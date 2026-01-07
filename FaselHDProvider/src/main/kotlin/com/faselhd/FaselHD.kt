@@ -4,34 +4,43 @@ import android.util.Log
 import android.net.Uri
 import android.webkit.CookieManager
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.network.cloudflare.GlobalHeaderStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.network.VideoSniffer
+import com.lagradost.cloudstream3.utils.Coroutines
 import org.jsoup.nodes.Element
 
-class FaselHDFix : MainAPI() {
+class FaselHD : MainAPI() {
     override var lang = "ar"
+    override var requiresVideoSniffing = true
     override var mainUrl = "https://faselhds.biz"
-    override var name = "FaselHD Fix"
+    override var name = "FaselHD (REFACTORED)"
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.AsianDrama, TvType.Anime)
 
     companion object {
-        private const val TAG = "FaselHD Fix"
-        private const val VERSION = "6.2"
+        private const val TAG = "FaselHD"
+        private const val VERSION = "6.1"
     }
 
     init {
-        Log.e(TAG, "!!!!!!!! FaselHD Provider Initialized - Version: $VERSION !!!!!!!!")
+        Log.e(TAG, "!!!!!!!! FaselHD Fixed Provider Initialized - Version: $VERSION !!!!!!!!")
+        // Try to init UA early to ensure consistency
+        try {
+            GlobalHeaderStore.initUserAgent(com.lagradost.cloudstream3.AcraApplication.context!!)
+        } catch(e: Exception) {
+             // context might be null or inaccessible
+        }
     }
 
     val posterHeaders: Map<String, String>
         get() {
-            Log.e(TAG, "posterHeaders: Fetching cookies for images (MainUrl=$mainUrl)")
             val manager = CookieManager.getInstance()
             val uri = Uri.parse(mainUrl)
             val host = uri.host ?: return emptyMap()
@@ -43,9 +52,9 @@ class FaselHDFix : MainAPI() {
                     manager.getCookie(host) ?: ""
                 }
             
-            val ua = WebViewResolver.webViewUserAgent ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            
-            Log.e(TAG, "posterHeaders: Found cookies length ${cookies.length}. UA: $ua")
+            val ua = GlobalHeaderStore.unifiedUserAgent 
+                ?: WebViewResolver.webViewUserAgent 
+                ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             return mapOf(
                 "Cookie" to cookies,
                 "User-Agent" to ua,
@@ -53,7 +62,7 @@ class FaselHDFix : MainAPI() {
             )
         }
     
-    private val cfInterceptor = CloudflareKiller()
+    // Interceptor handled globally by UnifiedInterceptor
 
     private fun String.getIntFromText(): Int? {
         return Regex("""\d+""").find(this)?.groupValues?.firstOrNull()?.toIntOrNull()
@@ -74,7 +83,7 @@ class FaselHDFix : MainAPI() {
             type
         ) {
             this.posterUrl = fixUrl(posterUrl)
-            this.posterHeaders = this@FaselHDFix.posterHeaders
+            this.posterHeaders = this@FaselHD.posterHeaders
             this.quality = getQualityFromString(quality)
         }
     }
@@ -93,7 +102,7 @@ class FaselHDFix : MainAPI() {
         val url = request.data + page
         Log.d(TAG, "getMainPage: Fetching $url")
         try {
-            val response = app.get(url, interceptor = cfInterceptor, timeout = 120)
+            val response = app.get(url, timeout = 120)
             val doc = response.document
             val list = doc.select("div[id=\"postList\"] div[class=\"col-xl-2 col-lg-2 col-md-3 col-sm-3\"]")
                 .mapNotNull { it.toSearchResponse() }
@@ -109,7 +118,7 @@ class FaselHDFix : MainAPI() {
         val url = "$mainUrl/?s=$q"
         Log.d(TAG, "search: Fetching $url")
         try {
-            val response = app.get(url, interceptor = cfInterceptor, timeout = 120)
+            val response = app.get(url, timeout = 120)
             val doc = response.document
             val results = doc.select("div[id=\"postList\"] div[class=\"col-xl-2 col-lg-2 col-md-3 col-sm-3\"]")
                 .mapNotNull { it.toSearchResponse() }
@@ -121,8 +130,9 @@ class FaselHDFix : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(TAG, "load: Fetching $url")
         try {
-            val doc = app.get(url, interceptor = cfInterceptor, timeout = 120).document
+            val doc = app.get(url, timeout = 120).document
             val isMovie = doc.select("div.epAll").isEmpty()
             
             var posterUrl = doc.select("div.posterImg img").attr("data-src")
@@ -142,6 +152,9 @@ class FaselHDFix : MainAPI() {
                 .replace("الموسم الأول|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|$year".toRegex(), "")
                 .trim()
 
+            Log.d(TAG, "load: Title=$title, isMovie=$isMovie")
+            Log.d(TAG, "load: PosterUrl=$posterUrl")
+
             val duration = doc.select("div[id=\"singleList\"] div[class=\"col-xl-6 col-lg-6 col-md-6 col-sm-6\"]")
                 .firstOrNull { it.text().contains("مدة|توقيت".toRegex()) }
                 ?.text()?.getIntFromText()
@@ -154,7 +167,7 @@ class FaselHDFix : MainAPI() {
             return if (isMovie) {
                 newMovieLoadResponse(title, url, TvType.Movie, url) {
                     this.posterUrl = fixUrl(posterUrl)
-                    this.posterHeaders = this@FaselHDFix.posterHeaders
+                    this.posterHeaders = this@FaselHD.posterHeaders
                     this.year = year
                     this.plot = synopsis
                     this.duration = duration
@@ -175,7 +188,7 @@ class FaselHDFix : MainAPI() {
                 doc.select("div[id=\"seasonList\"] div[class=\"col-xl-2 col-lg-3 col-md-6\"] div.seasonDiv")
                     .not(".active").amap { seasonElement ->
                         val id = seasonElement.attr("onclick").replace(".*/?p=|'".toRegex(), "")
-                        val seasonDoc = app.get("$mainUrl/?p=$id", interceptor = cfInterceptor, timeout = 120).document
+                        val seasonDoc = app.get("$mainUrl/?p=$id", timeout = 120).document
                         seasonDoc.select("div.epAll a").forEach {
                             episodes.add(
                                 newEpisode(it.attr("href")) {
@@ -186,10 +199,11 @@ class FaselHDFix : MainAPI() {
                             )
                         }
                     }
+                Log.d(TAG, "load: Found ${episodes.size} episodes")
                 newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinctBy { "${it.season}-${it.episode}" }.sortedBy { it.episode }) {
                     this.duration = duration
                     this.posterUrl = fixUrl(posterUrl)
-                    this.posterHeaders = this@FaselHDFix.posterHeaders
+                    this.posterHeaders = this@FaselHD.posterHeaders
                     this.year = year
                     this.plot = synopsis
                     this.tags = tags
@@ -210,76 +224,91 @@ class FaselHDFix : MainAPI() {
     ): Boolean {
         Log.e(TAG, "!!!!!!!! loadLinks Started (Version: $VERSION) - Data: $data !!!!!!!!")
         try {
-            val doc = app.get(data, interceptor = cfInterceptor, timeout = 120).document
+            val doc = app.get(data, timeout = 120).document
 
-            // Try download source
-            val downloadUrl = doc.select(".downloadLinks a").attr("href")
-            if (downloadUrl.isNotEmpty()) {
-                try {
-                    val player = app.post(downloadUrl, referer = mainUrl, interceptor = cfInterceptor, timeout = 120).document
-                    val directUrl = player.select("div.dl-link a").attr("href")
-                    if (directUrl.isNotEmpty()) {
+            // 1. Extract Watch Servers (Tabs)
+            // Example: <li onclick="player_iframe.location.href = '...'">Server Name</li>
+            doc.select(".signleWatch li").forEach { tab ->
+                val serverName = tab.text()
+                val onclick = tab.attr("onclick")
+                if (onclick.contains("player_iframe")) {
+                    val serverUrl = onclick.replace("player_iframe.location.href =", "")
+                        .replace("'", "")
+                        .replace(";", "")
+                        .trim()
+                    
+                    val fixedServerUrl = fixUrl(serverUrl)
+                    if (fixedServerUrl.startsWith("http")) {
+                        Log.e(TAG, "Found Watch Server: $serverName -> $fixedServerUrl")
+                        // Yield the raw server URL. Sniffing will happen on-click in the ViewModel.
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} Download",
-                                url = directUrl,
-                                type = ExtractorLinkType.VIDEO
+                                name = serverName,
+                                url = fixedServerUrl,
+                                type = ExtractorLinkType.VIDEO // Placeholder type, will be resolved by sniffer
                             ) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
+                                this.referer = data
                             }
                         )
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "loadLinks: Error getting download link", e)
                 }
             }
 
-            // Try iframe source
-            val iframeSrc = doc.select("iframe[name=\"player_iframe\"]").attr("src")
-            if (iframeSrc.isNotEmpty()) {
-                Log.e(TAG, "!!!!!!!! Starting VideoSniffer for $iframeSrc !!!!!!!!")
-                val result = VideoSniffer.sniff(iframeSrc)
-                if (result != null) {
-                    Log.e(TAG, "VideoSniffer SUCCESS: Found ${result.url}")
+            // 2. Extract Quality Buttons (Direct Links if possible)
+            // Example: <button data-url="...">1080p</button>
+            doc.select("div.quality_change button").forEach { btn ->
+                val qualityName = btn.text()
+                var directUrl = btn.attr("data-url").ifEmpty { btn.attr("data-href") }
+                
+                if (directUrl.isNotEmpty()) {
+                    val fixedDirectUrl = fixUrl(directUrl)
+                    if (fixedDirectUrl.startsWith("http")) {
+                        Log.e(TAG, "Found Quality Button: $qualityName -> $fixedDirectUrl")
+                        // Yield raw URL. Even if it's a player, we sniff it on-click.
+                        callback.invoke(
+                            newExtractorLink(
+                                source = this.name,
+                                name = qualityName, 
+                                url = fixedDirectUrl,
+                                type = if (fixedDirectUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = data
+                                this.quality = when(getQualityFromString(qualityName)) {
+                                    SearchQuality.HD -> Qualities.P720.value
+                                    SearchQuality.FourK -> Qualities.P2160.value
+                                    SearchQuality.SD -> Qualities.P480.value
+                                    else -> Qualities.Unknown.value
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // 3. Fallback to main player_iframe if no servers/buttons found
+            if (doc.select(".signleWatch li").isEmpty() && doc.select("div.quality_change button").isEmpty()) {
+                val iframeSrc = doc.select("iframe[name=\"player_iframe\"]").attr("src")
+                if (iframeSrc.isNotEmpty()) {
+                    val fixedIframeSrc = fixUrl(iframeSrc)
+                    Log.e(TAG, "Falling back to main iframe: $fixedIframeSrc")
                     callback.invoke(
                         newExtractorLink(
                             source = this.name,
-                            name = "${this.name} Auto (Visible)",
-                            url = result.url,
-                            type = if (result.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            name = "${this.name} Main Player",
+                            url = fixedIframeSrc,
+                            type = ExtractorLinkType.VIDEO
                         ) {
-                            this.referer = iframeSrc
-                            this.headers = result.headers
+                            this.referer = data
                         }
                     )
-                } else {
-                    Log.e(TAG, "VideoSniffer failed, falling back to WebViewResolver...")
-                    val webView = WebViewResolver(
-                        interceptUrl = Regex("""(?i)(https?://.*\.m3u8.*)|(https?://.*\.mp4.*)""")
-                    )
-                    val (finalRequest, extraRequests) = webView.resolveUsingWebView(iframeSrc)
-                    val extracted = (extraRequests + listOfNotNull(finalRequest)).map { it.url.toString() }.distinct()
-                    
-                    for (url in extracted) {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} Auto",
-                                url = url,
-                                type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = iframeSrc
-                            }
-                        )
-                    }
                 }
             }
+
             return true
         } catch (e: Exception) {
-            Log.e(TAG, "loadLinks: Error", e)
-            throw e
+            Log.e(TAG, "loadLinks: Error fetching $data", e)
+            return false
         }
     }
 }

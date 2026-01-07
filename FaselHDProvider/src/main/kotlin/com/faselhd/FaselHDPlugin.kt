@@ -7,6 +7,6 @@ import android.content.Context
 @CloudstreamPlugin
 class FaselHDPlugin: Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(FaselHDFix())
+        registerMainAPI(FaselHD())
     }
 }
