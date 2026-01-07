@@ -21,7 +21,8 @@ import com.faselhd.utils.PluginContext
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
-    var requiresVideoSniffing = true
+    // Using var instead of override var to avoid "overrides nothing" error in plugin SDK
+    var requiresVideoSniffing = true 
     override var mainUrl = "https://faselhds.biz"
     override var name = "FaselHD"
     override val hasMainPage = true
@@ -65,6 +66,8 @@ class FaselHD : MainAPI() {
             )
         }
     
+    // Interceptor handled globally by UnifiedInterceptor
+
     private fun String.getIntFromText(): Int? {
         return Regex("""\d+""").find(this)?.groupValues?.firstOrNull()?.toIntOrNull()
     }
@@ -228,6 +231,7 @@ class FaselHD : MainAPI() {
             val doc = app.get(data, timeout = 120).document
 
             // 1. Extract Watch Servers (Tabs)
+            // Example: <li onclick="player_iframe.location.href = '...'">Server Name</li>
             doc.select(".signleWatch li").forEach { tab ->
                 val serverName = tab.text()
                 val onclick = tab.attr("onclick")
@@ -256,6 +260,7 @@ class FaselHD : MainAPI() {
             }
 
             // 2. Extract Quality Buttons (Direct Links if possible)
+            // Example: <button data-url="...">1080p</button>
             doc.select("div.quality_change button").forEach { btn ->
                 val qualityName = btn.text()
                 var directUrl = btn.attr("data-url").ifEmpty { btn.attr("data-href") }
@@ -284,73 +289,23 @@ class FaselHD : MainAPI() {
                     }
                 }
             }
-            
-            // 3. Try Download Links
-            val downloadUrl = doc.select(".downloadLinks a").attr("href")
-            if (downloadUrl.isNotEmpty()) {
-                try {
-                    val player = app.post(downloadUrl, referer = mainUrl, timeout = 120).document
-                    val directUrl = player.select("div.dl-link a").attr("href")
-                    if (directUrl.isNotEmpty()) {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} Download",
-                                url = directUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "loadLinks: Error getting download link", e)
-                }
-            }
 
-            // 4. Fallback to main player_iframe
+            // 3. Fallback to main player_iframe if no servers/buttons found
             if (doc.select(".signleWatch li").isEmpty() && doc.select("div.quality_change button").isEmpty()) {
                 val iframeSrc = doc.select("iframe[name=\"player_iframe\"]").attr("src")
                 if (iframeSrc.isNotEmpty()) {
                     val fixedIframeSrc = fixUrl(iframeSrc)
-                    Log.e(TAG, "Falling back to main iframe (Sniffing): $fixedIframeSrc")
-                    
-                    // Use Custom VideoSniffer
-                    val result = VideoSniffer.sniff(fixedIframeSrc)
-                    if (result != null) {
-                        Log.e(TAG, "VideoSniffer SUCCESS: Found ${result.url}")
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} Auto (Visible)",
-                                url = result.url,
-                                type = if (result.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = fixedIframeSrc
-                                this.headers = result.headers
-                            }
-                        )
-                    } else {
-                        Log.e(TAG, "VideoSniffer failed, falling back to WebViewResolver...")
-                        val webView = WebViewResolver(
-                            interceptUrl = Regex("""(?i)(https?://.*\.m3u8.*)|(https?://.*\.mp4.*)""")
-                        )
-                        val (finalRequest, extraRequests) = webView.resolveUsingWebView(fixedIframeSrc)
-                        
-                        (extraRequests + listOfNotNull(finalRequest)).map { it.url.toString() }.distinct().forEach { url ->
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = this.name,
-                                    name = "${this.name} Auto",
-                                    url = url,
-                                    type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = data
-                                }
-                            )
+                    Log.e(TAG, "Falling back to main iframe: $fixedIframeSrc")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = this.name,
+                            name = "${this.name} Main Player",
+                            url = fixedIframeSrc,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = data
                         }
-                    }
+                    )
                 }
             }
 
