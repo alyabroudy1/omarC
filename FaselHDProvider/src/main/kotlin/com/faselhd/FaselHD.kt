@@ -4,21 +4,16 @@ import android.util.Log
 import android.net.Uri
 import android.webkit.CookieManager
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.cloudflare.GlobalHeaderStore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.network.WebViewResolver
-import com.lagradost.cloudstream3.network.VideoSniffer
 import com.lagradost.cloudstream3.utils.Coroutines
 import org.jsoup.nodes.Element
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
-    override var requiresVideoSniffing = true
     override var mainUrl = "https://faselhds.biz"
     override var name = "FaselHD (REFACTORED)"
     override val hasMainPage = true
@@ -31,12 +26,6 @@ class FaselHD : MainAPI() {
 
     init {
         Log.e(TAG, "!!!!!!!! FaselHD Fixed Provider Initialized - Version: $VERSION !!!!!!!!")
-        // Try to init UA early to ensure consistency
-        try {
-            GlobalHeaderStore.initUserAgent(com.lagradost.cloudstream3.AcraApplication.context!!)
-        } catch(e: Exception) {
-             // context might be null or inaccessible
-        }
     }
 
     val posterHeaders: Map<String, String>
@@ -52,8 +41,7 @@ class FaselHD : MainAPI() {
                     manager.getCookie(host) ?: ""
                 }
             
-            val ua = GlobalHeaderStore.unifiedUserAgent 
-                ?: WebViewResolver.webViewUserAgent 
+            val ua = WebViewResolver.webViewUserAgent 
                 ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             return mapOf(
                 "Cookie" to cookies,
@@ -62,8 +50,6 @@ class FaselHD : MainAPI() {
             )
         }
     
-    // Interceptor handled globally by UnifiedInterceptor
-
     private fun String.getIntFromText(): Int? {
         return Regex("""\d+""").find(this)?.groupValues?.firstOrNull()?.toIntOrNull()
     }
@@ -227,7 +213,6 @@ class FaselHD : MainAPI() {
             val doc = app.get(data, timeout = 120).document
 
             // 1. Extract Watch Servers (Tabs)
-            // Example: <li onclick="player_iframe.location.href = '...'">Server Name</li>
             doc.select(".signleWatch li").forEach { tab ->
                 val serverName = tab.text()
                 val onclick = tab.attr("onclick")
@@ -240,13 +225,19 @@ class FaselHD : MainAPI() {
                     val fixedServerUrl = fixUrl(serverUrl)
                     if (fixedServerUrl.startsWith("http")) {
                         Log.e(TAG, "Found Watch Server: $serverName -> $fixedServerUrl")
-                        // Yield the raw server URL. Sniffing will happen on-click in the ViewModel.
+                        // Use WebViewResolver to sniff the link if it's something complex, or yield likely direct links
+                        // Since we removed VideoSniffer, we rely on standard sniffers or direct URLs.
+                        // Standard practice: yield the link, and if it's an embed, the app's generic sniffers might pick it up.
+                        // BUT, FaselHD often needs active sniffing.
+                        
+                        // We will check if it's a known direct link, otherwise try generic webview resolve
+                        
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
                                 name = serverName,
                                 url = fixedServerUrl,
-                                type = ExtractorLinkType.VIDEO // Placeholder type, will be resolved by sniffer
+                                type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = data
                             }
@@ -255,8 +246,7 @@ class FaselHD : MainAPI() {
                 }
             }
 
-            // 2. Extract Quality Buttons (Direct Links if possible)
-            // Example: <button data-url="...">1080p</button>
+            // 2. Extract Quality Buttons
             doc.select("div.quality_change button").forEach { btn ->
                 val qualityName = btn.text()
                 var directUrl = btn.attr("data-url").ifEmpty { btn.attr("data-href") }
@@ -265,7 +255,6 @@ class FaselHD : MainAPI() {
                     val fixedDirectUrl = fixUrl(directUrl)
                     if (fixedDirectUrl.startsWith("http")) {
                         Log.e(TAG, "Found Quality Button: $qualityName -> $fixedDirectUrl")
-                        // Yield raw URL. Even if it's a player, we sniff it on-click.
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
@@ -286,22 +275,31 @@ class FaselHD : MainAPI() {
                 }
             }
 
-            // 3. Fallback to main player_iframe if no servers/buttons found
+            // 3. Fallback to main player_iframe / Generic Resolver
             if (doc.select(".signleWatch li").isEmpty() && doc.select("div.quality_change button").isEmpty()) {
                 val iframeSrc = doc.select("iframe[name=\"player_iframe\"]").attr("src")
                 if (iframeSrc.isNotEmpty()) {
                     val fixedIframeSrc = fixUrl(iframeSrc)
                     Log.e(TAG, "Falling back to main iframe: $fixedIframeSrc")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "${this.name} Main Player",
-                            url = fixedIframeSrc,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = data
-                        }
+
+                    // Attempt resolution using standard WebViewResolver
+                    val webView = WebViewResolver(
+                         interceptUrl = Regex("""(?i)(https?://.*\.m3u8.*)|(https?://.*\.mp4.*)""")
                     )
+                    val (finalRequest, extraRequests) = webView.resolveUsingWebView(fixedIframeSrc)
+                    
+                    (extraRequests + listOfNotNull(finalRequest)).map { it.url.toString() }.distinct().forEach { url ->
+                        callback.invoke(
+                            newExtractorLink(
+                                source = this.name,
+                                name = "${this.name} Auto",
+                                url = url,
+                                type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = data
+                            }
+                        )
+                    }
                 }
             }
 
