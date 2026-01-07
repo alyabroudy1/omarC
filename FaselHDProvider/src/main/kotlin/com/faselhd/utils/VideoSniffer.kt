@@ -53,7 +53,7 @@ object VideoSniffer {
     }
     
     fun onResult(resultCode: Int, data: Intent?) {
-        Log.d(TAG, "onResult: resultCode=\$resultCode")
+        Log.d(TAG, "onResult: resultCode=$resultCode")
         
         val result: Result? = if (resultCode == Activity.RESULT_OK && data != null) {
             val videoUrl = data.getStringExtra(VideoSnifferActivity.RESULT_VIDEO_URL)
