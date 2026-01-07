@@ -23,7 +23,7 @@ class FaselHD : MainAPI() {
     override var lang = "ar"
     var requiresVideoSniffing = true
     override var mainUrl = "https://faselhds.biz"
-    override var name = "FaselHD (REFACTORED)"
+    override var name = "FaselHD"
     override val hasMainPage = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.AsianDrama, TvType.Anime)
 
