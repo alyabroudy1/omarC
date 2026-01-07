@@ -1,0 +1,44 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=arabseed.show&sz=%size%",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 110833,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 4,
+        "internalName": "ArabseedProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/ArabseedProvider.cs3",
+        "name": "ArabseedProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=faselhds.biz&sz=%size%",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 136833,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 4,
+        "internalName": "FaselHDProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/FaselHDProvider.cs3",
+        "name": "FaselHDProvider"
+    }
+]
