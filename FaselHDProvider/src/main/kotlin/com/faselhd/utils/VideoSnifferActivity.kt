@@ -74,10 +74,10 @@ class VideoSnifferActivity : AppCompatActivity() {
         @Suppress("UNCHECKED_CAST")
         val extraHeaders = intent.getSerializableExtra(EXTRA_HEADERS) as? HashMap<String, String>
         
-        Log.d(TAG, "Starting Video Sniffer for: \$targetUrl (Allowed Domain: \$allowedDomain)")
+        Log.d(TAG, "Starting Video Sniffer for: $targetUrl (Allowed Domain: $allowedDomain)")
         HttpTraceLogger.logRequest("WEBVIEW_INTENT", targetUrl, "GET", extraHeaders?.toMap() ?: emptyMap())
         if (!extraHeaders.isNullOrEmpty()) {
-             Log.d(TAG, "Injecting \${extraHeaders.size} headers")
+             Log.d(TAG, "Injecting ${extraHeaders.size} headers")
         }
         
         val cookieManager = CookieManager.getInstance()
@@ -87,15 +87,15 @@ class VideoSnifferActivity : AppCompatActivity() {
         if (host != null) {
             val globalCookies = GlobalHeaderStore.getCookiesForHost(host)
             if (globalCookies.isNotEmpty()) {
-                Log.d(TAG, "Syncing \${globalCookies.size} global cookies for \$host")
+                Log.d(TAG, "Syncing ${globalCookies.size} global cookies for $host")
                 globalCookies.forEach { (key, value) ->
-                    cookieManager.setCookie(targetUrl, "\$key=\$value")
+                    cookieManager.setCookie(targetUrl, "$key=$value")
                 }
             }
         }
 
         extraHeaders?.get("Cookie")?.let { cookieString ->
-             Log.d(TAG, "Injecting Intent Cookies into WebView: \$cookieString")
+             Log.d(TAG, "Injecting Intent Cookies into WebView: $cookieString")
              cookieString.split(";").forEach { cookie ->
                  if (cookie.isNotBlank()) {
                     cookieManager.setCookie(targetUrl, cookie.trim())
@@ -163,7 +163,7 @@ class VideoSnifferActivity : AppCompatActivity() {
                     ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                 
                 userAgentString = unifiedUA
-                Log.d(TAG, "Using User-Agent: \$unifiedUA")
+                Log.d(TAG, "Using User-Agent: $unifiedUA")
             }
             
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -175,13 +175,13 @@ class VideoSnifferActivity : AppCompatActivity() {
                     val url = request?.url?.toString() ?: return false
                     
                     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                        Log.w(TAG, "Blocking non-HTTP navigation: \$url")
+                        Log.w(TAG, "Blocking non-HTTP navigation: $url")
                         return true
                     }
 
                     val targetDomain = extractBaseDomain(url)
                     if (targetDomain != null && allowedDomain != null && targetDomain != allowedDomain) {
-                        Log.w(TAG, "Blocking cross-domain redirect: \$url (Target: \$targetDomain, Base: \$allowedDomain)")
+                        Log.w(TAG, "Blocking cross-domain redirect: $url (Target: $targetDomain, Base: $allowedDomain)")
                         return true
                     }
 
@@ -203,9 +203,9 @@ class VideoSnifferActivity : AppCompatActivity() {
                     if (request?.isForMainFrame == true) {
                         val desc = error?.description?.toString() ?: "Unknown Error"
                         val code = error?.errorCode ?: 0
-                        Log.e(TAG, "WebView error: \$desc (Code: \$code)")
+                        Log.e(TAG, "WebView error: $desc (Code: $code)")
                         runOnUiThread {
-                            updateStatus("Error: \$desc")
+                            updateStatus("Error: $desc")
                         }
                     }
                 }
@@ -218,13 +218,13 @@ class VideoSnifferActivity : AppCompatActivity() {
                     
                     if (isVideoUrl(url)) {
                         if (url.length >= MIN_VIDEO_URL_LENGTH) {
-                            Log.i(TAG, "🎯 VIDEO DETECTED (V2): \$url")
+                            Log.i(TAG, "🎯 VIDEO DETECTED (V2): $url")
                             HttpTraceLogger.logResponse("WEBVIEW_SNIFFER", url, 200, request.requestHeaders)
                             runOnUiThread {
                                 deliverResult(url, request.requestHeaders)
                             }
                         } else {
-                            Log.d(TAG, "Filtered probable ad-proxy video: \$url")
+                            Log.d(TAG, "Filtered probable ad-proxy video: $url")
                         }
                     }
                     HttpTraceLogger.logRequest("WEBVIEW_RESOURCE", url, request.method, request.requestHeaders)
@@ -262,8 +262,8 @@ class VideoSnifferActivity : AppCompatActivity() {
                 webView.loadUrl(targetUrl)
             }
         } else {
-            Log.e(TAG, "Invalid URL scheme: \$targetUrl")
-            Toast.makeText(this, "Wait... Invalid URL: \$targetUrl", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Invalid URL scheme: $targetUrl")
+            Toast.makeText(this, "Wait... Invalid URL: $targetUrl", Toast.LENGTH_SHORT).show()
             finish()
         }
     }

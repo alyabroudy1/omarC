@@ -24,11 +24,11 @@ object GlobalHeaderStore {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val webView = WebView(context)
                 unifiedUserAgent = webView.settings.userAgentString
-                Log.i(TAG, "Unified UA initialized: \${unifiedUserAgent?.take(60)}...")
+                Log.i(TAG, "Unified UA initialized: ${unifiedUserAgent?.take(60)}...")
                 webView.destroy()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to init UA: \${e.message}")
+            Log.e(TAG, "Failed to init UA: ${e.message}")
         }
     }
     
@@ -38,10 +38,10 @@ object GlobalHeaderStore {
             try {
                 val webView = WebView(context)
                 unifiedUserAgent = webView.settings.userAgentString
-                Log.i(TAG, "Unified UA initialized (sync): \${unifiedUserAgent?.take(60)}...")
+                Log.i(TAG, "Unified UA initialized (sync): ${unifiedUserAgent?.take(60)}...")
                 webView.destroy()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to init UA sync: \${e.message}")
+                Log.e(TAG, "Failed to init UA sync: ${e.message}")
             }
         }
     }
@@ -52,7 +52,7 @@ object GlobalHeaderStore {
         }
 
         return cachedCookies[host] 
-            ?: cachedCookies["www.\$host"] 
+            ?: cachedCookies["www.$host"] 
             ?: cachedCookies[host.removePrefix("www.")] 
             ?: emptyMap()
     }
@@ -64,24 +64,24 @@ object GlobalHeaderStore {
         val key = if (cleanHost.startsWith("www.")) cleanHost.removePrefix("www.") else cleanHost
 
         cachedCookies[key] = cookies
-        cachedCookies["www.\$key"] = cookies
+        cachedCookies["www.$key"] = cookies
         
-        Log.i(TAG, "Updated/Cached \${cookies.size} cookies for \$cleanHost")
+        Log.i(TAG, "Updated/Cached ${cookies.size} cookies for $cleanHost")
         
         try {
             val cookieManager = CookieManager.getInstance()
-            val cookieString = cookies.entries.joinToString("; ") { "\${it.key}=\${it.value}" }
+            val cookieString = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
             cookieManager.setCookie(cleanHost, cookieString)
             cookieManager.flush()
         } catch (e: Exception) {
-            Log.e(TAG, "Error persisting cookies: \${e.message}")
+            Log.e(TAG, "Error persisting cookies: ${e.message}")
         }
     }
 
     private fun hydrateCookiesFromManager(host: String) {
         try {
            val cookieManager = CookieManager.getInstance()
-           val url = "https://\$host"
+           val url = "https://$host"
            val cookieString = cookieManager.getCookie(url) ?: return
            
            val cookies = parseCookies(cookieString)
@@ -114,7 +114,7 @@ object GlobalHeaderStore {
         
         val finalCookies = cached + currentCookies 
         
-        val cookieHeader = finalCookies.entries.joinToString("; ") { "\${it.key}=\${it.value}" }
+        val cookieHeader = finalCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
         val builder = currentHeaders.newBuilder()
         builder.set("User-Agent", ua)

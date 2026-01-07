@@ -23,7 +23,7 @@ object VideoSniffer {
     )
 
     suspend fun sniff(url: String, headers: Map<String, String> = emptyMap()): Result? {
-        Log.d(TAG, "Sniffing requested for: \$url with \${headers.size} headers")
+        Log.d(TAG, "Sniffing requested for: $url with ${headers.size} headers")
         
         val appContext = PluginContext.context ?: run {
             Log.e(TAG, "Application context is null (PluginContext not initialized)")
