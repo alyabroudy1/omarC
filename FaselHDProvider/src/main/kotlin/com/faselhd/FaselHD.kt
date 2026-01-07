@@ -4,6 +4,8 @@ import android.util.Log
 import android.net.Uri
 import android.webkit.CookieManager
 import com.lagradost.cloudstream3.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
@@ -12,8 +14,14 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.Coroutines
 import org.jsoup.nodes.Element
 
+// Local imports
+import com.faselhd.utils.GlobalHeaderStore
+import com.faselhd.utils.VideoSniffer
+import com.faselhd.utils.PluginContext
+
 class FaselHD : MainAPI() {
     override var lang = "ar"
+    override var requiresVideoSniffing = true
     override var mainUrl = "https://faselhds.biz"
     override var name = "FaselHD (REFACTORED)"
     override val hasMainPage = true
@@ -25,7 +33,13 @@ class FaselHD : MainAPI() {
     }
 
     init {
-        Log.e(TAG, "!!!!!!!! FaselHD Fixed Provider Initialized - Version: $VERSION !!!!!!!!")
+        Log.e(TAG, "!!!!!!!! FaselHD Fixed Provider Initialized - Version: \$VERSION !!!!!!!!")
+        // Try to init UA early to ensure consistency
+        try {
+            PluginContext.context?.let { GlobalHeaderStore.initUserAgent(it) }
+        } catch(e: Exception) {
+             // context might be null or inaccessible
+        }
     }
 
     val posterHeaders: Map<String, String>
@@ -35,18 +49,19 @@ class FaselHD : MainAPI() {
             val host = uri.host ?: return emptyMap()
             
             val cookies = (manager.getCookie(mainUrl)
-                ?: manager.getCookie("https://www.$host")
-                ?: manager.getCookie("https://${host.removePrefix("www.")}")
+                ?: manager.getCookie("https://www.\$host")
+                ?: manager.getCookie("https://\${host.removePrefix("www.")}")
                 ?: "").ifEmpty {
                     manager.getCookie(host) ?: ""
                 }
             
-            val ua = WebViewResolver.webViewUserAgent 
+            val ua = GlobalHeaderStore.unifiedUserAgent 
+                ?: WebViewResolver.webViewUserAgent 
                 ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             return mapOf(
                 "Cookie" to cookies,
                 "User-Agent" to ua,
-                "Referer" to "$mainUrl/"
+                "Referer" to "\$mainUrl/"
             )
         }
     
@@ -75,18 +90,18 @@ class FaselHD : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/all-movies/page/" to "جميع الافلام",
-        "$mainUrl/movies_top_views/page/" to "الافلام الاعلي مشاهدة",
-        "$mainUrl/dubbed-movies/page/" to "الأفلام المدبلجة",
-        "$mainUrl/movies_top_imdb/page/" to "الافلام الاعلي تقييما IMDB",
-        "$mainUrl/series/page/" to "مسلسلات",
-        "$mainUrl/recent_series/page/" to "المضاف حديثا",
-        "$mainUrl/anime/page/" to "الأنمي",
+        "\$mainUrl/all-movies/page/" to "جميع الافلام",
+        "\$mainUrl/movies_top_views/page/" to "الافلام الاعلي مشاهدة",
+        "\$mainUrl/dubbed-movies/page/" to "الأفلام المدبلجة",
+        "\$mainUrl/movies_top_imdb/page/" to "الافلام الاعلي تقييما IMDB",
+        "\$mainUrl/series/page/" to "مسلسلات",
+        "\$mainUrl/recent_series/page/" to "المضاف حديثا",
+        "\$mainUrl/anime/page/" to "الأنمي",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + page
-        Log.d(TAG, "getMainPage: Fetching $url")
+        Log.d(TAG, "getMainPage: Fetching \$url")
         try {
             val response = app.get(url, timeout = 120)
             val doc = response.document
@@ -94,15 +109,15 @@ class FaselHD : MainAPI() {
                 .mapNotNull { it.toSearchResponse() }
             return newHomePageResponse(request.name, list)
         } catch (e: Exception) {
-            Log.e(TAG, "getMainPage: Error fetching $url", e)
+            Log.e(TAG, "getMainPage: Error fetching \$url", e)
             throw e
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query.replace(" ", "+")
-        val url = "$mainUrl/?s=$q"
-        Log.d(TAG, "search: Fetching $url")
+        val url = "\$mainUrl/?s=\$q"
+        Log.d(TAG, "search: Fetching \$url")
         try {
             val response = app.get(url, timeout = 120)
             val doc = response.document
@@ -110,13 +125,13 @@ class FaselHD : MainAPI() {
                 .mapNotNull { it.toSearchResponse() }
             return results
         } catch (e: Exception) {
-            Log.e(TAG, "search: Error fetching $url", e)
+            Log.e(TAG, "search: Error fetching \$url", e)
             throw e
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "load: Fetching $url")
+        Log.d(TAG, "load: Fetching \$url")
         try {
             val doc = app.get(url, timeout = 120).document
             val isMovie = doc.select("div.epAll").isEmpty()
@@ -135,11 +150,11 @@ class FaselHD : MainAPI() {
 
             val title = doc.select("title").text()
                 .replace(" - فاصل إعلاني", "")
-                .replace("الموسم الأول|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|$year".toRegex(), "")
+                .replace("الموسم الأول|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|\$year".toRegex(), "")
                 .trim()
 
-            Log.d(TAG, "load: Title=$title, isMovie=$isMovie")
-            Log.d(TAG, "load: PosterUrl=$posterUrl")
+            Log.d(TAG, "load: Title=\$title, isMovie=\$isMovie")
+            Log.d(TAG, "load: PosterUrl=\$posterUrl")
 
             val duration = doc.select("div[id=\"singleList\"] div[class=\"col-xl-6 col-lg-6 col-md-6 col-sm-6\"]")
                 .firstOrNull { it.text().contains("مدة|توقيت".toRegex()) }
@@ -174,7 +189,7 @@ class FaselHD : MainAPI() {
                 doc.select("div[id=\"seasonList\"] div[class=\"col-xl-2 col-lg-3 col-md-6\"] div.seasonDiv")
                     .not(".active").amap { seasonElement ->
                         val id = seasonElement.attr("onclick").replace(".*/?p=|'".toRegex(), "")
-                        val seasonDoc = app.get("$mainUrl/?p=$id", timeout = 120).document
+                        val seasonDoc = app.get("\$mainUrl/?p=\$id", timeout = 120).document
                         seasonDoc.select("div.epAll a").forEach {
                             episodes.add(
                                 newEpisode(it.attr("href")) {
@@ -185,8 +200,8 @@ class FaselHD : MainAPI() {
                             )
                         }
                     }
-                Log.d(TAG, "load: Found ${episodes.size} episodes")
-                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinctBy { "${it.season}-${it.episode}" }.sortedBy { it.episode }) {
+                Log.d(TAG, "load: Found \${episodes.size} episodes")
+                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes.distinctBy { "\${it.season}-\${it.episode}" }.sortedBy { it.episode }) {
                     this.duration = duration
                     this.posterUrl = fixUrl(posterUrl)
                     this.posterHeaders = this@FaselHD.posterHeaders
@@ -197,7 +212,7 @@ class FaselHD : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "load: Error fetching $url", e)
+            Log.e(TAG, "load: Error fetching \$url", e)
             throw e
         }
     }
@@ -208,7 +223,7 @@ class FaselHD : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.e(TAG, "!!!!!!!! loadLinks Started (Version: $VERSION) - Data: $data !!!!!!!!")
+        Log.e(TAG, "!!!!!!!! loadLinks Started (Version: \$VERSION) - Data: \$data !!!!!!!!")
         try {
             val doc = app.get(data, timeout = 120).document
 
@@ -224,20 +239,14 @@ class FaselHD : MainAPI() {
                     
                     val fixedServerUrl = fixUrl(serverUrl)
                     if (fixedServerUrl.startsWith("http")) {
-                        Log.e(TAG, "Found Watch Server: $serverName -> $fixedServerUrl")
-                        // Use WebViewResolver to sniff the link if it's something complex, or yield likely direct links
-                        // Since we removed VideoSniffer, we rely on standard sniffers or direct URLs.
-                        // Standard practice: yield the link, and if it's an embed, the app's generic sniffers might pick it up.
-                        // BUT, FaselHD often needs active sniffing.
-                        
-                        // We will check if it's a known direct link, otherwise try generic webview resolve
-                        
+                        Log.e(TAG, "Found Watch Server: \$serverName -> \$fixedServerUrl")
+                        // Yield the raw server URL. Sniffing will happen on-click in the ViewModel.
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
                                 name = serverName,
                                 url = fixedServerUrl,
-                                type = ExtractorLinkType.VIDEO
+                                type = ExtractorLinkType.VIDEO // Placeholder type, will be resolved by sniffer
                             ) {
                                 this.referer = data
                             }
@@ -246,7 +255,7 @@ class FaselHD : MainAPI() {
                 }
             }
 
-            // 2. Extract Quality Buttons
+            // 2. Extract Quality Buttons (Direct Links if possible)
             doc.select("div.quality_change button").forEach { btn ->
                 val qualityName = btn.text()
                 var directUrl = btn.attr("data-url").ifEmpty { btn.attr("data-href") }
@@ -254,7 +263,8 @@ class FaselHD : MainAPI() {
                 if (directUrl.isNotEmpty()) {
                     val fixedDirectUrl = fixUrl(directUrl)
                     if (fixedDirectUrl.startsWith("http")) {
-                        Log.e(TAG, "Found Quality Button: $qualityName -> $fixedDirectUrl")
+                        Log.e(TAG, "Found Quality Button: \$qualityName -> \$fixedDirectUrl")
+                        // Yield raw URL. Even if it's a player, we sniff it on-click.
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
@@ -274,38 +284,79 @@ class FaselHD : MainAPI() {
                     }
                 }
             }
+            
+            // 3. Try Download Links
+            val downloadUrl = doc.select(".downloadLinks a").attr("href")
+            if (downloadUrl.isNotEmpty()) {
+                try {
+                    val player = app.post(downloadUrl, referer = mainUrl, timeout = 120).document
+                    val directUrl = player.select("div.dl-link a").attr("href")
+                    if (directUrl.isNotEmpty()) {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = this.name,
+                                name = "\${this.name} Download",
+                                url = directUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = mainUrl
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadLinks: Error getting download link", e)
+                }
+            }
 
-            // 3. Fallback to main player_iframe / Generic Resolver
+            // 4. Fallback to main player_iframe
             if (doc.select(".signleWatch li").isEmpty() && doc.select("div.quality_change button").isEmpty()) {
                 val iframeSrc = doc.select("iframe[name=\"player_iframe\"]").attr("src")
                 if (iframeSrc.isNotEmpty()) {
                     val fixedIframeSrc = fixUrl(iframeSrc)
-                    Log.e(TAG, "Falling back to main iframe: $fixedIframeSrc")
-
-                    // Attempt resolution using standard WebViewResolver
-                    val webView = WebViewResolver(
-                         interceptUrl = Regex("""(?i)(https?://.*\.m3u8.*)|(https?://.*\.mp4.*)""")
-                    )
-                    val (finalRequest, extraRequests) = webView.resolveUsingWebView(fixedIframeSrc)
+                    Log.e(TAG, "Falling back to main iframe (Sniffing): \$fixedIframeSrc")
                     
-                    (extraRequests + listOfNotNull(finalRequest)).map { it.url.toString() }.distinct().forEach { url ->
+                    // Use Custom VideoSniffer
+                    val result = VideoSniffer.sniff(fixedIframeSrc)
+                    if (result != null) {
+                        Log.e(TAG, "VideoSniffer SUCCESS: Found \${result.url}")
                         callback.invoke(
                             newExtractorLink(
                                 source = this.name,
-                                name = "${this.name} Auto",
-                                url = url,
-                                type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                name = "\${this.name} Auto (Visible)",
+                                url = result.url,
+                                type = if (result.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             ) {
-                                this.referer = data
+                                this.referer = fixedIframeSrc
+                                this.headers = result.headers
                             }
                         )
+                    } else {
+                        Log.e(TAG, "VideoSniffer failed, falling back to WebViewResolver...")
+                        val webView = WebViewResolver(
+                            interceptUrl = Regex("""(?i)(https?://.*\.m3u8.*)|(https?://.*\.mp4.*)""")
+                        )
+                        val (finalRequest, extraRequests) = webView.resolveUsingWebView(fixedIframeSrc)
+                        
+                        (extraRequests + listOfNotNull(finalRequest)).map { it.url.toString() }.distinct().forEach { url ->
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = this.name,
+                                    name = "\${this.name} Auto",
+                                    url = url,
+                                    type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = data
+                                }
+                            )
+                        }
                     }
                 }
             }
 
             return true
         } catch (e: Exception) {
-            Log.e(TAG, "loadLinks: Error fetching $data", e)
+            Log.e(TAG, "loadLinks: Error fetching \$data", e)
             return false
         }
     }
