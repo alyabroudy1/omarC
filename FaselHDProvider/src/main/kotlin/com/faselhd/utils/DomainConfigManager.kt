@@ -4,6 +4,8 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URI
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -159,23 +161,28 @@ class DomainConfigManager(
                 put("currentVersion", configVersion)
             }
             
-            withContext(Dispatchers.IO) {
-                val jsonBody = okhttp3.RequestBody.create(
-                    "application/json; charset=utf-8".toMediaTypeOrNull(),
-                    payload.toString()
-                )
-                val response = app.post(
-                    syncApiUrl,
-                    requestBody = jsonBody
-                )
-                
-                if (response.isSuccessful) {
-                    val result = JSONObject(response.text)
-                    val newVersion = result.optInt("newVersion", configVersion + 1)
-                    configVersion = newVersion
-                    Log.i(TAG, "[$providerName] Domain synced successfully! New version: $newVersion")
-                } else {
-                    Log.e(TAG, "[$providerName] Sync failed: ${response.code}")
+            // Fire and forget - do not block the main thread
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val jsonBody = okhttp3.RequestBody.create(
+                        "application/json; charset=utf-8".toMediaTypeOrNull(),
+                        payload.toString()
+                    )
+                    val response = app.post(
+                        syncApiUrl,
+                        requestBody = jsonBody
+                    )
+                    
+                    if (response.isSuccessful) {
+                        val result = JSONObject(response.text)
+                        val newVersion = result.optInt("newVersion", configVersion + 1)
+                        configVersion = newVersion
+                        Log.i(TAG, "[$providerName] Domain synced successfully! New version: $newVersion")
+                    } else {
+                        Log.e(TAG, "[$providerName] Sync failed: ${response.code}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "[$providerName] Sync error: ${e.message}")
                 }
             }
         } catch (e: Exception) {
