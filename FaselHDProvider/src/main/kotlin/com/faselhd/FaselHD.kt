@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
 import com.lagradost.api.Log
 import com.faselhd.utils.DomainConfigManager
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
@@ -123,13 +125,50 @@ class FaselHD : MainAPI() {
             FaselState.updateDomain(domainManager.currentDomain)
         }
         
-        // Page numbers: CloudStream uses 1-indexed, site might use 0-indexed
-        val sitePageNumber = page - 1
-        val pageUrl = request.data + sitePageNumber
+        // Use page directly (CloudStream uses 1-indexed, site expects 1-indexed)
+        val pageUrl = request.data + page
         Log.d("FaselHD", "[getMainPage] Fetching: $pageUrl")
+
+        // CLOUDFLARE SYNC LOGIC:
+        // 1. Check if we already have valid headers
+        // 2. If not, ACQUIRE LOCK and try again (double-check locking)
+        // 3. If still not, run request WITH cfKiller (WebView) to get headers
+        // 4. Update FaselState
+        // 5. Subsequent requests use the saved headers WITHOUT cfKiller (standard request)
         
-        var headers = getHeaders()
-        val response = app.get(pageUrl, headers = headers, interceptor = cfKiller)
+        var headers = FaselState.headers
+        val response = if (headers.isEmpty()) {
+            FaselState.paramMutex.withLock {
+                // Double-check inside lock
+                headers = FaselState.headers
+                if (headers.isEmpty()) {
+                    Log.i("FaselHD", "[getMainPage] First request/No headers. triggering CF Bypass for $pageUrl")
+                    // This request WILL trigger WebView if needed
+                    val resp = app.get(pageUrl, headers = getHeaders(), interceptor = cfKiller)
+                    
+                    // Headers should be properly updated by the interceptor/webview resolver
+                    // But we can also manually grab them here to be safe if cfKiller exposes them
+                    val cookies = cfKiller.getCookieHeaders(mainUrl).toMap()
+                    val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+                    
+                    if (cookies.isNotEmpty()) {
+                        val newHeaders = cookies.toMutableMap()
+                        if (!newHeaders.any { it.key.equals("user-agent", true) }) {
+                            newHeaders["User-Agent"] = ua
+                        }
+                        FaselState.updateHeaders(newHeaders)
+                    }
+                    resp
+                } else {
+                     Log.i("FaselHD", "[getMainPage] Headers found (in lock). reusing session for $pageUrl")
+                     app.get(pageUrl, headers = headers) // No cfKiller
+                }
+            }
+        } else {
+             Log.i("FaselHD", "[getMainPage] Headers found. reusing session for $pageUrl")
+             app.get(pageUrl, headers = headers) // No cfKiller
+        }
+        
         val doc = response.document
         
         // Check for domain redirect
@@ -323,6 +362,9 @@ class FaselHD : MainAPI() {
 
 object FaselState {
     var headers: Map<String, String> = emptyMap()
+    // Mutex to ensure only one CF challenge runs at a time
+    val paramMutex = Mutex()
+    
     var currentDomain: String = "https://www.faselhds.biz"
         private set
 
