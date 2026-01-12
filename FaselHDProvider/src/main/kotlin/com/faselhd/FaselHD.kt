@@ -119,10 +119,17 @@ class FaselHD : MainAPI() {
         // Initialize domain on first request
         if (!domainManager.isInitialized) {
             domainManager.initialize()
+            // Update FaselState with the resolved domain
+            FaselState.updateDomain(domainManager.currentDomain)
         }
         
+        // Page numbers: CloudStream uses 1-indexed, site might use 0-indexed
+        val sitePageNumber = page - 1
+        val pageUrl = request.data + sitePageNumber
+        Log.d("FaselHD", "[getMainPage] Fetching: $pageUrl")
+        
         var headers = getHeaders()
-        val response = app.get(request.data + page, headers = headers, interceptor = cfKiller)
+        val response = app.get(pageUrl, headers = headers, interceptor = cfKiller)
         val doc = response.document
         
         // Check for domain redirect
