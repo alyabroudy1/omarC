@@ -171,7 +171,30 @@ class FaselHD : MainAPI() {
             }
         } else {
              Log.i("FaselHD", "[getMainPage] Headers found. reusing session for $pageUrl")
-             app.get(pageUrl, headers = headers) // No cfKiller
+             val resp = app.get(pageUrl, headers = headers) // No cfKiller initially
+             
+             if (resp.code == 403 || resp.code == 503) {
+                 Log.w("FaselHD", "[getMainPage] Headers expired (403/503). Retrying with CF Killer.")
+                 // Clear bad headers
+                 FaselState.headers = emptyMap()
+                 // Retry with interceptor to refresh
+                 val retryResp = app.get(pageUrl, headers = getHeaders(), interceptor = cfKiller)
+                 
+                 // Capture new headers from retry
+                 val cookies = cfKiller.getCookieHeaders(mainUrl).toMap()
+                 val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+                 
+                 if (cookies.isNotEmpty()) {
+                     val newHeaders = cookies.toMutableMap()
+                     if (!newHeaders.any { it.key.equals("user-agent", true) }) {
+                         newHeaders["User-Agent"] = ua
+                     }
+                     FaselState.updateHeaders(newHeaders)
+                 }
+                 retryResp
+             } else {
+                 resp
+             }
         }
         
         val doc = response.document

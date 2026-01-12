@@ -91,7 +91,19 @@ class ConfigurableCloudflareKiller(
                 }
             }
             else -> {
-                return@runBlocking proceed(request, cookies)
+                val response = proceed(request, cookies)
+                if (response.header("Server") in CLOUDFLARE_SERVERS && response.code in ERROR_CODES) {
+                    Log.d(TAG, "Saved cookies expired for ${request.url}, clearing and retrying")
+                    response.close()
+                    savedCookies.remove(request.url.host)
+                    
+                    bypassCloudflare(request)?.let {
+                        Log.d(TAG, "Succeeded bypassing cloudflare after expiry: ${request.url}")
+                        return@runBlocking it
+                    }
+                } else {
+                    return@runBlocking response
+                }
             }
         }
 
