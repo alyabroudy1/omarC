@@ -6,10 +6,23 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
 import com.lagradost.api.Log
+import com.faselhd.utils.DomainConfigManager
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
-    override var mainUrl = "https://www.faselhds.biz"
+    
+    // Domain manager for auto-detection
+    private val domainManager = DomainConfigManager(
+        providerName = "FaselHD",
+        configFileName = "faselhd.json",
+        fallbackDomain = "https://www.faselhds.biz"
+    )
+    
+    // Dynamic mainUrl that uses the domain manager
+    override var mainUrl: String
+        get() = domainManager.currentDomain
+        set(value) { domainManager.updateDomain(value) }
+    
     override var name = "FaselHD"
     override val usesWebView = false
     override val hasMainPage = true
@@ -92,8 +105,17 @@ class FaselHD : MainAPI() {
         )
 
     override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse {
+        // Initialize domain on first request
+        if (!domainManager.isInitialized) {
+            domainManager.initialize()
+        }
+        
         var headers = getHeaders()
-        val doc = app.get(request.data + page, headers = headers, interceptor = cfKiller).document
+        val response = app.get(request.data + page, headers = headers, interceptor = cfKiller)
+        val doc = response.document
+        
+        // Check for domain redirect
+        domainManager.checkForDomainChange(response.url)
         
         // Update cache
         val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
