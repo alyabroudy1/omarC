@@ -226,9 +226,16 @@ class FaselHD : MainAPI() {
         for (li in elements) {
             if (foundLink) break
             
+            var url: String? = null
             val onclickAttr = li.attr("onclick")
             val match = urlRegex.find(onclickAttr)
-            val url = match?.value?.replace("'", "")
+            
+            if (match != null) {
+                url = match.value.replace("'", "")
+            } else {
+                 // Fallback: Check for data-url or other attributes if onclick parsing fails
+                 url = li.attr("data-url").ifEmpty { li.attr("data-link") }
+            }
             
             if (!url.isNullOrEmpty() && url.contains("faselhd")) {
                 loadExtractor(url, subtitleCallback, wrappedCallback)
