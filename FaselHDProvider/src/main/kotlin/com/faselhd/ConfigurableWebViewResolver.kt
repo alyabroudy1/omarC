@@ -8,7 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.*
 import com.lagradost.api.Log
-import com.lagradost.api.getContext
+import com.faselhd.utils.PluginContext
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mvvm.debugException
 import com.lagradost.cloudstream3.mvvm.debugWarning
@@ -225,7 +225,7 @@ class ConfigurableWebViewResolver(
             WebView.setWebContentsDebuggingEnabled(true)
             try {
                 webView = WebView(
-                    (getContext() as? Context)
+                    PluginContext.context
                         ?: throw RuntimeException("No base context in WebViewResolver")
                 ).apply {
                     settings.javaScriptEnabled = true
