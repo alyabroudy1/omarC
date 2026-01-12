@@ -7,6 +7,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URI
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Reusable Domain Configuration Manager.
@@ -67,6 +69,8 @@ class DomainConfigManager(
     
     // Last known domain (to detect changes)
     private var lastKnownDomain: String = fallbackDomain
+    
+    private val initMutex = Mutex()
 
     /**
      * Initialize the domain manager by fetching the remote config.
@@ -75,33 +79,37 @@ class DomainConfigManager(
     suspend fun initialize(): Boolean {
         if (isInitialized) return true
         
-        return try {
-            val configUrl = "$CONFIG_BASE_URL/$configFileName"
-            Log.i(TAG, "[$providerName] Fetching domain config from: $configUrl")
+        return initMutex.withLock {
+            if (isInitialized) return@withLock true
             
-            val response = withContext(Dispatchers.IO) {
-                app.get(configUrl, timeout = 10).text
-            }
-            
-            val config = parseConfig(response)
-            if (config != null) {
-                currentDomain = config.domain
-                configVersion = config.version
-                lastKnownDomain = config.domain
-                Log.i(TAG, "[$providerName] Domain initialized: $currentDomain (v$configVersion)")
-                isInitialized = true
-                true
-            } else {
-                Log.w(TAG, "[$providerName] Failed to parse config, using fallback: $fallbackDomain")
+            try {
+                val configUrl = "$CONFIG_BASE_URL/$configFileName"
+                Log.i(TAG, "[$providerName] Fetching domain config from: $configUrl")
+                
+                val response = withContext(Dispatchers.IO) {
+                    app.get(configUrl, timeout = 10).text
+                }
+                
+                val config = parseConfig(response)
+                if (config != null) {
+                    currentDomain = config.domain
+                    configVersion = config.version
+                    lastKnownDomain = config.domain
+                    Log.i(TAG, "[$providerName] Domain initialized: $currentDomain (v$configVersion)")
+                    isInitialized = true
+                    true
+                } else {
+                    Log.w(TAG, "[$providerName] Failed to parse config, using fallback: $fallbackDomain")
+                    currentDomain = fallbackDomain
+                    isInitialized = true
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[$providerName] Config fetch failed: ${e.message}, using fallback: $fallbackDomain")
                 currentDomain = fallbackDomain
                 isInitialized = true
                 false
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "[$providerName] Config fetch failed: ${e.message}, using fallback: $fallbackDomain")
-            currentDomain = fallbackDomain
-            isInitialized = true
-            false
         }
     }
 
