@@ -6,9 +6,9 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
 import com.lagradost.api.Log
-import com.faselhd.utils.DomainConfigManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.faselhd.utils.DomainConfigManager
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
@@ -31,6 +31,7 @@ class FaselHD : MainAPI() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.AsianDrama, TvType.Anime)
     
     // Use the custom ConfigurableCloudflareKiller
+    // NOTE: This class is defined in ConfigurableWebViewResolver.kt within the same package
     private val cfKiller = ConfigurableCloudflareKiller(
         blockNonHttp = true,         // STRICTLY BLOCK non-HTTP redirects
         allowThirdPartyCookies = true // Explicitly enable third-party cookies (standard behavior)
@@ -176,7 +177,10 @@ class FaselHD : MainAPI() {
         val doc = response.document
         
         // Check for domain redirect
-        domainManager.checkForDomainChange(response.url)
+        // Passing response.url to domain manager
+        if(domainManager.checkForDomainChange(response.url)) {
+            FaselState.updateDomain(domainManager.currentDomain)
+        }
         
         // Update cache
         val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
