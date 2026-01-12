@@ -83,7 +83,8 @@ class DomainConfigManager(
             if (isInitialized) return@withLock true
             
             try {
-                val configUrl = "$CONFIG_BASE_URL/$configFileName"
+                // Add timestamp to bypass CDN and local cache
+                val configUrl = "$CONFIG_BASE_URL/$configFileName?ts=${System.currentTimeMillis()}"
                 Log.i(TAG, "[$providerName] Fetching domain config from: $configUrl")
                 
                 val response = withContext(Dispatchers.IO) {
