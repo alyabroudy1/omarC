@@ -107,14 +107,14 @@ class ConfigurableCloudflareKiller(
 
     private fun trySolveWithSavedCookies(request: Request): Boolean {
         return getWebViewCookie(request.url.toString())?.let { cookie ->
-            Log.d(TAG, "[trySolveWithSavedCookies] WebView cookie for ${request.url}: $cookie")
+            Log.d(TAG, "[trySolveWithSavedCookies] Cookies for ${request.url}: $cookie")
             cookie.contains("cf_clearance").also { solved ->
                 if (solved) {
                     savedCookies[request.url.host] = parseCookieMap(cookie)
-                    Log.d(TAG, "[trySolveWithSavedCookies] Saved cookies for ${request.url.host}: ${savedCookies[request.url.host]}")
+                    Log.d(TAG, "[trySolveWithSavedCookies] SAVED COOKIES for ${request.url.host}")
                 }
             }
-        } ?: false
+        } ?: false.also { Log.d(TAG, "[trySolveWithSavedCookies] No cookies found for ${request.url}") }
     }
 
     private suspend fun proceed(request: Request, cookies: Map<String, String>): Response {
@@ -139,10 +139,10 @@ class ConfigurableCloudflareKiller(
         if (!trySolveWithSavedCookies(request)) {
             Log.d(TAG, "Loading ConfigurableWebViewResolver to solve cloudflare for ${request.url}")
             ConfigurableWebViewResolver(
-                Regex(".^"),
+                Regex("match_nothing"),
                 userAgent = null,
                 useOkhttp = false,
-                additionalUrls = listOf(Regex(".")),
+                additionalUrls = listOf(Regex(".*")),
                 blockNonHttp = blockNonHttp,
                 allowThirdPartyCookies = allowThirdPartyCookies
             ).resolveUsingWebView(
