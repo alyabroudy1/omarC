@@ -135,6 +135,7 @@ class ConfigurableCloudflareKiller(
 
     private suspend fun bypassCloudflare(request: Request): Response? {
         val url = request.url.toString()
+        var resolvedHost: String? = null
 
         if (!trySolveWithSavedCookies(request)) {
             Log.d(TAG, "Loading ConfigurableWebViewResolver to solve cloudflare for ${request.url}")
@@ -147,12 +148,18 @@ class ConfigurableCloudflareKiller(
                 allowThirdPartyCookies = allowThirdPartyCookies
             ).resolveUsingWebView(
                 url
-            ) {
-                trySolveWithSavedCookies(request)
+            ) { webViewRequest ->
+                val solved = trySolveWithSavedCookies(webViewRequest)
+                if (solved) {
+                    resolvedHost = webViewRequest.url.host
+                    Log.d(TAG, "Solved Cloudflare for ${webViewRequest.url.host}")
+                }
+                solved
             }
         }
 
-        val cookies = savedCookies[request.url.host] ?: return null
+        val host = resolvedHost ?: request.url.host
+        val cookies = savedCookies[host] ?: return null
         return proceed(request, cookies)
     }
 }
