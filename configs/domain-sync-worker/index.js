@@ -1,13 +1,5 @@
 /**
- * Cloudflare Worker for Domain Config Sync
- * 
- * This worker receives domain change notifications from CloudStream providers
- * and updates the config files in the GitHub repository.
- * 
- * ENVIRONMENT VARIABLES (set in Cloudflare Dashboard → Workers → Settings → Variables):
- *   - GITHUB_TOKEN: Your GitHub Personal Access Token with 'repo' scope
- *   - GITHUB_OWNER: alyabroudy1
- *   - GITHUB_REPO: omarC
+ * Cloudflare Worker for Domain Config Sync (with Debug)
  */
 
 export default {
@@ -17,8 +9,25 @@ export default {
             return new Response(null, {
                 headers: {
                     'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
                     'Access-Control-Allow-Headers': 'Content-Type',
+                },
+            });
+        }
+
+        // DEBUG: GET request shows environment variable status
+        if (request.method === 'GET') {
+            return new Response(JSON.stringify({
+                debug: true,
+                hasToken: !!env.GITHUB_TOKEN,
+                tokenLength: env.GITHUB_TOKEN ? env.GITHUB_TOKEN.length : 0,
+                tokenPrefix: env.GITHUB_TOKEN ? env.GITHUB_TOKEN.substring(0, 4) : 'MISSING',
+                owner: env.GITHUB_OWNER || 'MISSING',
+                repo: env.GITHUB_REPO || 'MISSING',
+            }, null, 2), {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
                 },
             });
         }
@@ -34,6 +43,19 @@ export default {
             if (!provider || !configFile || !newDomain) {
                 return new Response(JSON.stringify({ error: 'Missing required fields' }), {
                     status: 400,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            // Check env vars before proceeding
+            if (!env.GITHUB_TOKEN || !env.GITHUB_OWNER || !env.GITHUB_REPO) {
+                return new Response(JSON.stringify({
+                    error: 'Missing environment variables',
+                    hasToken: !!env.GITHUB_TOKEN,
+                    hasOwner: !!env.GITHUB_OWNER,
+                    hasRepo: !!env.GITHUB_REPO,
+                }), {
+                    status: 500,
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
