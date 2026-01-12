@@ -49,8 +49,8 @@ class DomainConfigManager(
         // Base URL for raw GitHub config files
         private const val CONFIG_BASE_URL = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs"
         
-        // Cloudflare Worker URL for syncing (you'll deploy this)
-        private const val DEFAULT_SYNC_API_URL = "https://domain-sync.your-worker.workers.dev"
+        // Cloudflare Worker URL for syncing
+        private const val DEFAULT_SYNC_API_URL = "https://omarstreamcloud.alyabroudy1.workers.dev"
     }
 
     // Current active domain
