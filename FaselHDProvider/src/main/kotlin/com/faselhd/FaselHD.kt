@@ -38,7 +38,7 @@ class FaselHD : MainAPI() {
 
     // Simple in-memory header storage
     companion object {
-        var headers: Map<String, String> = emptyMap()
+        // Headers are now managed by FaselState
     }
 
     private fun getHeaders(): Map<String, String> {
@@ -46,8 +46,8 @@ class FaselHD : MainAPI() {
         return if (current.isNotEmpty()) {
             current
         } else {
-             // Fallback to local headers or default
-             headers.ifEmpty { mapOf("User-Agent" to USER_AGENT) }
+             // Fallback to default
+             mapOf("User-Agent" to USER_AGENT)
         }
     }
 
