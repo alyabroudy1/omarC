@@ -126,7 +126,11 @@ class FaselHD : MainAPI() {
         }
         
         // Use page directly (CloudStream uses 1-indexed, site expects 1-indexed)
-        val pageUrl = request.data + page
+        // DYNAMIC DOMAIN FIX: Main page items are initialized with the default domain.
+        // We must strip the old domain from request.data and use the current resolved domain.
+        val relativePath = request.data.replace(Regex("^https?://[^/]+"), "")
+        val pageUrl = domainManager.currentDomain + relativePath + page
+        
         Log.d("FaselHD", "[getMainPage] Fetching: $pageUrl")
 
         // CLOUDFLARE SYNC LOGIC:
