@@ -11,7 +11,8 @@ import okhttp3.Request
  */
 open class FaselSniffer : ExtractorApi() {
     override val name = "FaselHD"
-    override val mainUrl = "https://faselhd.biz"
+    override val mainUrl: String
+        get() = FaselState.currentDomain
     override val requiresReferer = false
 
     companion object {
@@ -119,9 +120,9 @@ open class FaselSniffer : ExtractorApi() {
                                     if (sources.length > 0) {
                                         sourcesSent = true;
                                         console.log('[FaselSniffer] Found ' + sources.length + ' sources');
-                                        // Pass data in URL to ensure we receive it in the interceptor
+                                        // Pass data in URL - use current domain dynamically
                                         var json = JSON.stringify(sources);
-                                        window.location.href = "https://faselhd.biz/sniffer_done?sources=" + encodeURIComponent(json); 
+                                        window.location.href = window.location.origin + "/sniffer_done?sources=" + encodeURIComponent(json); 
                                         return json;
                                     }
                                 }
@@ -174,13 +175,12 @@ open class FaselSniffer : ExtractorApi() {
                 Log.i(TAG, "Injecting saved cookies into WebView CookieManager")
                 val cookieManager = android.webkit.CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
-                val domain = "https://www.faselhds.biz" // or extract from url
+                val domain = FaselState.currentDomain
                 
                 // Cookies format: "name=value; name2=value2"
                 cookies?.let { c ->
                     c.split(";").forEach { cookie ->
                         cookieManager.setCookie(domain, cookie.trim())
-                        cookieManager.setCookie("https://faselhd.club", cookie.trim()) // Sync both domains
                     }
                 }
                 cookieManager.flush()
@@ -193,9 +193,14 @@ open class FaselSniffer : ExtractorApi() {
         val resolverUserAgent = FaselState.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value 
             ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         Log.i(TAG, "[getUrl] Resolver userAgent: $resolverUserAgent")
+        // Build dynamic regex patterns based on current domain
+        val domainHost = FaselState.getDomainHost()
+        val snifferDoneRegex = Regex("""https://(www\.)?${Regex.escape(domainHost.removePrefix("www."))}/sniffer_done""")
+        val siteRegex = Regex("""https://(www\.)?${Regex.escape(domainHost.removePrefix("www."))}(s)?/.*""")
+        
         val resolver = ConfigurableWebViewResolver(
             interceptUrl = videoUrlRegex,
-            additionalUrls = listOf(videoUrlRegex, Regex("""https://faselhd\.biz/sniffer_done"""), Regex("""https://(www\.)?faselhd(s)?\.(biz|club)/.*""")), // Listen to all main site requests to capture headers
+            additionalUrls = listOf(videoUrlRegex, snifferDoneRegex, siteRegex),
             userAgent = resolverUserAgent,
             useOkhttp = false,
             script = extractSourcesScript,
@@ -333,7 +338,7 @@ open class FaselSniffer : ExtractorApi() {
                                         }
                                         
                                         // 3. Cookie Safety: Don't send Fasel cookies to external CDNs
-                                        val isFaselDomain = videoUrl.contains("faselhd", ignoreCase = true)
+                                        val isFaselDomain = videoUrl.contains(FaselState.getDomainHost().removePrefix("www."), ignoreCase = true)
                                         if (isFaselDomain) {
                                             finalHeaders = baseHeaders
                                         } else {

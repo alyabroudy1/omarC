@@ -73,9 +73,14 @@ class FaselHD : MainAPI() {
     }
 
     private fun fixUrl(url: String): String {
-        if (url.contains("://faselhds.biz")) {
-            return url.replace("://faselhds.biz", "://www.faselhds.biz")
-        }
+        // Dynamic domain fix - ensure www prefix
+        try {
+            val currentHost = java.net.URI(mainUrl).host ?: return url
+            val hostWithoutWww = currentHost.removePrefix("www.")
+            if (url.contains(hostWithoutWww) && !url.contains("www.")) {
+                return url.replace("://$hostWithoutWww", "://www.$hostWithoutWww")
+            }
+        } catch (e: Exception) { }
         return url
     }
 
@@ -101,7 +106,13 @@ class FaselHD : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-            "$mainUrl/all-movies/page/0" to "جميع الافلام",
+            "$mainUrl/all-movies/page/" to "جميع الافلام",
+            "$mainUrl/movies_top_views/page/" to "الافلام الاعلي مشاهدة",
+            "$mainUrl/dubbed-movies/page/" to "الأفلام المدبلجة",
+            "$mainUrl/movies_top_imdb/page/" to "الافلام الاعلي تقييما IMDB",
+            "$mainUrl/series/page/" to "مسلسلات",
+            "$mainUrl/recent_series/page/" to "المضاف حديثا",
+            "$mainUrl/anime/page/" to "الأنمي",
         )
 
     override suspend fun getMainPage(page: Int, request : MainPageRequest): HomePageResponse {
@@ -305,9 +316,24 @@ class FaselHD : MainAPI() {
 
 object FaselState {
     var headers: Map<String, String> = emptyMap()
+    var currentDomain: String = "https://www.faselhds.biz"
+        private set
 
     fun init() {
         // Initialize if needed
+    }
+    
+    fun updateDomain(domain: String) {
+        currentDomain = domain
+        Log.d("FaselState", "[updateDomain] Domain set to: $domain")
+    }
+    
+    fun getDomainHost(): String {
+        return try {
+            java.net.URI(currentDomain).host ?: "faselhds.biz"
+        } catch (e: Exception) {
+            "faselhds.biz"
+        }
     }
 
     fun updateHeaders(newHeaders: Map<String, String>) {
