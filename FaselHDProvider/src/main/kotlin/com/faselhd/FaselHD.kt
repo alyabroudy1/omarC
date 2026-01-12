@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.nodes.Element
+import com.lagradost.api.Log
 
 class FaselHD : MainAPI() {
     override var lang = "ar"
@@ -26,10 +27,13 @@ class FaselHD : MainAPI() {
     }
 
     private fun getHeaders(): Map<String, String> {
-        if (headers.isEmpty()) {
-            headers = cfKiller.getCookieHeaders(mainUrl).toMap()
+        val current = FaselState.headers
+        return if (current.isNotEmpty()) {
+            current
+        } else {
+             // Fallback to local headers or default
+             headers.ifEmpty { mapOf("User-Agent" to USER_AGENT) }
         }
-        return headers
     }
 
     private fun String.getIntFromText(): Int? {
@@ -92,8 +96,12 @@ class FaselHD : MainAPI() {
         val doc = app.get(request.data + page, headers = headers, interceptor = cfKiller).document
         
         // Update cache
-        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap()
-        if (currentCookies.isNotEmpty()) headers = currentCookies
+        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
+        val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+        if (!currentCookies.keys.any { it.equals("user-agent", true) }) {
+            currentCookies["User-Agent"] = ua
+        }
+        if (currentCookies.isNotEmpty()) FaselState.updateHeaders(currentCookies)
 
         val list = doc.select("div[id=\"postList\"] div[class=\"col-xl-2 col-lg-2 col-md-3 col-sm-3\"]")
             .mapNotNull { element ->
@@ -108,8 +116,12 @@ class FaselHD : MainAPI() {
         val d = app.get("$mainUrl/?s=$q", headers = headers, interceptor = cfKiller).document
 
         // Update cache
-        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap()
-        if (currentCookies.isNotEmpty()) Companion.headers = currentCookies
+        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
+        val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+        if (!currentCookies.keys.any { it.equals("user-agent", true) }) {
+            currentCookies["User-Agent"] = ua
+        }
+        if (currentCookies.isNotEmpty()) FaselState.updateHeaders(currentCookies)
 
         return d.select("div[id=\"postList\"] div[class=\"col-xl-2 col-lg-2 col-md-3 col-sm-3\"]")
             .mapNotNull {
@@ -123,8 +135,12 @@ class FaselHD : MainAPI() {
         val doc = app.get(url, headers = headers, interceptor = cfKiller).document
 
         // Update cache
-        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap()
-        if (currentCookies.isNotEmpty()) Companion.headers = currentCookies
+        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
+        val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+        if (!currentCookies.keys.any { it.equals("user-agent", true) }) {
+            currentCookies["User-Agent"] = ua
+        }
+        if (currentCookies.isNotEmpty()) FaselState.updateHeaders(currentCookies)
 
         val isMovie = doc.select("div.epAll").isEmpty()
         
@@ -213,6 +229,20 @@ class FaselHD : MainAPI() {
     ): Boolean {
         val headers = getHeaders()
         val doc = app.get(data, headers = headers, interceptor = cfKiller).document
+
+        // Update cache
+        val currentCookies = cfKiller.getCookieHeaders(mainUrl).toMap().toMutableMap()
+        val ua = com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent ?: USER_AGENT
+        Log.d("FaselHD", "[loadLinks] cfKiller cookies: $currentCookies")
+        Log.d("FaselHD", "[loadLinks] WebViewResolver.webViewUserAgent: ${com.lagradost.cloudstream3.network.WebViewResolver.webViewUserAgent}")
+        if (!currentCookies.keys.any { it.equals("user-agent", true) }) {
+            currentCookies["User-Agent"] = ua
+        }
+        if (currentCookies.isNotEmpty()) {
+            Log.d("FaselHD", "[loadLinks] Updating FaselState with: $currentCookies")
+            FaselState.updateHeaders(currentCookies)
+        }
+        Log.d("FaselHD", "[loadLinks] FaselState.headers AFTER update: ${FaselState.headers}")
         
         val urlRegex = "'.*?'".toRegex()
         val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
@@ -223,6 +253,7 @@ class FaselHD : MainAPI() {
              callback(link)
         }
 
+        Log.d("FaselHD", "Found ${elements.size} potential link elements")
         for (li in elements) {
             if (foundLink) break
             
@@ -232,15 +263,34 @@ class FaselHD : MainAPI() {
             
             if (match != null) {
                 url = match.value.replace("'", "")
+                Log.d("FaselHD", "Found URL via regex: $url")
             } else {
                  // Fallback: Check for data-url or other attributes if onclick parsing fails
                  url = li.attr("data-url").ifEmpty { li.attr("data-link") }
+                 Log.d("FaselHD", "Found URL via fallback: $url")
             }
             
             if (!url.isNullOrEmpty() && url.contains("faselhd")) {
-                loadExtractor(url, subtitleCallback, wrappedCallback)
+                Log.d("FaselHD", "Loading extractor for URL: $url")
+                FaselSniffer().getUrl(url, data, subtitleCallback, wrappedCallback)
+            } else {
+                Log.d("FaselHD", "Skipping URL: $url (isNullOrEmpty=${url.isNullOrEmpty()}, containsFasel=${url?.contains("faselhd")})")
             }
         }
         return true
+    }
+}
+
+object FaselState {
+    var headers: Map<String, String> = emptyMap()
+
+    fun init() {
+        // Initialize if needed
+    }
+
+    fun updateHeaders(newHeaders: Map<String, String>) {
+        Log.d("FaselState", "[updateHeaders] Incoming: $newHeaders")
+        headers = newHeaders
+        Log.d("FaselState", "[updateHeaders] Stored: $headers")
     }
 }

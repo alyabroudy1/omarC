@@ -8,9 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.*
 import com.lagradost.api.Log
-import com.faselhd.utils.PluginContext
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.mvvm.debugException
 import com.lagradost.cloudstream3.mvvm.debugWarning
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.mvvm.safe
@@ -26,6 +24,7 @@ import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import java.net.URI
+import com.faselhd.utils.PluginContext
 
 // ==========================================
 // Configurable Cloudflare Killer
@@ -59,7 +58,8 @@ class ConfigurableCloudflareKiller(
         val userAgentHeaders = WebViewResolver.webViewUserAgent?.let {
             mapOf("user-agent" to it)
         } ?: emptyMap()
-
+        Log.d(TAG, "[getCookieHeaders] WebViewResolver.webViewUserAgent: ${WebViewResolver.webViewUserAgent}")
+        Log.d(TAG, "[getCookieHeaders] savedCookies for ${URI(url).host}: ${savedCookies[URI(url).host]}")
         return getHeaders(userAgentHeaders, savedCookies[URI(url).host] ?: emptyMap())
     }
     
@@ -107,8 +107,12 @@ class ConfigurableCloudflareKiller(
 
     private fun trySolveWithSavedCookies(request: Request): Boolean {
         return getWebViewCookie(request.url.toString())?.let { cookie ->
+            Log.d(TAG, "[trySolveWithSavedCookies] WebView cookie for ${request.url}: $cookie")
             cookie.contains("cf_clearance").also { solved ->
-                if (solved) savedCookies[request.url.host] = parseCookieMap(cookie)
+                if (solved) {
+                    savedCookies[request.url.host] = parseCookieMap(cookie)
+                    Log.d(TAG, "[trySolveWithSavedCookies] Saved cookies for ${request.url.host}: ${savedCookies[request.url.host]}")
+                }
             }
         } ?: false
     }
@@ -231,14 +235,20 @@ class ConfigurableWebViewResolver(
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
+                    // Explicitly set database path for older WebViews or specific implementations
+                    PluginContext.context?.getDir("database", Context.MODE_PRIVATE)?.path?.let {
+                        settings.databasePath = it
+                    }
 
                     // CONFIGURABLE OPTION
+                    Log.d(TAG, "Setting CookieManager thirdPartyCookies to $allowThirdPartyCookies")
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, allowThirdPartyCookies)
 
                     WebViewResolver.webViewUserAgent = settings.userAgentString
                     if (userAgent != null) {
                         settings.userAgentString = userAgent
                     }
+                    Log.d(TAG, "WebView Settings: JS=${settings.javaScriptEnabled}, Dom=${settings.domStorageEnabled}, DB=${settings.databaseEnabled}, UA=${settings.userAgentString}")
                 }
 
                 // Use ConfigurableSafeWebViewClient
