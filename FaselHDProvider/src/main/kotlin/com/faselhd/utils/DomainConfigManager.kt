@@ -83,9 +83,7 @@ class DomainConfigManager(
             if (isInitialized) return@withLock true
             
             try {
-                // Cache for 10 minutes (600,000 ms) to balance freshness and caching
-                val cacheBucket = System.currentTimeMillis() / 600_000
-                val configUrl = "$CONFIG_BASE_URL/$configFileName?v=$cacheBucket"
+                val configUrl = "$CONFIG_BASE_URL/$configFileName"
                 Log.i(TAG, "[$providerName] Fetching domain config from: $configUrl")
                 
                 val response = withContext(Dispatchers.IO) {
