@@ -133,10 +133,16 @@ class FaselHDv2 : MainAPI() {
             throw ErrorLoadingException("Failed to parse page content")
         }
 
-        val posterUrl = fixUrl(doc.select("div.posterDiv img").attr("src")
-            .ifBlank { doc.select("div.poster img").attr("src") }
-            .ifBlank { doc.select("img.poster").attr("src") }
-            .ifBlank { doc.select("div.single-poster img").attr("src") })
+        // Fix: Check data-src first (lazy loading), then src
+        val posterImg = doc.selectFirst("div.posterDiv img") 
+            ?: doc.selectFirst("div.poster img")
+            ?: doc.selectFirst("img.poster")
+            ?: doc.selectFirst("div.single-poster img")
+        
+        val posterUrl = if (posterImg != null) {
+            fixUrl(posterImg.attr("data-src").ifBlank { posterImg.attr("src") })
+        } else ""
+
         val year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
         val plot = doc.select("div.singleInfo span:contains(القصة) p").text()
             .ifBlank { doc.select("div.singleDesc p").text() }
