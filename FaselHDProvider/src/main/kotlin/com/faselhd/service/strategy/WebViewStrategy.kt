@@ -1,246 +1,234 @@
 package com.faselhd.service.strategy
 
-import android.annotation.SuppressLint
-import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import com.lagradost.cloudstream3.app
 import com.faselhd.service.ProviderLogger
 import com.faselhd.service.ProviderLogger.TAG_WEBVIEW
-import com.faselhd.service.cloudflare.CloudflareDetector
 import com.faselhd.service.cookie.CookieLifecycleManager
-import kotlinx.coroutines.CompletableDeferred
+import com.faselhd.service.cloudflare.CloudflareDetector
+import com.faselhd.ConfigurableCloudflareKiller
+import com.lagradost.nicehttp.NiceResponse
+import com.lagradost.api.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * WebView-based request strategy for solving Cloudflare challenges.
+ * WebView-based request strategy using ConfigurableCloudflareKiller.
  * 
- * ## Purpose:
- * - Loads pages in a headless WebView
- * - Automatically solves Cloudflare challenges
- * - Extracts cookies after challenge solves
- * - Returns HTML content directly (no retry needed)
+ * ## Why ConfigurableCloudflareKiller?
+ * - Uses ConfigurableWebViewResolver which properly handles CF Turnstile
+ * - Battle-tested implementation that works in production
+ * - Automatically manages cookie extraction and storage
+ * - Supports third-party cookies required by CF
  * 
- * ## Features:
- * - Automatic cookie extraction and storage
- * - JS injection support
- * - Configurable timeout
- * - Comprehensive logging
+ * ## Flow:
+ * 1. Make request with ConfigurableCloudflareKiller as interceptor
+ * 2. If CF challenge detected, CFK triggers visible WebView (not headless)
+ * 3. After solve, CFK stores cookies for future requests
+ * 4. Returns response with HTML and cookies
  * 
- * ## Inheritance:
- * Designed to be extended by VideoSniffingStrategy which adds
- * video URL monitoring while inheriting all cookie management.
- * 
- * @param context Android context for WebView creation
- * @param cookieManager Cookie lifecycle manager for storage
+ * @param cookieManager Cookie lifecycle manager for additional tracking
  * @param cfDetector Cloudflare detection utility
  */
-open class WebViewStrategy(
-    protected val context: Context,
-    protected val cookieManager: CookieLifecycleManager,
-    protected val cfDetector: CloudflareDetector = CloudflareDetector()
+class WebViewStrategy(
+    private val cookieManager: CookieLifecycleManager,
+    private val userAgent: String? = null,
+    private val cfDetector: CloudflareDetector = CloudflareDetector()
 ) : RequestStrategy {
     
     override val name: String = "WebView"
     
-    /** JavaScript to inject after page load. Override in subclasses. */
-    protected open val jsInjection: String? = null
+    /** 
+     * The ConfigurableCloudflareKiller instance.
+     * This handles all CF solving internally using ConfigurableWebViewResolver.
+     */
+    private val cfKiller = ConfigurableCloudflareKiller(
+        userAgent = userAgent,
+        blockNonHttp = true,
+        allowThirdPartyCookies = true
+    )
     
-    /** Timeout for WebView loading in milliseconds. */
-    protected open val timeout: Long = 35_000
+    /** Maximum retries for CF solving */
+    private val maxRetries = 3
     
-    /** Minimum time to wait for CF challenge to solve (ms). */
-    protected open val cfSolveWaitTime: Long = 5_000
+    /** Delay between retries in ms */
+    private val retryDelayMs = 2000L
     
-    @SuppressLint("SetJavaScriptEnabled")
     override suspend fun execute(request: StrategyRequest): StrategyResponse {
         val startTime = System.currentTimeMillis()
-        val result = CompletableDeferred<StrategyResponse>()
         
-        ProviderLogger.i(TAG_WEBVIEW, "execute", "Starting WebView load",
+        ProviderLogger.i(TAG_WEBVIEW, "execute", "Starting request with ConfigurableCloudflareKiller",
             "url" to request.url.take(80),
-            "timeout" to timeout
+            "maxRetries" to maxRetries
         )
         
-        // Pre-inject cookies into WebView's CookieManager
-        preInjectCookies(request)
+        var lastException: Exception? = null
+        var attempt = 0
         
-        withContext(Dispatchers.Main) {
-            var webView: WebView? = null
+        while (attempt < maxRetries) {
+            attempt++
             
             try {
-                webView = createWebView(request)
+                val result = executeWithCfKiller(request, startTime, attempt)
                 
-                var pageLoaded = false
-                var challengeDetected = false
-                var challengeSolved = false
-                var finalHtml: String? = null
-                var finalUrl: String? = null
-                
-                webView.webViewClient = object : WebViewClient() {
-                    
-                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        super.onPageStarted(view, url, favicon)
-                        ProviderLogger.d(TAG_WEBVIEW, "onPageStarted", "Page started",
-                            "url" to (url?.take(80) ?: "null")
-                        )
+                if (result.success) {
+                    // Store cookies in our lifecycle manager for tracking
+                    if (result.cookies.isNotEmpty()) {
+                        cookieManager.store(request.url, result.cookies, "WebView-CFK")
                     }
-                    
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        finalUrl = url
-                        
-                        ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Page finished",
-                            "url" to (url?.take(80) ?: "null")
-                        )
-                        
-                        // Inject custom JS if provided
-                        jsInjection?.let { js ->
-                            view?.evaluateJavascript(js) { jsResult ->
-                                ProviderLogger.d(TAG_WEBVIEW, "jsInjection", "JS executed",
-                                    "resultLength" to (jsResult?.length ?: 0)
-                                )
-                                onJsResult(jsResult)
-                            }
-                        }
-                        
-                        // Check for CF challenge
-                        view?.evaluateJavascript(
-                            "(function() { return document.body.innerHTML; })();"
-                        ) { html ->
-                            val cleanHtml = html?.removeSurrounding("\"")?.replace("\\n", "\n")?.replace("\\\"", "\"") ?: ""
-                            
-                            if (cfDetector.isChallengePage(cleanHtml)) {
-                                challengeDetected = true
-                                ProviderLogger.w(TAG_WEBVIEW, "onPageFinished", "CF challenge detected, waiting for solve")
-                            } else {
-                                // Check if we have clearance cookie now
-                                val cookies = extractCookies(url ?: request.url)
-                                if (cfDetector.hasClearanceCookie(cookies)) {
-                                    challengeSolved = true
-                                    finalHtml = cleanHtml
-                                    pageLoaded = true
-                                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "CF challenge solved!",
-                                        "hasClearance" to true
-                                    )
-                                } else if (!challengeDetected) {
-                                    // No challenge, just regular page
-                                    finalHtml = cleanHtml
-                                    pageLoaded = true
-                                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Page loaded (no challenge)")
-                                }
-                            }
-                        }
-                    }
-                    
-                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                        val url = request?.url?.toString() ?: return false
-                        ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Navigation",
-                            "url" to url.take(80)
-                        )
-                        return false
-                    }
+                    return result
                 }
                 
-                // Load URL
-                webView.loadUrl(request.url)
-                
-                // Wait for result with timeout
-                val timeoutResult = withTimeoutOrNull(timeout) {
-                    // Poll for completion
-                    while (!pageLoaded && !result.isCompleted) {
-                        kotlinx.coroutines.delay(500)
-                        
-                        // If challenge was detected, wait extra time for solve
-                        if (challengeDetected && !challengeSolved) {
-                            kotlinx.coroutines.delay(cfSolveWaitTime)
-                            
-                            // Re-check for cookies after wait
-                            val cookies = extractCookies(request.url)
-                            if (cfDetector.hasClearanceCookie(cookies)) {
-                                challengeSolved = true
-                                // Get final HTML
-                                webView.evaluateJavascript(
-                                    "(function() { return document.body.innerHTML; })();"
-                                ) { html ->
-                                    finalHtml = html?.removeSurrounding("\"")?.replace("\\n", "\n")?.replace("\\\"", "\"") ?: ""
-                                    pageLoaded = true
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Build response
-                    val durationMs = System.currentTimeMillis() - startTime
-                    val cookies = extractCookies(finalUrl ?: request.url)
-                    
-                    // Store cookies
-                    if (cookies.isNotEmpty()) {
-                        cookieManager.store(finalUrl ?: request.url, cookies, "WebView")
-                    }
-                    
-                    ProviderLogger.i(TAG_WEBVIEW, "execute", "WebView completed",
-                        "durationMs" to durationMs,
-                        "challengeDetected" to challengeDetected,
-                        "challengeSolved" to challengeSolved,
-                        "htmlLength" to (finalHtml?.length ?: 0),
-                        "cookieCount" to cookies.size
+                // If CF blocked, retry after delay
+                if (result.isCloudflareChallenge) {
+                    ProviderLogger.w(TAG_WEBVIEW, "execute", "CF challenge detected, retrying",
+                        "attempt" to attempt,
+                        "maxRetries" to maxRetries
                     )
                     
-                    StrategyResponse.success(
-                        html = finalHtml ?: "",
-                        code = 200,
-                        cookies = cookies,
-                        finalUrl = finalUrl ?: request.url,
-                        duration = durationMs,
-                        strategy = name
-                    )
+                    if (attempt < maxRetries) {
+                        kotlinx.coroutines.delay(retryDelayMs)
+                    }
+                    continue
                 }
                 
-                if (timeoutResult == null) {
-                    val durationMs = System.currentTimeMillis() - startTime
-                    ProviderLogger.e(TAG_WEBVIEW, "execute", "WebView timeout", null,
-                        "durationMs" to durationMs,
-                        "timeout" to timeout
-                    )
-                    result.complete(StrategyResponse.failure(
-                        code = -1,
-                        error = Exception("WebView timeout after ${timeout}ms"),
-                        duration = durationMs,
-                        strategy = name
-                    ))
-                } else {
-                    result.complete(timeoutResult)
-                }
+                // Non-CF failure, don't retry
+                return result
                 
             } catch (e: Exception) {
-                val durationMs = System.currentTimeMillis() - startTime
-                ProviderLogger.e(TAG_WEBVIEW, "execute", "WebView error", e,
-                    "durationMs" to durationMs
+                lastException = e
+                ProviderLogger.e(TAG_WEBVIEW, "execute", "Request failed", e,
+                    "attempt" to attempt
                 )
-                result.complete(StrategyResponse.failure(
-                    code = -1,
-                    error = e,
-                    duration = durationMs,
-                    strategy = name
-                ))
-            } finally {
-                // Cleanup WebView on main thread
-                webView?.let { wv ->
-                    Handler(Looper.getMainLooper()).post {
-                        wv.stopLoading()
-                        wv.destroy()
-                    }
+                
+                if (attempt < maxRetries) {
+                    kotlinx.coroutines.delay(retryDelayMs)
                 }
             }
         }
         
-        return result.await()
+        val durationMs = System.currentTimeMillis() - startTime
+        ProviderLogger.e(TAG_WEBVIEW, "execute", "All retries exhausted", lastException,
+            "attempts" to attempt,
+            "durationMs" to durationMs
+        )
+        
+        return StrategyResponse.failure(
+            code = -1,
+            error = lastException ?: Exception("All retries exhausted"),
+            duration = durationMs,
+            strategy = name
+        )
+    }
+    
+    /**
+     * Execute a single request attempt using ConfigurableCloudflareKiller.
+     */
+    private suspend fun executeWithCfKiller(
+        request: StrategyRequest,
+        startTime: Long,
+        attempt: Int
+    ): StrategyResponse = withContext(Dispatchers.IO) {
+        
+        try {
+            // Build headers (includes headers from request, cookies, UA, Referer)
+            val headers = request.buildHeaders()
+            
+            ProviderLogger.d(TAG_WEBVIEW, "executeWithCfKiller", "Making request with CFK",
+                "url" to request.url.take(80),
+                "attempt" to attempt,
+                "headerCount" to headers.size
+            )
+            
+            // Make request with cfKiller as interceptor
+            // This will automatically trigger WebView CF solving if needed
+            val response: NiceResponse = app.get(
+                url = request.url,
+                headers = headers,
+                interceptor = cfKiller
+            )
+            
+            val durationMs = System.currentTimeMillis() - startTime
+            val html = response.text
+            
+            // Check if still CF blocked after the request
+            if (cfDetector.isCloudflareChallenge(response)) {
+                ProviderLogger.w(TAG_WEBVIEW, "executeWithCfKiller", "CF still blocking after CFK attempt",
+                    "code" to response.code,
+                    "attempt" to attempt
+                )
+                return@withContext StrategyResponse.cloudflareBlocked(
+                    code = response.code,
+                    duration = durationMs,
+                    strategy = name
+                )
+            }
+            
+            // Extract cookies from cfKiller's saved cookies
+            val extractedCookies = extractCookiesFromCfKiller(request.url)
+            
+            ProviderLogger.i(TAG_WEBVIEW, "executeWithCfKiller", "Request successful",
+                "code" to response.code,
+                "htmlLength" to html.length,
+                "cookieCount" to extractedCookies.size,
+                "hasClearance" to extractedCookies.containsKey("cf_clearance"),
+                "durationMs" to durationMs
+            )
+            
+            StrategyResponse.success(
+                html = html,
+                code = response.code,
+                cookies = extractedCookies,
+                finalUrl = response.url,
+                duration = durationMs,
+                strategy = name
+            )
+            
+        } catch (e: Exception) {
+            val durationMs = System.currentTimeMillis() - startTime
+            ProviderLogger.e(TAG_WEBVIEW, "executeWithCfKiller", "Exception during request", e,
+                "attempt" to attempt
+            )
+            StrategyResponse.failure(
+                code = -1,
+                error = e,
+                duration = durationMs,
+                strategy = name
+            )
+        }
+    }
+    
+    /**
+     * Extract cookies from ConfigurableCloudflareKiller's savedCookies.
+     */
+    private fun extractCookiesFromCfKiller(url: String): Map<String, String> {
+        return try {
+            val host = java.net.URI(url).host ?: return emptyMap()
+            
+            // Try cfKiller's saved cookies first
+            val cfkCookies = cfKiller.savedCookies[host]
+            if (!cfkCookies.isNullOrEmpty()) {
+                ProviderLogger.d(TAG_WEBVIEW, "extractCookiesFromCfKiller", "Got cookies from CFK",
+                    "host" to host,
+                    "count" to cfkCookies.size
+                )
+                return cfkCookies
+            }
+            
+            // Fallback: try to get from getCookieHeaders
+            val headers = cfKiller.getCookieHeaders(url)
+            val cookieHeader = headers["Cookie"]
+            if (!cookieHeader.isNullOrEmpty()) {
+                ProviderLogger.d(TAG_WEBVIEW, "extractCookiesFromCfKiller", "Got cookies from headers",
+                    "host" to host
+                )
+                return ConfigurableCloudflareKiller.parseCookieMap(cookieHeader)
+            }
+            
+            emptyMap()
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG_WEBVIEW, "extractCookiesFromCfKiller", "Failed to extract cookies", e)
+            emptyMap()
+        }
     }
     
     override fun canHandle(context: RequestContext): Boolean {
@@ -256,82 +244,13 @@ open class WebViewStrategy(
         return canHandle
     }
     
-    // ========== PROTECTED METHODS FOR SUBCLASSES ==========
-    
     /**
-     * Called when JS injection returns a result.
-     * Override in subclasses to handle custom JS results.
+     * Clears cookies from ConfigurableCloudflareKiller and System CookieManager.
      */
-    protected open fun onJsResult(result: String?) {
-        // Default: no-op
-    }
-    
-    /**
-     * Creates and configures the WebView.
-     * Override in subclasses to add custom configuration.
-     */
-    @SuppressLint("SetJavaScriptEnabled")
-    protected open fun createWebView(request: StrategyRequest): WebView {
-        return WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = true
-            settings.userAgentString = request.userAgent
-            
-            // Enable third-party cookies
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            
-            ProviderLogger.d(TAG_WEBVIEW, "createWebView", "WebView created",
-                "jsEnabled" to true,
-                "userAgent" to request.userAgent.take(50)
-            )
-        }
-    }
-    
-    /**
-     * Pre-injects cookies before WebView loads.
-     */
-    private fun preInjectCookies(request: StrategyRequest) {
-        if (request.cookies.isEmpty()) return
-        
-        val cookieManager = CookieManager.getInstance()
-        cookieManager.setAcceptCookie(true)
-        
-        request.cookies.forEach { (name, value) ->
-            cookieManager.setCookie(request.url, "$name=$value")
-        }
-        cookieManager.flush()
-        
-        ProviderLogger.d(TAG_WEBVIEW, "preInjectCookies", "Cookies injected",
-            "count" to request.cookies.size
+    fun clearCookies(url: String) {
+        cfKiller.clearCookies(url)
+        ProviderLogger.w(TAG_WEBVIEW, "clearCookies", "Cookies cleared",
+            "url" to url.take(80)
         )
-    }
-    
-    /**
-     * Extracts cookies from WebView's CookieManager.
-     */
-    protected fun extractCookies(url: String): Map<String, String> {
-        val cookies = mutableMapOf<String, String>()
-        
-        try {
-            val cookieString = CookieManager.getInstance().getCookie(url) ?: return cookies
-            
-            cookieString.split(";").forEach { cookie ->
-                val parts = cookie.trim().split("=", limit = 2)
-                if (parts.size == 2) {
-                    cookies[parts[0].trim()] = parts[1].trim()
-                }
-            }
-            
-            ProviderLogger.d(TAG_WEBVIEW, "extractCookies", "Cookies extracted",
-                "url" to url.take(50),
-                "count" to cookies.size,
-                "hasClearance" to cookies.containsKey("cf_clearance")
-            )
-        } catch (e: Exception) {
-            ProviderLogger.e(TAG_WEBVIEW, "extractCookies", "Failed to extract cookies", e)
-        }
-        
-        return cookies
     }
 }

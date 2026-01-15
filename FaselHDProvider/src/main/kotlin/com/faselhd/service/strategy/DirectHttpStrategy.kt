@@ -41,11 +41,30 @@ class DirectHttpStrategy : RequestStrategy {
             
             ProviderLogger.d(TAG_DIRECT_HTTP, "execute", "Headers built",
                 "headerCount" to headers.size,
-                "hasCookie" to headers.containsKey("Cookie"),
-                "hasUA" to headers.containsKey("User-Agent")
+            // FORCE HTTP/1.1 - Fix for Cloudflare 403 Loop
+            // Cloudflare often fingerprints HTTP/2 requests from OkHttp differently than WebView.
+            val protocols = listOf(okhttp3.Protocol.HTTP_1_1)
+            val directClient = app.baseClient.newBuilder()
+                .protocols(protocols)
+                .build()
+
+            val headersMap = request.buildHeaders()
+            val headerBuilder = okhttp3.Headers.Builder()
+            headersMap.forEach { (k, v) -> headerBuilder.add(k, v) }
+
+            ProviderLogger.d(TAG_DIRECT_HTTP, "execute", "Headers built",
+                "headerCount" to headersMap.size,
+                "hasCookie" to headersMap.containsKey("Cookie"),
+                "hasUA" to headersMap.containsKey("User-Agent")
             )
+
+            val okRequest = okhttp3.Request.Builder()
+                .url(request.url)
+                .headers(headerBuilder.build())
+                .get()
+                .build()
             
-            val response = app.get(request.url, headers = headers)
+            val response = directClient.newCall(okRequest).execute()
             val durationMs = System.currentTimeMillis() - startTime
             
             ProviderLogger.i(TAG_DIRECT_HTTP, "execute", "Response received",
@@ -56,7 +75,7 @@ class DirectHttpStrategy : RequestStrategy {
             
             // Check for Cloudflare challenge
             if (response.code in listOf(403, 503)) {
-                val serverHeader = response.headers["Server"] ?: ""
+                val serverHeader = response.header("Server") ?: ""
                 val isCloudflare = serverHeader.contains("cloudflare", ignoreCase = true)
                 
                 ProviderLogger.w(TAG_DIRECT_HTTP, "execute", "CF challenge detected",
@@ -65,12 +84,13 @@ class DirectHttpStrategy : RequestStrategy {
                     "isCloudflare" to isCloudflare
                 )
                 
+                response.close() // Close body if not used
                 return StrategyResponse.cloudflareBlocked(response.code, durationMs, name)
             }
             
             // Success
-            val html = response.text
-            val finalUrl = response.url
+            val html = response.body?.string() ?: ""
+            val finalUrl = response.request.url.toString() // OkHttp usually follows redirects
             
             // Extract any new cookies from response
             val responseCookies = extractCookiesFromResponse(response)
@@ -125,12 +145,12 @@ class DirectHttpStrategy : RequestStrategy {
     /**
      * Extracts cookies from response Set-Cookie headers.
      */
-    private fun extractCookiesFromResponse(response: com.lagradost.nicehttp.NiceResponse): Map<String, String> {
+    private fun extractCookiesFromResponse(response: okhttp3.Response): Map<String, String> {
         val cookies = mutableMapOf<String, String>()
         
         try {
             // Get Set-Cookie headers
-            response.headers.values("Set-Cookie").forEach { setCookie ->
+            response.headers("Set-Cookie").forEach { setCookie ->
                 // Parse "name=value; path=...; ..."
                 val parts = setCookie.split(";").firstOrNull()?.split("=", limit = 2)
                 if (parts != null && parts.size == 2) {

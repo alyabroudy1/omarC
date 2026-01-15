@@ -69,7 +69,7 @@ class ProviderHttpService private constructor(
             val sessionManager = ProviderSessionManager(
                 context = context,
                 providerName = providerName,
-                userAgent = userAgent,
+                rawUserAgent = userAgent,
                 fallbackDomain = fallbackDomain
             )
             
@@ -88,8 +88,29 @@ class ProviderHttpService private constructor(
     /**
      * The static User-Agent used by this service.
      */
-    val userAgent: String
+    val userAgent: String?
         get() = sessionManager.userAgent
+    
+    /**
+     * Whether the service has been initialized.
+     */
+    val isInitialized: Boolean
+        get() = sessionManager.isInitialized
+    
+    // ========== INITIALIZATION ==========
+    
+    /**
+     * Initialize the service.
+     * Call this ONCE when the provider first loads (e.g., in getMainPage).
+     * 
+     * Flow:
+     * 1. Load persisted state from disk
+     * 2. Fetch latest domain from GitHub
+     * 3. Update state if domain changed
+     */
+    suspend fun initialize() {
+        sessionManager.initialize()
+    }
     
     // ========== PUBLIC API ==========
     

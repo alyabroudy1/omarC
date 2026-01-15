@@ -24,18 +24,24 @@ import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import java.net.URI
-import com.faselhd.utils.PluginContext
+import com.lagradost.cloudstream3.AcraApplication
 
 // ==========================================
 // Configurable Cloudflare Killer
 // ==========================================
 
 class ConfigurableCloudflareKiller(
+    private val userAgent: String? = null,
     private val blockNonHttp: Boolean = true,
-    private val allowThirdPartyCookies: Boolean = true
+    private val allowThirdPartyCookies: Boolean = true,
+    /** Callback when domain change is detected (from WebView redirects) */
+    private val onDomainChanged: ((oldDomain: String, newDomain: String) -> Unit)? = null,
+    /** Callback when cookies are extracted (for ProviderState sync) */
+    private val onCookiesExtracted: ((domain: String, cookies: Map<String, String>) -> Unit)? = null
 ) : Interceptor {
     companion object {
         const val TAG = "ConfigurableCFKiller"
+        const val CF_FLOW_TAG = "CF_FLOW"
         private val ERROR_CODES = listOf(403, 503)
         private val CLOUDFLARE_SERVERS = listOf("cloudflare-nginx", "cloudflare")
         fun parseCookieMap(cookie: String): Map<String, String> {
@@ -53,6 +59,12 @@ class ConfigurableCloudflareKiller(
     }
 
      val savedCookies: MutableMap<String, Map<String, String>> = mutableMapOf()
+    
+    /** 
+     * Hosts that have been recently cleared. Prevents re-reading stale cookies from CookieManager.
+     * This is crucial because CookieManager.flush() is async and may not complete immediately.
+     */
+    private val recentlyClearedHosts: MutableSet<String> = mutableSetOf()
 
     fun getCookieHeaders(url: String): Headers {
         val userAgentHeaders = WebViewResolver.webViewUserAgent?.let {
@@ -61,6 +73,43 @@ class ConfigurableCloudflareKiller(
         Log.d(TAG, "[getCookieHeaders] WebViewResolver.webViewUserAgent: ${WebViewResolver.webViewUserAgent}")
         Log.d(TAG, "[getCookieHeaders] savedCookies for ${URI(url).host}: ${savedCookies[URI(url).host]}")
         return getHeaders(userAgentHeaders, savedCookies[URI(url).host] ?: emptyMap())
+    }
+
+    fun clearCookies(url: String) {
+        val host = URI(url).host
+        
+        // 1. Clear from in-memory map
+        savedCookies.remove(host)
+        
+        // 2. Mark host as recently cleared - prevents re-reading stale cookies
+        recentlyClearedHosts.add(host)
+        
+        // 3. Clear from System CookieManager (more aggressive approach)
+        safe {
+            val cookieManager = CookieManager.getInstance()
+            val cookies = cookieManager.getCookie(url)
+            if (cookies != null) {
+                // Expire ALL cookies for this URL, not just cf_* ones
+                cookies.split(";").forEach { cookie ->
+                    val name = cookie.split("=").firstOrNull()?.trim()
+                    if (!name.isNullOrBlank()) {
+                        // Expire the cookie by setting Max-Age=0
+                        cookieManager.setCookie(url, "$name=; Max-Age=0; Path=/")
+                    }
+                }
+                // Force sync flush
+                cookieManager.flush()
+            }
+        }
+        Log.d(TAG, "Cleared cookies for $host (added to recentlyCleared)")
+    }
+    
+    /**
+     * Called after a successful WebView solve to allow future reads from CookieManager.
+     */
+    fun markHostSolved(host: String) {
+        recentlyClearedHosts.remove(host)
+        Log.d(TAG, "Marked $host as solved (removed from recentlyCleared)")
     }
     
     // Helper since we can't access CloudflareKiller.getHeaders (private)
@@ -91,19 +140,7 @@ class ConfigurableCloudflareKiller(
                 }
             }
             else -> {
-                val response = proceed(request, cookies)
-                if (response.header("Server") in CLOUDFLARE_SERVERS && response.code in ERROR_CODES) {
-                    Log.d(TAG, "Saved cookies expired for ${request.url}, clearing and retrying")
-                    response.close()
-                    savedCookies.remove(request.url.host)
-                    
-                    bypassCloudflare(request)?.let {
-                        Log.d(TAG, "Succeeded bypassing cloudflare after expiry: ${request.url}")
-                        return@runBlocking it
-                    }
-                } else {
-                    return@runBlocking response
-                }
+                return@runBlocking proceed(request, cookies)
             }
         }
 
@@ -118,23 +155,58 @@ class ConfigurableCloudflareKiller(
     }
 
     private fun trySolveWithSavedCookies(request: Request): Boolean {
+        // 0. Filter noise (images, css, etc.)
+        val path = request.url.encodedPath
+        val noiseExtensions = listOf(".png", ".jpg", ".jpeg", ".ico", ".css", ".js", ".woff", ".woff2", ".ttf")
+        if (noiseExtensions.any { path.endsWith(it, ignoreCase = true) }) {
+            return false
+        }
+
+        val host = request.url.host
+        
+        // 1. FIRST: Check in-memory saved cookies (these are FRESH from JS callback)
+        val savedHostCookies = savedCookies[host]
+        if (savedHostCookies != null && savedHostCookies.isNotEmpty()) {
+            Log.i(CF_FLOW_TAG, ">>> [trySolve] ✓ Found ${savedHostCookies.size} cookies in savedCookies for $host")
+            return true
+        }
+
+        // 2. If host was recently cleared, do NOT read from System CookieManager (stale)
+        if (recentlyClearedHosts.contains(host)) {
+            Log.d(CF_FLOW_TAG, ">>> [trySolve] Host $host recently cleared, skipping CookieManager")
+            return false
+        }
+
+        // 3. Fallback to System CookieManager (only if not recently cleared)
         return getWebViewCookie(request.url.toString())?.let { cookie ->
-            Log.d(TAG, "[trySolveWithSavedCookies] Cookies for ${request.url}: $cookie")
-            cookie.contains("cf_clearance").also { solved ->
-                if (solved) {
-                    savedCookies[request.url.host] = parseCookieMap(cookie)
-                    Log.d(TAG, "[trySolveWithSavedCookies] SAVED COOKIES for ${request.url.host}")
-                }
+            val cookieCount = cookie.split(";").filter { it.contains("=") }.size
+            Log.d(CF_FLOW_TAG, ">>> [trySolve] CookieManager check | host=$host | cookieCount=$cookieCount") 
+            
+            if (cookie.isNotBlank() && cookieCount > 0) {
+                savedCookies[host] = parseCookieMap(cookie)
+                Log.i(CF_FLOW_TAG, ">>> [trySolve] ✓ Saved $cookieCount cookies from CookieManager for $host")
+                true
+            } else {
+                false
             }
-        } ?: false.also { Log.d(TAG, "[trySolveWithSavedCookies] No cookies found for ${request.url}") }
+        } ?: false
     }
 
     private suspend fun proceed(request: Request, cookies: Map<String, String>): Response {
-        val userAgentMap = WebViewResolver.webViewUserAgent?.let {
-            mapOf("user-agent" to it)
+        // Use local userAgent if available, otherwise global fallback
+        val effectiveUserAgent = userAgent ?: WebViewResolver.webViewUserAgent
+        
+        val userAgentMap = effectiveUserAgent?.let {
+            mapOf("User-Agent" to it)
         } ?: emptyMap()
 
-        val headers = getHeaders(request.headers.toMap() + userAgentMap, cookies + request.cookies)
+        // Filter out existing UA from request to avoid duplicates/conflicts
+        val requestHeaders = request.headers.toMap().filterKeys { 
+            !it.equals("User-Agent", ignoreCase = true) 
+        }
+
+        val headers = getHeaders(requestHeaders + userAgentMap, cookies + request.cookies)
+        Log.i(CF_FLOW_TAG, ">>> [proceed] Making request with cookies | url=${request.url.toString().take(60)} | cookieCount=${cookies.size} | UA=${effectiveUserAgent?.take(40)}")
         return app.baseClient.newCall(
              request.newBuilder()
                  .headers(headers)
@@ -145,36 +217,186 @@ class ConfigurableCloudflareKiller(
     private val Request.cookies: Map<String, String>
         get() = this.header("Cookie")?.let { parseCookieMap(it) } ?: emptyMap()
 
+    /**
+     * Bypass Cloudflare using WebView.
+     * 
+     * ## Flow:
+     * 1. Load target URL in WebView
+     * 2. Detect domain changes (redirects) FIRST
+     * 3. Wait for page content to load (not Cloudflare challenge)
+     * 4. Extract ALL cookies (not just cf_clearance)
+     * 5. Return response with cookies
+     * 
+     * NO RETRIES - single clean pass.
+     */
     private suspend fun bypassCloudflare(request: Request): Response? {
         val url = request.url.toString()
-        var resolvedHost: String? = null
+        val originalHost = request.url.host
+        
+        Log.i(CF_FLOW_TAG, "========================================")
+        Log.i(CF_FLOW_TAG, ">>> [bypassCloudflare] START")
+        Log.i(CF_FLOW_TAG, ">>> URL: $url")
+        Log.i(CF_FLOW_TAG, ">>> OriginalHost: $originalHost")
+        Log.i(CF_FLOW_TAG, ">>> UA: ${userAgent?.take(50)}")
+        Log.i(CF_FLOW_TAG, "========================================")
 
-        if (!trySolveWithSavedCookies(request)) {
-            Log.d(TAG, "Loading ConfigurableWebViewResolver to solve cloudflare for ${request.url}")
-            ConfigurableWebViewResolver(
-                Regex("match_nothing"),
-                userAgent = null,
-                useOkhttp = false,
-                additionalUrls = listOf(Regex(".*")),
-                blockNonHttp = blockNonHttp,
-                allowThirdPartyCookies = allowThirdPartyCookies
-            ).resolveUsingWebView(
-                url
-            ) { webViewRequest ->
-                val solved = trySolveWithSavedCookies(webViewRequest)
-                if (solved) {
-                    resolvedHost = webViewRequest.url.host
-                    Log.d(TAG, "Solved Cloudflare for ${webViewRequest.url.host}")
-                }
-                solved
-            }
+        // Check if we already have valid cookies
+        val existingCookies = savedCookies[originalHost]
+        if (existingCookies != null && existingCookies.isNotEmpty()) {
+            Log.i(CF_FLOW_TAG, ">>> Already have cookies for $originalHost: ${existingCookies.keys}")
+            return proceed(request, existingCookies)
         }
 
-        val host = resolvedHost ?: request.url.host
-        val cookies = savedCookies[host] ?: return null
-        return proceed(request, cookies)
+        // Track state during WebView navigation
+        var finalDomain = originalHost
+        var extractedCookies: Map<String, String> = emptyMap()
+        var contentLoaded = false
+        
+        Log.i(CF_FLOW_TAG, ">>> Loading WebView to solve Cloudflare...")
+        
+        ConfigurableWebViewResolver(
+            interceptUrl = Regex("match_nothing"), // Don't intercept for immediate exit
+            userAgent = userAgent,
+            useOkhttp = false,
+            additionalUrls = listOf(Regex(".*")),
+            blockNonHttp = blockNonHttp,
+            allowThirdPartyCookies = allowThirdPartyCookies,
+            timeout = 60_000L,
+            script = """
+                (function() {
+                    try {
+                        // 1. Check if this is a Cloudflare challenge page
+                        var title = (document.title || "").toLowerCase();
+                        var isChallenge = 
+                            title.includes("just a moment") || 
+                            title.includes("cloudflare") ||
+                            title.includes("checking your browser") ||
+                            title.includes("تحقق") ||
+                            document.getElementById('cf-wrapper') != null ||
+                            document.getElementById('challenge-form') != null ||
+                            document.querySelector('[data-ray]') != null;
+                        
+                        if (isChallenge) {
+                            return "CLOUDFLARE_CHALLENGE";
+                        }
+                        
+                        // 2. Page is real content - extract ALL cookies
+                        var cookies = document.cookie;
+                        if (cookies && cookies.length > 0) {
+                            return cookies;
+                        }
+                        return "CONTENT_LOADED_NO_COOKIES";
+                    } catch(e) {
+                        return "ERROR:" + e.message;
+                    }
+                })();
+            """.trimIndent(),
+            scriptCallback = { result ->
+                Log.i(CF_FLOW_TAG, ">>> [JS_CALLBACK] Result: ${result.take(100)}")
+                
+                when {
+                    result == "\"CLOUDFLARE_CHALLENGE\"" || result == "CLOUDFLARE_CHALLENGE" -> {
+                        Log.d(CF_FLOW_TAG, ">>> [JS_CALLBACK] Still on challenge page, waiting...")
+                    }
+                    result.startsWith("\"ERROR:") || result.startsWith("ERROR:") -> {
+                        Log.w(CF_FLOW_TAG, ">>> [JS_CALLBACK] JS error: $result")
+                    }
+                    result == "\"CONTENT_LOADED_NO_COOKIES\"" || result == "CONTENT_LOADED_NO_COOKIES" -> {
+                        Log.i(CF_FLOW_TAG, ">>> [JS_CALLBACK] Content loaded but no cookies from JS")
+                        contentLoaded = true
+                    }
+                    result.isNotBlank() && result != "null" && result != "\"\"" -> {
+                        Log.i(CF_FLOW_TAG, ">>> [JS_CALLBACK] Content loaded with cookies!")
+                        contentLoaded = true
+                        
+                        // Parse ALL cookies (not filtered)
+                        val cleanResult = result.removeSurrounding("\"")
+                        extractedCookies = parseCookieMap(cleanResult)
+                        Log.i(CF_FLOW_TAG, ">>> [JS_CALLBACK] Parsed ${extractedCookies.size} cookies: ${extractedCookies.keys}")
+                    }
+                }
+            }
+        ).resolveUsingWebView(url) { webViewRequest ->
+            val reqUrl = webViewRequest.url.toString()
+            val reqHost = webViewRequest.url.host
+            
+            // DOMAIN CHANGE DETECTION (before cookie extraction)
+            if (reqHost != null && 
+                reqHost != originalHost && 
+                !reqHost.contains("cloudflare") &&
+                !reqHost.contains("cdn-cgi") &&
+                !reqHost.contains("challenges.cloudflare.com") &&
+                reqHost.contains("fasel", ignoreCase = true)) {
+                
+                Log.i(CF_FLOW_TAG, ">>> [DOMAIN_CHANGE] $originalHost -> $reqHost")
+                finalDomain = reqHost
+            }
+            
+            // Exit if content loaded
+            if (contentLoaded && extractedCookies.isNotEmpty()) {
+                Log.i(CF_FLOW_TAG, ">>> [INTERCEPT] Content loaded with cookies, exiting WebView")
+                return@resolveUsingWebView true
+            }
+            
+            false // Keep WebView running
+        }
+        
+        Log.i(CF_FLOW_TAG, ">>> [POST_WEBVIEW] WebView completed")
+        Log.i(CF_FLOW_TAG, ">>> [POST_WEBVIEW] FinalDomain: $finalDomain")
+        Log.i(CF_FLOW_TAG, ">>> [POST_WEBVIEW] ContentLoaded: $contentLoaded")
+        Log.i(CF_FLOW_TAG, ">>> [POST_WEBVIEW] ExtractedCookies: ${extractedCookies.keys}")
+        
+        // If no cookies from JS, try CookieManager with FINAL domain
+        if (extractedCookies.isEmpty()) {
+            val cookieUrl = "https://$finalDomain"
+            val cmCookies = getWebViewCookie(cookieUrl)
+            Log.i(CF_FLOW_TAG, ">>> [COOKIE_MANAGER] URL: $cookieUrl")
+            Log.i(CF_FLOW_TAG, ">>> [COOKIE_MANAGER] Cookies: ${cmCookies?.take(100)}")
+            
+            if (!cmCookies.isNullOrBlank()) {
+                extractedCookies = parseCookieMap(cmCookies)
+                Log.i(CF_FLOW_TAG, ">>> [COOKIE_MANAGER] Parsed ${extractedCookies.size} cookies: ${extractedCookies.keys}")
+            }
+            
+            // Also try original host if different from final
+            if (extractedCookies.isEmpty() && finalDomain != originalHost) {
+                val originalUrl = "https://$originalHost"
+                val originalCookies = getWebViewCookie(originalUrl)
+                Log.i(CF_FLOW_TAG, ">>> [COOKIE_MANAGER] Original URL: $originalUrl")
+                Log.i(CF_FLOW_TAG, ">>> [COOKIE_MANAGER] Original Cookies: ${originalCookies?.take(100)}")
+                
+                if (!originalCookies.isNullOrBlank()) {
+                    extractedCookies = parseCookieMap(originalCookies)
+                }
+            }
+        }
+        
+        // Store cookies for the FINAL domain
+        if (extractedCookies.isNotEmpty()) {
+            savedCookies[finalDomain] = extractedCookies
+            markHostSolved(finalDomain)
+            Log.i(CF_FLOW_TAG, ">>> [SAVED] Cookies saved for $finalDomain")
+            
+            // Invoke domain change callback if domain changed
+            if (finalDomain != originalHost) {
+                Log.i(CF_FLOW_TAG, ">>> [CALLBACK] Notifying domain change: $originalHost -> $finalDomain")
+                onDomainChanged?.invoke(originalHost, finalDomain)
+            }
+            
+            // Invoke cookie extraction callback
+            Log.i(CF_FLOW_TAG, ">>> [CALLBACK] Notifying cookies extracted for $finalDomain")
+            onCookiesExtracted?.invoke(finalDomain, extractedCookies)
+            
+            Log.i(CF_FLOW_TAG, "========================================")
+            return proceed(request, extractedCookies)
+        }
+        
+        Log.w(CF_FLOW_TAG, ">>> [FAIL] No cookies extracted after WebView")
+        Log.i(CF_FLOW_TAG, "========================================")
+        return null
     }
 }
+
 
 // ==========================================
 // Configurable WebView Resolver
@@ -248,14 +470,14 @@ class ConfigurableWebViewResolver(
             WebView.setWebContentsDebuggingEnabled(true)
             try {
                 webView = WebView(
-                    PluginContext.context
+                    AcraApplication.context
                         ?: throw RuntimeException("No base context in WebViewResolver")
                 ).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
                     // Explicitly set database path for older WebViews or specific implementations
-                    PluginContext.context?.getDir("database", Context.MODE_PRIVATE)?.path?.let {
+                    AcraApplication.context?.getDir("database", Context.MODE_PRIVATE)?.path?.let {
                         settings.databasePath = it
                     }
 

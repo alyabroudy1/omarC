@@ -2,10 +2,14 @@ package com.faselhd.service.strategy
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.lagradost.cloudstream3.AcraApplication
 import com.faselhd.service.ProviderLogger
 import com.faselhd.service.ProviderLogger.TAG_VIDEO_SNIFFER
 import com.faselhd.service.cloudflare.CloudflareDetector
@@ -18,18 +22,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Video sniffing strategy extending WebViewStrategy.
+ * Video sniffing strategy using WebView.
  * 
- * ## Inheritance:
- * Inherits all cookie/session management from WebViewStrategy:
- * - Cookie extraction and storage
- * - Cloudflare challenge detection and solving
- * - WebView lifecycle management
- * 
- * ## Additional Features:
+ * ## Features:
  * - Monitors network requests for video URLs
  * - JS injection for player interaction (auto-play, skip ads)
- * - JWPlayer source extraction
+ * - JWPlayer source extraction via JS bridge
  * - Configurable URL patterns
  * 
  * ## JS Actions (Adopted from FaselSniffer.kt):
@@ -38,20 +36,25 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - extractSources(): Extract JWPlayer sources via bridge
  * 
  * @param context Android context
- * @param cookieManager Cookie lifecycle manager
- * @param videoPatterns Regex patterns to match video URLs
- * @param jsActions Video JS actions configuration
+ * @param cookieManager Cookie lifecycle manager for storing captured cookies
+ * @param cfDetector Cloudflare detector
  */
 class VideoSniffingStrategy(
-    context: Context,
-    cookieManager: CookieLifecycleManager,
-    cfDetector: CloudflareDetector = CloudflareDetector(),
-    private val videoPatterns: List<Regex> = DEFAULT_VIDEO_PATTERNS,
-    private val jsActions: VideoJsActions = VideoJsActions.DEFAULT
-) : WebViewStrategy(context, cookieManager, cfDetector) {
+    private val context: Context,
+    private val cookieManager: CookieLifecycleManager,
+    private val cfDetector: CloudflareDetector = CloudflareDetector()
+) {
     
-    override val name: String = "VideoSniffer"
-    override val timeout: Long = 35_000
+    val name: String = "VideoSniffer"
+    private val timeout: Long = 35_000
+    
+    /** Video URL patterns to capture */
+    private val videoPatterns = listOf(
+        Regex("""\.m3u8(\?|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\.mp4(\?|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\.mkv(\?|$)""", RegexOption.IGNORE_CASE),
+        Regex("""\.webm(\?|$)""", RegexOption.IGNORE_CASE)
+    )
     
     /** Captured video sources */
     private val capturedSources = CopyOnWriteArrayList<VideoSource>()
@@ -60,20 +63,9 @@ class VideoSniffingStrategy(
     private var sourcesDeferred: CompletableDeferred<List<VideoSource>>? = null
     
     companion object {
-        /** Default video URL patterns */
-        val DEFAULT_VIDEO_PATTERNS = listOf(
-            Regex("""\.m3u8(\?|$)""", RegexOption.IGNORE_CASE),
-            Regex("""\.mp4(\?|$)""", RegexOption.IGNORE_CASE),
-            Regex("""\.mkv(\?|$)""", RegexOption.IGNORE_CASE),
-            Regex("""\.webm(\?|$)""", RegexOption.IGNORE_CASE)
-        )
-        
         /** Minimum video URL length to filter noise */
         const val MIN_VIDEO_URL_LENGTH = 50
     }
-    
-    override val jsInjection: String
-        get() = jsActions.buildScript()
     
     /**
      * Sniffs video URLs from a page.
@@ -83,11 +75,12 @@ class VideoSniffingStrategy(
      * @param cookies Existing cookies to inject
      * @return List of captured video sources
      */
+    @SuppressLint("SetJavaScriptEnabled")
     suspend fun sniff(
         url: String,
         userAgent: String,
         cookies: Map<String, String> = emptyMap()
-    ): List<VideoSource> {
+    ): List<VideoSource> = withContext(Dispatchers.Main) {
         capturedSources.clear()
         sourcesDeferred = CompletableDeferred()
         
@@ -96,50 +89,104 @@ class VideoSniffingStrategy(
             "patternCount" to videoPatterns.size
         )
         
-        val request = StrategyRequest(
-            url = url,
-            userAgent = userAgent,
-            cookies = cookies
-        )
+        var webView: WebView? = null
+        val startTime = System.currentTimeMillis()
         
-        // Execute parent's WebView logic (handles CF, cookies, etc.)
-        val response = execute(request)
-        
-        // Wait for JS bridge or use captured network sources
-        val jsSources = withTimeoutOrNull(5_000) {
-            sourcesDeferred?.await() ?: emptyList()
-        } ?: emptyList()
-        
-        // Combine JS sources and network-captured sources
-        val allSources = (jsSources + capturedSources).distinctBy { it.url }
-        
-        ProviderLogger.i(TAG_VIDEO_SNIFFER, "sniff", "Sniff completed",
-            "jsSources" to jsSources.size,
-            "networkSources" to capturedSources.size,
-            "totalUnique" to allSources.size,
-            "responseSuccess" to response.success
-        )
-        
-        return allSources
+        try {
+            webView = createWebView(url, userAgent, cookies)
+            
+            // Load the page
+            webView.loadUrl(url)
+            
+            // Wait for JS bridge results with timeout
+            val jsSources = withTimeoutOrNull(timeout) {
+                // Poll for sources while waiting
+                var attempts = 0
+                while (capturedSources.isEmpty() && sourcesDeferred?.isCompleted != true && attempts < 70) {
+                    kotlinx.coroutines.delay(500)
+                    attempts++
+                }
+                
+                // Return JS sources if available, otherwise empty
+                if (sourcesDeferred?.isCompleted == true) {
+                    sourcesDeferred?.await() ?: emptyList()
+                } else {
+                    emptyList()
+                }
+            } ?: emptyList()
+            
+            // Combine JS sources and network-captured sources
+            val allSources = (jsSources + capturedSources).distinctBy { it.url }
+            
+            val durationMs = System.currentTimeMillis() - startTime
+            
+            ProviderLogger.i(TAG_VIDEO_SNIFFER, "sniff", "Sniff completed",
+                "jsSources" to jsSources.size,
+                "networkSources" to capturedSources.size,
+                "totalUnique" to allSources.size,
+                "durationMs" to durationMs
+            )
+            
+            allSources
+            
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG_VIDEO_SNIFFER, "sniff", "Sniff failed", e)
+            capturedSources.toList()
+        } finally {
+            // Cleanup WebView on main thread
+            webView?.let { wv ->
+                Handler(Looper.getMainLooper()).post {
+                    wv.stopLoading()
+                    wv.destroy()
+                }
+            }
+        }
     }
     
-    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
-    override fun createWebView(request: StrategyRequest): WebView {
-        return super.createWebView(request).apply {
+    /**
+     * Creates and configures the WebView for video sniffing.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun createWebView(url: String, userAgent: String, cookies: Map<String, String>): WebView {
+        // Try to get AcraApplication context if available, otherwise use provided context
+        val ctx = try { AcraApplication.context ?: context } catch(e: Exception) { context }
+        
+        return WebView(ctx).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.userAgentString = userAgent
+            settings.mediaPlaybackRequiresUserGesture = false
+            
+            // Enable third-party cookies
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            
+            // Inject cookies
+            if (cookies.isNotEmpty()) {
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookies.forEach { (key, value) ->
+                    cookieManager.setCookie(url, "$key=$value")
+                }
+                cookieManager.flush()
+                ProviderLogger.d(TAG_VIDEO_SNIFFER, "createWebView", "Cookies injected", "count" to cookies.size)
+            }
+            
             // Add JS bridge for source extraction
             addJavascriptInterface(SnifferBridge(), "SnifferBridge")
             
-            ProviderLogger.d(TAG_VIDEO_SNIFFER, "createWebView", "JS bridge added")
+            // Set WebViewClient to monitor network requests
+            webViewClient = createSnifferWebViewClient()
             
-            // Override to monitor network requests
-            webViewClient = createSnifferWebViewClient(request)
+            ProviderLogger.d(TAG_VIDEO_SNIFFER, "createWebView", "WebView created",
+                "userAgent" to userAgent.take(50)
+            )
         }
     }
     
     /**
      * Creates a WebViewClient that monitors network requests for video URLs.
      */
-    private fun createSnifferWebViewClient(request: StrategyRequest): WebViewClient {
+    private fun createSnifferWebViewClient(): WebViewClient {
         return object : WebViewClient() {
             
             override fun shouldInterceptRequest(
@@ -166,12 +213,10 @@ class VideoSniffingStrategy(
                 )
                 
                 // Inject JS for player extraction
-                jsInjection?.let { js ->
-                    view?.evaluateJavascript(js) { result ->
-                        ProviderLogger.d(TAG_VIDEO_SNIFFER, "jsInjection", "JS executed",
-                            "resultLength" to (result?.length ?: 0)
-                        )
-                    }
+                view?.evaluateJavascript(buildJsScript()) { result ->
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "jsInjection", "JS executed",
+                        "resultLength" to (result?.length ?: 0)
+                    )
                 }
             }
         }
@@ -225,117 +270,10 @@ class VideoSniffingStrategy(
         }
     }
     
-    override fun onJsResult(result: String?) {
-        // Handle sniffer_done signal if passed via URL
-        if (result != null && result.contains("sniffer_done")) {
-            ProviderLogger.d(TAG_VIDEO_SNIFFER, "onJsResult", "Sniffer done signal received")
-        }
-    }
-    
     /**
-     * JavaScript bridge for receiving extracted sources.
+     * Builds the JS script for video extraction.
      */
-    inner class SnifferBridge {
-        
-        @JavascriptInterface
-        fun onSourcesFound(json: String) {
-            ProviderLogger.i(TAG_VIDEO_SNIFFER, "SnifferBridge.onSourcesFound", "Sources received from JS",
-                "jsonLength" to json.length
-            )
-            
-            try {
-                val sources = parseSourcesJson(json)
-                if (sources.isNotEmpty()) {
-                    sourcesDeferred?.complete(sources)
-                }
-            } catch (e: Exception) {
-                ProviderLogger.e(TAG_VIDEO_SNIFFER, "SnifferBridge.onSourcesFound", "Failed to parse sources", e)
-            }
-        }
-        
-        @JavascriptInterface
-        fun log(message: String) {
-            ProviderLogger.d(TAG_VIDEO_SNIFFER, "JS", message)
-        }
-    }
-    
-    /**
-     * Parses JWPlayer sources JSON.
-     * Format: [{"url":"...","label":"...","type":"..."},...]
-     */
-    private fun parseSourcesJson(json: String): List<VideoSource> {
-        val sources = mutableListOf<VideoSource>()
-        
-        try {
-            // Simple JSON parsing without dependencies
-            val cleanJson = json.trim()
-                .removePrefix("[")
-                .removeSuffix("]")
-            
-            if (cleanJson.isBlank()) return sources
-            
-            val objects = cleanJson.split("},").map { 
-                var obj = it.trim()
-                if (!obj.startsWith("{")) obj = "{$obj"
-                if (!obj.endsWith("}")) obj = "$obj}"
-                obj
-            }
-            
-            objects.forEach { obj ->
-                val urlMatch = Regex(""""(?:url|file)"\s*:\s*"([^"]+)"""").find(obj)
-                val labelMatch = Regex(""""label"\s*:\s*"([^"]+)"""").find(obj)
-                
-                val url = urlMatch?.groupValues?.get(1)?.replace("\\/", "/")
-                val label = labelMatch?.groupValues?.get(1) ?: "Auto"
-                
-                if (url != null && url.length > MIN_VIDEO_URL_LENGTH) {
-                    val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    sources.add(VideoSource(url, label, emptyMap(), type))
-                    
-                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "parseSourcesJson", "Source parsed",
-                        "label" to label,
-                        "urlLength" to url.length
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            ProviderLogger.e(TAG_VIDEO_SNIFFER, "parseSourcesJson", "Parse error", e)
-        }
-        
-        return sources
-    }
-}
-
-/**
- * Video source captured during sniffing.
- */
-data class VideoSource(
-    val url: String,
-    val label: String,
-    val headers: Map<String, String>,
-    val type: ExtractorLinkType
-)
-
-/**
- * Configuration for video JS actions.
- * 
- * Adopted from FaselSniffer.kt with configurable options.
- */
-data class VideoJsActions(
-    val autoPlay: Boolean = true,
-    val skipAds: Boolean = true,
-    val muteVideo: Boolean = true,
-    val extractJwPlayer: Boolean = true,
-    val customSelectors: List<String> = emptyList()
-) {
-    companion object {
-        val DEFAULT = VideoJsActions()
-    }
-    
-    /**
-     * Builds the complete JS script for injection.
-     */
-    fun buildScript(): String = """
+    private fun buildJsScript(): String = """
         (function() {
             console.log('[VideoSniffer] Script initialized');
             var sourcesSent = false;
@@ -436,17 +374,100 @@ data class VideoJsActions(
             }
             
             // Run immediately
-            ${if (autoPlay) "autoPlay();" else ""}
-            ${if (skipAds) "skipAds();" else ""}
+            autoPlay();
+            skipAds();
             
             // Run periodically
             setInterval(function() {
-                ${if (autoPlay) "autoPlay();" else ""}
-                ${if (skipAds) "skipAds();" else ""}
-                ${if (extractJwPlayer) "extractSources();" else ""}
+                autoPlay();
+                skipAds();
+                extractSources();
             }, 1000);
             
             if (typeof SnifferBridge !== 'undefined') SnifferBridge.log('Script setup complete');
         })();
     """.trimIndent()
+    
+    /**
+     * JavaScript bridge for receiving extracted sources.
+     */
+    inner class SnifferBridge {
+        
+        @JavascriptInterface
+        fun onSourcesFound(json: String) {
+            ProviderLogger.i(TAG_VIDEO_SNIFFER, "SnifferBridge.onSourcesFound", "Sources received from JS",
+                "jsonLength" to json.length
+            )
+            
+            try {
+                val sources = parseSourcesJson(json)
+                if (sources.isNotEmpty()) {
+                    sourcesDeferred?.complete(sources)
+                }
+            } catch (e: Exception) {
+                ProviderLogger.e(TAG_VIDEO_SNIFFER, "SnifferBridge.onSourcesFound", "Failed to parse sources", e)
+            }
+        }
+        
+        @JavascriptInterface
+        fun log(message: String) {
+            ProviderLogger.d(TAG_VIDEO_SNIFFER, "JS", message)
+        }
+    }
+    
+    /**
+     * Parses JWPlayer sources JSON.
+     * Format: [{"url":"...","label":"...","type":"..."},...]
+     */
+    private fun parseSourcesJson(json: String): List<VideoSource> {
+        val sources = mutableListOf<VideoSource>()
+        
+        try {
+            // Simple JSON parsing without dependencies
+            val cleanJson = json.trim()
+                .removePrefix("[")
+                .removeSuffix("]")
+            
+            if (cleanJson.isBlank()) return sources
+            
+            val objects = cleanJson.split("},").map { 
+                var obj = it.trim()
+                if (!obj.startsWith("{")) obj = "{$obj"
+                if (!obj.endsWith("}")) obj = "$obj}"
+                obj
+            }
+            
+            objects.forEach { obj ->
+                val urlMatch = Regex(""""(?:url|file)"\s*:\s*"([^"]+)"""").find(obj)
+                val labelMatch = Regex(""""label"\s*:\s*"([^"]+)"""").find(obj)
+                
+                val url = urlMatch?.groupValues?.get(1)?.replace("\\/", "/")
+                val label = labelMatch?.groupValues?.get(1) ?: "Auto"
+                
+                if (url != null && url.length > MIN_VIDEO_URL_LENGTH) {
+                    val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    sources.add(VideoSource(url, label, emptyMap(), type))
+                    
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "parseSourcesJson", "Source parsed",
+                        "label" to label,
+                        "urlLength" to url.length
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG_VIDEO_SNIFFER, "parseSourcesJson", "Parse error", e)
+        }
+        
+        return sources
+    }
 }
+
+/**
+ * Video source captured during sniffing.
+ */
+data class VideoSource(
+    val url: String,
+    val label: String,
+    val headers: Map<String, String>,
+    val type: ExtractorLinkType
+)

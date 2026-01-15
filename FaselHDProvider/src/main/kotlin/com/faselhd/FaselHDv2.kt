@@ -3,6 +3,7 @@ package com.faselhd
 import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.faselhd.service.ProviderHttpService
+import com.faselhd.service.ProviderLogger
 import com.faselhd.service.strategy.VideoSource
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
@@ -32,17 +33,18 @@ class FaselHDv2 : MainAPI() {
     companion object {
         private const val TAG = "FaselHDv2"
         private const val FALLBACK_DOMAIN = "https://www.faselhds.biz"
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // private const val USER_AGENT ... removed
+
         
         // Lazy-initialized service (needs context)
         private var _httpService: ProviderHttpService? = null
         
         fun getHttpService(context: Context): ProviderHttpService {
             return _httpService ?: ProviderHttpService.create(
-                context = context,
+                context = context!!,
                 providerName = "FaselHD",
                 userAgent = USER_AGENT,
-                fallbackDomain = FALLBACK_DOMAIN
+                fallbackDomain = "https://www.faselhds.biz"
             ).also { _httpService = it }
         }
     }
@@ -74,6 +76,11 @@ class FaselHDv2 : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         Log.d(TAG, "[getMainPage] Fetching: ${request.data}$page")
         
+        // Initialize on first call (loads from disk, fetches GitHub for latest domain)
+        if (!httpService.isInitialized) {
+            httpService.initialize()
+        }
+        
         val pageUrl = "$mainUrl${request.data}$page"
         val doc = httpService.getDocument(pageUrl)
             ?: throw ErrorLoadingException("Failed to load main page")
@@ -103,19 +110,82 @@ class FaselHDv2 : MainAPI() {
         val doc = httpService.getDocument(url)
             ?: throw ErrorLoadingException("Failed to load page")
         
-        val title = doc.select("div.title h1").text()
-        val posterUrl = fixUrl(doc.select("div.posterDiv img").attr("src"))
+        // Improved title selector with fallback
+        var title = doc.select("div.title h1").text()
+        if (title.isBlank()) {
+            title = doc.select("h1.postTitle").text()
+        }
+        if (title.isBlank()) {
+            title = doc.select("div.h1-title h1").text()
+        }
+        // Fallback to page title (metadata) if structured selection fails
+        if (title.isBlank()) {
+            title = doc.title().replace(" - فاصل إعلاني", "")
+                .replace("مترجم اون لاين", "")
+                .trim()
+        }
+        
+        if (title.isBlank()) {
+            ProviderLogger.e(TAG, "load", "Failed to parse title", null,
+                "url" to url,
+                "htmlStart" to doc.html().take(2000)
+            )
+            throw ErrorLoadingException("Failed to parse page content")
+        }
+
+        val posterUrl = fixUrl(doc.select("div.posterDiv img").attr("src")
+            .ifBlank { doc.select("div.poster img").attr("src") }
+            .ifBlank { doc.select("img.poster").attr("src") }
+            .ifBlank { doc.select("div.single-poster img").attr("src") })
         val year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
         val plot = doc.select("div.singleInfo span:contains(القصة) p").text()
+            .ifBlank { doc.select("div.singleDesc p").text() }
+            .ifBlank { doc.select("div.story p").text() }
+            .ifBlank { doc.select("div.postContent p").text() }
         val tags = doc.select("div.singleInfo span:contains(النوع) a").map { it.text() }
         val rating = doc.select("div.singleInfo span:contains(التقييم) p").text()
             .replace("IMDB ", "").replace("/10", "").toDoubleOrNull()?.times(1000)?.toInt()
         
-        val isMovie = !doc.select("div.seasonEpsCont").isNullOrEmpty().not() && 
-                      doc.select("div.seasonEpsCont").isEmpty()
+        val isMovie = doc.select("div.seasonEpsCont").isEmpty()
+        
+        ProviderLogger.d(TAG, "load", "Page type detection",
+            "isMovie" to isMovie,
+            "url" to url
+        )
         
         return if (isMovie) {
-            val watchUrl = doc.select("a.watchBtnIn498").attr("href")
+            // New structure: generic iframe or tabs with onclick
+            var watchUrl = doc.select("iframe[name=player_iframe]").attr("src")
+            
+            // Fallback: Extract from onclick="player_iframe.location.href = '...'"
+            if (watchUrl.isBlank()) {
+                 val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")
+                 watchUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
+            }
+             
+            // Fallback 2: Any list item
+            if (watchUrl.isBlank()) {
+                 doc.select("ul.tabs-ul li").forEach { li ->
+                     if (watchUrl.isBlank()) {
+                         val onClick = li.attr("onclick")
+                         watchUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
+                     }
+                 }
+            }
+
+            if (watchUrl.isBlank() || plot.isBlank()) {
+                 ProviderLogger.w(TAG, "load", "Missing movie data",
+                     "title" to title,
+                     "watchUrlEmpty" to watchUrl.isBlank(),
+                     "plotFound" to !plot.isBlank()
+                 )
+            }
+            
+            ProviderLogger.d(TAG, "load", "Movie parsed",
+                "title" to title,
+                "watchUrl" to watchUrl
+            )
+            
             newMovieLoadResponse(title, url, TvType.Movie, watchUrl) {
                 this.posterUrl = posterUrl
                 this.year = year
@@ -141,6 +211,11 @@ class FaselHDv2 : MainAPI() {
                     })
                 }
             }
+            
+            ProviderLogger.d(TAG, "load", "Series parsed",
+                "title" to title,
+                "episodeCount" to episodes.size
+            )
             
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = posterUrl
@@ -215,13 +290,7 @@ class FaselHDv2 : MainAPI() {
     }
     
     private fun fixUrl(url: String): String {
-        try {
-            val currentHost = java.net.URI(mainUrl).host ?: return url
-            val hostWithoutWww = currentHost.removePrefix("www.")
-            if (url.contains(hostWithoutWww) && !url.contains("www.")) {
-                return url.replace("://$hostWithoutWww", "://www.$hostWithoutWww")
-            }
-        } catch (e: Exception) { }
+        // Just return as is - don't force www. which breaks recent domains
         return url
     }
     

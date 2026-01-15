@@ -105,34 +105,36 @@ class ProviderStateStore(
     
     /**
      * Saves cookies as a serialized string.
+     * Accepts Map and serializes to "key=value; key2=value2" format.
      * 
-     * @param cookieHeader Cookie header string (e.g., "cf_clearance=xxx; cf_chl_rc_ni=10")
+     * @param cookies Map of cookie name to value
      */
-    fun saveCookies(cookieHeader: String) {
+    fun saveCookies(cookies: Map<String, String>) {
         val now = System.currentTimeMillis()
+        val cookieHeader = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         prefs.edit()
             .putString(KEY_COOKIES, cookieHeader)
             .putLong(KEY_COOKIES_STORED, now)
             .putLong(KEY_COOKIES_USED, now)
             .apply()
         
-        val hasClearance = cookieHeader.contains("cf_clearance")
         ProviderLogger.i(TAG_STATE_STORE, "saveCookies", "Cookies saved to prefs",
-            "hasClearance" to hasClearance,
-            "length" to cookieHeader.length
+            "count" to cookies.size,
+            "keys" to cookies.keys.toString()
         )
     }
     
     /**
-     * Loads saved cookies, or null if not set or expired.
+     * Loads saved cookies, or empty map if not set or expired.
      * Updates last-used timestamp on successful load.
+     * Returns Map instead of String for consistency with ProviderState.
      */
-    fun loadCookies(): String? {
-        val cookies = prefs.getString(KEY_COOKIES, null)
+    fun loadCookies(): Map<String, String> {
+        val cookieHeader = prefs.getString(KEY_COOKIES, null)
         
-        if (cookies == null) {
+        if (cookieHeader == null) {
             ProviderLogger.d(TAG_STATE_STORE, "loadCookies", "No cookies in prefs")
-            return null
+            return emptyMap()
         }
         
         val storedAt = prefs.getLong(KEY_COOKIES_STORED, 0)
@@ -145,7 +147,7 @@ class ProviderStateStore(
                 "maxAgeMs" to COOKIE_MAX_AGE_MS
             )
             clearCookies()
-            return null
+            return emptyMap()
         }
         
         // Update last-used timestamp
@@ -153,13 +155,21 @@ class ProviderStateStore(
             .putLong(KEY_COOKIES_USED, System.currentTimeMillis())
             .apply()
         
-        val hasClearance = cookies.contains("cf_clearance")
+        // Parse cookie header to map
+        val cookieMap = parseCookieString(cookieHeader)
         ProviderLogger.i(TAG_STATE_STORE, "loadCookies", "Cookies loaded from prefs",
-            "hasClearance" to hasClearance,
+            "count" to cookieMap.size,
             "ageMs" to ageMs
         )
         
-        return cookies
+        return cookieMap
+    }
+    
+    private fun parseCookieString(cookieHeader: String): Map<String, String> {
+        return cookieHeader.split(";").associate {
+            val parts = it.split("=", limit = 2)
+            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+        }.filter { it.key.isNotBlank() && it.value.isNotBlank() }
     }
     
     /**
@@ -222,10 +232,12 @@ class ProviderStateStore(
     
     /**
      * Loads the complete provider state.
+     * 
+     * @param defaultUserAgent Fallback UA if none stored
      */
-    fun loadState(): ProviderState? {
+    fun loadState(defaultUserAgent: String): ProviderState? {
         val domain = loadDomain() ?: return null
-        val userAgent = loadUserAgent()
+        val userAgent = loadUserAgent() ?: defaultUserAgent
         val cookies = loadCookies()
         
         return ProviderState(
@@ -234,6 +246,19 @@ class ProviderStateStore(
             cookies = cookies,
             domainFresh = isDomainFresh(),
             cookiesFresh = areCookiesFresh()
+        )
+    }
+    
+    /**
+     * Saves the complete provider state.
+     */
+    fun saveState(state: ProviderState) {
+        saveDomain(state.domain)
+        saveUserAgent(state.userAgent)
+        saveCookies(state.cookies)
+        ProviderLogger.i(TAG_STATE_STORE, "saveState", "Full state saved",
+            "domain" to state.domain,
+            "cookieCount" to state.cookies.size
         )
     }
     
@@ -247,18 +272,53 @@ class ProviderStateStore(
 }
 
 /**
- * Complete provider state loaded from storage.
+ * Complete provider state - single source of truth.
+ * Generic abstraction that can be used by any provider.
  */
 data class ProviderState(
     val domain: String,
-    val userAgent: String?,
-    val cookies: String?,
+    val userAgent: String,
+    val cookies: Map<String, String>,
     val domainFresh: Boolean,
-    val cookiesFresh: Boolean
+    val cookiesFresh: Boolean,
+    val lastUpdated: Long = System.currentTimeMillis()
 ) {
     /**
+     * Cookie header string for HTTP requests.
+     */
+    val cookieHeader: String
+        get() = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    
+    /**
+     * Complete headers map for HTTP requests.
+     */
+    val headers: Map<String, String>
+        get() = buildMap {
+            put("User-Agent", userAgent)
+            if (cookies.isNotEmpty()) {
+                put("Cookie", cookieHeader)
+            }
+            put("Referer", domain)
+        }
+    
+    /**
      * True if cookies are present and fresh.
+     * No longer requires cf_clearance - any valid cookies work.
      */
     val hasValidSession: Boolean
-        get() = cookies != null && cookiesFresh && cookies.contains("cf_clearance")
+        get() = cookies.isNotEmpty() && cookiesFresh
+    
+    companion object {
+        /**
+         * Create empty state with fallback values.
+         */
+        fun empty(domain: String, userAgent: String) = ProviderState(
+            domain = domain,
+            userAgent = userAgent,
+            cookies = emptyMap(),
+            domainFresh = false,
+            cookiesFresh = false
+        )
+    }
 }
+

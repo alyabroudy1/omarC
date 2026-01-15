@@ -84,8 +84,8 @@ class CookieLifecycleManager(
         // Update last-used timestamp
         cookieStore[key] = entry.copy(lastUsedAt = System.currentTimeMillis())
         
-        ProviderLogger.logCookieRetrieve(key, found = true, cookieCount = entry.cookies.size, age = ageMs)
-        ProviderLogger.logCookieFreshness(key, isValid = true, ageMs = ageMs, maxAgeMs = maxAgeMs)
+        // ProviderLogger.logCookieRetrieve(key, found = true, cookieCount = entry.cookies.size, age = ageMs)
+        // ProviderLogger.logCookieFreshness(key, isValid = true, ageMs = ageMs, maxAgeMs = maxAgeMs)
         
         return entry.cookies
     }
