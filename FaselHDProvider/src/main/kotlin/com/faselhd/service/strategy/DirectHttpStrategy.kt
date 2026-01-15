@@ -40,7 +40,9 @@ class DirectHttpStrategy : RequestStrategy {
             val headers = request.buildHeaders()
             
             ProviderLogger.d(TAG_DIRECT_HTTP, "execute", "Headers built",
-                "headerCount" to headers.size,
+                "headerCount" to headers.size
+            )
+            
             // FORCE HTTP/1.1 - Fix for Cloudflare 403 Loop
             // Cloudflare often fingerprints HTTP/2 requests from OkHttp differently than WebView.
             val protocols = listOf(okhttp3.Protocol.HTTP_1_1)

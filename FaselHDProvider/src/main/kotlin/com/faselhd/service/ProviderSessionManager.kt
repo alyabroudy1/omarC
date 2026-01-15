@@ -2,7 +2,7 @@ package com.faselhd.service
 
 import android.content.Context
 import com.lagradost.cloudstream3.app
-import com.faselhd.DomainConfigManager
+import com.faselhd.utils.DomainConfigManager
 import com.faselhd.service.cloudflare.CloudflareDetector
 import com.faselhd.service.cookie.CookieLifecycleManager
 import com.faselhd.service.strategy.*
