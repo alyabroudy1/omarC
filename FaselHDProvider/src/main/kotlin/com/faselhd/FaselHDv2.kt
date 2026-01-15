@@ -146,11 +146,15 @@ class FaselHDv2 : MainAPI() {
         val rating = doc.select("div.singleInfo span:contains(التقييم) p").text()
             .replace("IMDB ", "").replace("/10", "").toDoubleOrNull()?.times(1000)?.toInt()
         
-        val isMovie = doc.select("div.seasonEpsCont").isEmpty()
+        val isMovie = doc.select("div.seasonEpsCont").isEmpty() && 
+            !url.contains("/seasons/") && 
+            !url.contains("/series/") &&
+            !title.contains("مسلسل")
         
         ProviderLogger.d(TAG, "load", "Page type detection",
             "isMovie" to isMovie,
-            "url" to url
+            "url" to url,
+            "hasSeasonEpsCont" to !doc.select("div.seasonEpsCont").isEmpty()
         )
         
         return if (isMovie) {
@@ -212,6 +216,26 @@ class FaselHDv2 : MainAPI() {
                 }
             }
             
+            if (episodes.isEmpty()) {
+                 ProviderLogger.w(TAG, "load", "No episodes found for series",
+                     "isMovie" to isMovie,
+                     "url" to url
+                 )
+                 
+                 // Remove junk to make the log readable and fit in logcat
+                 doc.select("header").remove()
+                 doc.select("script").remove()
+                 doc.select("style").remove()
+                 doc.select("footer").remove()
+                 doc.select(".menu").remove()
+                 
+                 val cleanHtml = doc.body().html()
+                 // Log in chunks of 3500 chars suitable for Logcat
+                 cleanHtml.chunked(3500).forEachIndexed { index, chunk ->
+                     ProviderLogger.w(TAG, "load_debug", "HTML_DUMP_CHUNK_$index", "content" to chunk)
+                 }
+            }
+
             ProviderLogger.d(TAG, "load", "Series parsed",
                 "title" to title,
                 "episodeCount" to episodes.size
