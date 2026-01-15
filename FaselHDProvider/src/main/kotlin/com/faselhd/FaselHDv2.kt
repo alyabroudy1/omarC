@@ -311,6 +311,13 @@ class FaselHDv2 : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 this.posterHeaders = httpService.getImageHeaders()
+                
+                // Explicitly valid season names
+                val sNames = episodes.mapNotNull { it.season }.distinct().sorted()
+                    .map { SeasonData(it, "الموسم $it") }
+                if (sNames.isNotEmpty()) {
+                    this.seasonNames = sNames
+                }
             }
         }
     }
