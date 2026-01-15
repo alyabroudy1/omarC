@@ -222,7 +222,12 @@ class FaselHDv2 : MainAPI() {
                 val episodeLinks = doc.select("div.epAll a")
                 if (episodeLinks.isNotEmpty()) {
                     val seasonTitle = doc.select("div.seasonDiv.active .title").text()
-                    val seasonNum = seasonTitle.replace("موسم", "").trim().toIntOrNull() ?: 1
+                    val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
+                    
+                    ProviderLogger.d(TAG, "load", "Season extraction fallback",
+                        "rawTitle" to seasonTitle,
+                        "extractedNum" to seasonNum
+                    )
                     
                     episodeLinks.forEach { ep ->
                         val epUrl = ep.attr("href")
