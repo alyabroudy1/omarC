@@ -362,7 +362,6 @@ class ProviderSessionManager(
         )
         
         // 1. Try DirectHttp first (Fast extraction of Player URL)
-        // This avoids loading the heavy main page in WebView if possible
         if (hasValidSession()) {
              try {
                  val req = buildRequest(url)
@@ -374,6 +373,11 @@ class ProviderSessionManager(
                      val urlRegex = "'.*?'".toRegex()
                      // V1 selector for onclick
                      val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
+                     
+                     ProviderLogger.d(TAG_SESSION, "sniffVideos", "DirectHttp success", 
+                         "elementsFound" to elements.size,
+                         "htmlLength" to resp.html.length
+                     )
                      
                      var videoUrl: String? = null
                      
@@ -387,6 +391,12 @@ class ProviderSessionManager(
                              li.attr("data-url").ifEmpty { li.attr("data-link") }
                          }
                          
+                         ProviderLogger.d(TAG_SESSION, "sniffVideos", "Checking element",
+                             "onclick" to onclickAttr,
+                             "extracted" to extracted
+                         )
+                         
+                         // FaselHD V1 used: if (url.contains("faselhd"))
                          if (!extracted.isNullOrEmpty() && extracted.contains("faselhd")) {
                              videoUrl = extracted
                              break
@@ -399,15 +409,24 @@ class ProviderSessionManager(
                              // Sniff the EXTRACTED iframe URL directly
                              videoSniffingStrategy.sniff(videoUrl, userAgent ?: rawUserAgent, emptyMap())
                          }
+                     } else {
+                         ProviderLogger.w(TAG_SESSION, "sniffVideos", "No faselhd URL found in ${elements.size} elements")
                      }
+                 } else {
+                      ProviderLogger.w(TAG_SESSION, "sniffVideos", "DirectHttp skipped or failed", 
+                          "success" to resp.success,
+                          "isCF" to resp.isCloudflareChallenge
+                      )
                  }
              } catch (e: Exception) {
                  ProviderLogger.w(TAG_SESSION, "sniffVideos", "Direct extraction failed: ${e.message}")
              }
+        } else {
+             ProviderLogger.w(TAG_SESSION, "sniffVideos", "Skipping DirectHttp: No valid session")
         }
         
         // 2. Fallback to full WebView sniff of the main page
-        // This handles cases where extraction failed (e.g. CF challenge on main page, or layout changed)
+        ProviderLogger.i(TAG_SESSION, "sniffVideos", "Falling back to WebView on Main Page")
         val cookies = cookieManager.retrieve(url) ?: emptyMap()
         
         return cfMutex.withLock {
