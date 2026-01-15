@@ -221,13 +221,24 @@ class FaselHDv2 : MainAPI() {
                 // Fallback for new design (div.epAll a)
                 val episodeLinks = doc.select("div.epAll a")
                 if (episodeLinks.isNotEmpty()) {
-                    val seasonTitle = doc.select("div.seasonDiv.active .title").text()
-                    val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
+                    var seasonNum = 1
+                    val seasons = doc.select("div.seasonDiv")
+                    val activeSeason = seasons.find { it.hasClass("active") }
                     
-                    ProviderLogger.d(TAG, "load", "Season extraction fallback",
-                        "rawTitle" to seasonTitle,
-                        "extractedNum" to seasonNum
-                    )
+                    if (activeSeason != null) {
+                        val title = activeSeason.select(".title").text()
+                        seasonNum = Regex("""\d+""").find(title)?.value?.toIntOrNull() ?: 1
+                        ProviderLogger.d(TAG, "load", "Active season found", 
+                            "title" to title, 
+                            "num" to seasonNum
+                        )
+                    } else {
+                        ProviderLogger.w(TAG, "load", "No active season found", "count" to seasons.size)
+                        // Log first few seasons to debug
+                        seasons.take(3).forEach { s ->
+                             ProviderLogger.d(TAG, "load", "Season candidate", "class" to s.className(), "title" to s.select(".title").text())
+                        }
+                    }
                     
                     episodeLinks.forEach { ep ->
                         val epUrl = ep.attr("href")
