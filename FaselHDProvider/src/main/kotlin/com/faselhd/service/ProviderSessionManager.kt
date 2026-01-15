@@ -369,48 +369,53 @@ class ProviderSessionManager(
                  if (resp.success && !resp.isCloudflareChallenge && !resp.html.isNullOrEmpty()) {
                      val doc = org.jsoup.Jsoup.parse(resp.html)
                      
-                     // Extraction Logic mirroring V1 (Find iframe/player URL)
-                     val urlRegex = "'.*?'".toRegex()
-                     // V1 selector for onclick
-                     val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
+                     // Extraction Logic: SAME AS MOVIE (load function)
+                     // 1. Check for iframe[name=player_iframe]
+                     var videoUrl = doc.select("iframe[name=player_iframe]").attr("src")
                      
-                     ProviderLogger.d(TAG_SESSION, "sniffVideos", "DirectHttp success", 
-                         "elementsFound" to elements.size,
-                         "htmlLength" to resp.html.length
-                     )
+                     // 2. Check for active tab onclick
+                     if (videoUrl.isBlank()) {
+                         val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")
+                         // Regex from Movie Logic
+                         videoUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
+                     }
                      
-                     var videoUrl: String? = null
-                     
-                     for (li in elements) {
-                         val onclickAttr = li.attr("onclick")
-                         val match = urlRegex.find(onclickAttr)
+                     // 3. Fallback: Any list item in tabs
+                     if (videoUrl.isBlank()) {
+                         val elements = doc.select("ul.tabs-ul li")
                          
-                         val extracted = if (match != null) {
-                             match.value.replace("'", "")
-                         } else {
-                             li.attr("data-url").ifEmpty { li.attr("data-link") }
-                         }
-                         
-                         ProviderLogger.d(TAG_SESSION, "sniffVideos", "Checking element",
-                             "onclick" to onclickAttr,
-                             "extracted" to extracted
-                         )
-                         
-                         // FaselHD V1 used: if (url.contains("faselhd"))
-                         if (!extracted.isNullOrEmpty() && extracted.contains("faselhd")) {
-                             videoUrl = extracted
-                             break
+                         for (li in elements) {
+                             val onClick = li.attr("onclick")
+                             val match = Regex("""href\s*=\s*'([^']+)'""").find(onClick)
+                             val extracted = match?.groupValues?.get(1) ?: ""
+                             
+                             if (!extracted.isBlank()) {
+                                 videoUrl = extracted
+                                 break
+                             }
                          }
                      }
                      
-                     if (videoUrl != null) {
-                         ProviderLogger.i(TAG_SESSION, "sniffVideos", "Extracted player URL via DirectHttp", "url" to videoUrl)
+                     // 4. Old V1 Fallback (data-url/data-link) - kept just in case
+                     if (videoUrl.isBlank()) {
+                         val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
+                         for (li in elements) {
+                             val extracted = li.attr("data-url").ifEmpty { li.attr("data-link") }
+                             if (extracted.contains("faselhd")) {
+                                 videoUrl = extracted
+                                 break
+                             }
+                         }
+                     }
+
+                     if (!videoUrl.isBlank()) {
+                         ProviderLogger.i(TAG_SESSION, "sniffVideos", "Extracted player URL via DirectHttp (Movie Logic)", "url" to videoUrl)
                          return cfMutex.withLock {
                              // Sniff the EXTRACTED iframe URL directly
                              videoSniffingStrategy.sniff(videoUrl, userAgent ?: rawUserAgent, emptyMap())
                          }
                      } else {
-                         ProviderLogger.w(TAG_SESSION, "sniffVideos", "No faselhd URL found in ${elements.size} elements")
+                         ProviderLogger.w(TAG_SESSION, "sniffVideos", "No video URL found via DirectHttp (Movie Logic)")
                      }
                  } else {
                       ProviderLogger.w(TAG_SESSION, "sniffVideos", "DirectHttp skipped or failed", 
