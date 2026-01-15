@@ -224,33 +224,30 @@ class FaselHDv2 : MainAPI() {
                 if (seasonTabs.isNotEmpty()) {
                     ProviderLogger.d(TAG, "load", "Found season tabs", "count" to seasonTabs.size)
                     
-                    // User requested ONLY active season to be parsed
+                    var seasonNum = 1
                     val activeTab = seasonTabs.find { it.hasClass("active") }
-                    
                     if (activeTab != null) {
                         val seasonTitle = activeTab.select(".title").text()
-                        val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
+                        seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
+                    }
+                    
+                     // Always parse episodes from current page
+                    val tabEpisodes = doc.select("div.epAll a")
+                    tabEpisodes.forEach { ep ->
+                        val epUrl = ep.attr("href")
+                        val epTitle = ep.text()
+                        val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
                         
-                        // Parse episodes from current page
-                        val tabEpisodes = doc.select("div.epAll a")
-                        
-                        tabEpisodes.forEach { ep ->
-                            val epUrl = ep.attr("href")
-                            val epTitle = ep.text()
-                            val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
-                            
-                            episodes.add(newEpisode(epUrl) {
-                                this.name = epTitle
-                                this.season = seasonNum
-                                this.episode = epNum
-                            })
-                        }
-                    } 
+                        episodes.add(newEpisode(epUrl) {
+                            this.name = epTitle
+                            this.season = seasonNum
+                            this.episode = epNum
+                        })
+                    }
                 } else {
-                    // Fallback: No tabs found, just parse what's on page (likely single season or old layout variant)
+                    // Fallback: No tabs found
                     val episodeLinks = doc.select("div.epAll a")
                     if (episodeLinks.isNotEmpty()) {
-                         // Try to find season title from a standalone active div if it exists, else 1
                          val seasonTitle = doc.select("div.seasonDiv.active .title").text()
                          val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
                          
