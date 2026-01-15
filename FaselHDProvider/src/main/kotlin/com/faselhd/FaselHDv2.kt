@@ -137,18 +137,31 @@ class FaselHDv2 : MainAPI() {
         }
 
         // Fix: Check data-src first (lazy loading), then src
-        val posterImg = doc.selectFirst("div.posterDiv img") 
+        var posterImg = doc.selectFirst("div.posterDiv img") 
             ?: doc.selectFirst("div.poster img")
             ?: doc.selectFirst("img.poster")
             ?: doc.selectFirst("div.single-poster img")
-            ?: doc.selectFirst("div.postDiv img")  // Additional fallback
-            ?: doc.selectFirst(".moviePoster img") // Another common pattern
+            ?: doc.selectFirst("div.postDiv img")
+            ?: doc.selectFirst(".moviePoster img")
         
-        val posterUrl = if (posterImg != null) {
+        // Extract URL from poster img
+        var posterUrl = if (posterImg != null) {
             fixUrl(posterImg.attr("data-src").ifBlank { posterImg.attr("src") })
         } else ""
         
-        // Debug: Log when poster is empty
+        // Fallback: If posterUrl is still empty, find first image with valid content URL
+        if (posterUrl.isBlank()) {
+            val contentImg = doc.select("img").firstOrNull { img ->
+                val src = img.attr("data-src").ifBlank { img.attr("src") }
+                src.contains("/wp-content/uploads/") && src.length > 10
+            }
+            if (contentImg != null) {
+                posterUrl = fixUrl(contentImg.attr("data-src").ifBlank { contentImg.attr("src") })
+                Log.d(TAG, "[load] Poster found via content URL fallback: ${posterUrl.take(80)}...")
+            }
+        }
+        
+        // Debug: Log when poster is still empty after all attempts
         if (posterUrl.isBlank()) {
             val allImgs = doc.select("img").take(5).map { img ->
                 "src=${img.attr("src").take(50)}, data-src=${img.attr("data-src").take(50)}, class=${img.attr("class")}"
