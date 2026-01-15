@@ -199,20 +199,42 @@ class FaselHDv2 : MainAPI() {
             }
         } else {
             val episodes = mutableListOf<Episode>()
-            doc.select("div.seasonEpsCont").forEach { season ->
-                val seasonNum = season.select("div.season-title").text()
-                    .replace("الموسم", "").trim().toIntOrNull() ?: 1
-                
-                season.select("a.epAll").forEach { ep ->
-                    val epUrl = ep.attr("href")
-                    val epTitle = ep.text()
-                    val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
+            val seasonEpsCont = doc.select("div.seasonEpsCont")
+            if (seasonEpsCont.isNotEmpty()) {
+                seasonEpsCont.forEach { season ->
+                    val seasonNum = season.select("div.season-title").text()
+                        .replace("الموسم", "").trim().toIntOrNull() ?: 1
                     
-                    episodes.add(newEpisode(epUrl) {
-                        this.name = epTitle
-                        this.season = seasonNum
-                        this.episode = epNum
-                    })
+                    season.select("a.epAll").forEach { ep ->
+                        val epUrl = ep.attr("href")
+                        val epTitle = ep.text()
+                        val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
+                        
+                        episodes.add(newEpisode(epUrl) {
+                            this.name = epTitle
+                            this.season = seasonNum
+                            this.episode = epNum
+                        })
+                    }
+                }
+            } else {
+                // Fallback for new design (div.epAll a)
+                val episodeLinks = doc.select("div.epAll a")
+                if (episodeLinks.isNotEmpty()) {
+                    val seasonTitle = doc.select("div.seasonDiv.active .title").text()
+                    val seasonNum = seasonTitle.replace("موسم", "").trim().toIntOrNull() ?: 1
+                    
+                    episodeLinks.forEach { ep ->
+                        val epUrl = ep.attr("href")
+                        val epTitle = ep.text()
+                        val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
+                        
+                        episodes.add(newEpisode(epUrl) {
+                            this.name = epTitle
+                            this.season = seasonNum
+                            this.episode = epNum
+                        })
+                    }
                 }
             }
             
