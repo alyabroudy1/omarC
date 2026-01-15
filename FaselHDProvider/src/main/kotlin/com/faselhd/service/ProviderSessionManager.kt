@@ -361,6 +361,53 @@ class ProviderSessionManager(
             "url" to url.take(80)
         )
         
+        // 1. Try DirectHttp first (Fast extraction of Player URL)
+        // This avoids loading the heavy main page in WebView if possible
+        if (hasValidSession()) {
+             try {
+                 val req = buildRequest(url)
+                 val resp = directHttpStrategy.execute(req)
+                 if (resp.success && !resp.isCloudflareChallenge && !resp.html.isNullOrEmpty()) {
+                     val doc = org.jsoup.Jsoup.parse(resp.html)
+                     
+                     // Extraction Logic mirroring V1 (Find iframe/player URL)
+                     val urlRegex = "'.*?'".toRegex()
+                     // V1 selector for onclick
+                     val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
+                     
+                     var videoUrl: String? = null
+                     
+                     for (li in elements) {
+                         val onclickAttr = li.attr("onclick")
+                         val match = urlRegex.find(onclickAttr)
+                         
+                         val extracted = if (match != null) {
+                             match.value.replace("'", "")
+                         } else {
+                             li.attr("data-url").ifEmpty { li.attr("data-link") }
+                         }
+                         
+                         if (!extracted.isNullOrEmpty() && extracted.contains("faselhd")) {
+                             videoUrl = extracted
+                             break
+                         }
+                     }
+                     
+                     if (videoUrl != null) {
+                         ProviderLogger.i(TAG_SESSION, "sniffVideos", "Extracted player URL via DirectHttp", "url" to videoUrl)
+                         return cfMutex.withLock {
+                             // Sniff the EXTRACTED iframe URL directly
+                             videoSniffingStrategy.sniff(videoUrl, userAgent ?: rawUserAgent, emptyMap())
+                         }
+                     }
+                 }
+             } catch (e: Exception) {
+                 ProviderLogger.w(TAG_SESSION, "sniffVideos", "Direct extraction failed: ${e.message}")
+             }
+        }
+        
+        // 2. Fallback to full WebView sniff of the main page
+        // This handles cases where extraction failed (e.g. CF challenge on main page, or layout changed)
         val cookies = cookieManager.retrieve(url) ?: emptyMap()
         
         return cfMutex.withLock {
