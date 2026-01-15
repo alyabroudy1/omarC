@@ -361,68 +361,8 @@ class ProviderSessionManager(
             "url" to url.take(80)
         )
         
-        // 1. Try DirectHttp first (Fast extraction of Player URL)
-        // ALWAYS try, don't require valid session
-        try {
-            val req = buildRequest(url)
-            val resp = directHttpStrategy.execute(req)
-            if (resp.success && !resp.isCloudflareChallenge && !resp.html.isNullOrEmpty()) {
-                val doc = org.jsoup.Jsoup.parse(resp.html)
-                
-                // Extraction Logic: SAME AS MOVIE
-                var videoUrl = doc.select("iframe[name=player_iframe]").attr("src")
-                
-                if (videoUrl.isBlank()) {
-                    val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")
-                    videoUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
-                }
-                
-                if (videoUrl.isBlank()) {
-                    val elements = doc.select("ul.tabs-ul li")
-                    for (li in elements) {
-                        val onClick = li.attr("onclick")
-                        val match = Regex("""href\s*=\s*'([^']+)'""").find(onClick)
-                        val extracted = match?.groupValues?.get(1) ?: ""
-                        if (!extracted.isBlank()) {
-                            videoUrl = extracted
-                            break
-                        }
-                    }
-                }
-                
-                if (videoUrl.isBlank()) {
-                    val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
-                    for (li in elements) {
-                        val extracted = li.attr("data-url").ifEmpty { li.attr("data-link") }
-                        if (extracted.contains("faselhd")) {
-                            videoUrl = extracted
-                            break
-                        }
-                    }
-                }
-
-                if (!videoUrl.isBlank()) {
-                    ProviderLogger.i(TAG_SESSION, "sniffVideos", "Extracted player URL via DirectHttp", "url" to videoUrl)
-                    return cfMutex.withLock {
-                        videoSniffingStrategy.sniff(videoUrl, userAgent ?: rawUserAgent, emptyMap())
-                    }
-                } else {
-                    // DUMP HTML for debugging
-                    val htmlSnippet = resp.html.take(2000)
-                    ProviderLogger.w(TAG_SESSION, "sniffVideos", "No video URL found - HTML DUMP: $htmlSnippet")
-                }
-            } else {
-                 ProviderLogger.w(TAG_SESSION, "sniffVideos", "DirectHttp failed", 
-                     "success" to resp.success,
-                     "isCF" to resp.isCloudflareChallenge
-                 )
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_SESSION, "sniffVideos", "Direct extraction failed: ${e.message}")
-        }
-        
-        // 2. Fallback to full WebView sniff
-        ProviderLogger.i(TAG_SESSION, "sniffVideos", "Falling back to WebView")
+        // Player pages need JS execution for JWPlayer extraction
+        // Skip DirectHttp and go straight to WebView with JS injection
         val cookies = cookieManager.retrieve(url) ?: emptyMap()
         
         return cfMutex.withLock {
