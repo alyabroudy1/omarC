@@ -137,10 +137,12 @@ class FaselHDv2 : MainAPI() {
         }
 
         // Fix: Check data-src first (lazy loading), then src
+        // Include toSearchResponse selector as fallback
         var posterImg = doc.selectFirst("div.posterDiv img") 
             ?: doc.selectFirst("div.poster img")
             ?: doc.selectFirst("img.poster")
             ?: doc.selectFirst("div.single-poster img")
+            ?: doc.selectFirst("div.postDiv a div img")  // toSearchResponse selector
             ?: doc.selectFirst("div.postDiv img")
             ?: doc.selectFirst(".moviePoster img")
         
