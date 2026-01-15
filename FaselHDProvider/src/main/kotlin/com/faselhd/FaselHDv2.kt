@@ -141,10 +141,23 @@ class FaselHDv2 : MainAPI() {
             ?: doc.selectFirst("div.poster img")
             ?: doc.selectFirst("img.poster")
             ?: doc.selectFirst("div.single-poster img")
+            ?: doc.selectFirst("div.postDiv img")  // Additional fallback
+            ?: doc.selectFirst(".moviePoster img") // Another common pattern
         
         val posterUrl = if (posterImg != null) {
             fixUrl(posterImg.attr("data-src").ifBlank { posterImg.attr("src") })
         } else ""
+        
+        // Debug: Log when poster is empty
+        if (posterUrl.isBlank()) {
+            val allImgs = doc.select("img").take(5).map { img ->
+                "src=${img.attr("src").take(50)}, data-src=${img.attr("data-src").take(50)}, class=${img.attr("class")}"
+            }
+            Log.w(TAG, "[load] Poster URL is empty! First 5 images found: $allImgs")
+            Log.w(TAG, "[load] HTML_DUMP (poster area): ${doc.select("div[class*=poster], div[class*=Poster]").html().take(1000)}")
+        } else {
+            Log.d(TAG, "[load] Poster URL found: ${posterUrl.take(80)}...")
+        }
 
         val year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
         val plot = doc.select("div.singleInfo span:contains(القصة) p").text()
