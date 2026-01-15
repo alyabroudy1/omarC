@@ -283,7 +283,7 @@ class FaselHDv2 : MainAPI() {
         }
     }
 
-    // ========== LOAD LINKS (VIDEO SNIFFING) ==========
+    // ========== LOAD LINKS (V1 Flow with VideoSniffingStrategy) ==========
     
     override suspend fun loadLinks(
         data: String,
@@ -291,35 +291,90 @@ class FaselHDv2 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i(TAG, "[loadLinks] Sniffing video from: $data")
+        Log.i(TAG, "[loadLinks] Starting V1-style extraction for: $data")
         
-        val videos = httpService.sniffVideos(data)
-        
-        if (videos.isEmpty()) {
-            Log.w(TAG, "[loadLinks] No videos found!")
+        // 1. Fetch the episode/movie page
+        val doc = httpService.getDocument(data)
+        if (doc == null) {
+            Log.w(TAG, "[loadLinks] Failed to fetch page: $data")
             return false
         }
         
-        Log.i(TAG, "[loadLinks] Found ${videos.size} video sources")
+        // 2. Extract player URLs from onclick (V1 logic)
+        val urlRegex = "'.*?'".toRegex()
+        val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
         
-        videos.forEach { source ->
-            val quality = parseQuality(source.label)
+        Log.d(TAG, "[loadLinks] Found ${elements.size} potential link elements")
+        
+        var foundVideos = false
+        
+        for (li in elements) {
+            var playerUrl: String? = null
+            val onclickAttr = li.attr("onclick")
+            val match = urlRegex.find(onclickAttr)
             
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = "$name - ${source.label}",
-                    url = source.url,
-                    type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = data
-                    this.quality = quality
-                    this.headers = source.headers + httpService.getImageHeaders()
+            if (match != null) {
+                playerUrl = match.value.replace("'", "")
+                Log.d(TAG, "[loadLinks] Found URL via regex: $playerUrl")
+            } else {
+                // Fallback: Check for data-url or other attributes
+                playerUrl = li.attr("data-url").ifEmpty { li.attr("data-link") }
+                Log.d(TAG, "[loadLinks] Found URL via fallback: $playerUrl")
+            }
+            
+            if (!playerUrl.isNullOrEmpty() && playerUrl.contains("faselhd")) {
+                Log.i(TAG, "[loadLinks] Sniffing player URL: $playerUrl")
+                
+                // 3. Sniff the player URL (NOT the episode page)
+                val videos = httpService.sniffVideos(playerUrl)
+                
+                if (videos.isNotEmpty()) {
+                    Log.i(TAG, "[loadLinks] Found ${videos.size} videos from player")
+                    foundVideos = true
+                    
+                    videos.forEach { source ->
+                        val quality = parseQuality(source.label)
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name - ${source.label}",
+                                url = source.url,
+                                type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = data
+                                this.quality = quality
+                                this.headers = source.headers + httpService.getImageHeaders()
+                            }
+                        )
+                    }
+                    break // Found videos, stop trying other servers
                 }
-            )
+            }
         }
         
-        return true
+        // 4. Fallback: Direct sniff if no onclick elements found
+        if (!foundVideos && elements.isEmpty()) {
+            Log.w(TAG, "[loadLinks] No onclick elements, trying direct sniff on page")
+            val videos = httpService.sniffVideos(data)
+            videos.forEach { source ->
+                val quality = parseQuality(source.label)
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name - ${source.label}",
+                        url = source.url,
+                        type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = data
+                        this.quality = quality
+                        this.headers = source.headers + httpService.getImageHeaders()
+                    }
+                )
+            }
+            foundVideos = videos.isNotEmpty()
+        }
+        
+        return foundVideos
     }
 
     // ========== HELPERS ==========
