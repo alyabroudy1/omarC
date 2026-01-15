@@ -313,32 +313,40 @@ class FaselHDv2 : MainAPI() {
         val urlRegex = "'.*?'".toRegex()
         val elements = doc.select(".signleWatch ul.tabs-ul li[onclick]")
         
-        Log.d(TAG, "[loadLinks] Found ${elements.size} potential link elements")
+        Log.i(TAG, "[loadLinks] Found ${elements.size} watch servers")
+        
+        // Log all available servers first
+        elements.forEachIndexed { index, li ->
+            val serverTitle = li.select("a").text().ifBlank { "Server ${index + 1}" }
+            val onclick = li.attr("onclick")
+            val urlMatch = urlRegex.find(onclick)?.value?.replace("'", "") ?: "unknown"
+            Log.i(TAG, "[loadLinks] Server #${index + 1}: '$serverTitle' -> ${urlMatch.take(80)}...")
+        }
         
         var foundVideos = false
+        var serverIndex = 0
         
         for (li in elements) {
+            serverIndex++
+            val serverTitle = li.select("a").text().ifBlank { "Server $serverIndex" }
             var playerUrl: String? = null
             val onclickAttr = li.attr("onclick")
             val match = urlRegex.find(onclickAttr)
             
             if (match != null) {
                 playerUrl = match.value.replace("'", "")
-                Log.d(TAG, "[loadLinks] Found URL via regex: $playerUrl")
             } else {
-                // Fallback: Check for data-url or other attributes
                 playerUrl = li.attr("data-url").ifEmpty { li.attr("data-link") }
-                Log.d(TAG, "[loadLinks] Found URL via fallback: $playerUrl")
             }
             
             if (!playerUrl.isNullOrEmpty() && playerUrl.contains("faselhd")) {
-                Log.i(TAG, "[loadLinks] Sniffing player URL: $playerUrl")
+                Log.i(TAG, "[loadLinks] Trying Server #$serverIndex '$serverTitle'...")
                 
                 // 3. Sniff the player URL (NOT the episode page)
                 val videos = httpService.sniffVideos(playerUrl)
                 
                 if (videos.isNotEmpty()) {
-                    Log.i(TAG, "[loadLinks] Found ${videos.size} videos from player")
+                    Log.i(TAG, "[loadLinks] Server #$serverIndex '$serverTitle' -> Found ${videos.size} videos!")
                     foundVideos = true
                     
                     videos.forEach { source ->
@@ -357,7 +365,11 @@ class FaselHDv2 : MainAPI() {
                         )
                     }
                     break // Found videos, stop trying other servers
+                } else {
+                    Log.w(TAG, "[loadLinks] Server #$serverIndex '$serverTitle' -> No videos found")
                 }
+            } else {
+                Log.w(TAG, "[loadLinks] Server #$serverIndex '$serverTitle' -> Invalid URL: $playerUrl")
             }
         }
         
