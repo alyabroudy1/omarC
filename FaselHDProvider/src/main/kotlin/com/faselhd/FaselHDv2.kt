@@ -2,9 +2,6 @@ package com.faselhd
 
 import android.content.Context
 import com.lagradost.cloudstream3.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import com.faselhd.service.ProviderHttpService
 import com.faselhd.service.ProviderLogger
 import com.faselhd.service.strategy.VideoSource
@@ -227,46 +224,28 @@ class FaselHDv2 : MainAPI() {
                 if (seasonTabs.isNotEmpty()) {
                     ProviderLogger.d(TAG, "load", "Found season tabs", "count" to seasonTabs.size)
                     
-                    coroutineScope {
-                        val seasonTasks = seasonTabs.map { tab ->
-                            async {
-                                val seasonTitle = tab.select(".title").text()
-                                val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
-                                
-                                // Parse episodes
-                                val tabEpisodes = if (tab.hasClass("active")) {
-                                    // Episodes are on current page
-                                    doc.select("div.epAll a")
-                                } else {
-                                    // Fetch other season page
-                                    var pageUrl = Regex("""href\s*=\s*['"]([^'"]+)['"]""").find(tab.attr("onclick"))?.groupValues?.get(1)
-                                    if (pageUrl != null) {
-                                        if (pageUrl.startsWith("/")) pageUrl = "$mainUrl$pageUrl"
-                                        ProviderLogger.d(TAG, "load", "Fetching other season (Async)", "season" to seasonNum, "url" to pageUrl)
-                                        val seasonDoc = httpService.getDocument(pageUrl)
-                                        seasonDoc?.select("div.epAll a") ?: emptyList()
-                                    } else {
-                                        emptyList()
-                                    }
-                                }
-                                
-                                tabEpisodes.map { ep ->
-                                    val epUrl = ep.attr("href")
-                                    val epTitle = ep.text()
-                                    val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
-                                    
-                                    newEpisode(epUrl) {
-                                        this.name = epTitle
-                                        this.season = seasonNum
-                                        this.episode = epNum
-                                    }
-                                }
-                            }
-                        }
+                    // User requested ONLY active season to be parsed
+                    val activeTab = seasonTabs.find { it.hasClass("active") }
+                    
+                    if (activeTab != null) {
+                        val seasonTitle = activeTab.select(".title").text()
+                        val seasonNum = Regex("""\d+""").find(seasonTitle)?.value?.toIntOrNull() ?: 1
                         
-                        // Wait for all seasons and flatten result
-                        seasonTasks.awaitAll().flatten().forEach { episodes.add(it) }
-                    }
+                        // Parse episodes from current page
+                        val tabEpisodes = doc.select("div.epAll a")
+                        
+                        tabEpisodes.forEach { ep ->
+                            val epUrl = ep.attr("href")
+                            val epTitle = ep.text()
+                            val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
+                            
+                            episodes.add(newEpisode(epUrl) {
+                                this.name = epTitle
+                                this.season = seasonNum
+                                this.episode = epNum
+                            })
+                        }
+                    } 
                 } else {
                     // Fallback: No tabs found, just parse what's on page (likely single season or old layout variant)
                     val episodeLinks = doc.select("div.epAll a")
@@ -322,9 +301,20 @@ class FaselHDv2 : MainAPI() {
                 this.tags = tags
                 this.posterHeaders = httpService.getImageHeaders()
                 
-                // Explicitly valid season names
-                val sNames = episodes.mapNotNull { it.season }.distinct().sorted()
-                    .map { SeasonData(it, "الموسم $it") }
+                // Collect all seasons from tabs if available to show in dropdown
+                val allSeasons = mutableSetOf<Int>()
+                val seasonTabs = doc.select("div.seasonDiv")
+                if (seasonTabs.isNotEmpty()) {
+                     seasonTabs.forEach { tab ->
+                         val t = tab.select(".title").text()
+                         val n = Regex("""\d+""").find(t)?.value?.toIntOrNull()
+                         if (n != null) allSeasons.add(n)
+                     }
+                }
+                // Also include whatever we found in episodes
+                episodes.mapNotNull { it.season }.forEach { allSeasons.add(it) }
+                
+                val sNames = allSeasons.sorted().map { SeasonData(it, "الموسم $it") }
                 if (sNames.isNotEmpty()) {
                     this.seasonNames = sNames
                 }
