@@ -9,6 +9,9 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import com.lagradost.api.Log
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * FaselHD provider integrated with the new ProviderHttpService.
