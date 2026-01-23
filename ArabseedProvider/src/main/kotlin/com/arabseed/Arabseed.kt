@@ -59,8 +59,9 @@ class Arabseed : MainAPI() {
             val ctx = PluginContext.context
                 ?: throw IllegalStateException("No application context available")
             
-            // Initialize ActivityProvider for Dialog support if not yet initialized
-            (ctx as? android.app.Application)?.let { app ->
+            CommonActivity.activity?.let { activity ->
+                ActivityProvider.setActivity(activity)
+            } ?: (ctx as? android.app.Application)?.let { app ->
                 ActivityProvider.init(app)
             }
             
