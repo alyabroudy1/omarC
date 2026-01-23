@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.providers.arabseed.utils
+package com.arabseed.utils
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -27,8 +27,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.lagradost.cloudstream3.network.WebViewResolver
 // Local imports
-import com.lagradost.cloudstream3.providers.arabseed.utils.GlobalHeaderStore
-import com.lagradost.cloudstream3.providers.arabseed.utils.HttpTraceLogger
+// Local imports removed (same package)
 import java.io.Serializable
 
 class VideoSnifferActivity : AppCompatActivity() {

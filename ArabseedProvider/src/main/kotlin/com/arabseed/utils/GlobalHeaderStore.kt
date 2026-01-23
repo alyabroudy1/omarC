@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.providers.arabseed.utils
+package com.arabseed.utils
 
 import android.content.Context
 import android.webkit.CookieManager
