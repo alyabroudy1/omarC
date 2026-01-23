@@ -59,11 +59,8 @@ class Arabseed : MainAPI() {
             val ctx = PluginContext.context
                 ?: throw IllegalStateException("No application context available")
             
-            CommonActivity.activity?.let { activity ->
-                ActivityProvider.setActivity(activity)
-            } ?: (ctx as? android.app.Application)?.let { app ->
-                ActivityProvider.init(app)
-            }
+            // Ensure ActivityProvider is initialized (safe to call multiple times)
+            ActivityProvider.initCompat(ctx)
             
             return getHttpService(ctx)
         }
@@ -129,8 +126,12 @@ class Arabseed : MainAPI() {
                 Log.e(TAG, "'poster' found at index $posterIndex. Context: ${rawHtml.substring((posterIndex-50).coerceAtLeast(0), (posterIndex+100).coerceAtMost(rawHtml.length))}")
             }
             
-            // Dump broader chunk to see structure (3000 chars)
-            Log.e(TAG, "HTML Header Dump: ${doc.html().take(2000)}")
+            // FULL HTML DUMP as requested
+            val html = doc.html()
+            Log.e(TAG, ">>> FULL HTML DUMP (${html.length} chars) <<<")
+            html.chunked(3500).forEachIndexed { i, chunk ->
+                Log.e(TAG, "HTML_DUMP_CHUNK_$i: $chunk")
+            }
         }
 
         val list = elements.mapNotNull { element -> 

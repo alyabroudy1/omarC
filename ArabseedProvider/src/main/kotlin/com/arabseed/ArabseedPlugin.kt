@@ -9,6 +9,10 @@ import com.arabseed.utils.PluginContext
 class ArabseedPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
+        
+        // Initialize ActivityProvider safely
+        com.arabseed.utils.ActivityProvider.initCompat(context)
+        
         // Register provider
         registerMainAPI(Arabseed())
     }

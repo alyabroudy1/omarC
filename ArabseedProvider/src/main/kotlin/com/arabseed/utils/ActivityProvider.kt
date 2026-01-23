@@ -102,4 +102,17 @@ object ActivityProvider {
             }
         })
     }
+    
+    /**
+     * Initialize with compatibility for Plugin usage.
+     * Safely gets Application context.
+     */
+    fun initCompat(context: Context) {
+         val app = context.applicationContext as? Application
+         if (app != null) {
+             init(app)
+         } else {
+             Log.e(TAG, "Failed to get Application context from $context")
+         }
+    }
 }
