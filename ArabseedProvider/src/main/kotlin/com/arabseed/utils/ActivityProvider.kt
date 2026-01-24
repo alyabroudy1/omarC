@@ -2,6 +2,7 @@ package com.arabseed.utils
 
 import android.app.Activity
 import android.app.Application
+import android.content.Context
 import android.os.Bundle
 import com.lagradost.api.Log
 import java.lang.ref.WeakReference

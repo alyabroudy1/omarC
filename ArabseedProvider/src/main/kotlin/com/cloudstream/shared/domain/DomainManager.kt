@@ -1,0 +1,144 @@
+package com.cloudstream.shared.domain
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.cloudstream.shared.http.CookieStore
+import com.lagradost.api.Log
+import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.*
+import org.json.JSONObject
+import java.net.URI
+
+/**
+ * Manages provider domain with GitHub fetch and persistence.
+ */
+class DomainManager(
+    private val context: Context,
+    private val providerName: String,
+    private val fallbackDomain: String,
+    private val githubConfigUrl: String,
+    private val cookieStore: CookieStore,
+    private val syncWorkerUrl: String? = null
+) {
+    private val TAG = "DomainManager"
+    private val prefs: SharedPreferences = context.getSharedPreferences(
+        "domain_$providerName", 
+        Context.MODE_PRIVATE
+    )
+    
+    var currentDomain: String = fallbackDomain
+        private set
+    
+    private var isInitialized = false
+    
+    /**
+     * BLOCKING initialization - called before first request.
+     * Fetches latest domain from GitHub and waits for response.
+     */
+    suspend fun ensureInitialized() {
+        if (isInitialized) return
+        
+        // Load persisted first (fast)
+        currentDomain = prefs.getString("domain", fallbackDomain) ?: fallbackDomain
+        Log.d(TAG, "Loaded persisted domain: $currentDomain")
+        
+        // Fetch from GitHub (BLOCKING, with timeout)
+        try {
+            withTimeout(5000L) {
+                val response = app.get(githubConfigUrl)
+                if (response.isSuccessful) {
+                    val config = JSONObject(response.text)
+                    val remoteDomain = config.optString("domain", "")
+                    
+                    if (remoteDomain.isNotBlank() && remoteDomain != currentDomain) {
+                        Log.i(TAG, "Domain updated from GitHub: $currentDomain → $remoteDomain")
+                        
+                        // Clear cookies for old domain before updating
+                        cookieStore.clear(currentDomain, "Domain changed from GitHub")
+                        
+                        updateDomain(remoteDomain)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "GitHub config fetch timed out, using persisted: $currentDomain")
+        } catch (e: Exception) {
+            Log.w(TAG, "GitHub config fetch failed: ${e.message}, using persisted: $currentDomain")
+        }
+        
+        isInitialized = true
+    }
+    
+    /**
+     * Update domain and persist.
+     */
+    fun updateDomain(newDomain: String) {
+        val normalized = newDomain
+            .removePrefix("http://")
+            .removePrefix("https://")
+            .trimEnd('/')
+        
+        if (normalized != currentDomain) {
+            Log.i(TAG, "Domain updated: $currentDomain → $normalized")
+            currentDomain = normalized
+            prefs.edit().putString("domain", normalized).apply()
+        }
+    }
+    
+    /**
+     * Check if response URL indicates a domain redirect.
+     * Only call this for main page / search / load - NOT video sniffing.
+     */
+    fun checkDomainChange(requestUrl: String, finalUrl: String?) {
+        if (finalUrl == null) return
+        
+        try {
+            val requestHost = URI(requestUrl).host?.removePrefix("www.")
+            val finalHost = URI(finalUrl).host?.removePrefix("www.")
+            
+            if (requestHost != finalHost && finalHost != null && finalHost.isNotBlank()) {
+                Log.i(TAG, "Domain redirect detected: $requestHost → $finalHost")
+                
+                // Clear old cookies
+                if (requestHost != null) {
+                    cookieStore.clear(requestHost, "Domain redirect detected")
+                }
+                
+                updateDomain(finalHost)
+                syncToRemote()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to check domain change: ${e.message}")
+        }
+    }
+    
+    /**
+     * Sync domain change back to GitHub via Cloudflare Worker.
+     */
+    fun syncToRemote() {
+        if (syncWorkerUrl == null) return
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                app.post(
+                    syncWorkerUrl,
+                    data = mapOf(
+                        "provider" to providerName,
+                        "domain" to currentDomain
+                    )
+                )
+                Log.d(TAG, "Domain synced to remote: $currentDomain")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to sync domain: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * Build full URL from path.
+     */
+    fun buildUrl(path: String): String {
+        val normalizedPath = if (path.startsWith("/")) path else "/$path"
+        return "https://$currentDomain$normalizedPath"
+    }
+}

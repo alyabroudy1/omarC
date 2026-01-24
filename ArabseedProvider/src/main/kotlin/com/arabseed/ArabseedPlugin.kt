@@ -14,6 +14,6 @@ class ArabseedPlugin: Plugin() {
         com.arabseed.utils.ActivityProvider.initCompat(context)
         
         // Register provider
-        registerMainAPI(Arabseed())
+        registerMainAPI(ArabseedV2())
     }
 }
