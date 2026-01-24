@@ -401,8 +401,16 @@ class ProviderHttpService private constructor(
         return buildMap {
             put("User-Agent", config.userAgent)
             put("Referer", "https://$currentDomain/")
-            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            put("Accept-Language", "en-US,en;q=0.5")
+            
+            // EXACT headers from FaselHD ProviderSessionManager.kt
+            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+            put("Accept-Language", "en-US,en;q=0.9")
+            put("Upgrade-Insecure-Requests", "1")
+            put("Sec-Fetch-Dest", "document")
+            put("Sec-Fetch-Mode", "navigate")
+            put("Sec-Fetch-Site", "none")
+            put("Sec-Fetch-User", "?1")
+            
             if (cookies.isNotEmpty()) {
                 val cookieString = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
                 put("Cookie", cookieString)
