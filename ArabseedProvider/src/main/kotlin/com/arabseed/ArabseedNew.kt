@@ -48,6 +48,7 @@ class ArabseedV2 : MainAPI() {
                 fallbackDomain = "arabseed.show",
                 githubConfigUrl = GITHUB_CONFIG,
                 userAgent = USER_AGENT,
+                syncWorkerUrl = "https://omarstreamcloud.alyabroudy1.workers.dev",
                 skipHeadless = true
             ),
             parser = parser,

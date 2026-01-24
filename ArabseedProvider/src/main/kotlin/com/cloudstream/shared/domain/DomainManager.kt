@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.URI
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Manages provider domain with GitHub fetch and persistence.
@@ -113,6 +115,14 @@ class DomainManager(
     }
     
     /**
+     * Build full URL from path.
+     */
+    fun buildUrl(path: String): String {
+        val normalizedPath = if (path.startsWith("/")) path else "/$path"
+        return "https://$currentDomain$normalizedPath"
+    }
+
+    /**
      * Sync domain change back to GitHub via Cloudflare Worker.
      */
     fun syncToRemote() {
@@ -120,25 +130,30 @@ class DomainManager(
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Determine config filename from provider name or URL
+                // Heuristic: providerName.lowercase() + ".json"
+                val configName = "${providerName.lowercase()}.json"
+                
+                // FaselHD worker expects:
+                // { "provider": "name", "configFile": "name.json", "newDomain": "url", "currentVersion": int }
+                val payload = JSONObject().apply {
+                    put("provider", providerName.lowercase())
+                    put("configFile", configName)
+                    put("newDomain", "https://$currentDomain")
+                    put("currentVersion", 0)
+                }
+                
+                val jsonBody = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                
                 app.post(
                     syncWorkerUrl,
-                    data = mapOf(
-                        "provider" to providerName,
-                        "domain" to currentDomain
-                    )
+                    requestBody = jsonBody
                 )
+                
                 Log.d(TAG, "Domain synced to remote: $currentDomain")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync domain: ${e.message}")
             }
         }
-    }
-    
-    /**
-     * Build full URL from path.
-     */
-    fun buildUrl(path: String): String {
-        val normalizedPath = if (path.startsWith("/")) path else "/$path"
-        return "https://$currentDomain$normalizedPath"
     }
 }
