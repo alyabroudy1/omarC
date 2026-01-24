@@ -35,6 +35,8 @@ class ArabseedV2 : MainAPI() {
     companion object {
         private const val TAG = "ArabseedV2"
         private const val GITHUB_CONFIG = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/arabseed.json"
+        // EXACT UA from FaselHD's ProviderSessionManager.kt (Line 75)
+        const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
     }
     
     private val parser = ArabseedParser()
