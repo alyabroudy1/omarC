@@ -401,7 +401,8 @@ class ProviderHttpService private constructor(
         return buildMap {
             put("User-Agent", config.userAgent)
             put("Referer", "https://$currentDomain/")
-            // Removed Accept/Accept-Language to match FaselHD and reduce fingerprinting
+            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            put("Accept-Language", "en-US,en;q=0.5")
             if (cookies.isNotEmpty()) {
                 val cookieString = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
                 put("Cookie", cookieString)
