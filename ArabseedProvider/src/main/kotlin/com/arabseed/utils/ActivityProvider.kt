@@ -35,10 +35,40 @@ object ActivityProvider {
      */
     val currentActivity: Activity?
         get() {
-            val activity = activityRef?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+            var activity = activityRef?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+            if (activity == null) {
+                activity = getTopActivityReflection()
+                if (activity != null) {
+                    setActivity(activity) // Cache it
+                }
+            }
             Log.d(TAG, "currentActivity requested: ${activity?.javaClass?.simpleName ?: "null"}")
             return activity
         }
+    
+    private fun getTopActivityReflection(): Activity? {
+        try {
+            val activityThreadClass = Class.forName("android.app.ActivityThread")
+            val activityThread = activityThreadClass.getMethod("currentActivityThread").invoke(null)
+            val activitiesField = activityThreadClass.getDeclaredField("mActivities")
+            activitiesField.isAccessible = true
+            val activities = activitiesField.get(activityThread) as Map<*, *>
+            
+            for (activityRecord in activities.values) {
+                val activityRecordClass = activityRecord!!.javaClass
+                val pausedField = activityRecordClass.getDeclaredField("paused")
+                pausedField.isAccessible = true
+                if (!pausedField.getBoolean(activityRecord)) {
+                    val activityField = activityRecordClass.getDeclaredField("activity")
+                    activityField.isAccessible = true
+                    return activityField.get(activityRecord) as Activity
+                }
+            }
+        } catch (e: Exception) {
+            // Log.w(TAG, "Reflection for activity failed: ${e.message}") // Silence to avoid spam
+        }
+        return null
+    }
     
     /**
      * Manually set the current Activity. Useful when init() is called

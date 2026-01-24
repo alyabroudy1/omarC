@@ -12,6 +12,9 @@ class ArabseedPlugin: Plugin() {
         
         // Initialize ActivityProvider safely
         com.arabseed.utils.ActivityProvider.initCompat(context)
+        if (context is android.app.Activity) {
+            com.arabseed.utils.ActivityProvider.setActivity(context)
+        }
         
         // Register provider
         registerMainAPI(ArabseedV2())
