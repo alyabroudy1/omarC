@@ -11,6 +11,7 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import com.lagradost.cloudstream3.network.WebViewResolver
 
 /**
  * Arabseed provider V2 - Now a thin layer using ProviderHttpService.
@@ -26,10 +27,10 @@ class ArabseedV2 : MainAPI() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime, TvType.AsianDrama)
     
     override val mainPage = mainPageOf(
-        "/movies/?offset=" to "أفلام",
-        "/series/?offset=" to "مسلسلات",
-        "/anime/?offset=" to "أنمي",
-        "/asian-drama/?offset=" to "دراما آسيوية"
+        "/movies-1/page/" to "أفلام",
+        "/series-1/page/" to "مسلسلات",
+        "/anime-1/page/" to "أنمي",
+        "/asian-drama/page/" to "دراما آسيوية"
     )
     
     companion object {
@@ -47,7 +48,7 @@ class ArabseedV2 : MainAPI() {
                 name = name,
                 fallbackDomain = "arabseed.show",
                 githubConfigUrl = GITHUB_CONFIG,
-                userAgent = USER_AGENT,
+                userAgent = WebViewResolver.webViewUserAgent ?: USER_AGENT,
                 syncWorkerUrl = "https://omarstreamcloud.alyabroudy1.workers.dev",
                 skipHeadless = true
             ),
