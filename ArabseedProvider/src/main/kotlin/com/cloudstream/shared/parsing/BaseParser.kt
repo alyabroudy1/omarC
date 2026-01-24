@@ -60,7 +60,10 @@ abstract class BaseParser {
         val container = findContainer(doc, mainPageContainerSelectors)
         
         if (container == null) {
-            Log.w(TAG, "[$providerName] No container found for main page")
+            Log.w(TAG, "[$providerName] No container found for main page. Dumping HTML:")
+            Log.w(TAG, "HTML_DUMP_START")
+            Log.w(TAG, doc.outerHtml())
+            Log.w(TAG, "HTML_DUMP_END")
             return emptyList()
         }
         
@@ -99,7 +102,10 @@ abstract class BaseParser {
         val container = findContainer(doc, searchContainerSelectors)
         
         if (container == null) {
-            Log.w(TAG, "[$providerName] No container found for search")
+            Log.w(TAG, "[$providerName] No container found for search. Dumping HTML:")
+            Log.w(TAG, "HTML_DUMP_START")
+            Log.w(TAG, doc.outerHtml())
+            Log.w(TAG, "HTML_DUMP_END")
             return emptyList()
         }
         

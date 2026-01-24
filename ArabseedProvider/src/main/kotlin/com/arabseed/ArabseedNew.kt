@@ -47,7 +47,8 @@ class ArabseedV2 : MainAPI() {
                 name = name,
                 fallbackDomain = "arabseed.show",
                 githubConfigUrl = GITHUB_CONFIG,
-                userAgent = USER_AGENT
+                userAgent = USER_AGENT,
+                skipHeadless = true
             ),
             parser = parser,
             activityProvider = { ActivityProvider.currentActivity }
