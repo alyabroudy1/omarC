@@ -23,8 +23,27 @@ class ArabseedParser : BaseParser() {
         "ul.Blocks-UL > div",
         "div.Blocks-UL > div",
         "div.MovieBlock",
-        "div.poster__single"
+        "div.poster__single",
+        "div.Section",
+        "div.Container",
+        "div.Content",
+        "main",
+        "body" // Fallback to body to force parsing attempts
     )
+    
+    // Debug helper to find the real container
+    override fun parseMainPage(doc: Document): List<ParsedSearchItem> {
+        val items = super.parseMainPage(doc)
+        if (items.isEmpty()) {
+            // DEBUG: Log the structure to help find the new selector
+            val divs = doc.select("div").take(20).map { "${it.tagName()}.${it.className()}" }
+            Log.e(TAG, "DEBUG STRUCTURE: Found divs: $divs")
+            
+            // Log first 1000 chars of body
+            Log.e(TAG, "DEBUG BODY START: ${doc.body().html().take(1000)}")
+        }
+        return items
+    }
     
     override fun extractTitle(element: Element): String {
         return element.select("h4").text()

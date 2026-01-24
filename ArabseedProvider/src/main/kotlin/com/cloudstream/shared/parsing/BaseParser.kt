@@ -56,7 +56,7 @@ abstract class BaseParser {
     )
     
     /** Final parsing method - uses overridable helpers */
-    fun parseMainPage(doc: Document): List<ParsedSearchItem> {
+    open fun parseMainPage(doc: Document): List<ParsedSearchItem> {
         val container = findContainer(doc, mainPageContainerSelectors)
         
         if (container == null) {
