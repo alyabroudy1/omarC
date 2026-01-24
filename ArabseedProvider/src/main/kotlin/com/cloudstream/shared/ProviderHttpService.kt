@@ -242,31 +242,39 @@ class ProviderHttpService private constructor(
      */
     internal suspend fun executeDirectRequest(url: String): RequestResult {
         return try {
-            val domain = extractDomain(url)
+            // REWRITE URL if domain changed
+            // If the request is for the configured domain, but we know the current domain is different, switch it.
+            var targetUrl = url
+            val urlDomain = extractDomain(url)
+            val current = currentDomain
+            
+            if (urlDomain.isNotBlank() && current.isNotBlank() && urlDomain != current) {
+                // Only rewrite if we are targeting the provider's domain (heuristic: assuming urlDomain matches fallback or name)
+                // For safety, we can check if urlDomain is contained in fallbackDomain or if it was the original domain.
+                // Or simply: if we have a currentDomain, use it for main requests.
+                // To be safe: if urlDomain == config.fallbackDomain || urlDomain == "arabseed.show" (hardcoded safety)
+                
+                // Better approach: Replace the host in the URL with currentDomain
+                targetUrl = targetUrl.replace(urlDomain, current)
+                Log.i(TAG, "Rewrote URL domain: $urlDomain -> $current")
+            }
+            
+            val domain = extractDomain(targetUrl)
             val cookies = cookieStore.retrieve(domain)
             val headers = buildHeaders(cookies)
             
-            Log.d(TAG, "Requesting: $url")
-            Log.d(TAG, "Headers: ${headers.keys}")
-            if (cookies.isNotEmpty()) {
-                Log.d(TAG, "Cookies present: ${cookies.keys}")
-            } else {
-                Log.d(TAG, "No cookies for $domain")
-            }
+            Log.d(TAG, "Requesting: $targetUrl")
+            Log.d(TAG, "Headers context: Domain=$domain")
             
-            val response = app.get(url, headers = headers)
+            val response = app.get(targetUrl, headers = headers)
             val html = response.text
             val code = response.code
             val finalUrl = response.url
             
-            Log.d(TAG, "Response: $code | Final URL: $finalUrl | Length: ${html.length}")
+            Log.d(TAG, "Response: $code | Final URL: $finalUrl")
             
-            if (finalUrl != url) {
-                val newDomain = extractDomain(finalUrl)
-                if (newDomain != domain && newDomain.isNotEmpty()) {
-                    Log.i(TAG, "Redirect detected: $domain -> $newDomain")
-                    // Note: We don't update domainManager here, it's done in getDocument
-                }
+            if (finalUrl != targetUrl) {
+                domainManager.checkDomainChange(targetUrl, finalUrl)
             }
             
             when {
@@ -293,17 +301,28 @@ class ProviderHttpService private constructor(
      * Solve CF challenge and return the HTML.
      */
     internal suspend fun solveCloudflareThenRequest(url: String): RequestResult {
-        val domain = extractDomain(url)
+        // We might need to use the current domain here too if it changed while queued?
+        var targetUrl = url
+        val current = currentDomain
+        val urlDomain = extractDomain(url)
+        if (urlDomain != current && current.isNotBlank()) {
+             targetUrl = targetUrl.replace(urlDomain, current)
+             Log.i(TAG, "Rewrote CF solve URL: $urlDomain -> $current")
+        }
+        
+        val domain = extractDomain(targetUrl)
         
         // Clear old cookies before WebView attempt
         cookieStore.clear(domain, "Preparing for CF solve")
         
         var result: WebViewResult
+        var skippedHeadless = false
         
         if (config.skipHeadless) {
-            Log.i(TAG, "Skipping HEADLESS (config), going straight to FULLSCREEN for: $url")
+            Log.i(TAG, "Skipping HEADLESS (config), going straight to FULLSCREEN for: $targetUrl")
+            skippedHeadless = true
             result = webViewEngine.runSession(
-                url = url,
+                url = targetUrl,
                 mode = WebViewEngine.Mode.FULLSCREEN,
                 userAgent = config.userAgent,
                 exitCondition = ExitCondition.PageLoaded,
@@ -311,9 +330,9 @@ class ProviderHttpService private constructor(
             )
         } else {
             // Try headless first
-            Log.i(TAG, "Attempting HEADLESS CF solve for: $url")
+            Log.i(TAG, "Attempting HEADLESS CF solve for: $targetUrl")
             result = webViewEngine.runSession(
-                url = url,
+                url = targetUrl,
                 mode = WebViewEngine.Mode.HEADLESS,
                 userAgent = config.userAgent,
                 exitCondition = ExitCondition.PageLoaded,
@@ -323,24 +342,27 @@ class ProviderHttpService private constructor(
         
         when (result) {
             is WebViewResult.Success -> {
-                Log.i(TAG, "CF solve SUCCESS (Headless/First attempt)")
+                val mode = if (skippedHeadless) "FULLSCREEN (Skipped Headless)" else "HEADLESS"
+                Log.i(TAG, "CF solve SUCCESS ($mode)")
+                
+                // CRITICAL: Update domain immediately so followers know
+                domainManager.checkDomainChange(targetUrl, result.finalUrl)
+                
                 return RequestResult.success(result.html, 200, result.finalUrl)
             }
             is WebViewResult.Timeout -> {
                 // Check if it's still CF
                 if (CloudflareDetector.isCloudflareChallenge(result.partialHtml) || config.skipHeadless) {
-                    if (!config.skipHeadless) {
+                    if (!skippedHeadless) {
                         Log.i(TAG, "HEADLESS timeout, CF detected, trying FULLSCREEN")
                     } else {
                         Log.w(TAG, "FULLSCREEN timeout/failed (SkipHeadless active)")
-                        // If we already skipped headless and failed fullscreen, we are done
                         return RequestResult.failure("CF bypass failed (Timeout)")
                     }
                     
-                    // If we tried headless and failed, NOW try fullscreen (unless we already did)
-                    if (!config.skipHeadless) {
+                    if (!skippedHeadless) {
                         result = webViewEngine.runSession(
-                            url = url,
+                            url = targetUrl,
                             mode = WebViewEngine.Mode.FULLSCREEN,
                             userAgent = config.userAgent,
                             exitCondition = ExitCondition.PageLoaded,
@@ -350,6 +372,7 @@ class ProviderHttpService private constructor(
                         return when (result) {
                             is WebViewResult.Success -> {
                                 Log.i(TAG, "FULLSCREEN solve SUCCESS")
+                                domainManager.checkDomainChange(targetUrl, result.finalUrl)
                                 RequestResult.success(result.html, 200, result.finalUrl)
                             }
                             else -> {
@@ -361,7 +384,6 @@ class ProviderHttpService private constructor(
                          return RequestResult.failure("Request timeout")
                     }
                 } else {
-                    // Timeout but not CF - return partial content
                     Log.w(TAG, "HEADLESS timeout, no CF detected")
                     return RequestResult.failure("Request timeout")
                 }
