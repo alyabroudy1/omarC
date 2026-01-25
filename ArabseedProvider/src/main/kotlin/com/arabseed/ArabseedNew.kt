@@ -26,10 +26,11 @@ class ArabseedV2 : MainAPI() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime, TvType.AsianDrama)
     
     override val mainPage = mainPageOf(
-        "/movies-1/page/" to "أفلام",
-        "/series-1/page/" to "مسلسلات",
-        "/anime-1/page/" to "أنمي",
-        "/asian-drama/page/" to "دراما آسيوية"
+        "/" to "الرئيسية", // Home page to debug structure
+        "/category/movies/page/" to "أفلام",
+        "/category/series/page/" to "مسلسلات",
+        "/movies/page/" to "أفلام (بديل)",
+        "/series/page/" to "مسلسلات (بديل)"
     )
     
     companion object {
