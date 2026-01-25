@@ -279,6 +279,12 @@ class ProviderHttpService private constructor(
             }
             
             when {
+                // Special case: Arabseed sometimes returns 403 but with valid content (WAF behavior).
+                // If we see the site title/markers, treat it as a success.
+                (code == 403 && (html.contains("ArabSeed") || html.contains("عرب سيد"))) -> {
+                    Log.i(TAG, "Redirected 403 to SUCCESS (Valid content detected)")
+                    RequestResult.success(html, 200, finalUrl)
+                }
                 CloudflareDetector.isBlocked(code, html) -> {
                     Log.w(TAG, "Cloudflare blocked (Direct): $code")
                     RequestResult.cloudflareBlocked(code, finalUrl)
