@@ -101,18 +101,33 @@ class WebViewEngine(
             
             // Setup WebViewClient
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val nextUrl = request?.url?.toString()
+                    Log.d(TAG, "WebView Redirecting to: $nextUrl")
+                    return super.shouldOverrideUrlLoading(view, request)
+                }
+
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    Log.d(TAG, "WebView Page Started: $url")
+                    super.onPageStarted(view, url, favicon)
+                }
+
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
+                    val currentUrl = view?.url ?: loadedUrl ?: url
+                    Log.d(TAG, "WebView Page Finished: $currentUrl")
+
                     if (resultDelivered) return
                     
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
                             val html = getHtmlFromWebView(view!!)
-                            val currentUrl = view.url ?: loadedUrl ?: url
                             
                             // Check exit condition
                             val shouldExit = when (exitCondition) {
                                 is ExitCondition.PageLoaded -> {
-                                    !CloudflareDetector.isCloudflareChallenge(html)
+                                    val isCf = CloudflareDetector.isCloudflareChallenge(html)
+                                    if (isCf) Log.d(TAG, "WebView still in Cloudflare challenge...")
+                                    !isCf
                                 }
                                 is ExitCondition.CookiesPresent -> {
                                     val cookies = extractCookies(currentUrl)
@@ -147,8 +162,8 @@ class WebViewEngine(
                     request: WebResourceRequest?,
                     error: WebResourceError?
                 ) {
-                    if (request?.isForMainFrame == true && !resultDelivered) {
-                        Log.e(TAG, "WebView error: ${error?.description}")
+                    if (request?.isForMainFrame == true) {
+                        Log.e(TAG, "WebView error: ${error?.description} for ${request.url}")
                     }
                 }
             }

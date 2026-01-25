@@ -274,6 +274,7 @@ class ProviderHttpService private constructor(
             Log.d(TAG, "Response: $code | Final URL: $finalUrl")
             
             if (finalUrl != targetUrl) {
+                Log.d(TAG, "Request was redirected: $targetUrl -> $finalUrl")
                 domainManager.checkDomainChange(targetUrl, finalUrl)
             }
             
@@ -287,6 +288,7 @@ class ProviderHttpService private constructor(
                 }
                 else -> {
                     Log.e(TAG, "HTTP Failure: $code")
+                    Log.e(TAG, "Response Body (First 2000 chars): ${html.take(2000)}")
                     RequestResult.failure("HTTP $code", code)
                 }
             }
