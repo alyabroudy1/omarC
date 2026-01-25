@@ -26,11 +26,10 @@ class ArabseedV2 : MainAPI() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie, TvType.Anime, TvType.AsianDrama)
     
     override val mainPage = mainPageOf(
-        "/" to "الرئيسية", // Home page to debug structure
-        "/category/movies/page/" to "أفلام",
-        "/category/series/page/" to "مسلسلات",
-        "/movies/page/" to "أفلام (بديل)",
-        "/series/page/" to "مسلسلات (بديل)"
+        "/movies-1/" to "أفلام",
+        "/series-1/" to "مسلسلات",
+        "/anime-1/" to "أنمي",
+        "/asian-drama/" to "دراما آسيوية"
     )
     
     companion object {
@@ -66,7 +65,13 @@ class ArabseedV2 : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "[getMainPage] ${request.name} page=$page")
         
-        val items = http.getMainPage("${request.data}$page")
+        val url = if (page == 1) {
+            request.data
+        } else {
+            "${request.data}page/$page/"
+        }
+        
+        val items = http.getMainPage(url)
         
         if (items.isEmpty()) return null
         
