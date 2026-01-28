@@ -38,14 +38,27 @@ class ArabseedParser : BaseParser() {
     override fun parseMainPage(doc: Document): List<ParsedSearchItem> {
         val url = doc.location()
         // Direct selection of items based on user report + fallbacks
+        // Debug specific selectors
+        Log.d(TAG, "DEBUG: div.series__box count: ${doc.select("div.series__box").size}")
+        Log.d(TAG, "DEBUG: div.MovieBlock count: ${doc.select("div.MovieBlock").size}")
+        Log.d(TAG, "DEBUG: ul.Blocks-UL > div count: ${doc.select("ul.Blocks-UL > div").size}")
+
         val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem, div.series__box").mapNotNull { element ->
             try {
                 val title = extractTitle(element)
-                val url = extractUrl(element) ?: return@mapNotNull null
+                val url = extractUrl(element)
                 val poster = extractPoster(element)
                 val isMovie = isMovie(element)
                 
-                if (title.isBlank()) return@mapNotNull null
+                if (url == null) {
+                    Log.w(TAG, "Skipping item: URL null. Element: ${element.tagName()}.${element.className()}")
+                    return@mapNotNull null
+                }
+                
+                if (title.isBlank()) {
+                    Log.w(TAG, "Skipping item: Title blank. URL: $url")
+                    return@mapNotNull null
+                }
                 
                 ParsedSearchItem(
                     title = title,
@@ -54,6 +67,7 @@ class ArabseedParser : BaseParser() {
                     isMovie = isMovie
                 )
             } catch (e: Exception) {
+                Log.e(TAG, "Error parsing item: ${e.message}")
                 null
             }
         }
