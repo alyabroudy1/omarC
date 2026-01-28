@@ -315,6 +315,43 @@ class ProviderHttpService private constructor(
         // If SessionState has specific image handling logic, it will be used.
         return sessionState.buildHeaders()
     }
+
+    /**
+     * Execute POST request and return Document.
+     */
+    suspend fun post(url: String, data: Map<String, String>, referer: String? = null): Document? {
+        val finalUrl = buildUrl(url)
+        val headers = sessionState.buildHeaders().toMutableMap()
+        if (referer != null) {
+            headers["Referer"] = referer
+        }
+
+        val result = requestQueue.enqueue(finalUrl) { target ->
+             try {
+                 val formBody = okhttp3.FormBody.Builder().apply {
+                     data.forEach { (k, v) -> add(k, v) }
+                 }.build()
+
+                 val okRequest = okhttp3.Request.Builder()
+                     .url(target)
+                     .headers(okhttp3.Headers.of(headers))
+                     .post(formBody)
+                     .build()
+
+                 val response = app.baseClient.newCall(okRequest).execute()
+                 val code = response.code
+                 val html = response.body?.string() ?: ""
+                 val finalReqUrl = response.request.url.toString()
+                 response.close()
+
+                 RequestResult.success(html, code, finalReqUrl)
+             } catch (e: Exception) {
+                 RequestResult.failure(e)
+             }
+        }
+        
+        return result.html?.let { Jsoup.parse(it, finalUrl) }
+    }
     
     // ==================== INTERNAL: Request execution ====================
     

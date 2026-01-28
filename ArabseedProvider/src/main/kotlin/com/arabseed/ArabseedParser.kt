@@ -375,6 +375,62 @@ class ArabseedParser : BaseParser() {
         return urls
     }
     
+    fun parseEpisodesFromAjax(doc: Document, seasonNum: Int): List<ParsedEpisode> {
+        return doc.select("a").mapNotNull { ep ->
+            val epUrl = ep.attr("href")
+            val epTitle = ep.text()
+            if (epUrl.isBlank()) return@mapNotNull null
+            
+            val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 0
+            
+            ParsedEpisode(
+                url = epUrl,
+                name = epTitle,
+                season = seasonNum,
+                episode = epNum
+            )
+        }
+    }
+    
+    // ==================== SEASONS (AJAX SUPPORT) ====================
+    
+    data class SeasonData(val season: Int, val postId: String)
+    
+    fun parseSeasonsWithPostId(doc: Document): List<SeasonData> {
+        return doc.select("div.SeasonsListHolder ul > li").mapNotNull { li ->
+            val season = li.attr("data-season").toIntOrNull()
+            val postId = li.attr("data-id")
+            if (season != null && postId.isNotBlank()) {
+                SeasonData(season, postId)
+            } else null
+        }
+    }
+    
+    // ==================== SERVER LIST PARSING ====================
+    
+    data class ServerItem(val name: String, val url: String)
+    
+    fun parseServerList(doc: Document): List<ServerItem> {
+        val servers = mutableListOf<ServerItem>()
+        // Logic from reference: select "ul > li[data-link], ul > h3"
+        // But we need to handle the grouping or just extract valid links
+        // The reference groups them by quality (H3 text).
+        // For simplicity and robustness, we can just extract all "li[data-link]"
+        // and append the quality from the preceding H3 if we want, OR just extract all links.
+        // The reference filters for "سيد" (Seed) in the name for special handling.
+        
+        doc.select("ul > li[data-link]").forEach { li ->
+             val url = li.attr("data-link").ifBlank { li.attr("data-url") }
+             val name = li.text().trim()
+             if (url.isNotBlank()) {
+                 servers.add(ServerItem(name, url))
+             }
+        }
+        
+        // Also check .watchBTn if not found in list (though reference does this separately)
+        return servers
+    }
+    
     // ==================== QUALITY PARSING ====================
     
     fun parseQuality(label: String): Int {

@@ -90,12 +90,26 @@ class ArabseedV2 : MainAPI() {
     
     // ==================== SEARCH ====================
     
+    // ==================== SEARCH ====================
+    
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "[search] query=$query")
         
-        val items = http.search(query, "/find/$query/")
+        // Simulating reference: POST to /SearchingTwo.php for both "movies" and "series"
+        val types = listOf("movies", "series")
         
-        return items.map { item ->
+        return types.map { type ->
+            async {
+                val doc = http.post(
+                    url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/SearchingTwo.php",
+                    data = mapOf("search" to query, "type" to type),
+                    referer = mainUrl
+                )
+                
+                // Use parser to extract items from the returned HTML document
+                doc?.let { parser.parseSearch(it) } ?: emptyList()
+            }
+        }.awaitAll().flatten().map { item ->
             if (item.isMovie) {
                 newMovieSearchResponse(item.title, item.url, TvType.Movie) {
                     this.posterUrl = item.posterUrl
@@ -127,10 +141,30 @@ class ArabseedV2 : MainAPI() {
                 this.posterHeaders = http.getImageHeaders()
             }
         } else {
-            val episodes = data.episodes?.toMutableList() ?: mutableListOf()
+            // Reference logic: Check season list, if exists, fetch episodes via AJAX
+            val seasonData = parser.parseSeasonsWithPostId(doc)
+            val episodes = mutableListOf<ParsedEpisode>()
             
-            // Simplified season logic for port
-            
+            if (seasonData.isNotEmpty()) {
+                // Fetch episodes for each season via AJAX
+                val ajaxEpisodes = seasonData.map { s ->
+                    async {
+                        val epDoc = http.post(
+                            url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/Single/Episodes.php",
+                            data = mapOf("season" to s.season.toString(), "post_id" to s.postId),
+                            referer = url
+                        )
+                        epDoc?.let { parser.parseEpisodesFromAjax(it, s.season) } ?: emptyList()
+                    }
+                }.awaitAll().flatten()
+                episodes.addAll(ajaxEpisodes)
+            } else {
+                // Fallback: parse from DOM (if no seasons or failed)
+                // Reference uses doc.select("div.ContainerEpisodesList > a")
+                // Our parser.parseEpisodes uses div.epAll a, which is similar/updated.
+                episodes.addAll(parser.parseEpisodes(doc, 1))
+            }
+
             val convertedEpisodes = episodes.distinctBy { "${it.season}:${it.episode}" }
                 .sortedWith(compareBy({ it.season }, { it.episode }))
                 .map { ep ->
@@ -167,47 +201,83 @@ class ArabseedV2 : MainAPI() {
     ): Boolean {
         Log.i(TAG, "[loadLinks] $data")
         
-        val playerUrls = http.getPlayerUrls(data)
-        Log.i(TAG, "[loadLinks] Found ${playerUrls.size} player URLs")
+        // 1. Get Main Doc (to find watch button)
+        val doc = http.getDocument(data) ?: return false
+        val watchUrl = doc.select("a.watchBTn").attr("href")
         
-        if (playerUrls.isEmpty()) {
-            return sniffAndCallback(data, data, callback)
+        if (watchUrl.isBlank()) {
+             Log.w(TAG, "No watch button found")
+             return false
         }
         
-        for ((index, playerUrl) in playerUrls.withIndex()) {
-            if (sniffAndCallback(playerUrl, data, callback)) {
-                return true
+        // 2. Get Watch Doc
+        val watchDoc = http.getDocument(watchUrl) ?: return false
+        
+        // 3. Parse Links simulating reference logic (group by H3 headers/Qualities)
+        val indexOperators = mutableListOf<Int>()
+        val elements = watchDoc.select("ul > li[data-link], ul > h3")
+        
+        elements.forEachIndexed { index, element ->
+            if (element.`is`("h3")) {
+                indexOperators.add(index)
             }
         }
         
-        return false
-    }
-    
-    private suspend fun sniffAndCallback(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val videos = http.sniffVideos(url)
-        
-        if (videos.isEmpty()) return false
-        
-        videos.forEach { source ->
-            val quality = parser.parseQuality(source.label)
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = "$name - ${source.label}",
-                    url = source.url,
-                    type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = referer
-                    this.quality = quality
-                    this.headers = source.headers + http.getImageHeaders()
-                }
-            )
+        val watchLinks = if (indexOperators.isNotEmpty()) {
+            indexOperators.mapIndexed { i, index ->
+                val endIndex = if (i != indexOperators.size - 1) indexOperators[i + 1] else elements.size
+                val qualityText = elements[index].text()
+                val quality = Regex("""\d+""").find(qualityText)?.value?.toIntOrNull() ?: 0
+                val links = elements.subList(index + 1, endIndex).filter { !it.`is`("h3") }
+                quality to links
+            }
+        } else {
+             listOf(0 to elements.filter { !it.`is`("h3") })
         }
         
-        return true
+        var found = false
+        
+        watchLinks.forEach { (quality, links) ->
+            links.forEach { linkElement ->
+                val linkUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
+                val linkName = linkElement.text()
+                
+                if (linkUrl.isNotBlank()) {
+                     if (linkName.contains("سيد")) {
+                         // Special handling for ArabSeed files
+                         // Reference fetches iframe and selects "source"
+                         val srcDoc = http.getDocument(linkUrl)
+                         val src = srcDoc?.select("source")?.attr("src")
+                         
+                         if (!src.isNullOrBlank()) {
+                             callback(
+                                 ExtractorLink(
+                                     name,
+                                     "Arab Seed",
+                                     src,
+                                     referer = "",
+                                     quality = quality
+                                 )
+                             )
+                             found = true
+                         }
+                         // Also loadExtractor as backup/alternative? Reference does BOTH.
+                         loadExtractor(linkUrl, data, subtitleCallback) { link ->
+                             callback(link)
+                             found = true
+                         }
+                     } else {
+                         loadExtractor(linkUrl, data, subtitleCallback) { link ->
+                             // Inject quality if missing
+                             // We can't easily modify ExtractorLink, but we pass it through
+                             callback(link)
+                             found = true
+                         }
+                     }
+                }
+            }
+        }
+        
+        return found
     }
 }
