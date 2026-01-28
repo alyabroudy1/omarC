@@ -38,7 +38,7 @@ class ArabseedParser : BaseParser() {
     override fun parseMainPage(doc: Document): List<ParsedSearchItem> {
         val url = doc.location()
         // Direct selection of items based on user report + fallbacks
-        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div").mapNotNull { element ->
+        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem").mapNotNull { element ->
             try {
                 val title = extractTitle(element)
                 val url = extractUrl(element) ?: return@mapNotNull null
