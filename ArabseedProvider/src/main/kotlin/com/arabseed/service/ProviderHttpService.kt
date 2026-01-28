@@ -280,7 +280,7 @@ class ProviderHttpService private constructor(
         // CF BYPASS / 403 HANDLING
         // If DirectHttp is blocked (403/Access Denied), retry with WebView.
         // This is critical when OkHttp TLS fingerprint is blocked despite valid cookies.
-        val doc = result.html?.let { Jsoup.parse(it) }
+        val doc = result.html?.let { Jsoup.parse(it, url) }
         
         if (doc == null || result.responseCode == 403 || doc.select("title").text().contains("403 Forbidden") || doc.select("title").text().contains("Access denied")) {
             Log.w(TAG, "DirectHttp blocked (403/Access Denied). Retrying with WebView: $url")
