@@ -38,7 +38,7 @@ class ArabseedParser : BaseParser() {
     override fun parseMainPage(doc: Document): List<ParsedSearchItem> {
         val url = doc.location()
         // Direct selection of items based on user report + fallbacks
-        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem").mapNotNull { element ->
+        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem, div.series__box").mapNotNull { element ->
             try {
                 val title = extractTitle(element)
                 val url = extractUrl(element) ?: return@mapNotNull null
@@ -92,6 +92,7 @@ class ArabseedParser : BaseParser() {
             .ifEmpty { element.select("h4").text() }
             .ifEmpty { element.select("h3").text() }
             .ifEmpty { element.select("div.title").text() }
+            .ifEmpty { element.select("div.title___").text() }
             .ifEmpty { element.selectFirst("a")?.attr("title") ?: "" }
     }
     
@@ -99,6 +100,7 @@ class ArabseedParser : BaseParser() {
         val img = element.selectFirst("div.post__image img")
             ?: element.selectFirst("img.imgOptimzer")
             ?: element.selectFirst("div.Poster img")
+            ?: element.selectFirst("div.image__poster img")
             ?: element.selectFirst("img")
         
         return img?.attr("data-src")
