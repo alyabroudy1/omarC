@@ -52,6 +52,7 @@ class ArabseedParser : BaseParser() {
                 
                 if (url == null) {
                     Log.w(TAG, "Skipping item: URL null. Element: ${element.tagName()}.${element.className()}")
+                    Log.w(TAG, "HTML of skipped item: ${element.outerHtml()}")
                     return@mapNotNull null
                 }
                 
@@ -95,8 +96,8 @@ class ArabseedParser : BaseParser() {
             val divs = doc.select("div").take(20).map { "${it.tagName()}.${it.className()}" }
             Log.e(TAG, "DEBUG STRUCTURE: Found divs: $divs")
             
-            // Log first 1000 chars of body
-            Log.e(TAG, "DEBUG BODY START: ${doc.body().html().take(1000)}")
+            // Log full HTML as requested
+            Log.e(TAG, "FULL HTML DUMP: ${doc.html()}")
         }
         return baseItems
     }
@@ -124,8 +125,11 @@ class ArabseedParser : BaseParser() {
     }
     
     override fun extractUrl(element: Element): String? {
-        return element.selectFirst("a.movie__block")?.attr("href")
-            ?.ifBlank { element.selectFirst("a")?.attr("href") }?.ifBlank { null }
+        val url = element.select("a.movie__block").attr("href")
+            .ifBlank { element.select("a[href]").attr("href") }
+            .ifBlank { element.attr("href") }
+            
+        return url.ifBlank { null }
     }
     
     override fun isMovie(element: Element): Boolean {
