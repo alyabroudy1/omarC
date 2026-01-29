@@ -258,7 +258,8 @@ class ArabseedV2 : MainAPI() {
         
         watchLinks.forEach { (quality, links) ->
             links.forEach { linkElement ->
-                val linkUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
+                val rawUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
+                val linkUrl = fixUrl(rawUrl)
                 val linkName = linkElement.text()
                 
                 if (linkUrl.isNotBlank()) {
