@@ -380,13 +380,8 @@ class ArabseedParser : BaseParser() {
         // Parse episodes with new selector
         // User provided: <ul class="episodes__list boxs__wrapper ..."> <li> <a> ...
         // Also try finding by inner content "div.epi__num" which seems unique to episodes
-        var epElements = doc.select("ul.episodes__list li a")
-        
-        if (epElements.isEmpty()) {
-             // Try searching for the inner div and getting parent
-             val elementList = doc.select("div.epi__num").mapNotNull { it.parent() }.filter { it.tagName() == "a" }
-             epElements = Elements(elementList)
-        }
+        // using :has() is cleaner than detecting parents
+        var epElements = doc.select("ul.episodes__list li a, a:has(div.epi__num)")
         
         if (epElements.isEmpty()) {
             // retain old selectors as fallback
