@@ -204,6 +204,7 @@ class ArabseedParser : BaseParser() {
             "div.singleInfo span:contains(القصة) p",
             "div.singleDesc p",
             "div.story p",
+            "div.post__story p",
             "div.postContent p"
         ))
         if (plot.isBlank()) {
@@ -311,7 +312,7 @@ class ArabseedParser : BaseParser() {
 
         // Fallback: Watch Button (critical for loadLinks)
         if (watchUrl.isBlank()) {
-            watchUrl = doc.select("a.watchBTn").attr("href")
+            watchUrl = doc.select("a.watch__btn").attr("href")
             if (watchUrl.isNotBlank()) Log.d(TAG, "Found watch button URL: $watchUrl")
         }
 

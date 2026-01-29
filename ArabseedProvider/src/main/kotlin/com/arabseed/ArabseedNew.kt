@@ -221,7 +221,7 @@ class ArabseedV2 : MainAPI() {
         var watchDoc = if (isWatchPage) doc else null
         
         if (watchDoc == null) {
-            val watchUrl = doc.select("a.watchBTn").attr("href")
+            val watchUrl = doc.select("a.watch__btn").attr("href")
             if (watchUrl.isNotBlank()) {
                 Log.d(TAG, "Found watch button on main page, following to: $watchUrl")
                 watchDoc = http.getDocument(watchUrl)
