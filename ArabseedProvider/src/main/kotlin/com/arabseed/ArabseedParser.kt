@@ -220,7 +220,7 @@ class ArabseedParser : BaseParser() {
             .toDoubleOrNull()?.times(1000)?.toInt()
         
         // Type detection
-        val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont, div.seasons--list, a.episode__item, div.series-episodes").isNotEmpty()
+        val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont, div.seasons--list, a.episode__item, div.series-episodes, div#seasons__list, div.list__sub__cats, div.epi__num, ul.episodes__list").isNotEmpty()
         
         val seriesKeywords = listOf("انمي", "مسلسل", "موسم", "برنامج", "سلسلة")
         val isSeriesTitle = seriesKeywords.any { title.contains(it, ignoreCase = true) }
@@ -355,8 +355,8 @@ class ArabseedParser : BaseParser() {
         
         // Detect active season
         var activeSeasonNum = 1
-        // Check for the specific ID provided by user
-        val seasonList = doc.selectFirst("div#seasons__list")
+        // Check for the specific ID provided by user or class fallback
+        val seasonList = doc.selectFirst("div#seasons__list, div.list__sub__cats")
         
         if (seasonList != null) {
             val selected = seasonList.selectFirst("li.selected")
@@ -378,7 +378,14 @@ class ArabseedParser : BaseParser() {
         
         // Parse episodes with new selector
         // User provided: <ul class="episodes__list boxs__wrapper ..."> <li> <a> ...
+        // Also try finding by inner content "div.epi__num" which seems unique to episodes
         var epElements = doc.select("ul.episodes__list li a")
+        
+        if (epElements.isEmpty()) {
+             // Try searching for the inner div and getting parent
+             epElements = doc.select("div.epi__num").mapNotNull { it.parent() }.filter { it.tagName() == "a" }
+                 .toMutableList() as Elements
+        }
         
         if (epElements.isEmpty()) {
             // retain old selectors as fallback
@@ -430,17 +437,8 @@ class ArabseedParser : BaseParser() {
         val urls = mutableListOf<Pair<Int, String>>()
         
         // New selector from user
-        doc.select("div#seasons__list ul li").forEach { li ->
+        doc.select("div#seasons__list ul li, div.list__sub__cats ul li").forEach { li ->
             if (li.hasClass("selected")) return@forEach
-            
-            // The user snippet shows 'data-term' but doesn't explicitly show a URL in the <li> itself.
-            // Usually these work via AJAX or have an onclick/href.
-            // Looking at the snippet: <li data-term="280903">...</li>
-            // It might be using a term ID to fetch via AJAX, OR there might be an <a> tag inside or onclick not shown.
-            // Assuming standard Arabseed behavior which often uses onClick with window.location or similar.
-            // IF NO URL found, we might need to rely on the 'data-term' to build a URL or assume standard pattern.
-            // However, often `extractSeasonUrls` is for *other* pages. 
-            // If the user didn't provide the link structure for seasons, I'll rely on common patterns or look for <a>
             
             // Try to find a link inside
             var pageUrl = li.select("a").attr("href")
@@ -534,7 +532,7 @@ class ArabseedParser : BaseParser() {
         
         // New selector
         if (list.isEmpty()) {
-            doc.select("div#seasons__list ul li").forEach { li ->
+            doc.select("div#seasons__list ul li, div.list__sub__cats ul li").forEach { li ->
                 val termId = li.attr("data-term")
                 if (termId.isNotBlank()) {
                     val sNum = parseSeasonNumber(li.text())
