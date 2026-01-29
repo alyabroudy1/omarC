@@ -348,38 +348,58 @@ class ArabseedParser : BaseParser() {
     
     // ==================== EPISODES ====================
     
+    // ==================== EPISODES ====================
+    
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParsedEpisode> {
         val episodes = mutableListOf<ParsedEpisode>()
         
         // Detect active season
         var activeSeasonNum = 1
-        val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
+        // Check for the specific ID provided by user
+        val seasonList = doc.selectFirst("div#seasons__list")
         
-        if (seasonTabs.isNotEmpty()) {
-            val activeTab = seasonTabs.find { it.hasClass("active") }
-            if (activeTab != null) {
-                val t = activeTab.select(".title").text()
-                activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
+        if (seasonList != null) {
+            val selected = seasonList.selectFirst("li.selected")
+            if (selected != null) {
+                // Extract number from "الموسم الثالث" etc
+                val t = selected.text()
+                activeSeasonNum = parseSeasonNumber(t)
             }
         } else {
-            val t = doc.select("div.seasonDiv.active .title, div.seasons--list.active .title").text()
-            activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
+            // Fallback to old selectors
+            val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
+            if (seasonTabs.isNotEmpty()) {
+                val activeTab = seasonTabs.find { it.hasClass("active") }
+                if (activeTab != null) {
+                    activeSeasonNum = Regex("""\d+""").find(activeTab.text())?.value?.toIntOrNull() ?: 1
+                }
+            }
         }
         
-        // Parse episodes from current page (try multiple selectors)
-        var epElements = doc.select("div.epAll a")
+        // Parse episodes with new selector
+        // User provided: <ul class="episodes__list boxs__wrapper ..."> <li> <a> ...
+        var epElements = doc.select("ul.episodes__list li a")
+        
         if (epElements.isEmpty()) {
-            epElements = doc.select("div.episodes-list a, ul.episodes li a, a.episode__item, div.series-episodes a")
+            // retain old selectors as fallback
+             epElements = doc.select("div.epAll a, div.episodes-list a, ul.episodes li a, a.episode__item, div.series-episodes a")
         }
         
         epElements.forEach { ep ->
             val epUrl = ep.attr("href")
-            val epTitle = ep.text()
-            val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
+            val epName = ep.text()
+            
+            // User snippet shows: <div class="epi__num"> الحلقة <b>12</b> </div>
+            val numText = ep.select("div.epi__num b").text()
+            val epNum = if (numText.isNotEmpty()) {
+                numText.trim().toIntOrNull() ?: 0
+            } else {
+                epName.replace("الحلقة", "").trim().toIntOrNull() ?: 0
+            }
             
             episodes.add(ParsedEpisode(
                 url = epUrl,
-                name = epTitle,
+                name = epName,
                 season = seasonNum ?: activeSeasonNum,
                 episode = epNum
             ))
@@ -389,12 +409,57 @@ class ArabseedParser : BaseParser() {
             .sortedWith(compareBy({ it.season }, { it.episode }))
     }
     
+    private fun parseSeasonNumber(text: String): Int {
+        if (text.contains("الأول")) return 1
+        if (text.contains("الثاني")) return 2
+        if (text.contains("الثالث")) return 3
+        if (text.contains("الرابع")) return 4
+        if (text.contains("الخامس")) return 5
+        if (text.contains("السادس")) return 6
+        if (text.contains("السابع")) return 7
+        if (text.contains("الثامن")) return 8
+        if (text.contains("التاسع")) return 9
+        if (text.contains("العاشر")) return 10
+        return Regex("""\d+""").find(text)?.value?.toIntOrNull() ?: 1
+    }
+
     /**
      * Extract season URLs for parallel fetching.
      */
     fun extractSeasonUrls(doc: Document): List<Pair<Int, String>> {
-        val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
+        val urls = mutableListOf<Pair<Int, String>>()
         
+        // New selector from user
+        doc.select("div#seasons__list ul li").forEach { li ->
+            if (li.hasClass("selected")) return@forEach
+            
+            // The user snippet shows 'data-term' but doesn't explicitly show a URL in the <li> itself.
+            // Usually these work via AJAX or have an onclick/href.
+            // Looking at the snippet: <li data-term="280903">...</li>
+            // It might be using a term ID to fetch via AJAX, OR there might be an <a> tag inside or onclick not shown.
+            // Assuming standard Arabseed behavior which often uses onClick with window.location or similar.
+            // IF NO URL found, we might need to rely on the 'data-term' to build a URL or assume standard pattern.
+            // However, often `extractSeasonUrls` is for *other* pages. 
+            // If the user didn't provide the link structure for seasons, I'll rely on common patterns or look for <a>
+            
+            // Try to find a link inside
+            var pageUrl = li.select("a").attr("href")
+            if (pageUrl.isBlank()) {
+                // Check onclick
+                pageUrl = Regex("""href\s*=\s*['"]([^'"]+)['"]""").find(li.attr("onclick"))?.groupValues?.get(1) ?: ""
+            }
+            
+            if (pageUrl.isNotBlank()) {
+                 val t = li.text()
+                 val sNum = parseSeasonNumber(t)
+                 urls.add(Pair(sNum, pageUrl))
+            }
+        }
+        
+        if (urls.isNotEmpty()) return urls
+        
+        // Fallback to old logic
+        val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
         return seasonTabs.filter { !it.hasClass("active") }.mapNotNull { tab ->
             val t = tab.select(".title").text()
             val sNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: return@mapNotNull null
