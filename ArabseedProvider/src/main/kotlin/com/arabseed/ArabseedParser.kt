@@ -220,13 +220,19 @@ class ArabseedParser : BaseParser() {
             .toDoubleOrNull()?.times(1000)?.toInt()
         
         // Type detection
-        val isMovie = doc.select("div.seasonEpsCont").isEmpty() &&
-            !url.contains("/seasons/") &&
-            !url.contains("/series/") &&
-            !url.contains("/category/") &&
-            !title.contains("مسلسل")
+        val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont").isNotEmpty()
+        val isSeriesUrl = url.contains("/seasons/") || 
+                         url.contains("/series/") || 
+                         title.contains("مسلسل")
+        
+        val isMovie = !hasEpisodes && !isSeriesUrl
             
-        Log.d(TAG, "[parseLoadPageData] Extracted: title='$title', year=$year, plotLength=${plot.length}, poster='$posterUrl'")
+        Log.d(TAG, "[parseLoadPageData] Extracted: title='$title', year=$year, plotLength=${plot.length}, hasEpisodes=$hasEpisodes, isSeriesUrl=$isSeriesUrl, isMovie=$isMovie")
+        
+        // Dump HTML for debugging as requested
+        Log.e(TAG, "HTML_DUMP_START")
+        Log.e(TAG, doc.outerHtml())
+        Log.e(TAG, "HTML_DUMP_END")
         
         return if (isMovie) {
             val watchUrl = extractMovieWatchUrl(doc)
