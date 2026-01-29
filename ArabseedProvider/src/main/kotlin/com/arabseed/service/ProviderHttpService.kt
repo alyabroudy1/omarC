@@ -332,9 +332,13 @@ class ProviderHttpService private constructor(
                      data.forEach { (k, v) -> add(k, v) }
                  }.build()
 
+                 val okHeaders = okhttp3.Headers.Builder().apply {
+                     headers.forEach { (k, v) -> add(k, v) }
+                 }.build()
+
                  val okRequest = okhttp3.Request.Builder()
                      .url(finalUrl)
-                     .headers(okhttp3.Headers.of(headers))
+                     .headers(okHeaders)
                      .post(formBody)
                      .build()
 

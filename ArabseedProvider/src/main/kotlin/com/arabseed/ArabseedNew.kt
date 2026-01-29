@@ -252,13 +252,14 @@ class ArabseedV2 : MainAPI() {
                          if (!src.isNullOrBlank()) {
                              callback(
                                  newExtractorLink(
-                                     name,
-                                     "Arab Seed",
-                                     src,
-                                     data, // referer
-                                     quality,
-                                     src.contains(".m3u8") // isM3u8
-                                 )
+                                     source = name,
+                                     name = "Arab Seed",
+                                     url = src,
+                                     type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                 ) {
+                                     this.referer = ""
+                                     this.quality = quality
+                                 }
                              )
                              found = true
                          }
