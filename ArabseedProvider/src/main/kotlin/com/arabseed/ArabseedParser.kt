@@ -232,8 +232,8 @@ class ArabseedParser : BaseParser() {
             Log.d(TAG, "[parseLoadPageData] Movie detected. WatchUrl='$watchUrl'")
             
             if (watchUrl.isBlank()) {
-                Log.w(TAG, "[parseLoadPageData] Watch URL is empty! Dumping BODY (first 20k chars)...")
-                Log.w(TAG, doc.body().outerHtml().take(20000))
+                Log.w(TAG, "[parseLoadPageData] Watch URL is empty! Dumping BODY (first 200k chars)...")
+                Log.w(TAG, doc.body().outerHtml().take(200000))
             }
             
             ParsedLoadData(
