@@ -221,13 +221,18 @@ class ArabseedParser : BaseParser() {
         
         // Type detection
         val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont").isNotEmpty()
+        
+        val seriesKeywords = listOf("انمي", "مسلسل", "موسم", "برنامج", "سلسلة")
+        val isSeriesTitle = seriesKeywords.any { title.contains(it, ignoreCase = true) }
+        
         val isSeriesUrl = url.contains("/seasons/") || 
                          url.contains("/series/") || 
-                         title.contains("مسلسل")
+                         url.contains("/selary") ||
+                         url.contains("/anime/")
         
-        val isMovie = !hasEpisodes && !isSeriesUrl
+        val isMovie = !hasEpisodes && !isSeriesUrl && !isSeriesTitle
             
-        Log.d(TAG, "[parseLoadPageData] Extracted: title='$title', year=$year, plotLength=${plot.length}, hasEpisodes=$hasEpisodes, isSeriesUrl=$isSeriesUrl, isMovie=$isMovie")
+        Log.d(TAG, "[parseLoadPageData] Extracted: title='$title', year=$year, plotLength=${plot.length}, hasEpisodes=$hasEpisodes, isSeriesUrl=$isSeriesUrl, isSeriesTitle=$isSeriesTitle, isMovie=$isMovie")
         
         // Dump HTML for debugging as requested
         Log.e(TAG, "HTML_DUMP_START")
