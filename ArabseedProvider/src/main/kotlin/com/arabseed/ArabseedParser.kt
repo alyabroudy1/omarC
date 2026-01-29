@@ -185,6 +185,9 @@ class ArabseedParser : BaseParser() {
         
         if (title.isBlank()) {
             Log.e(TAG, "[$providerName] Failed to parse title for: $url")
+            Log.e(TAG, "HTML_DUMP_START")
+            Log.e(TAG, doc.outerHtml())
+            Log.e(TAG, "HTML_DUMP_END")
             return null
         }
         
