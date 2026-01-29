@@ -31,7 +31,8 @@ class RequestQueue(
     
     data class QueuedRequest(
         val url: String,
-        val deferred: CompletableDeferred<RequestResult>
+        val deferred: CompletableDeferred<RequestResult>,
+        val action: suspend () -> RequestResult
     )
     
     private val pendingRequests = mutableMapOf<String, MutableList<QueuedRequest>>()
@@ -40,9 +41,16 @@ class RequestQueue(
      * Queue a request. Returns when the request is complete.
      */
     suspend fun enqueue(url: String): RequestResult {
+        return enqueueAction(url) { executeRequest(url) }
+    }
+
+    /**
+     * Queue a generic action (like a POST request) associated with a URL (for domain grouping).
+     */
+    suspend fun enqueueAction(url: String, action: suspend () -> RequestResult): RequestResult {
         val domain = extractDomain(url)
         val deferred = CompletableDeferred<RequestResult>()
-        val request = QueuedRequest(url, deferred)
+        val request = QueuedRequest(url, deferred, action)
         
         val isLeader = mutex.withLock {
             val queue = pendingRequests.getOrPut(domain) { mutableListOf() }
@@ -62,7 +70,7 @@ class RequestQueue(
     
     private suspend fun executeAsLeader(domain: String, leader: QueuedRequest) {
         // Step 1: Execute leader request
-        val result = executeRequest(leader.url)
+        val result = leader.action()
         
         when {
             result.success -> {
@@ -88,11 +96,16 @@ class RequestQueue(
                 Log.i(TAG, "Solving for URL: $solveUrl (Original: ${leader.url})")
                 
                 val cfResult = solveCfAndRequest(solveUrl)
-                leader.deferred.complete(cfResult)
                 
                 if (cfResult.success) {
+                    Log.i(TAG, "CF solved, retrying leader request...")
+                    // Retry original action now that cookies are fresh
+                    val retryResult = leader.action()
+                    leader.deferred.complete(retryResult)
                     verifyAndRunFollowers(domain)
                 } else {
+                    Log.w(TAG, "CF solve failed")
+                    leader.deferred.complete(cfResult)
                     failAllFollowers(domain, "CF solve failed")
                 }
             }
@@ -125,7 +138,7 @@ class RequestQueue(
         val verifier = followers.first()
         Log.d(TAG, "Verifying cookies with first follower: ${verifier.url}")
         
-        val verifyResult = executeRequest(verifier.url)
+        val verifyResult = verifier.action()
         
         if (verifyResult.success) {
             Log.i(TAG, "Cookie verification SUCCESS for $domain")
@@ -135,7 +148,7 @@ class RequestQueue(
             coroutineScope {
                 followers.drop(1).forEach { request ->
                     launch {
-                        val result = executeRequest(request.url)
+                        val result = request.action()
                         request.deferred.complete(result)
                     }
                 }
@@ -165,7 +178,7 @@ class RequestQueue(
         coroutineScope {
             followers.forEach { request ->
                 launch {
-                    val result = executeRequest(request.url)
+                    val result = request.action()
                     request.deferred.complete(result)
                 }
             }

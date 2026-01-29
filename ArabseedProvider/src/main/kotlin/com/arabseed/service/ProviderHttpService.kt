@@ -326,14 +326,14 @@ class ProviderHttpService private constructor(
             headers["Referer"] = referer
         }
 
-        val result = requestQueue.enqueue(finalUrl) { target ->
+        val result = requestQueue.enqueueAction(finalUrl) { 
              try {
                  val formBody = okhttp3.FormBody.Builder().apply {
                      data.forEach { (k, v) -> add(k, v) }
                  }.build()
 
                  val okRequest = okhttp3.Request.Builder()
-                     .url(target)
+                     .url(finalUrl)
                      .headers(okhttp3.Headers.of(headers))
                      .post(formBody)
                      .build()

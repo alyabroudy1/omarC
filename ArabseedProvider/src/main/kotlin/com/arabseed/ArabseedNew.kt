@@ -90,35 +90,35 @@ class ArabseedV2 : MainAPI() {
     
     // ==================== SEARCH ====================
     
-    // ==================== SEARCH ====================
-    
     override suspend fun search(query: String): List<SearchResponse> {
         Log.d(TAG, "[search] query=$query")
         
         // Simulating reference: POST to /SearchingTwo.php for both "movies" and "series"
         val types = listOf("movies", "series")
         
-        return types.map { type ->
-            async {
-                val doc = http.post(
-                    url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/SearchingTwo.php",
-                    data = mapOf("search" to query, "type" to type),
-                    referer = mainUrl
-                )
-                
-                // Use parser to extract items from the returned HTML document
-                doc?.let { parser.parseSearch(it) } ?: emptyList()
-            }
-        }.awaitAll().flatten().map { item ->
-            if (item.isMovie) {
-                newMovieSearchResponse(item.title, item.url, TvType.Movie) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = http.getImageHeaders()
+        return coroutineScope {
+            types.map { type ->
+                async {
+                    val doc = http.post(
+                        url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/SearchingTwo.php",
+                        data = mapOf("search" to query, "type" to type),
+                        referer = mainUrl
+                    )
+                    
+                    // Use parser to extract items from the returned HTML document
+                    doc?.let { parser.parseSearch(it) } ?: emptyList()
                 }
-            } else {
-                newTvSeriesSearchResponse(item.title, item.url, TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = http.getImageHeaders()
+            }.awaitAll().flatten().map { item -> // item is ParsedSearchItem
+                if (item.isMovie) {
+                    newMovieSearchResponse(item.title, item.url, TvType.Movie) {
+                        this.posterUrl = item.posterUrl
+                        this.posterHeaders = http.getImageHeaders()
+                    }
+                } else {
+                    newTvSeriesSearchResponse(item.title, item.url, TvType.TvSeries) {
+                        this.posterUrl = item.posterUrl
+                        this.posterHeaders = http.getImageHeaders()
+                    }
                 }
             }
         }
@@ -147,21 +147,21 @@ class ArabseedV2 : MainAPI() {
             
             if (seasonData.isNotEmpty()) {
                 // Fetch episodes for each season via AJAX
-                val ajaxEpisodes = seasonData.map { s ->
-                    async {
-                        val epDoc = http.post(
-                            url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/Single/Episodes.php",
-                            data = mapOf("season" to s.season.toString(), "post_id" to s.postId),
-                            referer = url
-                        )
-                        epDoc?.let { parser.parseEpisodesFromAjax(it, s.season) } ?: emptyList()
-                    }
-                }.awaitAll().flatten()
-                episodes.addAll(ajaxEpisodes)
+                coroutineScope {
+                    val ajaxEpisodes = seasonData.map { s ->
+                        async {
+                            val epDoc = http.post(
+                                url = "$mainUrl/wp-content/themes/Elshaikh2021/Ajaxat/Single/Episodes.php",
+                                data = mapOf("season" to s.season.toString(), "post_id" to s.postId),
+                                referer = url
+                            )
+                            epDoc?.let { parser.parseEpisodesFromAjax(it, s.season) } ?: emptyList()
+                        }
+                    }.awaitAll().flatten()
+                    episodes.addAll(ajaxEpisodes)
+                }
             } else {
                 // Fallback: parse from DOM (if no seasons or failed)
-                // Reference uses doc.select("div.ContainerEpisodesList > a")
-                // Our parser.parseEpisodes uses div.epAll a, which is similar/updated.
                 episodes.addAll(parser.parseEpisodes(doc, 1))
             }
 
@@ -251,12 +251,12 @@ class ArabseedV2 : MainAPI() {
                          
                          if (!src.isNullOrBlank()) {
                              callback(
-                                 ExtractorLink(
+                                 newExtractorLink(
                                      name,
                                      "Arab Seed",
                                      src,
-                                     referer = "",
-                                     quality = quality
+                                     ExtractorLinkType.VIDEO,
+                                     quality
                                  )
                              )
                              found = true
@@ -280,4 +280,5 @@ class ArabseedV2 : MainAPI() {
         
         return found
     }
+}
 }
