@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.select.Elements
 
 /**
  * Arabseed-specific parser extending BaseParser.
@@ -383,8 +384,8 @@ class ArabseedParser : BaseParser() {
         
         if (epElements.isEmpty()) {
              // Try searching for the inner div and getting parent
-             epElements = doc.select("div.epi__num").mapNotNull { it.parent() }.filter { it.tagName() == "a" }
-                 .toMutableList() as Elements
+             val elementList = doc.select("div.epi__num").mapNotNull { it.parent() }.filter { it.tagName() == "a" }
+             epElements = Elements(elementList)
         }
         
         if (epElements.isEmpty()) {
