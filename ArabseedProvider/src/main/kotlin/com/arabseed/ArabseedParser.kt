@@ -185,9 +185,9 @@ class ArabseedParser : BaseParser() {
         
         if (title.isBlank()) {
             Log.e(TAG, "[$providerName] Failed to parse title for: $url")
-            Log.e(TAG, "HTML_DUMP_START")
-            Log.e(TAG, doc.outerHtml())
-            Log.e(TAG, "HTML_DUMP_END")
+            Log.e(TAG, "HTML_DUMP_START_BODY")
+            Log.e(TAG, doc.body().outerHtml().take(20000))
+            Log.e(TAG, "HTML_DUMP_END_BODY")
             return null
         }
         
@@ -195,13 +195,24 @@ class ArabseedParser : BaseParser() {
         val posterUrl = extractPosterFromLoadPage(doc)
         
         // Metadata
-        val year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
-        val plot = findText(doc, listOf(
+        var year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
+        if (year == null) {
+            year = Regex("""\d{4}""").find(title)?.value?.toIntOrNull()
+        }
+
+        var plot = findText(doc, listOf(
             "div.singleInfo span:contains(القصة) p",
             "div.singleDesc p",
             "div.story p",
             "div.postContent p"
         ))
+        if (plot.isBlank()) {
+            plot = doc.select("meta[property='og:description']").attr("content")
+        }
+        if (plot.isBlank()) {
+            plot = doc.select("meta[name='description']").attr("content")
+        }
+
         val tags = doc.select("div.singleInfo span:contains(النوع) a").map { it.text() }
         val rating = doc.select("div.singleInfo span:contains(التقييم) p").text()
             .replace("IMDB ", "").replace("/10", "")
@@ -221,8 +232,8 @@ class ArabseedParser : BaseParser() {
             Log.d(TAG, "[parseLoadPageData] Movie detected. WatchUrl='$watchUrl'")
             
             if (watchUrl.isBlank()) {
-                Log.w(TAG, "[parseLoadPageData] Watch URL is empty! Dumping HTML (first 20k chars)...")
-                Log.w(TAG, doc.outerHtml().take(20000))
+                Log.w(TAG, "[parseLoadPageData] Watch URL is empty! Dumping BODY (first 20k chars)...")
+                Log.w(TAG, doc.body().outerHtml().take(20000))
             }
             
             ParsedLoadData(

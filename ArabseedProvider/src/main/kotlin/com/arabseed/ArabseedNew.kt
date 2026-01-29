@@ -142,7 +142,7 @@ class ArabseedV2 : MainAPI() {
         Log.d(TAG, "[load] Parsed data: title='${data.title}', isMovie=${data.isMovie}")
         
         return if (data.isMovie) {
-            newMovieLoadResponse(data.title, url, TvType.Movie, data.watchUrl ?: "") {
+            newMovieLoadResponse(data.title, url, TvType.Movie, data.watchUrl ?: url) {
                 this.posterUrl = data.posterUrl
                 this.year = data.year
                 this.plot = data.plot
