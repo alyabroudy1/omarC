@@ -255,8 +255,9 @@ class ArabseedV2 : MainAPI() {
                                      name,
                                      "Arab Seed",
                                      src,
-                                     ExtractorLinkType.VIDEO,
-                                     quality
+                                     data, // referer
+                                     quality,
+                                     src.contains(".m3u8") // isM3u8
                                  )
                              )
                              found = true
@@ -280,5 +281,4 @@ class ArabseedV2 : MainAPI() {
         
         return found
     }
-}
 }
