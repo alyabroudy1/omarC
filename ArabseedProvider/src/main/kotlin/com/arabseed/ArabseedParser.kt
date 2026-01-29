@@ -213,9 +213,18 @@ class ArabseedParser : BaseParser() {
             !url.contains("/series/") &&
             !url.contains("/category/") &&
             !title.contains("مسلسل")
+            
+        Log.d(TAG, "[parseLoadPageData] Extracted: title='$title', year=$year, plotLength=${plot.length}, poster='$posterUrl'")
         
         return if (isMovie) {
             val watchUrl = extractMovieWatchUrl(doc)
+            Log.d(TAG, "[parseLoadPageData] Movie detected. WatchUrl='$watchUrl'")
+            
+            if (watchUrl.isBlank()) {
+                Log.w(TAG, "[parseLoadPageData] Watch URL is empty! Dumping HTML (first 20k chars)...")
+                Log.w(TAG, doc.outerHtml().take(20000))
+            }
+            
             ParsedLoadData(
                 title = title,
                 posterUrl = posterUrl,
@@ -229,6 +238,13 @@ class ArabseedParser : BaseParser() {
             )
         } else {
             val episodes = parseEpisodes(doc, null)
+            Log.d(TAG, "[parseLoadPageData] Series detected. Episodes count=${episodes.size}")
+            
+            if (episodes.isEmpty()) {
+                 Log.w(TAG, "[parseLoadPageData] No episodes found! Dumping HTML (first 20k chars)...")
+                 Log.w(TAG, doc.outerHtml().take(20000))
+            }
+            
             ParsedLoadData(
                 title = title,
                 posterUrl = posterUrl,
