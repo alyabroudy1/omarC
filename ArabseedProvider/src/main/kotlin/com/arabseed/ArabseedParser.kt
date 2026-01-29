@@ -521,13 +521,29 @@ class ArabseedParser : BaseParser() {
     data class SeasonData(val season: Int, val postId: String)
     
     fun parseSeasonsWithPostId(doc: Document): List<SeasonData> {
-        return doc.select("div.SeasonsListHolder ul > li").mapNotNull { li ->
+        val list = mutableListOf<SeasonData>()
+        
+        // Old selector
+        doc.select("div.SeasonsListHolder ul > li").forEach { li ->
             val season = li.attr("data-season").toIntOrNull()
             val postId = li.attr("data-id")
             if (season != null && postId.isNotBlank()) {
-                SeasonData(season, postId)
-            } else null
+                list.add(SeasonData(season, postId))
+            }
         }
+        
+        // New selector
+        if (list.isEmpty()) {
+            doc.select("div#seasons__list ul li").forEach { li ->
+                val termId = li.attr("data-term")
+                if (termId.isNotBlank()) {
+                    val sNum = parseSeasonNumber(li.text())
+                    list.add(SeasonData(sNum, termId))
+                }
+            }
+        }
+        
+        return list.distinctBy { it.season }
     }
     
     // ==================== SERVER LIST PARSING ====================

@@ -169,9 +169,12 @@ class ArabseedV2 : MainAPI() {
                     }.awaitAll().flatten()
                     episodes.addAll(ajaxEpisodes)
                 }
-            } else {
-                // Fallback: parse from DOM (if no seasons or failed)
-                episodes.addAll(parser.parseEpisodes(doc, 1))
+            }
+            
+            // ALWAYS parse from DOM as well to ensure we check the current page (fallback & redundancy)
+            val domEpisodes = parser.parseEpisodes(doc, null)
+            if (domEpisodes.isNotEmpty()) {
+                 episodes.addAll(domEpisodes)
             }
 
             val convertedEpisodes = episodes.distinctBy { "${it.season}:${it.episode}" }
