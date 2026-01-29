@@ -130,7 +130,16 @@ class ArabseedV2 : MainAPI() {
         Log.d(TAG, "[load] $url")
         
         val doc = http.getDocument(url, checkDomainChange = true) ?: return null
-        val data = parser.parseLoadPageData(doc, url) ?: return null
+        Log.d(TAG, "[load] Document size: ${doc.html().length}")
+        
+        val data = parser.parseLoadPageData(doc, url)
+        
+        if (data == null) {
+             Log.e(TAG, "[load] Parsed data is NULL")
+             return null
+        }
+        
+        Log.d(TAG, "[load] Parsed data: title='${data.title}', isMovie=${data.isMovie}")
         
         return if (data.isMovie) {
             newMovieLoadResponse(data.title, url, TvType.Movie, data.watchUrl ?: "") {
