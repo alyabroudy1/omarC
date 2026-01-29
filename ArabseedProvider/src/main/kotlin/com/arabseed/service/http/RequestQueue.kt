@@ -22,7 +22,7 @@ import java.net.URI
  * This ensures cookies are stored for the correct domain, preventing CF loops.
  */
 class RequestQueue(
-    private val executeRequest: suspend (String) -> RequestResult,
+    private val executeRequest: suspend (String, Map<String, String>) -> RequestResult,
     private val solveCfAndRequest: suspend (String) -> RequestResult,
     private val onDomainRedirect: suspend (String, String) -> Unit
 ) {
@@ -40,8 +40,8 @@ class RequestQueue(
     /**
      * Queue a request. Returns when the request is complete.
      */
-    suspend fun enqueue(url: String): RequestResult {
-        return enqueueAction(url) { executeRequest(url) }
+    suspend fun enqueue(url: String, headers: Map<String, String> = emptyMap()): RequestResult {
+        return enqueueAction(url) { executeRequest(url, headers) }
     }
 
     /**

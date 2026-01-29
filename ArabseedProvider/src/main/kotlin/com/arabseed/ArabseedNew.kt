@@ -267,7 +267,7 @@ class ArabseedV2 : MainAPI() {
                          // Special handling for ArabSeed files
                          // Reference fetches iframe and selects "source"
                          val srcDoc = http.getDocument(linkUrl, headers = mapOf("Referer" to watchDoc.location()))
-                         val src = srcDoc.select("source").attr("src")
+                         val src = srcDoc?.select("source")?.attr("src")
                          
                          if (!src.isNullOrBlank()) {
                              callback(

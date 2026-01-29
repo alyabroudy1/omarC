@@ -47,7 +47,7 @@ class ProviderHttpService private constructor(
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain, config.userAgent)
     
     private val requestQueue = RequestQueue(
-        executeRequest = { url -> executeDirectRequest(url) },
+        executeRequest = { url, headers -> executeDirectRequest(url, headers) },
         solveCfAndRequest = { url -> solveCloudflareThenRequest(url) },
         onDomainRedirect = { oldDomain, newDomain ->
             Log.i(TAG, "RequestQueue detected redirect: $oldDomain → $newDomain")
@@ -269,9 +269,9 @@ class ProviderHttpService private constructor(
     /**
      * Get parsed Document (queued).
      */
-    suspend fun getDocument(url: String, checkDomainChange: Boolean = false): Document? {
+    suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false): Document? {
         android.util.Log.d(TAG, "getDocument: url: $url")
-        val result = requestQueue.enqueue(url)
+        val result = requestQueue.enqueue(url, headers)
         
         if (result.success && checkDomainChange) {
             checkAndUpdateDomain(url, result.finalUrl)
@@ -363,10 +363,11 @@ class ProviderHttpService private constructor(
      * Execute a direct HTTP request using current SessionState.
      * Uses custom OkHttpClient to enforce HTTP/1.1 (FaselHD strategy).
      */
-    internal suspend fun executeDirectRequest(url: String): RequestResult {
+    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap()): RequestResult {
         return try {
             val targetUrl = rewriteUrlIfNeeded(url)
-            val headers = sessionState.buildHeaders()
+            val headers = sessionState.buildHeaders().toMutableMap()
+            customHeaders.forEach { (k, v) -> headers[k] = v }
             
             // UA VERIFICATION: Log to ensure consistency between WebView and OkHttp
             Log.d(TAG, "Requesting: $targetUrl")
