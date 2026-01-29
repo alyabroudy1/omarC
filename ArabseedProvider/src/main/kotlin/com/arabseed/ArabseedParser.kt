@@ -220,7 +220,7 @@ class ArabseedParser : BaseParser() {
             .toDoubleOrNull()?.times(1000)?.toInt()
         
         // Type detection
-        val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont").isNotEmpty()
+        val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont, div.seasons--list, a.episode__item, div.series-episodes").isNotEmpty()
         
         val seriesKeywords = listOf("انمي", "مسلسل", "موسم", "برنامج", "سلسلة")
         val isSeriesTitle = seriesKeywords.any { title.contains(it, ignoreCase = true) }
@@ -352,8 +352,8 @@ class ArabseedParser : BaseParser() {
         val episodes = mutableListOf<ParsedEpisode>()
         
         // Detect active season
-        val seasonTabs = doc.select("div.seasonDiv")
         var activeSeasonNum = 1
+        val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
         
         if (seasonTabs.isNotEmpty()) {
             val activeTab = seasonTabs.find { it.hasClass("active") }
@@ -362,14 +362,14 @@ class ArabseedParser : BaseParser() {
                 activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
             }
         } else {
-            val t = doc.select("div.seasonDiv.active .title").text()
+            val t = doc.select("div.seasonDiv.active .title, div.seasons--list.active .title").text()
             activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
         }
         
         // Parse episodes from current page (try multiple selectors)
         var epElements = doc.select("div.epAll a")
         if (epElements.isEmpty()) {
-            epElements = doc.select("div.episodes-list a, ul.episodes li a")
+            epElements = doc.select("div.episodes-list a, ul.episodes li a, a.episode__item, div.series-episodes a")
         }
         
         epElements.forEach { ep ->
@@ -393,7 +393,7 @@ class ArabseedParser : BaseParser() {
      * Extract season URLs for parallel fetching.
      */
     fun extractSeasonUrls(doc: Document): List<Pair<Int, String>> {
-        val seasonTabs = doc.select("div.seasonDiv")
+        val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
         
         return seasonTabs.filter { !it.hasClass("active") }.mapNotNull { tab ->
             val t = tab.select(".title").text()
