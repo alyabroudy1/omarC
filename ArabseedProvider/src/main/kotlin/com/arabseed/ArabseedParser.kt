@@ -309,6 +309,12 @@ class ArabseedParser : BaseParser() {
                  .attr("src")
         }
 
+        // Fallback: Watch Button (critical for loadLinks)
+        if (watchUrl.isBlank()) {
+            watchUrl = doc.select("a.watchBTn").attr("href")
+            if (watchUrl.isNotBlank()) Log.d(TAG, "Found watch button URL: $watchUrl")
+        }
+
         // Fallback: onclick
         if (watchUrl.isBlank()) {
             val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")

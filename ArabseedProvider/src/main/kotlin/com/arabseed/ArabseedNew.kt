@@ -210,17 +210,27 @@ class ArabseedV2 : MainAPI() {
     ): Boolean {
         Log.i(TAG, "[loadLinks] $data")
         
-        // 1. Get Main Doc (to find watch button)
-        val doc = http.getDocument(data) ?: return false
-        val watchUrl = doc.select("a.watchBTn").attr("href")
+        // 1. Get Main Doc or Watch Doc
+        var doc = http.getDocument(data) ?: return false
         
-        if (watchUrl.isBlank()) {
-             Log.w(TAG, "No watch button found")
-             return false
+        // If we are already on the watch page (because load passed the watch URL), we might not find watchBTn
+        // Check if we have server list or iframe
+        var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
+                         doc.select("iframe[name=player_iframe]").isNotEmpty()
+        
+        var watchDoc = if (isWatchPage) doc else null
+        
+        if (watchDoc == null) {
+            val watchUrl = doc.select("a.watchBTn").attr("href")
+            if (watchUrl.isNotBlank()) {
+                Log.d(TAG, "Found watch button on main page, following to: $watchUrl")
+                watchDoc = http.getDocument(watchUrl)
+            } else {
+                 Log.w(TAG, "No watch button found and not a watch page")
+            }
         }
         
-        // 2. Get Watch Doc
-        val watchDoc = http.getDocument(watchUrl) ?: return false
+        if (watchDoc == null) return false
         
         // 3. Parse Links simulating reference logic (group by H3 headers/Qualities)
         val indexOperators = mutableListOf<Int>()
