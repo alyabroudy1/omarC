@@ -289,9 +289,15 @@ class ArabseedParser : BaseParser() {
     }
     
     private fun extractMovieWatchUrl(doc: Document): String {
-        // Try iframe
+        // Try iframe with specific name
         var watchUrl = doc.select("iframe[name=player_iframe]").attr("src")
         
+        // Try any iframe that might be the player
+        if (watchUrl.isBlank()) {
+             watchUrl = doc.select("div.Container iframe, div.Content iframe, div.embed-player iframe")
+                 .attr("src")
+        }
+
         // Fallback: onclick
         if (watchUrl.isBlank()) {
             val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")
@@ -331,8 +337,13 @@ class ArabseedParser : BaseParser() {
             activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
         }
         
-        // Parse episodes from current page
-        doc.select("div.epAll a").forEach { ep ->
+        // Parse episodes from current page (try multiple selectors)
+        var epElements = doc.select("div.epAll a")
+        if (epElements.isEmpty()) {
+            epElements = doc.select("div.episodes-list a, ul.episodes li a")
+        }
+        
+        epElements.forEach { ep ->
             val epUrl = ep.attr("href")
             val epTitle = ep.text()
             val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull() ?: 1
