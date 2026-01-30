@@ -5,6 +5,7 @@ import com.arabseed.utils.ActivityProvider
 import com.arabseed.utils.PluginContext
 import com.arabseed.service.ProviderConfig
 import com.arabseed.service.ProviderHttpService
+import com.arabseed.service.parsing.BaseParser.ParsedEpisode
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -235,9 +236,19 @@ class ArabseedV2 : MainAPI() {
         
         if (watchDoc == null) return false
         
-        // 3. Parse Links simulating reference logic (group by H3 headers/Qualities)
-        val indexOperators = mutableListOf<Int>()
+        // 2. Extract CSRF token and post_id for lazy extraction
+        val csrfToken = watchDoc.select("input[name=csrf_token], #csrf_token").attr("value").ifBlank {
+            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
+        }
+        val postId = watchDoc.select("input[name=post_id], #post_id").attr("value").ifBlank {
+            Regex("""post_id\s*[:=]\s*["']?(\d+)["']?""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
+        }
+        
+        Log.d(TAG, "[loadLinks] postId=$postId, csrfToken=${csrfToken.take(10)}...")
+        
+        // 3. Parse available qualities and servers
         val elements = watchDoc.select("ul > li[data-link], ul > h3")
+        val indexOperators = mutableListOf<Int>()
         
         elements.forEachIndexed { index, element ->
             if (element.`is`("h3")) {
@@ -258,47 +269,45 @@ class ArabseedV2 : MainAPI() {
         }
         
         var found = false
+        val pageReferer = watchDoc.location()
+        val encodedReferer = java.net.URLEncoder.encode(pageReferer, "UTF-8")
         
-        watchLinks.forEach { (quality, links) ->
-            links.forEach { linkElement ->
-                val rawUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
-                val linkUrl = fixUrl(rawUrl)
-                val linkName = linkElement.text()
-                
-                if (linkUrl.isNotBlank()) {
-                     if (linkName.contains("سيد")) {
-                         // Special handling for ArabSeed files
-                         // Reference fetches iframe and selects "source"
-                         val srcDoc = http.getDocument(linkUrl, headers = mapOf("Referer" to watchDoc.location()))
-                         val src = srcDoc?.select("source")?.attr("src")
-                         
-                         if (!src.isNullOrBlank()) {
-                             callback(
-                                 newExtractorLink(
-                                     source = name,
-                                     name = "Arab Seed",
-                                     url = src,
-                                     type = if (src.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                 ) {
-                                     this.referer = ""
-                                     this.quality = quality
-                                 }
-                             )
-                             found = true
-                         }
-                         // Also loadExtractor as backup/alternative? Reference does BOTH.
-                         loadExtractor(linkUrl, data, subtitleCallback) { link ->
-                             callback(link)
-                             found = true
-                         }
-                     } else {
-                         loadExtractor(linkUrl, data, subtitleCallback) { link ->
-                             // Inject quality if missing
-                             // We can't easily modify ExtractorLink, but we pass it through
-                             callback(link)
-                             found = true
-                         }
-                     }
+        // 4. Emit lazy links (virtual URLs that ArabseedLazyExtractor will handle)
+        if (postId.isNotBlank() && csrfToken.isNotBlank()) {
+            watchLinks.forEachIndexed { serverIndex, (quality, links) ->
+                links.forEachIndexed { linkIndex, linkElement ->
+                    val linkName = linkElement.text().ifBlank { "Server ${linkIndex + 1}" }
+                    
+                    // Construct virtual URL for lazy extraction
+                    val virtualUrl = "$mainUrl/get__watch__server/?post_id=$postId&quality=$quality&server=$linkIndex&csrf_token=$csrfToken&referer=$encodedReferer"
+                    
+                    callback(
+                        newExtractorLink(
+                            source = name,  // This is "ArabseedV2" which matches the provider, not extractor
+                            name = "$linkName (${quality}p)",
+                            url = virtualUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.quality = quality
+                        }
+                    )
+                    found = true
+                }
+            }
+        } else {
+            // Fallback: Use eager extraction if CSRF/postId unavailable
+            Log.w(TAG, "[loadLinks] postId or CSRF missing, falling back to eager extraction")
+            watchLinks.forEach { (quality, links) ->
+                links.forEach { linkElement ->
+                    val rawUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
+                    val linkUrl = fixUrl(rawUrl)
+                    
+                    if (linkUrl.isNotBlank()) {
+                        loadExtractor(linkUrl, data, subtitleCallback) { link ->
+                            callback(link)
+                            found = true
+                        }
+                    }
                 }
             }
         }
@@ -306,3 +315,4 @@ class ArabseedV2 : MainAPI() {
         return found
     }
 }
+
