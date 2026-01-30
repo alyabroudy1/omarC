@@ -356,6 +356,51 @@ class ProviderHttpService private constructor(
         
         return result.html?.let { Jsoup.parse(it, finalUrl) }
     }
+
+    /**
+     * Execute POST request and return raw text.
+     * Supports custom headers (e.g. X-Requested-With).
+     */
+    suspend fun postText(
+        url: String, 
+        data: Map<String, String>, 
+        referer: String? = null, 
+        headers: Map<String, String> = emptyMap()
+    ): String {
+        val finalUrl = buildUrl(url)
+        val combinedHeaders = sessionState.buildHeaders().toMutableMap()
+        if (referer != null) combinedHeaders["Referer"] = referer
+        combinedHeaders.putAll(headers)
+
+        val result = requestQueue.enqueueAction(finalUrl) {
+             try {
+                 val formBody = okhttp3.FormBody.Builder().apply {
+                     data.forEach { (k, v) -> add(k, v) }
+                 }.build()
+
+                 val okHeaders = okhttp3.Headers.Builder().apply {
+                     combinedHeaders.forEach { (k, v) -> add(k, v) }
+                 }.build()
+
+                 val okRequest = okhttp3.Request.Builder()
+                     .url(finalUrl)
+                     .headers(okHeaders)
+                     .post(formBody)
+                     .build()
+
+                 val response = app.baseClient.newCall(okRequest).execute()
+                 val code = response.code
+                 val html = response.body?.string() ?: ""
+                 val finalReqUrl = response.request.url.toString()
+                 response.close()
+
+                 RequestResult.success(html, code, finalReqUrl)
+             } catch (e: Exception) {
+                 RequestResult.failure(e)
+             }
+        }
+        return result.html ?: ""
+    }
     
     // ==================== INTERNAL: Request execution ====================
     

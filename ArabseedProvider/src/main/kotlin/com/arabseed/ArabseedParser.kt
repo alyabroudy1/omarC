@@ -593,4 +593,59 @@ class ArabseedParser : BaseParser() {
             else -> Qualities.Unknown.value
         }
     }
+    
+    // ==================== LAZY EXTRACTION SUPPORT (NEW) ====================
+    
+    data class ServerData(
+        val postId: String,
+        val quality: Int,
+        val serverId: String,
+        val title: String
+    )
+
+    fun extractVisibleServers(doc: Document): List<ServerData> {
+        val servers = mutableListOf<ServerData>()
+        // Select logic based on user provided HTML:
+        // <li data-post="832749" data-server="1" data-qu="720" class="active"><span>سيرفر 1</span></li>
+        
+        doc.select("li[data-server]").forEach { li ->
+            val postId = li.attr("data-post")
+            val serverId = li.attr("data-server")
+            val quality = li.attr("data-qu").toIntOrNull() ?: 0
+            val title = li.select("span").text()
+            
+            if (serverId.isNotBlank() && quality > 0) {
+                servers.add(ServerData(postId, quality, serverId, title))
+            }
+        }
+        return servers
+    }
+    
+    fun extractDirectEmbeds(doc: Document): List<String> {
+        // Broaden selector to find ANY video iframe, filtering out known ads/socials
+        return doc.select("iframe[src]").mapNotNull { 
+            var src = it.attr("src")
+            if (src.isBlank()) return@mapNotNull null
+            
+            // Handle /play.php?url=BASE64
+            if (src.contains("url=")) {
+                val param = src.substringAfter("url=").substringBefore("&")
+                try {
+                    val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
+                    if (decoded.startsWith("http")) {
+                        src = decoded
+                    }
+                } catch (e: Exception) {
+                    // Failed to decode, keep original
+                }
+            }
+            
+            if (src.isNotBlank() && 
+                !src.contains("facebook") && 
+                !src.contains("twitter") && 
+                !src.contains("instagram") && 
+                !src.contains("google")
+            ) src else null
+        }
+    }
 }

@@ -12,6 +12,8 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import okhttp3.Interceptor
+import com.arabseed.extractors.ArabseedLazyExtractor
 
 /**
  * Arabseed provider V2 - Ported Extension
@@ -206,6 +208,52 @@ class ArabseedV2 : MainAPI() {
     
     // ==================== LOAD LINKS ====================
     
+
+
+    // ==================== INTERCEPTOR ====================
+
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            
+            // Check if it's our virtual URL
+            if (url.contains("/get__watch__server/")) {
+                var resolvedLink: ExtractorLink? = null
+                
+                try {
+                    // Use runBlocking for interceptor
+                    kotlinx.coroutines.runBlocking {
+                        // Use the Extension's Lazy Extractor (com.arabseed.extractors)
+                        val extractor = ArabseedLazyExtractor { endpoint, data, referer ->
+                             // Ensure we pass headers explicitly, especially X-Requested-With
+                             http.postText(
+                                 endpoint, // should be relative path
+                                 data,
+                                 referer = referer,
+                                 headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                             )
+                        }
+                        extractor.getUrl(url, null, {}) { link ->
+                            resolvedLink = link
+                        }
+                    }
+                } catch(e: Exception) {
+                    Log.e(TAG, "[getVideoInterceptor] Failed: ${e.message}")
+                }
+                
+                resolvedLink?.let { link ->
+                    val builder = request.newBuilder().url(link.url)
+                    if (link.referer.isNotBlank()) builder.header("Referer", link.referer)
+                    return@Interceptor chain.proceed(builder.build())
+                }
+            }
+            chain.proceed(request)
+        }
+    }
+    
+    // ==================== LOAD LINKS ====================
+    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -217,10 +265,10 @@ class ArabseedV2 : MainAPI() {
         // 1. Get Main Doc or Watch Doc
         var doc = http.getDocument(data) ?: return false
         
-        // If we are already on the watch page (because load passed the watch URL), we might not find watchBTn
         // Check if we have server list or iframe
         var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
-                         doc.select("iframe[name=player_iframe]").isNotEmpty()
+                          doc.select("iframe").isNotEmpty() ||
+                          doc.select("li[data-server]").isNotEmpty()
         
         var watchDoc = if (isWatchPage) doc else null
         
@@ -236,83 +284,84 @@ class ArabseedV2 : MainAPI() {
         
         if (watchDoc == null) return false
         
-        // 2. Extract CSRF token and post_id for lazy extraction
-        val csrfToken = watchDoc.select("input[name=csrf_token], #csrf_token").attr("value").ifBlank {
-            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
-        }
         val postId = watchDoc.select("input[name=post_id], #post_id").attr("value").ifBlank {
             Regex("""post_id\s*[:=]\s*["']?(\d+)["']?""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
+        }
+        val csrfToken = watchDoc.select("input[name=csrf_token], #csrf_token").attr("value").ifBlank {
+            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
         }
         
         Log.d(TAG, "[loadLinks] postId=$postId, csrfToken=${csrfToken.take(10)}...")
         
-        // 3. Parse available qualities and servers
-        val elements = watchDoc.select("ul > li[data-link], ul > h3")
-        val indexOperators = mutableListOf<Int>()
-        
-        elements.forEachIndexed { index, element ->
-            if (element.`is`("h3")) {
-                indexOperators.add(index)
+        // ==================== DIRECT EMBEDS (PRIORITY) ====================
+        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
+        Log.d(TAG, "[loadLinks] Found direct embeds: $directEmbeds")
+        directEmbeds.forEach { embedUrl ->
+            // Manual handling for ReviewRate
+            if (embedUrl.contains("reviewrate")) {
+                Log.d(TAG, "[loadLinks] Attempting manual extraction for: $embedUrl")
+                try {
+                    // Pass Referer using named argument 'headers' matches ProviderHttpService.getDocument definition
+                    val embedDoc = http.getDocument(embedUrl, headers = mapOf("Referer" to watchDoc.location()))
+                    val responseText = embedDoc?.html() ?: ""
+                    
+                    val directUrl = Regex("""file:\s*["']([^"']+)["']""").find(responseText)?.groupValues?.get(1)
+                    if (!directUrl.isNullOrBlank()) {
+                         Log.d(TAG, "[loadLinks] Manual success: $directUrl")
+                         callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name Direct",
+                                url = directUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = embedUrl
+                            }
+                        )
+                    } else {
+                         Log.w(TAG, "[loadLinks] Manual regex failed for: $embedUrl")
+                    }
+                } catch(e: Exception) { 
+                    Log.e(TAG, "[loadLinks] Manual extract failed: ${e.message}") 
+                }
             }
+            loadExtractor(embedUrl, watchDoc.location(), subtitleCallback, callback)
         }
         
-        val watchLinks = if (indexOperators.isNotEmpty()) {
-            indexOperators.mapIndexed { i, index ->
-                val endIndex = if (i != indexOperators.size - 1) indexOperators[i + 1] else elements.size
-                val qualityText = elements[index].text()
-                val quality = Regex("""\d+""").find(qualityText)?.value?.toIntOrNull() ?: 0
-                val links = elements.subList(index + 1, endIndex).filter { !it.`is`("h3") }
-                quality to links
-            }
-        } else {
-             listOf(0 to elements.filter { !it.`is`("h3") })
-        }
-        
-        var found = false
+        // ==================== VISIBLE SERVERS (LAZY) ====================
+        val servers = parser.extractVisibleServers(watchDoc)
         val pageReferer = watchDoc.location()
         val encodedReferer = java.net.URLEncoder.encode(pageReferer, "UTF-8")
         
-        // 4. Emit lazy links (virtual URLs that ArabseedLazyExtractor will handle)
+        var found = false
         if (postId.isNotBlank() && csrfToken.isNotBlank()) {
-            watchLinks.forEachIndexed { serverIndex, (quality, links) ->
-                links.forEachIndexed { linkIndex, linkElement ->
-                    val linkName = linkElement.text().ifBlank { "Server ${linkIndex + 1}" }
-                    
-                    // Construct virtual URL for lazy extraction
-                    val virtualUrl = "$mainUrl/get__watch__server/?post_id=$postId&quality=$quality&server=$linkIndex&csrf_token=$csrfToken&referer=$encodedReferer"
-                    
-                    callback(
-                        newExtractorLink(
-                            source = name,  // This is "ArabseedV2" which matches the provider, not extractor
-                            name = "$linkName (${quality}p)",
-                            url = virtualUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.quality = quality
-                        }
-                    )
-                    found = true
-                }
-            }
-        } else {
-            // Fallback: Use eager extraction if CSRF/postId unavailable
-            Log.w(TAG, "[loadLinks] postId or CSRF missing, falling back to eager extraction")
-            watchLinks.forEach { (quality, links) ->
-                links.forEach { linkElement ->
-                    val rawUrl = linkElement.attr("data-link").ifBlank { linkElement.attr("data-url") }
-                    val linkUrl = fixUrl(rawUrl)
-                    
-                    if (linkUrl.isNotBlank()) {
-                        loadExtractor(linkUrl, data, subtitleCallback) { link ->
-                            callback(link)
-                            found = true
-                        }
+            servers.forEach { server ->
+                val linkName = server.title.ifBlank { "Server ${server.serverId}" }
+                val quality = server.quality
+                
+                // Construct virtual URL
+                val currentBaseUrl = try {
+                    val uri = java.net.URI(pageReferer)
+                    "${uri.scheme}://${uri.host}"
+                } catch (e: Exception) { "https://arabseed.show" }
+                
+                val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$postId&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
+                
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "$linkName (${quality}p)",
+                        url = virtualUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = quality
                     }
-                }
+                )
+                found = true
             }
         }
         
-        return found
+        return found || directEmbeds.isNotEmpty()
     }
 }
 
