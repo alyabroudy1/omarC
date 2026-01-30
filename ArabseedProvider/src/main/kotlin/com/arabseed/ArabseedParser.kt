@@ -196,7 +196,12 @@ class ArabseedParser : BaseParser() {
         val posterUrl = extractPosterFromLoadPage(doc)
         
         // Metadata
+        // Metadata
         var year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
+        if (year == null) {
+            // New info__area selector
+            year = doc.select("div.info__area li:has(span:contains(سنة العرض)) ul.tags__list a").text().toIntOrNull()
+        }
         if (year == null) {
             year = Regex("""\d{4}""").find(title)?.value?.toIntOrNull()
         }
@@ -215,7 +220,19 @@ class ArabseedParser : BaseParser() {
             plot = doc.select("meta[name='description']").attr("content")
         }
 
-        val tags = doc.select("div.singleInfo span:contains(النوع) a").map { it.text() }
+        var tags = doc.select("div.singleInfo span:contains(النوع) a").map { it.text() }
+        if (tags.isEmpty()) {
+            // New info__area selector
+            tags = doc.select("div.info__area li:has(span:contains(نوع العرض)) ul.tags__list a").map { it.text() }
+        }
+        
+        // Country
+        val country = doc.select("div.info__area li:has(span:contains(بلد العرض)) ul.tags__list a").text()
+        if (country.isNotBlank()) {
+            // Append to tags if found
+            tags = tags + country
+        }
+
         val rating = doc.select("div.singleInfo span:contains(التقييم) p").text()
             .replace("IMDB ", "").replace("/10", "")
             .toDoubleOrNull()?.times(1000)?.toInt()
