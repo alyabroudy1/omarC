@@ -47,7 +47,7 @@ class ArabseedV2 : MainAPI() {
         ProviderHttpService.create(
             context = PluginContext.context!!,
             config = ProviderConfig(
-                name = name,
+                name = this.name,
                 fallbackDomain = "arabseed.show",
                 githubConfigUrl = GITHUB_CONFIG,
                 userAgent = USER_AGENT,
@@ -285,11 +285,12 @@ class ArabseedV2 : MainAPI() {
         if (watchDoc == null) return false
         
         val postId = watchDoc.select("input[name=post_id], #post_id").attr("value").ifBlank {
-            Regex("""post_id\s*[:=]\s*["']?(\d+)["']?""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
-        }
+            Regex("""post_id\s*[:=]\s*["']?(\d+)["']?""").find(watchDoc.html())?.groupValues?.get(1) 
+        } ?: watchDoc.select("body").attr("data-post-id").ifBlank { "" }
+
         val csrfToken = watchDoc.select("input[name=csrf_token], #csrf_token").attr("value").ifBlank {
-            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) ?: ""
-        }
+            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) 
+        } ?: ""
         
         Log.d(TAG, "[loadLinks] postId=$postId, csrfToken=${csrfToken.take(10)}...")
         
@@ -299,33 +300,23 @@ class ArabseedV2 : MainAPI() {
         directEmbeds.forEach { embedUrl ->
             // Manual handling for ReviewRate
             if (embedUrl.contains("reviewrate")) {
-                Log.d(TAG, "[loadLinks] Attempting manual extraction for: $embedUrl")
-                try {
-                    // Pass Referer using named argument 'headers' matches ProviderHttpService.getDocument definition
-                    val embedDoc = http.getDocument(embedUrl, headers = mapOf("Referer" to watchDoc.location()))
-                    val responseText = embedDoc?.html() ?: ""
-                    
-                    val directUrl = Regex("""file:\s*["']([^"']+)["']""").find(responseText)?.groupValues?.get(1)
-                    if (!directUrl.isNullOrBlank()) {
-                         Log.d(TAG, "[loadLinks] Manual success: $directUrl")
-                         callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name Direct",
-                                url = directUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = embedUrl
-                            }
-                        )
-                    } else {
-                         Log.w(TAG, "[loadLinks] Manual regex failed for: $embedUrl")
-                    }
-                } catch(e: Exception) { 
-                    Log.e(TAG, "[loadLinks] Manual extract failed: ${e.message}") 
+                loadExtractor(embedUrl, watchDoc.location(), subtitleCallback) { link ->
+                     // No op - standard loadExtractor handles it
                 }
+                // OR better: Emit directly as we do in built-in
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name Direct",
+                        url = embedUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = watchDoc.location()
+                    }
+                )
+            } else {
+                 loadExtractor(embedUrl, watchDoc.location(), subtitleCallback, callback)
             }
-            loadExtractor(embedUrl, watchDoc.location(), subtitleCallback, callback)
         }
         
         // ==================== VISIBLE SERVERS (LAZY) ====================
