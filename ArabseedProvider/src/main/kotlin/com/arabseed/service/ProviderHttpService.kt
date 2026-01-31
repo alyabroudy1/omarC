@@ -309,11 +309,25 @@ class ProviderHttpService private constructor(
     
     /**
      * Get headers for loading images.
+     * Uses MINIMAL headers like FaselHD - only User-Agent, Cookie, Referer.
+     * Sending too many headers (Sec-Fetch-*, etc.) triggers CDN 403 errors.
      */
     fun getImageHeaders(): Map<String, String> {
-        // Using SessionState.buildHeaders (the one reverted to use default headers)
-        // If SessionState has specific image handling logic, it will be used.
-        return sessionState.buildHeaders()
+        val headers = mutableMapOf<String, String>()
+        
+        // 1. User-Agent - essential
+        headers["User-Agent"] = sessionState.userAgent
+        
+        // 2. Cookie - only if we have valid session cookies
+        val cookieHeader = sessionState.buildCookieHeader()
+        if (!cookieHeader.isNullOrBlank()) {
+            headers["Cookie"] = cookieHeader
+        }
+        
+        // 3. Referer - use full domain URL (matching how cookies were set)
+        headers["Referer"] = "https://${sessionState.domain}/"
+        
+        return headers
     }
 
     /**
