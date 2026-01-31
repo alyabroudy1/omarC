@@ -62,6 +62,9 @@ class ArabseedV2 : MainAPI() {
     // ==================== MAIN PAGE ====================
     
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        // Initialize session (loads cookies from disk) - CRITICAL for image loading
+        http.ensureInitialized()
+        
         Log.d(TAG, "[getMainPage] ${request.name} page=$page")
         
         val url = if (page == 1) {

@@ -64,7 +64,7 @@ class ProviderHttpService private constructor(
      * Initialize session from disk.
      * Called once before first request.
      */
-    private suspend fun ensureInitialized() {
+    suspend fun ensureInitialized() {
         Log.i(TAG, "Using MainAPI UA: ${config.userAgent}")
 
         // Load persisted session
