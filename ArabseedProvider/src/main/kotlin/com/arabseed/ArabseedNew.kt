@@ -76,17 +76,35 @@ class ArabseedV2 : MainAPI() {
         val items = http.getMainPage(url)
         
         if (items.isEmpty()) return null
+
+        // Cache first 3 images (likely Hero + first row spotlights) to fix 403 issue
+        // This is a plugin-side fix because App Core ignores headers for Hero image.
+        val cacheHeaders = http.getImageHeaders()
         
-        val searchResponses = items.map { item ->
+        // Parallel pre-fetching (launch async block if possible, but here we do it safely inside map)
+        // Since we are suspension, this is fine.
+        val searchResponses = items.mapIndexed { index, item ->
+            var finalPosterUrl = item.posterUrl
+            
+            // Only cache the first few items to avoid slowing down the whole page load
+            if (index < 3 && item.posterUrl.contains("asd.pics")) {
+               try {
+                   finalPosterUrl = com.arabseed.utils.ImageCache.getOrDownload(item.posterUrl, cacheHeaders)
+                   Log.d(TAG, "Cached hero image [$index]: $finalPosterUrl")
+               } catch (e: Exception) {
+                   Log.e(TAG, "Failed to cache image [$index]: ${e.message}")
+               }
+            }
+
             if (item.isMovie) {
                 newMovieSearchResponse(item.title, item.url, TvType.Movie) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = http.getImageHeaders()
+                    this.posterUrl = finalPosterUrl
+                    this.posterHeaders = cacheHeaders
                 }
             } else {
                 newTvSeriesSearchResponse(item.title, item.url, TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = http.getImageHeaders()
+                    this.posterUrl = finalPosterUrl
+                    this.posterHeaders = cacheHeaders
                 }
             }
         }
