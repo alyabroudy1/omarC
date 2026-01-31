@@ -98,7 +98,7 @@ abstract class BaseParser {
     open val searchContainerSelectors: List<String>
         get() = mainPageContainerSelectors
     
-    fun parseSearch(doc: Document): List<ParsedSearchItem> {
+    open fun parseSearch(doc: Document): List<ParsedSearchItem> {
         val container = findContainer(doc, searchContainerSelectors)
         
         if (container == null) {

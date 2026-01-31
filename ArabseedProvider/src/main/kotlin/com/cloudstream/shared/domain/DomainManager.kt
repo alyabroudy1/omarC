@@ -6,6 +6,8 @@ import com.cloudstream.shared.http.CookieStore
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.net.URI
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -33,6 +35,8 @@ class DomainManager(
     
     private var isInitialized = false
     
+    private val mutex = Mutex()
+    
     /**
      * BLOCKING initialization - called before first request.
      * Fetches latest domain from GitHub and waits for response.
@@ -40,35 +44,46 @@ class DomainManager(
     suspend fun ensureInitialized() {
         if (isInitialized) return
         
-        // Load persisted first (fast)
-        currentDomain = prefs.getString("domain", fallbackDomain) ?: fallbackDomain
-        Log.d(TAG, "Loaded persisted domain: $currentDomain")
-        
-        // Fetch from GitHub (BLOCKING, with timeout)
-        try {
-            withTimeout(5000L) {
-                val response = app.get(githubConfigUrl)
-                if (response.isSuccessful) {
-                    val config = JSONObject(response.text)
-                    val remoteDomain = config.optString("domain", "")
-                    
-                    if (remoteDomain.isNotBlank() && remoteDomain != currentDomain) {
-                        Log.i(TAG, "Domain updated from GitHub: $currentDomain → $remoteDomain")
+        mutex.withLock {
+            if (isInitialized) return@withLock
+            
+            // Load persisted first (fast)
+            currentDomain = prefs.getString("domain", fallbackDomain) ?: fallbackDomain
+            Log.d(TAG, "Loaded persisted domain: $currentDomain")
+            
+            // Fetch from GitHub (BLOCKING, with timeout)
+            try {
+                withTimeout(5000L) {
+                    val response = app.get(githubConfigUrl)
+                    if (response.isSuccessful) {
+                        val config = JSONObject(response.text)
+                        val remoteDomain = config.optString("domain", "")
                         
-                        // Clear cookies for old domain before updating
-                        cookieStore.clear(currentDomain, "Domain changed from GitHub")
+                        val normalizedRemote = remoteDomain
+                            .removePrefix("http://")
+                            .removePrefix("https://")
+                            .trimEnd('/')
                         
-                        updateDomain(remoteDomain)
+                        if (normalizedRemote.isNotBlank() && normalizedRemote != currentDomain) {
+                            Log.i(TAG, "Domain updated from GitHub: $currentDomain → $normalizedRemote")
+                            
+                            // Clear cookies for old domain before updating
+                            cookieStore.clear(currentDomain, "Domain changed from GitHub")
+                            
+                            updateDomain(normalizedRemote)
+                        } else {
+                            Log.i(TAG, "Domain is up to date. Keeping: $currentDomain")
+                        }
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "GitHub config fetch timed out, using persisted: $currentDomain")
+            } catch (e: Exception) {
+                Log.w(TAG, "GitHub config fetch failed: ${e.message}, using persisted: $currentDomain")
             }
-        } catch (e: TimeoutCancellationException) {
-            Log.w(TAG, "GitHub config fetch timed out, using persisted: $currentDomain")
-        } catch (e: Exception) {
-            Log.w(TAG, "GitHub config fetch failed: ${e.message}, using persisted: $currentDomain")
+            
+            isInitialized = true
         }
-        
-        isInitialized = true
     }
     
     /**

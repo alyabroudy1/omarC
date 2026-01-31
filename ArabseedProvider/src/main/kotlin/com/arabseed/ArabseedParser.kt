@@ -37,14 +37,22 @@ class ArabseedParser : BaseParser() {
     
     // Debug helper to find the real container
     override fun parseMainPage(doc: Document): List<ParsedSearchItem> {
+        return parseItemsDirectly(doc, "MainPage")
+    }
+
+    override fun parseSearch(doc: Document): List<ParsedSearchItem> {
+         return parseItemsDirectly(doc, "Search")
+    }
+
+    private fun parseItemsDirectly(doc: Document, source: String): List<ParsedSearchItem> {
         val url = doc.location()
         // Direct selection of items based on user report + fallbacks
-        // Debug specific selectors
-        Log.d(TAG, "DEBUG: div.series__box count: ${doc.select("div.series__box").size}")
-        Log.d(TAG, "DEBUG: div.MovieBlock count: ${doc.select("div.MovieBlock").size}")
-        Log.d(TAG, "DEBUG: ul.Blocks-UL > div count: ${doc.select("ul.Blocks-UL > div").size}")
+        if (source == "Search") {
+             Log.d(TAG, "DEBUG Search: div.series__box count: ${doc.select("div.series__box").size}")
+             Log.d(TAG, "DEBUG Search: div.MovieBlock count: ${doc.select("div.MovieBlock").size}")
+        }
 
-        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem, div.series__box").mapNotNull { element ->
+        val items = doc.select("div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, div.Blocks-UL > div, div.BlockItem, div.series__box, div.search__res__container > div").mapNotNull { element ->
             try {
                 val title = extractTitle(element)
                 val url = extractUrl(element)
@@ -52,13 +60,14 @@ class ArabseedParser : BaseParser() {
                 val isMovie = isMovie(element)
                 
                 if (url == null) {
-                    Log.w(TAG, "Skipping item: URL null. Element: ${element.tagName()}.${element.className()}")
-                    Log.w(TAG, "HTML of skipped item: ${element.outerHtml()}")
+                    // Only log warnings for "likely items" (e.g. series__box), not generic divs
+                    if (element.hasClass("series__box") || element.hasClass("MovieBlock")) {
+                         Log.w(TAG, "Skipping item: URL null. Element: ${element.tagName()}.${element.className()}")
+                    }
                     return@mapNotNull null
                 }
                 
                 if (title.isBlank()) {
-                    Log.w(TAG, "Skipping item: Title blank. URL: $url")
                     return@mapNotNull null
                 }
                 
@@ -75,32 +84,25 @@ class ArabseedParser : BaseParser() {
         }
         
         if (items.isNotEmpty()) {
-            Log.d(TAG, "[$providerName] Parsed ${items.size} items from $url using direct selection")
+            Log.d(TAG, "[$providerName] Parsed ${items.size} items from $source using direct selection")
             return items
         } else {
-            Log.w(TAG, "[$providerName] Found 0 items from $url using direct selection")
-            
-            // Debug: Inspect inner__contents specifically
-            val innerContents = doc.selectFirst("div.inner__contents")
-            if (innerContents != null) {
-                val children = innerContents.children().take(10).map { "${it.tagName()}.${it.className()}" }
-                Log.e(TAG, "DEBUG INNER_CONTENTS: $children")
-            } else {
-                Log.e(TAG, "DEBUG: div.inner__contents NOT FOUND")
+            Log.w(TAG, "[$providerName] Found 0 items from $source using direct selection")
+            if (source == "Search") {
+                // Debug: Dump search container children types
+                val searchContainer = doc.selectFirst("div.search__res__container")
+                if (searchContainer != null) {
+                     Log.e(TAG, "DEBUG SEARCH CONTAINER CHILDREN: ${searchContainer.children().map { "${it.tagName()}.${it.className()}" }}")
+                }
+            }
+            // For main page, we can try fallback to super if valid, but super relies on container finding which we are bypassing. 
+            // If direct selection fails on main page, we might want fallback? 
+            // The original code had fallback to super.parseMainPage(doc).
+            if (source == "MainPage") {
+                 return super.parseMainPage(doc)
             }
         }
-
-        // Fallback to BaseParser logic if direct selection failed
-        val baseItems = super.parseMainPage(doc)
-        if (baseItems.isEmpty()) {
-            // DEBUG: Log the structure to help find the new selector
-            val divs = doc.select("div").take(20).map { "${it.tagName()}.${it.className()}" }
-            Log.e(TAG, "DEBUG STRUCTURE: Found divs: $divs")
-            
-            // Log full HTML as requested
-            Log.e(TAG, "FULL HTML DUMP: ${doc.html()}")
-        }
-        return baseItems
+        return items
     }
     
     override fun extractTitle(element: Element): String {
