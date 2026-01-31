@@ -287,15 +287,14 @@ class ArabseedV2 : MainAPI() {
         
         if (watchDoc == null) return false
         
-        val postId = watchDoc.select("input[name=post_id], #post_id").attr("value").ifBlank {
-            Regex("""post_id\s*[:=]\s*["']?(\d+)["']?""").find(watchDoc.html())?.groupValues?.get(1) 
-        } ?: watchDoc.select("body").attr("data-post-id").ifBlank { "" }
-
-        val csrfToken = watchDoc.select("input[name=csrf_token], #csrf_token").attr("value").ifBlank {
-            Regex("""csrf_token\s*[:=]\s*["']([^"']+)["']""").find(watchDoc.html())?.groupValues?.get(1) 
-        } ?: ""
+        // 3. Dynamic Quality Extraction
+        // Extract available qualities from tabs
+        val availableQualities = parser.extractQualities(watchDoc)
+        val postId = parser.extractPostId(watchDoc)
+        val csrfToken = parser.parseCsrfToken(doc) ?: "" // Need token for AJAX
         
-        Log.d(TAG, "[loadLinks] postId=$postId, csrfToken=${csrfToken.take(10)}...")
+        Log.d(TAG, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
+        Log.d(TAG, "[loadLinks] PostID: $postId, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
         // ==================== DIRECT EMBEDS (PRIORITY) ====================
         val directEmbeds = parser.extractDirectEmbeds(watchDoc)

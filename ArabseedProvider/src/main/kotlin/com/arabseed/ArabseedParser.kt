@@ -648,4 +648,90 @@ class ArabseedParser : BaseParser() {
             ) src else null
         }
     }
+
+    // ==================== MIRRORED METHODS FROM BUILT-IN PROVIDER ====================
+
+    fun extractPostId(doc: Document): String {
+        // 1. Try hidden input
+        var postId = doc.select("input[name='post_id'], input#post_id").attr("value")
+        
+        // 2. Try shortlink (e.g. <link rel='shortlink' href='https://asd.pics/?p=832749' />)
+        if (postId.isBlank()) {
+            val shortlink = doc.select("link[rel='shortlink']").attr("href")
+            postId = Regex("""\?p=(\d+)""").find(shortlink)?.groupValues?.get(1) ?: ""
+        }
+        
+        // 3. Try global Javascript variable
+        if (postId.isBlank()) {
+            postId = Regex("""var\s+post_id\s*=\s*(\d+)""").find(doc.html())?.groupValues?.get(1) ?: ""
+        }
+        
+        // 4. Try from report/comment form or data-id attributes
+        if (postId.isBlank()) {
+            postId = doc.select("div#report-video input[name='post_id']").attr("value")
+        }
+        
+        if (postId.isBlank()) {
+            postId = doc.select("*[data-post-id]").attr("data-post-id")
+        }
+        
+        if (postId.isBlank()) {
+            postId = doc.select("*[data-id]").firstOrNull { it.attr("data-id").matches(Regex("""\d+""")) }?.attr("data-id") ?: ""
+        }
+        
+        // 5. Try Body Class (WordPress standard: postid-12345)
+        if (postId.isBlank()) {
+            val bodyClasses = doc.body().className()
+            postId = Regex("""postid-(\d+)""").find(bodyClasses)?.groupValues?.get(1) ?: ""
+        }
+        
+        // 6. Try parsing from ajax calls in script
+        if (postId.isBlank()) {
+            postId = Regex("""post_id\s*:\s*(\d+)""").find(doc.html())?.groupValues?.get(1) ?: ""
+            if (postId.isBlank()) {
+                 postId = Regex("""post_id["']\s*:\s*["']?(\d+)""").find(doc.html())?.groupValues?.get(1) ?: ""
+            }
+        }
+        
+        return postId
+    }
+
+    data class QualityData(val quality: Int, val title: String)
+    
+    fun extractQualities(doc: Document): List<QualityData> {
+        val qualities = mutableListOf<QualityData>()
+        doc.select("ul.qualities__list li").forEach { li ->
+            val q = li.attr("data-quality").toIntOrNull() ?: 0
+            val title = li.attr("data-title")
+            if (q > 0) {
+                qualities.add(QualityData(q, title))
+            }
+        }
+        return qualities.sortedByDescending { it.quality }
+    }
+
+    fun parseCsrfToken(doc: Document): String? {
+        val html = doc.html()
+        
+        // Pattern 1: main__obj = { ..., 'csrf__token': "..." }
+        var token = Regex("""'csrf__token'\s*:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+        if (!token.isNullOrBlank()) return token
+
+        // Pattern 2: var csrf_token = "..."
+        token = Regex("""var\s+csrf_token\s*=\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
+        if (!token.isNullOrBlank()) return token
+        
+        // Pattern 3: csrf_token: "..."
+        token = Regex("""csrf_token\s*:\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
+        if (!token.isNullOrBlank()) return token
+
+        // Try meta tag
+        token = doc.select("meta[name='csrf-token']").attr("content")
+        if (token.isNotBlank()) return token
+        
+        // Try finding it in hidden inputs
+        token = doc.select("input[name='csrf_token']").attr("value")
+        
+        return token.ifBlank { null }
+    }
 }
