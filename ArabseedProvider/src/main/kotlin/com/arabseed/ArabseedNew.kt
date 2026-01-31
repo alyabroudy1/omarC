@@ -387,11 +387,15 @@ class ArabseedV2 : MainAPI() {
         Log.d(TAG, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
         Log.d(TAG, "[loadLinks] PostID: $postId, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
-        // ==================== LEGACY SERVER LIST (li[data-link]) ====================
-        val linksToProcess = mutableListOf<Pair<Int, String>>()
-        val indexOperators = mutableListOf<Int>()
-        val elements = watchDoc.select("ul > li[data-link], ul > h3")
+
         
+        var found = false
+        
+        // ==================== LEGACY LINKS (PRIORITY) ====================
+        // Logic from Reference: Parse data-link elements grouped by H3 headers
+        // This handles cases where servers are listed directly as links
+        val elements = watchDoc.select("ul > li[data-link], ul > h3")
+        val indexOperators = mutableListOf<Int>()
         elements.forEachIndexed { index, element ->
             if (element.`is`("h3")) {
                 indexOperators.add(index)
@@ -407,34 +411,29 @@ class ArabseedV2 : MainAPI() {
                 quality to links
             }
         } else {
+             // Fallback: use active quality from tabs if available
              val activeQuality = availableQualities.find { watchDoc.select("ul.qualities__list li[data-quality='${it.quality}']").hasClass("active") }?.quality ?: 0
              listOf(activeQuality to elements.filter { !it.`is`("h3") })
         }
         
-        watchLinks.forEach { (quality, elements) ->
-            elements.forEach { element ->
+        watchLinks.forEach { (quality, linkElements) ->
+            linkElements.forEach { element ->
                 val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
+                val linkName = element.text()
                 if (rawUrl.isNotBlank()) {
-                    linksToProcess.add(quality to rawUrl)
+                    Log.d(TAG, "[loadLinks] Found legacy link: $linkName ($rawUrl)")
+                    loadExtractor(rawUrl, watchDoc.location(), subtitleCallback) { link ->
+                        // Enrich with quality if missing
+                        if (link.quality == Qualities.Unknown.value && quality > 0) {
+                             link.quality = quality
+                        }
+                        callback(link)
+                        found = true
+                    }
                 }
             }
         }
-        
-        var found = false
-        
-        if (linksToProcess.isNotEmpty()) {
-             Log.d(TAG, "[loadLinks] Found ${linksToProcess.size} legacy links")
-             linksToProcess.forEach { (quality, url) ->
-                 loadExtractor(url, watchDoc.location(), subtitleCallback) { link ->
-                     callback(link) // TODO: Inject quality if missing
-                     found = true
-                 }
-                 // If it's a direct video link, loadExtractor might fail to deduce quality/name if not embedded.
-                 // We can also emit direct link?
-                 // But loadExtractor handles most cases.
-             }
-        }
-        
+
         // ==================== DIRECT EMBEDS (PRIORITY) ====================
         val directEmbeds = parser.extractDirectEmbeds(watchDoc)
         Log.d(TAG, "[loadLinks] Found direct embeds: $directEmbeds")
