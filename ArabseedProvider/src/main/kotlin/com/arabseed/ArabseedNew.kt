@@ -360,9 +360,8 @@ class ArabseedV2 : MainAPI() {
         var doc = http.getDocument(data) ?: return false
         
         // Check if we have server list or iframe
-        var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
-                          doc.select("iframe").isNotEmpty() ||
-                          doc.select("li[data-server]").isNotEmpty()
+        var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() ||
+                doc.select("iframe[name=player_iframe]").isNotEmpty()
         
         var watchDoc = if (isWatchPage) doc else null
         
