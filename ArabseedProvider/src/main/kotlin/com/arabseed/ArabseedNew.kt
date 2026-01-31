@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import com.arabseed.extractors.ArabseedLazyExtractor
 
@@ -235,43 +236,114 @@ class ArabseedV2 : MainAPI() {
     // ==================== INTERCEPTOR ====================
 
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return Interceptor { chain ->
-            val request = chain.request()
-            val url = request.url.toString()
-            
-            // Check if it's our virtual URL
-            if (url.contains("/get__watch__server/")) {
-                var resolvedLink: ExtractorLink? = null
+        // Handle both lazy servers and reviewrate direct embeds
+        if (extractorLink.url.contains("/get__watch__server/") || extractorLink.url.contains("reviewrate")) {
+            return Interceptor { chain ->
+                val request = chain.request()
+                val url = request.url
+                val urlString = url.toString()
                 
-                try {
-                    // Use runBlocking for interceptor
-                    kotlinx.coroutines.runBlocking {
-                        // Use the Extension's Lazy Extractor (com.arabseed.extractors)
-                        val extractor = ArabseedLazyExtractor { endpoint, data, referer ->
-                             // Ensure we pass headers explicitly, especially X-Requested-With
-                             http.postText(
-                                 endpoint, // should be relative path
-                                 data,
-                                 referer = referer,
-                                 headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                             )
+                // Handle JIT Direct Embeds (ReviewRate)
+                if (urlString.contains("reviewrate")) {
+                    Log.d(TAG, "[getVideoInterceptor] Resolving direct embed: $urlString")
+                    try {
+                        val referer = request.header("Referer")
+                        
+                        val directUrl = runBlocking {
+                            // Robust Manual Extraction
+                            // Try with provided Referer first
+                            var response = try {
+                                val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
+                                app.get(urlString, headers = headers).text
+                            } catch (e: Exception) {
+                                null
+                            }
+                            
+                            // Fallback: Try without Referer
+                            if (response == null) {
+                                 Log.w(TAG, "[getVideoInterceptor] First attempt failed, retrying without specific referer...")
+                                 response = try { app.get(urlString).text } catch(e: Exception) { null }
+                            }
+                            
+                            val html = response ?: ""
+                            // Debug: Log the HTML to see what we are getting
+                            if (html.isNotBlank()) Log.d(TAG, "[getVideoInterceptor] ReviewRate HTML len=${html.length}")
+                            
+                            var foundUrl: String? = null
+                            
+                            // Pattern 1: file: "..."
+                            if (foundUrl == null) foundUrl = Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                            // Pattern 2: <source src="...">
+                            if (foundUrl == null) foundUrl = Regex("""<source[^>]+src=["']([^"']+\.mp4)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                            // Pattern 3: sources: [{file:"..."}]
+                            if (foundUrl == null) foundUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                            // Pattern 4: source: "..."
+                            if (foundUrl == null) foundUrl = Regex("""source:\s*["']([^"']+\.mp4)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                            // Pattern 5: URL inside script variable
+                            if (foundUrl == null) foundUrl = Regex("""var\s+url\s*=\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                            
+                            if (foundUrl != null) Log.d(TAG, "[getVideoInterceptor] Found match: $foundUrl")
+                            else Log.w(TAG, "[getVideoInterceptor] No regex match found in HTML")
+                            
+                            return@runBlocking foundUrl
                         }
-                        extractor.getUrl(url, null, {}) { link ->
-                            resolvedLink = link
+                        
+                        if (!directUrl.isNullOrBlank()) {
+                            Log.i(TAG, "[getVideoInterceptor] Resolved direct embed to: $directUrl")
+                            return@Interceptor chain.proceed(
+                                request.newBuilder()
+                                    .url(directUrl)
+                                    .header("Referer", urlString) // Use embed as referer for video
+                                    .build()
+                            )
+                        } else {
+                            Log.w(TAG, "[getVideoInterceptor] Failed to resolve direct link, but proceeding with original URL")
+                            return@Interceptor chain.proceed(request)
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "[getVideoInterceptor] JIT resolution failed: ${e.message}")
+                        return@Interceptor chain.proceed(request)
                     }
-                } catch(e: Exception) {
-                    Log.e(TAG, "[getVideoInterceptor] Failed: ${e.message}")
+                }
+
+                // Handle Lazy Servers
+                if (urlString.contains("/get__watch__server/")) {
+                    var resolvedLink: ExtractorLink? = null
+                    
+                    try {
+                        runBlocking {
+                             // Use the Extension's Lazy Extractor (com.arabseed.extractors)
+                             val extractor = ArabseedLazyExtractor { endpoint, data, referer ->
+                                 // Ensure we pass headers explicitly, especially X-Requested-With
+                                 http.postText(
+                                     endpoint, // should be relative path
+                                     data,
+                                     referer = referer,
+                                     headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                                 )
+                             }
+                             extractor.getUrl(urlString, null, {}) { link ->
+                                 resolvedLink = link
+                             }
+                        }
+                    } catch(e: Exception) {
+                        Log.e(TAG, "[getVideoInterceptor] Lazy resolution failed: ${e.message}")
+                    }
+                    
+                    resolvedLink?.let { link ->
+                         Log.d(TAG, "[getVideoInterceptor] Resolved to: ${link.url}")
+                         val builder = request.newBuilder().url(link.url)
+                         if (link.referer.isNotBlank()) {
+                             builder.header("Referer", link.referer)
+                         }
+                         return@Interceptor chain.proceed(builder.build())
+                    }
                 }
                 
-                resolvedLink?.let { link ->
-                    val builder = request.newBuilder().url(link.url)
-                    if (link.referer.isNotBlank()) builder.header("Referer", link.referer)
-                    return@Interceptor chain.proceed(builder.build())
-                }
+                chain.proceed(request)
             }
-            chain.proceed(request)
         }
+        return null
     }
     
     // ==================== LOAD LINKS ====================
