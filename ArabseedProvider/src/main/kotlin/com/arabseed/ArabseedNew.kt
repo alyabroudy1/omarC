@@ -322,7 +322,24 @@ class ArabseedV2 : MainAPI() {
         }
         
         // ==================== VISIBLE SERVERS (LAZY) ====================
-        val servers = parser.extractVisibleServers(watchDoc)
+        val servers = parser.extractVisibleServers(watchDoc).toMutableList()
+        
+        // Lazy Fallback: If we found qualities but no servers for them, generate placeholder servers
+        // This is CRITICAL for pages where servers are hidden or loaded dynamically
+        val processedQualities = servers.map { it.quality }.toSet()
+        val qualitiesToGenerate = availableQualities.filter { it.quality !in processedQualities }
+        
+        if (qualitiesToGenerate.isNotEmpty()) {
+            Log.d(TAG, "[loadLinks] Generating placeholder links for: ${qualitiesToGenerate.map { it.quality }}")
+            qualitiesToGenerate.forEach { qData ->
+                servers.add(com.arabseed.ArabseedParser.ServerData(
+                    postId = postId,
+                    quality = qData.quality,
+                    serverId = "0", // Default server ID
+                    title = "Server Auto"
+                ))
+            }
+        }
         val pageReferer = watchDoc.location()
         val encodedReferer = java.net.URLEncoder.encode(pageReferer, "UTF-8")
         
