@@ -459,52 +459,54 @@ class ArabseedV2 : MainAPI() {
         }
         
         // ==================== VISIBLE SERVERS (LAZY) ====================
-        val servers = parser.extractVisibleServers(watchDoc).toMutableList()
+        var servers = parser.extractVisibleServers(watchDoc).toMutableList()
         Log.d(TAG, "[loadLinks] Visible servers: ${servers.size}")
         
-        // Lazy Fallback: If we found qualities but no servers for them, generate placeholder servers
-        // This is CRITICAL for pages where servers are hidden or loaded dynamically
-        val processedQualities = servers.map { it.quality }.toSet()
-        val qualitiesToGenerate = availableQualities.filter { it.quality !in processedQualities }
-        
-        if (qualitiesToGenerate.isNotEmpty()) {
-            Log.d(TAG, "[loadLinks] Generating placeholder links for: ${qualitiesToGenerate.map { it.quality }}")
-            qualitiesToGenerate.forEach { qData ->
-                servers.add(com.arabseed.ArabseedParser.ServerData(
-                    postId = postId,
-                    quality = qData.quality,
-                    serverId = "0", // Default server ID
-                    title = "Server Auto"
-                ))
-            }
+        // Cross-product: Use all available qualities for ALL unique servers found
+        // If no servers found, assume Server 0 (Auto) exists
+        val uniqueServers = servers.distinctBy { it.serverId }.toMutableList()
+        if (uniqueServers.isEmpty()) {
+             // Fallback to Server 0 (Auto) if no explicit servers are listed
+             uniqueServers.add(com.arabseed.ArabseedParser.ServerData(postId, 0, "0", "Server Auto"))
         }
+
+        // Determine qualities to process (Prioritize extracted qualities, fallback to defaults)
+        val qualitiesToProcess = if (availableQualities.isNotEmpty()) {
+             availableQualities.map { it.quality }.distinct().sortedDescending()
+        } else {
+             // Fallback to qualities seen in server list, or default 720p
+             val sQualities = servers.map { it.quality }.filter { it > 0 }.distinct().sortedDescending()
+             if (sQualities.isNotEmpty()) sQualities else listOf(720) 
+        }
+        
         val pageReferer = watchDoc.location()
         val encodedReferer = java.net.URLEncoder.encode(pageReferer, "UTF-8")
         
         if (postId.isNotBlank() && csrfToken.isNotBlank()) {
-            servers.forEach { server ->
-                val linkName = server.title.ifBlank { "Server ${server.serverId}" }
-                val quality = server.quality
-                
-                // Construct virtual URL
-                val currentBaseUrl = try {
-                    val uri = java.net.URI(pageReferer)
-                    "${uri.scheme}://${uri.host}"
-                } catch (e: Exception) { "https://arabseed.show" }
-                
-                val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$postId&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
-                
-                callback(
-                    newExtractorLink(
-                        source = name,
-                        name = "$linkName (${quality}p)",
-                        url = virtualUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.quality = quality
-                    }
-                )
-                found = true
+            qualitiesToProcess.forEach { quality ->
+                uniqueServers.forEach { server ->
+                    val linkName = server.title.ifBlank { "Server ${server.serverId}" }
+                    
+                    // Construct virtual URL overriding the quality parameter
+                    val currentBaseUrl = try {
+                        val uri = java.net.URI(pageReferer)
+                        "${uri.scheme}://${uri.host}"
+                    } catch (e: Exception) { "https://arabseed.show" }
+                    
+                    val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$postId&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
+                    
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = "$linkName (${quality}p)",
+                            url = virtualUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.quality = quality
+                        }
+                    )
+                    found = true
+                }
             }
         }
         
