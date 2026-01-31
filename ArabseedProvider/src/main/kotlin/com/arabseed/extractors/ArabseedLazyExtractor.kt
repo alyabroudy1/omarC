@@ -164,7 +164,21 @@ class ArabseedLazyExtractor(private val jsonFetcher: JsonFetcher? = null) : Extr
         try {
             if (embedUrl.contains("reviewrate") || embedUrl.contains("cdn.boutique")) {
                  val response = app.get(embedUrl).text
-                 return Regex("""file:\s*["']([^"']+)["']""").find(response)?.groupValues?.get(1) ?: ""
+                 val html = response ?: ""
+                 var foundUrl: String? = null
+                           
+                 // Pattern 1: file: "..."
+                 if (foundUrl == null) foundUrl = Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                 // Pattern 2: <source src="...">
+                 if (foundUrl == null) foundUrl = Regex("""<source[^>]+src=["']([^"']+\.mp4)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                 // Pattern 3: sources: [{file:"..."}]
+                 if (foundUrl == null) foundUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                 // Pattern 4: source: "..."
+                 if (foundUrl == null) foundUrl = Regex("""source:\s*["']([^"']+\.mp4)["']""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                 // Pattern 5: URL inside script variable
+                 if (foundUrl == null) foundUrl = Regex("""var\s+url\s*=\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                 
+                 return foundUrl ?: ""
             }
         } catch (e: Exception) {
             // ignore
