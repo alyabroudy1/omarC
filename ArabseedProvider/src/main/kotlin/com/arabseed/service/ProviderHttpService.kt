@@ -28,13 +28,7 @@ class ProviderHttpService private constructor(
     private val config: ProviderConfig,
     private val sessionStore: SessionStore,
     private val webViewEngine: WebViewEngine,
-    // domainManager removed for simplicity in extension port, handling domain locally/via config
-    // Actually, original code had DomainManager. I should port it too if I want full feature parity...
-    // But I didn't verify DomainManager source.
-    // Wait, the original had private val domainManager: DomainManager.
-    // I missed importing DomainManager source!
-    // I will simplify by removing DomainManager logic for now and relying on static domain + fallback.
-    // This reduces complexity for the extension port.
+    private val domainManager: com.cloudstream.shared.domain.DomainManager,
     private val parser: BaseParser
 ) {
     private val TAG = "ProviderHttpService"
@@ -74,6 +68,14 @@ class ProviderHttpService private constructor(
         } else {
             // New session
             sessionState = SessionState.initial(config.fallbackDomain, config.userAgent)
+        }
+
+        // Fetch latest domain from GitHub (may update session)
+        domainManager.ensureInitialized()
+        val remoteDomain = domainManager.currentDomain
+        if (remoteDomain != sessionState.domain) {
+            Log.i(TAG, "Domain from GitHub differs: ${sessionState.domain} → $remoteDomain")
+            updateDomain(remoteDomain)
         }
     }
     
@@ -657,9 +659,20 @@ class ProviderHttpService private constructor(
             activityProvider: () -> android.app.Activity?
         ): ProviderHttpService {
             return instances.getOrPut(config.name) {
+                // Restore DomainManager to enable GitHub fetching
                 val sessionStore = SessionStore(context, config.name)
                 
-                // Removed DomainManager for simplicity - relying on config & local detection
+                // Use shared CookieStore implementation that DomainManager expects
+                val cookieStore = com.cloudstream.shared.http.InMemoryCookieStore()
+
+                val domainManager = com.cloudstream.shared.domain.DomainManager(
+                    context = context,
+                    providerName = config.name,
+                    fallbackDomain = config.fallbackDomain,
+                    githubConfigUrl = config.githubConfigUrl,
+                    cookieStore = cookieStore,
+                    syncWorkerUrl = config.syncWorkerUrl
+                )
                 
                 val webViewEngine = WebViewEngine(
                     activityProvider = activityProvider
@@ -669,6 +682,7 @@ class ProviderHttpService private constructor(
                     config = config,
                     sessionStore = sessionStore,
                     webViewEngine = webViewEngine,
+                    domainManager = domainManager,
                     parser = parser
                 )
             }
