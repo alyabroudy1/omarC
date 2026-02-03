@@ -16,9 +16,9 @@ class YoutubeProvider : MainAPI() {
         val url = "https://www.youtube.com/feed/trending?gl=SY&hl=ar"
         // Use a standard User-Agent to reduce bot detection
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Accept-Language" to "ar,en-US;q=0.9",
-            "Cookie" to "CONSENT=YES+cb.20210328-17-p0.en+FX+417"
+            "Cookie" to "CONSENT=YES+; SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"
         )
         val output = app.get(url, headers = headers).text
         
