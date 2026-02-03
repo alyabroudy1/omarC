@@ -909,7 +909,7 @@ class YouTubePlayerDialog(
                    
                    // Name Extraction Strategy
                    var name = t.optString("displayName")
-                   if (name.isEmpty()) name = t.optJSONObject("name")?.optString("simpleText")
+                   if (name.isEmpty()) name = t.optJSONObject("name")?.optString("simpleText") ?: ""
                    if (name.isNullOrEmpty()) name = t.optString("label") // Common fallback
                    if (name.isNullOrEmpty()) name = t.optString("languageName") // Another fallback
                    if (name.isNullOrEmpty()) name = t.optString("name") // Another fallback
