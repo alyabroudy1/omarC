@@ -241,35 +241,50 @@ class YouTubePlayerDialog(
 
 
 
+    private fun getResId(name: String, type: String): Int {
+        return context.resources.getIdentifier(name, type, "com.youtube")
+    }
+    
+    // ... inside createOverlayUI ...
     private fun createOverlayUI() {
         Log.d(TAG, "createOverlayUI: Inflating XML layout")
         
-        // Inflate the strict XML layout
-        val view = layoutInflater.inflate(R.layout.dialog_youtube_player, null)
+        // Use reflection to find layout to avoid NoClassDefFoundError on R class
+        val layoutId = getResId("dialog_youtube_player", "layout")
+        if (layoutId == 0) {
+            Log.e(TAG, "FATAL: Could not find layout dialog_youtube_player")
+            Toast.makeText(context, "Error: Player Layout Not Found", Toast.LENGTH_LONG).show()
+            dismiss()
+            return
+        }
+
+        val view = layoutInflater.inflate(layoutId, null)
         overlayRoot = view as ViewGroup
         overlayRoot.visibility = View.GONE
         overlayRoot.isClickable = true
         overlayRoot.isFocusable = true
         
-        // REMOVED: setContentView(view) - handled in onCreate via rootLayout logic
+        // Helper for finding IDs
+        fun findId(name: String): Int = getResId(name, "id")
         
         // Bind Views
-        btnPlayPause = view.findViewById(R.id.btn_play_pause)
-        btnRewind = view.findViewById(R.id.btn_rewind)
-        btnForward = view.findViewById(R.id.btn_forward)
+        btnPlayPause = view.findViewById(findId("btn_play_pause"))
+        btnRewind = view.findViewById(findId("btn_rewind"))
+        btnForward = view.findViewById(findId("btn_forward"))
         
         // Extended Controls
-        btnSpeed = view.findViewById(R.id.btn_speed)
-        btnQuality = view.findViewById(R.id.btn_quality) // was btn_settings
-        btnCaptions = view.findViewById(R.id.btn_captions)
-        btnAudio = view.findViewById(R.id.btn_audio)
-        btnExit = view.findViewById(R.id.btn_close)
+        btnSpeed = view.findViewById(findId("btn_speed"))
+        btnQuality = view.findViewById(findId("btn_quality"))
+        btnCaptions = view.findViewById(findId("btn_captions"))
+        btnAudio = view.findViewById(findId("btn_audio"))
+        btnExit = view.findViewById(findId("btn_close"))
         
-        seekBar = view.findViewById(R.id.seekbar)
-        textCurrentTime = view.findViewById(R.id.text_time)
+        seekBar = view.findViewById(findId("seekbar"))
+        textCurrentTime = view.findViewById(findId("text_time"))
         textDuration = TextView(context) 
         
-        // Ensure standard accessibility references
+        // ... rest of setup ...
+    }
         btnPlayPause.contentDescription = "Play"
         btnPlayPause.setImageResource(android.R.drawable.ic_media_pause) // Default to Pause icon as we autoplay
         btnExit.contentDescription = "Close"
