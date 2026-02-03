@@ -5,9 +5,9 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 
 @CloudstreamPlugin
-class YoutubePlugin: Plugin() {
+class YoutubePlugin : Plugin() {
     override fun load(context: Context) {
-        // Register provider
+        // All providers should be added in this manner
         registerMainAPI(YoutubeProvider())
     }
 }

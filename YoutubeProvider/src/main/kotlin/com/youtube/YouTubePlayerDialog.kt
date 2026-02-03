@@ -50,7 +50,6 @@ class YouTubePlayerDialog(
     private lateinit var btnQuality: ImageButton
     private lateinit var btnSpeed: ImageButton
     private lateinit var btnCaptions: ImageButton
-    private lateinit var btnAudio: ImageButton
     private lateinit var btnExit: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var textCurrentTime: TextView
@@ -240,6 +239,8 @@ class YouTubePlayerDialog(
         }
     }
 
+
+
     private fun createOverlayUI() {
         Log.d(TAG, "createOverlayUI: Inflating XML layout")
         
@@ -249,6 +250,8 @@ class YouTubePlayerDialog(
         overlayRoot.visibility = View.GONE
         overlayRoot.isClickable = true
         overlayRoot.isFocusable = true
+        
+        // REMOVED: setContentView(view) - handled in onCreate via rootLayout logic
         
         // Bind Views
         btnPlayPause = view.findViewById(R.id.btn_play_pause)
@@ -374,9 +377,7 @@ class YouTubePlayerDialog(
 
     private fun loadVideo() {
         Log.d(TAG, "loadVideo: $url")
-        // User Requested Test Video
-        val testUrl = "https://www.youtube.com/watch?v=pAnGwRiQ4-4"
-        webView.loadUrl(testUrl)
+        webView.loadUrl(url)
     }
 
     private fun injectFullscreenCSS() {
@@ -591,6 +592,11 @@ class YouTubePlayerDialog(
                                 btnPlayPause.setImageResource(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
                             } catch(e:Exception) {}
                         }
+                        // Also proactively check if icon matches state to fix "wrong icon on start" bug 
+                        // (e.g., if isPlaying=true but icon is Play)
+                        // Note: setImageResource is lightweight, safe to call redundantly if needed, 
+                        // but cleaner to check drawable constant? Hard with system resources.
+                        // We rely on isPlaying state being accurate now.
                     }
                 } catch(e: Exception) {}
             }
@@ -600,6 +606,8 @@ class YouTubePlayerDialog(
     }
 
     private var currentSpeed: Double = 1.0
+
+
 
     private fun showQualityDialog() {
         val names = qualityOptions.map { it.second }.toTypedArray()
@@ -640,6 +648,11 @@ class YouTubePlayerDialog(
         executeJs("var v = document.querySelector('video'); if(v) { v.playbackRate = $rate; }")
         showToast("Speed: ${rate}x")
     }
+
+    private lateinit var btnAudio: ImageButton
+
+    // ... inside createOverlayUI ...
+    // btnAudio = view.findViewById(R.id.btn_audio)
 
     private fun showCaptionMenu() {
         // Parse ytInitialPlayerResponse directly as API is unreliable on Mobile
@@ -801,6 +814,7 @@ class YouTubePlayerDialog(
         """.trimIndent()
         
         webView.evaluateJavascript(js) { res ->
+            if (res != null) Log.d(TAG, "CAPTIONS_RESULT: $res")
             if (res != null && (res.contains("success\":true") || res.contains("success\": true"))) {
                  val mode = if (!enabled) "OFF" else (translateTo?.uppercase() ?: languageCode?.uppercase() ?: "ON")
                  showToast("Captions: $mode")
@@ -815,6 +829,8 @@ class YouTubePlayerDialog(
             }
         }
     }
+    
+    // ...
 
     private fun dumpDiagnostics() {
         val js = """
@@ -989,6 +1005,8 @@ class YouTubePlayerDialog(
     
     // Stats for Nerds (Video Info)
  
+
+
     private fun syncCurrentSettings() {
         // Implementation similar to overlay class
     }
