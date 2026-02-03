@@ -284,7 +284,6 @@ class YouTubePlayerDialog(
         textDuration = TextView(context) 
         
         // ... rest of setup ...
-    }
         btnPlayPause.contentDescription = "Play"
         btnPlayPause.setImageResource(android.R.drawable.ic_media_pause) // Default to Pause icon as we autoplay
         btnExit.contentDescription = "Close"
