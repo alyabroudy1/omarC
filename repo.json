@@ -1,0 +1,11 @@
+{
+    "name": "FaselHD Provider",
+    "description": "Custom FaselHD streaming provider for CloudStream with video sniffing support",
+    "manifestVersion": 1,
+    "authors": [
+        "omarC"
+    ],
+    "pluginLists": [
+        "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/plugins.json"
+    ]
+}

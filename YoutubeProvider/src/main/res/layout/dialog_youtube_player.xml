@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
+
+    <!-- Top Overlay Gradient -->
+    <View
+        android:id="@+id/top_gradient"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:background="@drawable/player_gradient_top"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Top Controls Container -->
+    <LinearLayout
+        android:id="@+id/top_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/btn_audio"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:src="@drawable/ic_baseline_volume_up_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_captions"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:src="@drawable/ic_baseline_subtitles_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_speed"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:src="@drawable/ic_baseline_speed_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_quality"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:src="@drawable/ic_outline_settings_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_close"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:src="@drawable/ic_baseline_close_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+    </LinearLayout>
+
+    <!-- Center Controls -->
+    <LinearLayout
+        android:id="@+id/center_controls"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageButton
+            android:id="@+id/btn_rewind"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_baseline_replay_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_play_pause"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_marginStart="32dp"
+            android:layout_marginEnd="32dp"
+            android:background="@drawable/selector_play_button"
+            android:padding="20dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_baseline_play_arrow_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+
+        <ImageButton
+            android:id="@+id/btn_forward"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/selector_player_button"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_baseline_fast_forward_24"
+            app:tint="@android:color/white"
+            android:focusable="true"
+            tools:ignore="ContentDescription" />
+    </LinearLayout>
+
+    <!-- Bottom Overlay Gradient -->
+    <View
+        android:id="@+id/bottom_gradient"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:background="@drawable/player_gradient_bottom"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- SeekBar (Absolute Bottom) -->
+    <SeekBar
+        android:id="@+id/seekbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="0dp"
+        android:paddingStart="0dp"
+        android:paddingEnd="0dp"
+        android:progressTint="#FF0000"
+        android:thumbTint="#FF0000"
+        android:focusable="true"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- Time Text (Start aligned, Above SeekBar) -->
+    <TextView
+        android:id="@+id/text_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="12dp"
+        android:text="0:00 / 0:00"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toTopOf="@id/seekbar"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Fullscreen Icon (End aligned, Above SeekBar) -->
+
+
+</androidx.constraintlayout.widget.ConstraintLayout>
