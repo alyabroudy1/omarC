@@ -1,0 +1,847 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=3iskk.xyz&sz=%size%",
+        "fileHash": "sha256-4cbf21548c776793d6a26763bfbe06c343abab281b7424e0512beff66a20cde1",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 687035,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 2,
+        "internalName": "3isk",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/3isk.cs3",
+        "name": "3isk"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=asia2tv.com&sz=%size%",
+        "fileHash": "sha256-19bf35a12a246850c7de2202a2824e0758553df0cffec8892bdeac9f29e15f7d",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 684508,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Asia Drama"
+        ],
+        "version": 2,
+        "internalName": "Aia2tv",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Aia2tv.cs3",
+        "name": "Aia2tv"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=ak.sv&sz=%size%",
+        "fileHash": "sha256-be06ff3bac502c24ff09aa6e103a5cc2b81b3bf78f4ac436b83b14985c0569ee",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 686996,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 5,
+        "internalName": "AkwamProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/AkwamProvider.cs3",
+        "name": "AkwamProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=anime3rb.com&sz=%size%",
+        "fileHash": "sha256-b874f11d40652032d96a31cb74d2cfbd176446a6f460d8793fc7c580da923a2d",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 705429,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Anim3rb",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Anim3rb.cs3",
+        "name": "Anim3rb"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=3iskk.xyz&sz=%size%",
+        "fileHash": "sha256-f9ba8a7b533bc87687f390f06e5547bfc7c5614ddaf38dba65957f6c0ee00430",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 684546,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 2,
+        "internalName": "Anime4up",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Anime4up.cs3",
+        "name": "Anime4up"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=animeiat.tv&sz=%size%",
+        "fileHash": "sha256-4c30533db403df2e07094e81506df5e0f65f0122cf8c8c2518e33571f1707725",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 689384,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Animeiat",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Animeiat.cs3",
+        "name": "Animeiat"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=animerco.com&sz=%size%",
+        "fileHash": "sha256-e51cb7f4b67839d26b0fa6b33fd76b325a7894a0cbe3570de4af2ee3c375a2a3",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 717785,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Animerco",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Animerco.cs3",
+        "name": "Animerco"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=animewitcher.net&sz=%size%",
+        "fileHash": "sha256-3a312f9de2100d7b956c3b12fa949402a48703def99e3960349bd26920373ea9",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 699493,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Animewitcher",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Animewitcher.cs3",
+        "name": "Animewitcher"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=arabseed.show&sz=%size%",
+        "fileHash": "sha256-fb74f55ab9dcef57c1408fdbf3c2a12459ccae6f791f4cff0cb02b8ad3373476",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 695075,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 10,
+        "internalName": "ArabSeedProviderV4",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/ArabSeedProviderV4.cs3",
+        "name": "ArabSeedProviderV4"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=arabseed.wine&sz=%size%",
+        "fileHash": "sha256-fbee00a7a25a8d4df68227d8c99e556d049b21c86b1cedde3627e1432c9f98c0",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 695176,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 3,
+        "internalName": "ArabSeedWineProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/ArabSeedWineProvider.cs3",
+        "name": "ArabSeedWineProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=amd.brstej.com&sz=%size%",
+        "fileHash": "sha256-f7c362a4041835b6e4f6dc35eb82d61e08b0df06631ee5461fbdcfab94cd1d46",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 693815,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 6,
+        "internalName": "BristegeProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/BristegeProvider.cs3",
+        "name": "BristegeProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=ciimaclub.club&sz=%size%",
+        "fileHash": "sha256-2a8a7ccf30e5843425b80be378bde66637d8232751f0cec51a3021beb40e70e1",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 677077,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "CimaClub",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/CimaClub.cs3",
+        "name": "CimaClub"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=cimaleek.pw&sz=%size%",
+        "fileHash": "sha256-435cf1562d2df2ccd55daa2d1269f56596287845999096ac12ebc2f494bed5aa",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 710722,
+        "status": 0,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime"
+        ],
+        "version": 6,
+        "internalName": "CimaLeekProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/CimaLeekProvider.cs3",
+        "name": "CimaLeekProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=cimalight.cam&sz=%size%",
+        "fileHash": "sha256-e8fcfc3d0ffb0438f9e3f0185297dd890d1f8aa00d991d651c0495810c120361",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 690846,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "Cimalight",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Cimalight.cs3",
+        "name": "Cimalight"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=cimanow.cc&sz=%size%",
+        "fileHash": "sha256-78380351a32b8054a159b9fa1344e9e5a23e369ea554de74ca1a2df644b25ca6",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 795889,
+        "status": 0,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 9,
+        "internalName": "CimaNowProviderV2",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/CimaNowProviderV2.cs3",
+        "name": "CimaNowProviderV2"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=cima-tn.com&sz=%size%",
+        "fileHash": "sha256-ef4f67428688d58bad43034b621b97555555cd11c5001e230c79a48f266efa00",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 693615,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "Cimatn",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Cimatn.cs3",
+        "name": "Cimatn"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=cimawbas.org&sz=%size%",
+        "fileHash": "sha256-c213420889ec257235c0a1c9289fbafc64d7dd310f894e0cedad674d0e0008c5",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 691588,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarC",
+            "Antigravity"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime"
+        ],
+        "version": 4,
+        "internalName": "CimawbasProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/CimawbasProvider.cs3",
+        "name": "CimawbasProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=dima-toon.com&sz=%size%",
+        "fileHash": "sha256-0813a23dc866db9a3bee3b15257601c723e8336008654a0063ebc07328f81a3e",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 681229,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Cartoon",
+            "Anime",
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "dima-toon",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/dima-toon.cs3",
+        "name": "dima-toon"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=egydead.space&sz=%size%",
+        "fileHash": "sha256-d13ccaba098b55f37bedee1a33574bf86e44e76f1b1d5a228fd6e4d8ad2dd981",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 701347,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 10,
+        "internalName": "EgyDeadProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/EgyDeadProvider.cs3",
+        "name": "EgyDeadProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=gesseh.com&sz=%size%",
+        "fileHash": "sha256-f5b9ee38be644b4c2fbba1b2b56ae0d7f6a6694d25f8f0efe07e3f91ab754862",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 698256,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "eseek",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/eseek.cs3",
+        "name": "eseek"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=laroza.co&sz=%size%",
+        "fileHash": "sha256-3d7662a01331f647121935b8c30227f005863085c2387f0db49322feab423885",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 694583,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 8,
+        "internalName": "FaselHDV2Provider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/FaselHDV2Provider.cs3",
+        "name": "FaselHDV2Provider"
+    },
+    {
+        "iconUrl": "https://bit.ly/jpgairmaxtv",
+        "fileHash": "sha256-b970023d85b17216fb7099e1483f4ada821d5333672e67111c918ecf3afd7e40",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 685317,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "LiveTV"
+        ],
+        "version": 6,
+        "internalName": "IPTVProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/IPTVProvider.cs3",
+        "name": "IPTVProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=koora-livehd7.com&sz=%size%",
+        "fileHash": "sha256-1fdfceebb28a8e230ea8c684af2f91273463b97c33c43e2e78e4b59e6202492d",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 684818,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Live",
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 3,
+        "internalName": "KooraLiveProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/KooraLiveProvider.cs3",
+        "name": "KooraLiveProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=krmzy.net&sz=%size%",
+        "fileHash": "sha256-58d7bb9b6378c4a622cd51bbe9a53b6aac00dc30e8b165bc5463b2bbd2f89548",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 721242,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 2,
+        "internalName": "Krmzy",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Krmzy.cs3",
+        "name": "Krmzy"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=laroza.co&sz=%size%",
+        "fileHash": "sha256-619a7ceae82a19abf17f11fcc40ac4b24c2bff045f921251764414d92a13f6af",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 685561,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 9,
+        "internalName": "LarozaProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/LarozaProvider.cs3",
+        "name": "LarozaProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=lodynet.com&sz=%size%",
+        "fileHash": "sha256-e1f3adff0bcbc07f4822b8d623d389a7d1914062749516a9b32b3a812e65b8ff",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 692668,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "AsianDrama"
+        ],
+        "version": 1,
+        "internalName": "Lodynet",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Lodynet.cs3",
+        "name": "Lodynet"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=mycima.horse&sz=%size%",
+        "fileHash": "sha256-41e624221cc48398c97f593237c4e9281ead5c2d81b1edcc4464f53d1310b9fb",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 681588,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarC"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 3,
+        "internalName": "MyCimaCloneProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/MyCimaCloneProvider.cs3",
+        "name": "MyCimaCloneProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=mycima.boo&sz=%size%",
+        "fileHash": "sha256-0ef71056d25cda9cc56f396cbea1c2c665c607a08394a14e3d77a1825793b196",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 681564,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarC"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime",
+            "AsianDrama"
+        ],
+        "version": 4,
+        "internalName": "MyCimaProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/MyCimaProvider.cs3",
+        "name": "MyCimaProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=ohatv.com&sz=%size%",
+        "fileHash": "sha256-ff3917ff62ccf698444b8e986914d90ae0cd1b82414b95f5ab5c870a403e25c4",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 688954,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "Ohatv",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Ohatv.cs3",
+        "name": "Ohatv"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=replaymatch.com&sz=%size%",
+        "fileHash": "sha256-0863910a05a40f4f3324ee8fbb4ad659f640056fd3805fba67869dc1d4a2fed5",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 694699,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "Replaymatch",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Replaymatch.cs3",
+        "name": "Replaymatch"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=shahed4u.us&sz=%size%",
+        "fileHash": "sha256-17d312818954a9240d8341abb1bdb9db1e02b3a5fc8c4cc9952db98387d9b7d8",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 692746,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "Shahid4u",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Shahid4u.cs3",
+        "name": "Shahid4u"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=syrlive.com&sz=%size%",
+        "fileHash": "sha256-38bb4ba0dc553f2f7717ea8dc399653b0097499856d8cea2e635dee03d31049b",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 686305,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Live"
+        ],
+        "version": 10,
+        "internalName": "SyriaLiveProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/SyriaLiveProvider.cs3",
+        "name": "SyriaLiveProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=topcinema.cam&sz=%size%",
+        "fileHash": "sha256-59c08633916bb59d2f2c5e8746fba17be7f6462e9106f3d6334953db7460c708",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 694511,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "Topcinema",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Topcinema.cs3",
+        "name": "Topcinema"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=tuktukhd.com&sz=%size%",
+        "fileHash": "sha256-3fed233979049b6fe39aa04a59d04bef709f57bb2ce59687282034b86ce47016",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 696454,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarC",
+            "Antigravity"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Anime"
+        ],
+        "version": 10,
+        "internalName": "TukTukcimaProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/TukTukcimaProvider.cs3",
+        "name": "TukTukcimaProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?tuniflix=tuniflix.io&sz=%size%",
+        "fileHash": "sha256-8b254eb63bcdb01aaa001f656c952ce03ac4cef52a9c12f1d811626630f40b74",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 693168,
+        "status": 0,
+        "language": "ar",
+        "authors": [
+            "Cloudburst",
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": -1,
+        "internalName": "Tuniflix",
+        "description": "Watch content from tuniflix (tuniflix frontend)",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Tuniflix.cs3",
+        "name": "Tuniflix"
+    },
+    {
+        "iconUrl": "https://famelack.com/assets/favicons/favicon-512.png",
+        "fileHash": "sha256-edb16b170d4cc3ed83cdc0123ba65191d94eb724b256df879439d48e61d70319",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 682611,
+        "status": 3,
+        "language": "en",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Live",
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 1,
+        "internalName": "TVgarden",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/TVgarden.cs3",
+        "name": "TVgarden"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=viu.io&sz=%size%",
+        "fileHash": "sha256-f8e1a43cbfe4380657eb6c4cb0a3f5f6dd16d8a9f1982382518dd949fc1fb503",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 702324,
+        "status": 0,
+        "language": "ar",
+        "authors": [
+            "Cloudburst",
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Others"
+        ],
+        "version": -1,
+        "internalName": "Viu",
+        "description": "Watch content from viu (viu frontend)",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Viu.cs3",
+        "name": "Viu"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=watanflix.com&sz=%size%",
+        "fileHash": "sha256-b31f0d924e70cad510146c5d4153af947310fee0f76e9f0903eb67e3df1b7395",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 713782,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 3,
+        "internalName": "WatanflixProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/WatanflixProvider.cs3",
+        "name": "WatanflixProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=wecima.ac&sz=%size%",
+        "fileHash": "sha256-7a1682e4eefac2b275b6491b1fcd7258737d12c2dd171f700e2db4b9d1fdc0c7",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 688097,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarC"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie"
+        ],
+        "version": 10,
+        "internalName": "WecimaProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/WecimaProvider.cs3",
+        "name": "WecimaProvider"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=witanime.cyou&sz=%size%",
+        "fileHash": "sha256-bd1b40f08ea7f91245a897844070770a12e1bc2597c2ba16f7fc19b54677708b",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 711766,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "Witanime",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/Witanime.cs3",
+        "name": "Witanime"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=shoot-one.com&sz=%size%",
+        "fileHash": "sha256-de28f6c30c3ea985ce60c82c08c93fd62da8a9cb6c2a0532f274a33a2017bbf9",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/alyabroudy1/omarC",
+        "fileSize": 685933,
+        "status": 3,
+        "language": "ar",
+        "authors": [
+            "omarflex"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "Live"
+        ],
+        "version": 5,
+        "internalName": "YallaShootProvider",
+        "url": "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/YallaShootProvider.cs3",
+        "name": "YallaShootProvider"
+    }
+]
