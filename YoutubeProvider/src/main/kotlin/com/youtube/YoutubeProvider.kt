@@ -13,18 +13,57 @@ class YoutubeProvider : MainAPI() {
     override val hasMainPage = true
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val items = listOf(
-            newMovieSearchResponse("Test YouTube Video", "https://www.youtube.com/watch?v=5AwtptT8X8k", TvType.Movie) {
-                this.posterUrl = "https://img.youtube.com/vi/5AwtptT8X8k/maxresdefault.jpg"
+        val url = "https://www.youtube.com/feed/trending?gl=SY&hl=ar"
+        val response = app.get(url).text
+        // Extract ytInitialData
+        val jsonText = response.substringAfter("var ytInitialData = ", "")
+            .substringBefore(";</script>", "")
+        
+        if (jsonText.isEmpty()) return null
+
+        val json = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(jsonText)
+        val videoRenderers = mutableListOf<com.fasterxml.jackson.databind.JsonNode>()
+        
+        // Recursive search for robustness
+        findAllVideoRenderers(json, videoRenderers)
+
+        val items = videoRenderers.mapNotNull { v ->
+            val videoId = v["videoId"]?.textValue() ?: return@mapNotNull null
+            val title = v["title"]?.get("runs")?.get(0)?.get("text")?.textValue() ?: "No Title"
+            val poster = v["thumbnail"]?.get("thumbnails")?.lastOrNull()?.get("url")?.textValue()
+            val watchUrl = "https://www.youtube.com/watch?v=$videoId"
+
+            newMovieSearchResponse(title, watchUrl, TvType.Movie) {
+                this.posterUrl = poster
             }
-        )
-        return newHomePageResponse("Test Videos", items)
+        }
+
+        return newHomePageResponse("Trending - Syria", items)
+    }
+
+    private fun findAllVideoRenderers(node: com.fasterxml.jackson.databind.JsonNode, list: MutableList<com.fasterxml.jackson.databind.JsonNode>) {
+        if (node.has("videoRenderer")) {
+            list.add(node.get("videoRenderer"))
+        }
+        if (node.isArray) {
+            for (item in node) {
+                findAllVideoRenderers(item, list)
+            }
+        } else if (node.isObject) {
+            for (field in node.fields()) {
+                findAllVideoRenderers(field.value, list)
+            }
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        return newMovieLoadResponse("Test YouTube Video", url, TvType.Movie, url) {
-            this.posterUrl = "https://img.youtube.com/vi/5AwtptT8X8k/maxresdefault.jpg"
-            this.plot = "A test video to verify the YouTube WebView Player implementation."
+        // Basic load response to allow playback
+        // In a real app we might fetch metadata here, but for now we rely on the passed URL
+         val id = url.substringAfter("v=")
+         val poster = "https://img.youtube.com/vi/$id/maxresdefault.jpg"
+         
+        return newMovieLoadResponse("YouTube Video", url, TvType.Movie, url) {
+            this.posterUrl = poster
         }
     }
 
@@ -34,6 +73,7 @@ class YoutubeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // data passed from load() is the URL, which is what we need for the player
         CommonActivity.activity?.let { activity ->
            activity.runOnUiThread {
                YouTubePlayerDialog(activity, data).show()
