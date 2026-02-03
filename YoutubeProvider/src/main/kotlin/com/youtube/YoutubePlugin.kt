@@ -8,6 +8,8 @@ import android.content.Context
 class YoutubePlugin : Plugin() {
     override fun load(context: Context) {
         // All providers should be added in this manner
-        registerMainAPI(YoutubeProvider())
+        val provider = YoutubeProvider()
+        provider.resources = context.resources
+        registerMainAPI(provider)
     }
 }

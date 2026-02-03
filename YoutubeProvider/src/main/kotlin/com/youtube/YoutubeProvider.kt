@@ -14,6 +14,9 @@ class YoutubeProvider : MainAPI() {
 
     private val cookieStore = InMemoryCookieStore()
 
+    // Plugin Context Resources
+    var resources: android.content.res.Resources? = null
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val trendingUrl = "https://www.youtube.com/feed/trending?gl=SY&hl=ar"
         var items = fetchAndParse(trendingUrl)
@@ -25,6 +28,25 @@ class YoutubeProvider : MainAPI() {
         }
 
         return newHomePageResponse("Trending - Syria", items)
+    }
+
+
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // data passed from load() is the URL, which is what we need for the player
+        CommonActivity.activity?.let { activity ->
+           activity.runOnUiThread {
+               val dialog = YouTubePlayerDialog(activity, data)
+               dialog.pluginResources = resources // Pass plugin resources
+               dialog.show()
+           }
+        }
+        return true
     }
 
     private suspend fun fetchAndParse(url: String): List<SearchResponse> {
@@ -127,18 +149,5 @@ class YoutubeProvider : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // data passed from load() is the URL, which is what we need for the player
-        CommonActivity.activity?.let { activity ->
-           activity.runOnUiThread {
-               YouTubePlayerDialog(activity, data).show()
-           }
-        }
-        return true
-    }
+
 }

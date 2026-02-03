@@ -241,8 +241,16 @@ class YouTubePlayerDialog(
 
 
 
+    // Externally injected resources from Plugin Context
+    var pluginResources: android.content.res.Resources? = null
+
     private fun getResId(name: String, type: String): Int {
-        return context.resources.getIdentifier(name, type, "com.youtube")
+        val res = pluginResources ?: context.resources
+        // Try plugin package first
+        val id = res.getIdentifier(name, type, "com.youtube")
+        if (id != 0) return id
+        // Fallback to host app package just in case
+        return res.getIdentifier(name, type, "com.lagradost.cloudstream3")
     }
     
     // ... inside createOverlayUI ...
