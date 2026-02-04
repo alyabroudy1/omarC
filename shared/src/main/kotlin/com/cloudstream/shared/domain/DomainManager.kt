@@ -1,8 +1,9 @@
-package com.arabseed.service.domain
+package com.cloudstream.shared.domain
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.lagradost.api.Log
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_DOMAIN
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -11,14 +12,18 @@ import org.json.JSONObject
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
+/**
+ * Manages provider domain with GitHub fetch, persistence, and auto-sync.
+ * 
+ * Simplified version matching Arabseed's implementation.
+ */
 class DomainManager(
-    private val context: Context,
+    context: Context,
     private val providerName: String,
     private val fallbackDomain: String,
-    private val githubConfigUrl: String,
+    private val githubConfigUrl: String?,
     private val syncWorkerUrl: String? = null
 ) {
-    private val TAG = "DomainManager"
     private val prefs: SharedPreferences = context.getSharedPreferences(
         "domain_$providerName", 
         Context.MODE_PRIVATE
@@ -43,25 +48,30 @@ class DomainManager(
                  currentDomain = fallbackDomain
             }
             
-            try {
-                withTimeout(5000L) {
-                    val response = app.get(githubConfigUrl)
-                    if (response.isSuccessful) {
-                        val config = JSONObject(response.text)
-                        val remoteDomain = config.optString("domain", "")
-                        
-                        val normalizedRemote = remoteDomain
-                            .removePrefix("http://")
-                            .removePrefix("https://")
-                            .trimEnd('/')
-                        
-                        if (normalizedRemote.isNotBlank() && normalizedRemote != currentDomain) {
-                            updateDomain(normalizedRemote)
+            if (githubConfigUrl != null) {
+                try {
+                    withTimeout(5000L) {
+                        val response = app.get(githubConfigUrl)
+                        if (response.isSuccessful) {
+                            val config = JSONObject(response.text)
+                            val remoteDomain = config.optString("domain", "")
+                            
+                            val normalizedRemote = remoteDomain
+                                .removePrefix("http://")
+                                .removePrefix("https://")
+                                .trimEnd('/')
+                            
+                            if (normalizedRemote.isNotBlank() && normalizedRemote != currentDomain) {
+                                ProviderLogger.i(TAG_DOMAIN, "ensureInitialized", "Remote domain update",
+                                    "old" to currentDomain, "new" to normalizedRemote)
+                                updateDomain(normalizedRemote)
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    ProviderLogger.w(TAG_DOMAIN, "ensureInitialized", "GitHub config fetch failed",
+                        "error" to e.message)
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "GitHub config fetch ERROR: ${e.message}")
             }
             
             isInitialized = true
@@ -77,6 +87,7 @@ class DomainManager(
         if (normalized != currentDomain) {
             currentDomain = normalized
             prefs.edit().putString("domain", normalized).apply()
+            ProviderLogger.i(TAG_DOMAIN, "updateDomain", "Updated", "domain" to normalized)
         }
     }
 
@@ -95,7 +106,16 @@ class DomainManager(
                 
                 val jsonBody = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                 app.post(syncWorkerUrl, requestBody = jsonBody)
-            } catch (e: Exception) { /* ignore */ }
+                
+                ProviderLogger.d(TAG_DOMAIN, "syncToRemote", "Synced", "domain" to currentDomain)
+            } catch (e: Exception) { 
+                ProviderLogger.w(TAG_DOMAIN, "syncToRemote", "Failed", "error" to e.message)
+            }
         }
+    }
+    
+    fun buildUrl(path: String): String {
+        val normalizedPath = if (path.startsWith("/")) path else "/$path"
+        return "https://$currentDomain$normalizedPath"
     }
 }

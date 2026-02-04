@@ -1,35 +1,39 @@
 package com.arabseed.service
 
 import android.content.Context
-import com.arabseed.service.ProviderConfig
 import com.arabseed.service.parsing.ParserInterface
-import com.arabseed.service.domain.DomainManager
-import com.arabseed.service.http.*
-import com.arabseed.service.session.SessionState
-import com.arabseed.service.session.SessionStore
-import com.arabseed.service.webview.ExitCondition
-import com.arabseed.service.webview.WebViewEngine
-import com.arabseed.service.webview.WebViewResult
-import com.lagradost.api.Log
+import com.cloudstream.shared.cloudflare.CloudflareDetector
+import com.cloudstream.shared.domain.DomainManager
+import com.cloudstream.shared.cookie.CookieLifecycleManager
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
+import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
+import com.cloudstream.shared.queue.RequestQueue
+import com.cloudstream.shared.queue.RequestResult
+import com.cloudstream.shared.session.SessionState
+import com.cloudstream.shared.session.SessionStore
+import com.cloudstream.shared.webview.ExitCondition
+import com.cloudstream.shared.webview.WebViewEngine
+import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.net.URI
 
-
-
 /**
  * THE GATEWAY - Single entry point for all provider HTTP operations.
+ * 
+ * Now uses shared module components for CloudflareDetector, RequestQueue,
+ * SessionState, SessionStore, WebViewEngine, DomainManager.
  */
 class ProviderHttpService private constructor(
     private val config: ProviderConfig,
     private val sessionStore: SessionStore,
     private val webViewEngine: WebViewEngine,
     private val domainManager: DomainManager,
+    private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface
 ) {
-    private val TAG = "ProviderHttpService"
-    
     @Volatile
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain)
     
@@ -64,6 +68,12 @@ class ProviderHttpService private constructor(
     private fun updateCookies(cookies: Map<String, String>, fromWebView: Boolean) {
         sessionState = sessionState.withCookies(cookies, fromWebView)
         sessionStore.save(sessionState)
+        
+        // Also update cookie manager for domain
+        if (cookies.isNotEmpty()) {
+            cookieManager.store("https://${sessionState.domain}", cookies, 
+                if (fromWebView) "webview" else "http")
+        }
     }
     
     @Synchronized
@@ -77,6 +87,7 @@ class ProviderHttpService private constructor(
     fun invalidateSession(reason: String) {
         sessionState = sessionState.invalidate()
         sessionStore.save(sessionState)
+        ProviderLogger.i(TAG_PROVIDER_HTTP, "invalidateSession", reason)
     }
     
     // ==================== PUBLIC API ====================
@@ -167,9 +178,8 @@ class ProviderHttpService private constructor(
         if (doc == null || result.responseCode == 403 || 
             (doc.select("title").text().contains("403 Forbidden"))) {
             
-            // Try fallback if allowed
             if (config.webViewEnabled) {
-                Log.w(TAG, "Standard request failed (403), attempting WebView fallback for: $url")
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403 - WebView fallback", "url" to url.take(80))
                 val cfResult = solveCloudflareThenRequest(url)
                 if (cfResult.success && cfResult.html != null) {
                     return Jsoup.parse(cfResult.html, cfResult.finalUrl ?: url)
@@ -203,7 +213,6 @@ class ProviderHttpService private constructor(
             val headerBuilder = okhttp3.Headers.Builder()
             headers.forEach { (k, v) -> headerBuilder.add(k, v) }
 
-            // Use generic executeHelper
             val okRequest = okhttp3.Request.Builder()
                 .url(targetUrl)
                 .headers(headerBuilder.build())
@@ -347,6 +356,7 @@ class ProviderHttpService private constructor(
         ): ProviderHttpService {
             return instances.getOrPut(config.name) {
                 val sessionStore = SessionStore(context, config.name)
+                val cookieManager = CookieLifecycleManager()
                 val domainManager = DomainManager(
                     context = context,
                     providerName = config.name,
@@ -356,7 +366,7 @@ class ProviderHttpService private constructor(
                 )
                 val webViewEngine = WebViewEngine(activityProvider)
                 
-                ProviderHttpService(config, sessionStore, webViewEngine, domainManager, parser)
+                ProviderHttpService(config, sessionStore, webViewEngine, domainManager, cookieManager, parser)
             }
         }
     }

@@ -1,6 +1,7 @@
-package com.arabseed.service.http
+package com.cloudstream.shared.queue
 
-import com.lagradost.api.Log
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_QUEUE
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,9 +25,8 @@ import java.net.URI
 class RequestQueue(
     private val executeRequest: suspend (String, Map<String, String>) -> RequestResult,
     private val solveCfAndRequest: suspend (String) -> RequestResult,
-    private val onDomainRedirect: suspend (String, String) -> Unit
+    private val onDomainRedirect: suspend (String, String) -> Unit = { _, _ -> }
 ) {
-    private val TAG = "RequestQueue"
     private val mutex = Mutex()
     
     data class QueuedRequest(
@@ -43,7 +43,7 @@ class RequestQueue(
     suspend fun enqueue(url: String, headers: Map<String, String> = emptyMap()): RequestResult {
         return enqueueAction(url) { executeRequest(url, headers) }
     }
-
+    
     /**
      * Queue a generic action (like a POST request) associated with a URL (for domain grouping).
      */
@@ -59,10 +59,10 @@ class RequestQueue(
         }
         
         if (isLeader) {
-            Log.d(TAG, "Request is LEADER for $domain: $url")
+            ProviderLogger.d(TAG_QUEUE, "enqueue", "Request is LEADER", "domain" to domain, "url" to url.take(80))
             executeAsLeader(domain, request)
         } else {
-            Log.d(TAG, "Request is FOLLOWER for $domain: $url")
+            ProviderLogger.d(TAG_QUEUE, "enqueue", "Request is FOLLOWER", "domain" to domain, "url" to url.take(80))
         }
         
         return deferred.await()
@@ -74,12 +74,13 @@ class RequestQueue(
         
         when {
             result.success -> {
-                Log.i(TAG, "Leader SUCCESS for $domain")
+                ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Leader SUCCESS", "domain" to domain)
                 leader.deferred.complete(result)
                 runFollowersParallel(domain)
             }
             result.isCloudflareBlocked -> {
-                Log.i(TAG, "Leader CF BLOCKED for $domain - solving...")
+                ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Leader CF BLOCKED - solving", "domain" to domain)
+                
                 // CRITICAL: use the final URL from the direct request if it redirected
                 // This prevents solving for the old domain when we've been redirected to a new one
                 val solveUrl = result.finalUrl?.takeIf { it.isNotBlank() } ?: leader.url
@@ -89,28 +90,27 @@ class RequestQueue(
                 val finalDomain = extractDomain(solveUrl)
                 
                 if (requestDomain != finalDomain && finalDomain.isNotBlank()) {
-                    Log.i(TAG, "Domain redirect detected before CF solve: $requestDomain → $finalDomain")
+                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Domain redirect before CF",
+                        "from" to requestDomain, "to" to finalDomain)
                     onDomainRedirect(requestDomain, finalDomain)
                 }
-                
-                Log.i(TAG, "Solving for URL: $solveUrl (Original: ${leader.url})")
                 
                 val cfResult = solveCfAndRequest(solveUrl)
                 
                 if (cfResult.success) {
-                    Log.i(TAG, "CF solved, retrying leader request...")
+                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "CF solved, retrying leader")
                     // Retry original action now that cookies are fresh
                     val retryResult = leader.action()
                     leader.deferred.complete(retryResult)
                     verifyAndRunFollowers(domain)
                 } else {
-                    Log.w(TAG, "CF solve failed")
+                    ProviderLogger.w(TAG_QUEUE, "executeAsLeader", "CF solve failed")
                     leader.deferred.complete(cfResult)
                     failAllFollowers(domain, "CF solve failed")
                 }
             }
             else -> {
-                Log.w(TAG, "Leader FAILED for $domain: ${result.error?.message}")
+                ProviderLogger.w(TAG_QUEUE, "executeAsLeader", "Leader FAILED", "domain" to domain, "error" to result.error?.message)
                 leader.deferred.complete(result)
                 failAllFollowers(domain, result.error?.message ?: "Leader request failed")
             }
@@ -119,29 +119,19 @@ class RequestQueue(
     
     private suspend fun verifyAndRunFollowers(domain: String) {
         val followers = mutex.withLock {
-            val list = pendingRequests[domain]
-            // We DO NOT remove yet, because if verification fails, we might want to try something else?
-            // Actually, if verification fails, we failAllFollowers, which removes it.
-            // If verification succeeds, we continue.
-            // To be safe against incoming requests, we should probably "claim" this batch.
-            // Simplest safe strategy: Remove from map immediately. 
-            // If verify fails, we fail THESE followers. New requests start fresh.
-            pendingRequests.remove(domain)
-            list?.drop(1) ?: emptyList()
+            pendingRequests.remove(domain)?.drop(1) ?: emptyList()
         }
         
-        if (followers.isEmpty()) {
-            return
-        }
+        if (followers.isEmpty()) return
         
         // First follower verifies that new cookies work
         val verifier = followers.first()
-        Log.d(TAG, "Verifying cookies with first follower: ${verifier.url}")
+        ProviderLogger.d(TAG_QUEUE, "verifyAndRunFollowers", "Verifying cookies", "url" to verifier.url.take(80))
         
         val verifyResult = verifier.action()
         
         if (verifyResult.success) {
-            Log.i(TAG, "Cookie verification SUCCESS for $domain")
+            ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers", "Verification SUCCESS", "domain" to domain)
             verifier.deferred.complete(verifyResult)
             
             // Run remaining followers in parallel
@@ -154,26 +144,21 @@ class RequestQueue(
                 }
             }
         } else {
-            Log.w(TAG, "Cookie verification FAILED for $domain")
-            // Apply failure to the batch we extracted
+            ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "Verification FAILED", "domain" to domain)
             followers.forEach { request ->
-                 request.deferred.complete(RequestResult.failure("Cookie verification failed after CF solve"))
+                request.deferred.complete(RequestResult.failure("Cookie verification failed after CF solve"))
             }
         }
     }
     
     private suspend fun runFollowersParallel(domain: String) {
         val followers = mutex.withLock {
-            val list = pendingRequests[domain]
-            pendingRequests.remove(domain) // Remove immediately!
-            list?.drop(1) ?: emptyList()
+            pendingRequests.remove(domain)?.drop(1) ?: emptyList()
         }
         
-        if (followers.isEmpty()) {
-            return
-        }
+        if (followers.isEmpty()) return
         
-        Log.d(TAG, "Running ${followers.size} followers in parallel for $domain")
+        ProviderLogger.d(TAG_QUEUE, "runFollowersParallel", "Running followers", "count" to followers.size, "domain" to domain)
         
         coroutineScope {
             followers.forEach { request ->
@@ -189,13 +174,11 @@ class RequestQueue(
         mutex.withLock {
             val followers = pendingRequests[domain]?.drop(1) ?: emptyList()
             if (followers.isNotEmpty()) {
-                Log.w(TAG, "Failing ${followers.size} followers for $domain: $reason")
+                ProviderLogger.w(TAG_QUEUE, "failAllFollowers", "Failing followers", "count" to followers.size, "reason" to reason)
             }
-            
             followers.forEach { request ->
                 request.deferred.complete(RequestResult.failure(reason))
             }
-            
             pendingRequests.remove(domain)
         }
     }
@@ -206,5 +189,50 @@ class RequestQueue(
         } catch (e: Exception) {
             ""
         }
+    }
+}
+
+/**
+ * Result of a queued request - matches Arabseed's richer implementation.
+ */
+data class RequestResult(
+    val success: Boolean,
+    val html: String?,
+    val responseCode: Int,
+    val finalUrl: String?,
+    val error: Throwable? = null,
+    val isCloudflareBlocked: Boolean = false
+) {
+    companion object {
+        fun success(html: String, code: Int = 200, finalUrl: String) = RequestResult(
+            success = true,
+            html = html,
+            responseCode = code,
+            finalUrl = finalUrl
+        )
+        
+        fun cloudflareBlocked(code: Int = 403, finalUrl: String? = null) = RequestResult(
+            success = false,
+            html = null,
+            responseCode = code,
+            finalUrl = finalUrl,
+            isCloudflareBlocked = true
+        )
+        
+        fun failure(reason: String, code: Int = -1) = RequestResult(
+            success = false,
+            html = null,
+            responseCode = code,
+            finalUrl = null,
+            error = Exception(reason)
+        )
+        
+        fun failure(error: Throwable, code: Int = -1) = RequestResult(
+            success = false,
+            html = null,
+            responseCode = code,
+            finalUrl = null,
+            error = error
+        )
     }
 }

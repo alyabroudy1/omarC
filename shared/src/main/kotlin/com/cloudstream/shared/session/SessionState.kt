@@ -1,4 +1,6 @@
-package com.arabseed.service.session
+package com.cloudstream.shared.session
+
+import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 
 /**
  * SINGLE SOURCE OF TRUTH for all session-related data.
@@ -27,18 +29,11 @@ data class SessionState(
     val fromWebView: Boolean
 ) {
     companion object {
-
-        /** 
-         * UNIFIED USER-AGENT (From FaselHD)
-         * Matches modern Android Chrome to pass Cloudflare checks.
-         */
-        const val DEFAULT_UA = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-
         /** Cookie TTL - sessions expire after 30 minutes of inactivity */
         const val COOKIE_TTL_MS = 30 * 60 * 1000L
         
         /** Create initial state for a domain */
-        fun initial(domain: String, userAgent: String = DEFAULT_UA): SessionState {
+        fun initial(domain: String, userAgent: String = UNIFIED_USER_AGENT): SessionState {
             return SessionState(
                 userAgent = userAgent,
                 cookies = emptyMap(),
@@ -126,5 +121,26 @@ data class SessionState(
     
     override fun toString(): String {
         return "SessionState(domain=$domain, cookies=${cookies.keys}, valid=${isValid()}, fromWebView=$fromWebView)"
+    }
+}
+
+/**
+ * Snapshot for external state communication.
+ */
+data class SessionSnapshot(
+    val domain: String,
+    val hasCookies: Boolean,
+    val hasClearance: Boolean,
+    val cookieAgeMs: Long?,
+    val isValid: Boolean
+) {
+    companion object {
+        fun from(state: SessionState) = SessionSnapshot(
+            domain = state.domain,
+            hasCookies = state.cookies.isNotEmpty(),
+            hasClearance = state.hasClearance(),
+            cookieAgeMs = if (state.cookieTimestamp > 0) System.currentTimeMillis() - state.cookieTimestamp else null,
+            isValid = state.isValid()
+        )
     }
 }

@@ -2,7 +2,6 @@ package com.cloudstream.shared.webview
 
 import android.annotation.SuppressLint
 import android.app.Dialog
-import android.content.Context
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
@@ -11,21 +10,21 @@ import android.view.ViewGroup
 import android.webkit.*
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.cloudstream.shared.http.CookieStore
-import com.cloudstream.shared.http.CloudflareDetector
-import com.lagradost.api.Log
+import com.cloudstream.shared.cloudflare.CloudflareDetector
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_WEBVIEW
 import kotlinx.coroutines.*
-import java.net.URI
 
 /**
  * Unified WebView engine for CF bypass and video sniffing.
+ * 
+ * DECOUPLED FROM STATE: This engine does NOT store cookies.
+ * It returns cookies in WebViewResult.Success, and the caller
+ * (ProviderHttpService) is responsible for updating SessionState.
  */
 class WebViewEngine(
-    private val cookieStore: CookieStore,
     private val activityProvider: () -> android.app.Activity?
 ) {
-    private val TAG = "WebViewEngine"
-    
     enum class Mode {
         HEADLESS,    // No UI, runs in background
         FULLSCREEN   // User-visible dialog for CAPTCHA
@@ -40,12 +39,13 @@ class WebViewEngine(
         mode: Mode,
         userAgent: String,
         exitCondition: ExitCondition,
-        timeout: Long = 60_000L
+        timeout: Long = 60_000L,
+        delayMs: Long = 0L
     ): WebViewResult = withContext(Dispatchers.Main) {
         
         val activity = activityProvider()
         if (activity == null) {
-            Log.e(TAG, "No Activity available")
+            ProviderLogger.e(TAG_WEBVIEW, "runSession", "No Activity available")
             return@withContext WebViewResult.Error("No Activity context")
         }
         
@@ -74,10 +74,18 @@ class WebViewEngine(
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
+                    databaseEnabled = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    cacheMode = WebSettings.LOAD_DEFAULT
                     userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 }
             }
+            
+            // UA VERIFICATION: Log the exact UA WebView is using
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "WebView UA",
+                "ua" to webView.settings.userAgentString.take(60))
             
             // Setup cookies
             CookieManager.getInstance().apply {
@@ -88,14 +96,12 @@ class WebViewEngine(
             // Setup based on mode
             when (mode) {
                 Mode.HEADLESS -> {
-                    // Headless - no dialog, webview not visible
-                    Log.d(TAG, "Running HEADLESS session for: $url")
+                    ProviderLogger.d(TAG_WEBVIEW, "runSession", "HEADLESS mode", "url" to url.take(80))
                 }
                 Mode.FULLSCREEN -> {
-                    // Show dialog with webview
                     dialog = createDialog(activity, webView)
                     dialog.show()
-                    Log.d(TAG, "Running FULLSCREEN session for: $url")
+                    ProviderLogger.d(TAG_WEBVIEW, "runSession", "FULLSCREEN mode", "url" to url.take(80))
                 }
             }
             
@@ -103,30 +109,54 @@ class WebViewEngine(
             webView.webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val nextUrl = request?.url?.toString()
-                    Log.d(TAG, "WebView Redirecting to: $nextUrl")
+                    ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Redirect", "url" to nextUrl?.take(80))
                     return super.shouldOverrideUrlLoading(view, request)
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                    Log.d(TAG, "WebView Page Started: $url")
+                    ProviderLogger.d(TAG_WEBVIEW, "onPageStarted", "Started", "url" to url?.take(80))
+                    
+                    // Inject Advanced Polyfill & Fingerprint Spoofing
+                    view?.evaluateJavascript(
+                        """
+                        (function() {
+                            // 1. Polyfill for sites that expect object__info
+                            if (typeof window.object__info === 'undefined') {
+                                window.object__info = {};
+                            }
+                            
+                            // 2. Fingerprint Spoofing (Match Desktop UA)
+                            if (navigator.userAgent.indexOf("Windows") !== -1) {
+                                Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; } });
+                                Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
+                                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
+                            }
+                        })();
+                        """.trimIndent(), null
+                    )
+                    
                     super.onPageStarted(view, url, favicon)
                 }
 
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                     val currentUrl = view?.url ?: loadedUrl ?: url
-                    Log.d(TAG, "WebView Page Finished: $currentUrl")
+                    ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Finished", "url" to currentUrl.take(80))
 
                     if (resultDelivered) return
                     
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
+                            if (delayMs > 0) {
+                                delay(delayMs)
+                            }
+                            
                             val html = getHtmlFromWebView(view!!)
                             
                             // Check exit condition
                             val shouldExit = when (exitCondition) {
                                 is ExitCondition.PageLoaded -> {
                                     val isCf = CloudflareDetector.isCloudflareChallenge(html)
-                                    if (isCf) Log.d(TAG, "WebView still in Cloudflare challenge...")
+                                    if (isCf) ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Still in CF challenge")
                                     !isCf
                                 }
                                 is ExitCondition.CookiesPresent -> {
@@ -143,16 +173,15 @@ class WebViewEngine(
                                 resultDelivered = true
                                 timeoutJob.cancel()
                                 
-                                // Extract and store cookies
                                 val cookies = extractCookies(currentUrl)
-                                val domain = URI(currentUrl).host ?: ""
-                                cookieStore.store(domain, cookies, "WebView")
+                                ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Exit successful",
+                                    "cookies" to cookies.size)
                                 
                                 cleanup(view, dialog)
                                 deferred.complete(WebViewResult.Success(cookies, html, currentUrl))
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error in onPageFinished: ${e.message}")
+                            ProviderLogger.e(TAG_WEBVIEW, "onPageFinished", "Error", e)
                         }
                     }
                 }
@@ -163,13 +192,17 @@ class WebViewEngine(
                     error: WebResourceError?
                 ) {
                     if (request?.isForMainFrame == true) {
-                        Log.e(TAG, "WebView error: ${error?.description} for ${request.url}")
+                        ProviderLogger.w(TAG_WEBVIEW, "onReceivedError", "WebView error",
+                            "description" to error?.description?.toString(), "url" to request.url.toString().take(80))
                     }
                 }
             }
             
-            // Load URL
-            webView.loadUrl(url)
+            // Load URL with headers to bypass detection
+            val extraHeaders = mutableMapOf<String, String>()
+            extraHeaders["X-Requested-With"] = ""
+            
+            webView.loadUrl(url, extraHeaders)
             
         } catch (e: Exception) {
             resultDelivered = true
@@ -222,12 +255,13 @@ class WebViewEngine(
             webView.evaluateJavascript(
                 "(function() { return document.documentElement.outerHTML; })();"
             ) { result ->
-                val html = result
-                    ?.removeSurrounding("\"")
-                    ?.replace("\\n", "\n")
-                    ?.replace("\\\"", "\"")
-                    ?.replace("\\\\", "\\")
-                    ?: ""
+                val html = try {
+                    if (result == null || result == "null") ""
+                    else org.json.JSONTokener(result).nextValue().toString()
+                } catch (e: Exception) {
+                    ProviderLogger.e(TAG_WEBVIEW, "getHtmlFromWebView", "HTML escape failed", e)
+                    ""
+                }
                 cont.resume(html) {}
             }
         }
@@ -243,7 +277,7 @@ class WebViewEngine(
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to extract cookies: ${e.message}")
+            ProviderLogger.w(TAG_WEBVIEW, "extractCookies", "Failed", "error" to e.message)
         }
         return cookies
     }
@@ -251,13 +285,16 @@ class WebViewEngine(
     private fun cleanup(webView: WebView?, dialog: Dialog?) {
         try {
             dialog?.dismiss()
-            webView?.apply {
-                stopLoading()
-                (parent as? ViewGroup)?.removeView(this)
-                destroy()
+            webView?.let { view ->
+                view.stopLoading()
+                (view.parent as? ViewGroup)?.removeView(view)
+                // Defer destroy to ensure pending callbacks complete
+                view.post { 
+                    try { view.destroy() } catch (e: Exception) { /* ignore */ } 
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Cleanup error: ${e.message}")
+            ProviderLogger.w(TAG_WEBVIEW, "cleanup", "Error", "error" to e.message)
         }
     }
 }

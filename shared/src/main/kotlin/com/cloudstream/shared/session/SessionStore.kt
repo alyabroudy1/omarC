@@ -1,8 +1,10 @@
-package com.arabseed.service.session
+package com.cloudstream.shared.session
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.lagradost.api.Log
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_SESSION
+import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 import org.json.JSONObject
 
 /**
@@ -15,8 +17,6 @@ class SessionStore(
     context: Context,
     private val providerName: String
 ) {
-    private val TAG = "SessionStore"
-    
     private val prefs: SharedPreferences = context.getSharedPreferences(
         "session_${providerName.lowercase()}", 
         Context.MODE_PRIVATE
@@ -47,9 +47,10 @@ class SessionStore(
                 .putBoolean(KEY_FROM_WEBVIEW, state.fromWebView)
                 .apply()
             
-            Log.d(TAG, "Saved session: domain=${state.domain}, cookies=${state.cookies.size}")
+            ProviderLogger.d(TAG_SESSION, "save", "Saved session",
+                "domain" to state.domain, "cookies" to state.cookies.size)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to save session: ${e.message}")
+            ProviderLogger.e(TAG_SESSION, "save", "Failed", e)
         }
     }
     
@@ -59,8 +60,7 @@ class SessionStore(
      */
     fun load(fallbackDomain: String): SessionState? {
         return try {
-            // Robust loading: Fallback to default UA if missing
-            val userAgent = prefs.getString(KEY_USER_AGENT, null) ?: SessionState.DEFAULT_UA
+            val userAgent = prefs.getString(KEY_USER_AGENT, null) ?: UNIFIED_USER_AGENT
             val cookiesJson = prefs.getString(KEY_COOKIES, null) ?: "{}"
             val domain = prefs.getString(KEY_DOMAIN, fallbackDomain) ?: fallbackDomain
             val cookieTimestamp = prefs.getLong(KEY_COOKIE_TIMESTAMP, 0L)
@@ -72,10 +72,10 @@ class SessionStore(
                 cookies[key] = json.getString(key)
             }
             
-            // IMPORTANT: If we have no cookies, consider session empty/null so we re-initialize
+            // If we have no cookies, consider session empty/null so we re-initialize
             if (cookies.isEmpty()) {
-                 Log.d(TAG, "Loaded session has no cookies, treating as null")
-                 return null
+                ProviderLogger.d(TAG_SESSION, "load", "No cookies, treating as null")
+                return null
             }
             
             val state = SessionState(
@@ -86,10 +86,11 @@ class SessionStore(
                 fromWebView = fromWebView
             )
             
-            Log.d(TAG, "Loaded session: domain=$domain, cookies=${cookies.size}, valid=${state.isValid()}")
+            ProviderLogger.d(TAG_SESSION, "load", "Loaded session",
+                "domain" to domain, "cookies" to cookies.size, "valid" to state.isValid())
             state
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load session: ${e.message}")
+            ProviderLogger.w(TAG_SESSION, "load", "Failed", "error" to e.message)
             null
         }
     }
@@ -99,7 +100,7 @@ class SessionStore(
      */
     fun clear() {
         prefs.edit().clear().apply()
-        Log.d(TAG, "Cleared persisted session")
+        ProviderLogger.d(TAG_SESSION, "clear", "Cleared session")
     }
     
     /**
