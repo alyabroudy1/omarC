@@ -24,9 +24,9 @@ class YoutubeProvider : MainAPI() {
         const val SEARCH_FILTER_VIDEO_BY_DATE = "CAISAhAB" // Video type, sorted by upload date
         const val SEARCH_FILTER_VIDEO_ONLY = "EgIQAQ%3D%3D" // Video type only
         
-        // SOCS cookie to bypass YouTube consent screen
-        // This value indicates "rejected all" consent state
-        private const val SOCS_COOKIE = "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTI3GAEgASgB"
+        // Consent cookie to bypass YouTube consent screen
+        // CONSENT=PENDING+999 is a simpler format that signals consent given
+        private const val CONSENT_COOKIE = "CONSENT=PENDING+999"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
 
@@ -103,7 +103,7 @@ class YoutubeProvider : MainAPI() {
             val response = app.get(
                 url,
                 headers = mapOf(
-                    "Cookie" to SOCS_COOKIE,
+                    "Cookie" to CONSENT_COOKIE,
                     "Accept-Language" to "en-US,en;q=0.9"
                 ),
                 referer = "https://www.youtube.com/",
