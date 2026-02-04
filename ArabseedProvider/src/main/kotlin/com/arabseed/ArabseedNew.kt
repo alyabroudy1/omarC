@@ -12,6 +12,8 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import okhttp3.Interceptor
+import okhttp3.Response
 
 /**
  * Arabseed V4 - Ported to Plugin Architecture.
@@ -174,24 +176,21 @@ class ArabseedV2 : MainAPI() {
             val isPrivate = embedUrl.contains("arabseed") || embedUrl.contains("asd") || embedUrl.contains("reviewrate")
             
             if (isPrivate) {
-                // Sniff video from private player
-                val sources = httpService.sniffVideos(embedUrl)
-                Log.d(name, "[loadLinks] Sniffed ${sources.size} sources from embed")
-                sources.forEach { source ->
-                    callback(
-                        newExtractorLink(
-                            name,
-                            "$name ${source.quality}",
-                            source.url,
-                            if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = data
-                            this.quality = getQualityFromName(source.quality)
-                            this.headers = source.headers
-                        }
-                    )
-                    found = true
-                }
+                // Pass directly to callback for lazy resolution via getVideoInterceptor
+                // (Matches built-in Arabseed.kt:361-371)
+                Log.d(name, "[loadLinks] Passing private embed directly for lazy resolution")
+                callback(
+                    newExtractorLink(
+                        name,
+                        "$name Direct",
+                        embedUrl,
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = watchDoc.location()
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                found = true
             } else {
                 loadExtractor(embedUrl, subtitleCallback, callback)
                 found = true
@@ -288,5 +287,64 @@ class ArabseedV2 : MainAPI() {
             qualityName.contains("4k") || qualityName.contains("2160") -> Qualities.P2160.value
             else -> Qualities.Unknown.value
         }
+    }
+    
+    /**
+     * Lazy URL resolution for reviewrate embeds.
+     * Matches built-in Arabseed.kt:436-490
+     */
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        if (extractorLink.url.contains("reviewrate")) {
+            return Interceptor { chain ->
+                val request = chain.request()
+                val urlString = request.url.toString()
+                
+                Log.d(name, "[getVideoInterceptor] Resolving reviewrate: ${urlString.take(60)}")
+                
+                try {
+                    val referer = request.header("Referer")
+                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
+                    
+                    // Fetch the embed page
+                    val html = kotlinx.coroutines.runBlocking {
+                        try {
+                            app.get(urlString, headers = headers).text
+                        } catch (e: Exception) {
+                            app.get(urlString).text
+                        }
+                    }
+                    
+                    // Extract video URL
+                    var videoUrl: String? = null
+                    
+                    // Pattern 1: file: "..."
+                    if (videoUrl == null) {
+                        videoUrl = Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                    }
+                    // Pattern 2: <source src="...">
+                    if (videoUrl == null) {
+                        videoUrl = Regex("""<source[^>]+src=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                    }
+                    // Pattern 3: sources: [{file: "..."}]
+                    if (videoUrl == null) {
+                        videoUrl = Regex("""sources:\s*\[\{[^}]*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                    }
+                    
+                    Log.d(name, "[getVideoInterceptor] Resolved URL: ${videoUrl?.take(60)}")
+                    
+                    if (videoUrl != null) {
+                        val newRequest = request.newBuilder().url(videoUrl).build()
+                        chain.proceed(newRequest)
+                    } else {
+                        Log.w(name, "[getVideoInterceptor] Could not extract video URL from reviewrate")
+                        chain.proceed(request)
+                    }
+                } catch (e: Exception) {
+                    Log.e(name, "[getVideoInterceptor] Error resolving reviewrate: ${e.message}")
+                    chain.proceed(request)
+                }
+            }
+        }
+        return null
     }
 }

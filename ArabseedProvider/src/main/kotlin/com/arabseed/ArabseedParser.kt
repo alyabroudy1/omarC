@@ -27,21 +27,16 @@ class ArabseedParser : BaseParser() {
 
     // ================= MAIN PAGE & SEARCH =================
     
-    // Legacy Selectors: div.item__contents, div.MovieBlock, div.poster__single, ul.Blocks-UL > div, 
-    // div.Blocks-UL > div, div.BlockItem, div.series__box, div.search__res__container > div
+    // Exact selectors from built-in ArabseedParser.kt:56
     private val mainPageItemSelectors = listOf(
         "div.item__contents",
-        "ul.Blocks-UL > div",
-        "div.Blocks-UL > div",
         "div.MovieBlock",
         "div.poster__single",
-        "div.search__res__container", // Mobile container
-        "div.live__search__res",      // Alternative mobile
-        "div.Section",
-        "div.Container",
-        "div.Content",
-        "main",
-        "body"
+        "ul.Blocks-UL > div",
+        "div.Blocks-UL > div",
+        "div.BlockItem",
+        "div.series__box",
+        "div.search__res__container > div"
     )
 
     override fun parseMainPage(doc: Document): List<ParsedItem> {
