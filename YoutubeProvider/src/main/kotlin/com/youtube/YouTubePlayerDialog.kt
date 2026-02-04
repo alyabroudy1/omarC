@@ -271,21 +271,102 @@ class YouTubePlayerDialog(
     }
     
     private fun createOverlayUI() {
-        Log.d(TAG, "createOverlayUI: Building programmatic UI (no XML)")
+        Log.d(TAG, "createOverlayUI: Building programmatic UI")
         
-        // Root container - full screen overlay
+        // Root container - full screen overlay (transparent, no background to show video)
         overlayRoot = FrameLayout(context).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(0x80000000.toInt()) // Semi-transparent black
+            setBackgroundColor(0x00000000) // Fully transparent - video shows through
             visibility = View.GONE
             isClickable = true
             isFocusable = true
         }
         
-        // Bottom Controls Container
+        // ===== TOP HEADER BAR (Close, Audio, Captions, Quality, Speed) =====
+        val topBar = LinearLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP
+            }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(8))
+            // Gradient background from black to transparent
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xCC000000.toInt(), 0x00000000)
+            )
+        }
+        
+        // Helper to create header buttons (smaller, icon-based)
+        fun createHeaderButton(iconRes: Int, desc: String): ImageButton {
+            return ImageButton(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)).apply {
+                    marginStart = dpToPx(12)
+                }
+                setBackgroundColor(0x00000000)
+                setImageResource(iconRes)
+                setColorFilter(0xFFFFFFFF.toInt())
+                contentDescription = desc
+                isFocusable = true
+            }
+        }
+        
+        btnSpeed = createHeaderButton(android.R.drawable.ic_menu_recent_history, "Speed")
+        btnQuality = createHeaderButton(android.R.drawable.ic_menu_preferences, "Quality")
+        btnCaptions = createHeaderButton(android.R.drawable.ic_menu_more, "Captions")
+        btnAudio = createHeaderButton(android.R.drawable.ic_lock_silent_mode_off, "Audio")
+        btnExit = createHeaderButton(android.R.drawable.ic_menu_close_clear_cancel, "Close")
+        
+        topBar.addView(btnSpeed)
+        topBar.addView(btnQuality)
+        topBar.addView(btnCaptions)
+        topBar.addView(btnAudio)
+        topBar.addView(btnExit)
+        
+        // ===== CENTER PLAYBACK CONTROLS (Rewind, Play/Pause, Forward) =====
+        val centerControls = LinearLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0x00000000) // Transparent
+        }
+        
+        // Helper to create large center buttons
+        fun createCenterButton(iconRes: Int, desc: String, size: Int = 72): ImageButton {
+            return ImageButton(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(size), dpToPx(size)).apply {
+                    marginStart = dpToPx(24)
+                    marginEnd = dpToPx(24)
+                }
+                setBackgroundResource(android.R.drawable.dialog_holo_light_frame) // Slight circle bg
+                setImageResource(iconRes)
+                setColorFilter(0xFFFFFFFF.toInt())
+                contentDescription = desc
+                isFocusable = true
+                isFocusableInTouchMode = true
+            }
+        }
+        
+        btnRewind = createCenterButton(android.R.drawable.ic_media_rew, "Rewind 10s", 56)
+        btnPlayPause = createCenterButton(android.R.drawable.ic_media_pause, "Play/Pause", 80)
+        btnForward = createCenterButton(android.R.drawable.ic_media_ff, "Forward 10s", 56)
+        
+        centerControls.addView(btnRewind)
+        centerControls.addView(btnPlayPause)
+        centerControls.addView(btnForward)
+        
+        // ===== BOTTOM BAR (Timeline/SeekBar + Time) =====
         val bottomBar = LinearLayout(context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -295,11 +376,15 @@ class YouTubePlayerDialog(
             }
             orientation = LinearLayout.VERTICAL
             setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(24))
-            setBackgroundColor(0xCC000000.toInt())
+            // Gradient background from transparent to black
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(0xCC000000.toInt(), 0x00000000)
+            )
         }
         
-        // SeekBar Row
-        val seekBarRow = LinearLayout(context).apply {
+        // Time display row
+        val timeRow = LinearLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -313,80 +398,53 @@ class YouTubePlayerDialog(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            text = "0:00 / 0:00"
+            text = "0:00"
             setTextColor(0xFFFFFFFF.toInt())
-            textSize = 12f
+            textSize = 13f
         }
         
-        seekBar = SeekBar(context).apply {
+        val spacer = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+        
+        textDuration = TextView(context).apply {
             layoutParams = LinearLayout.LayoutParams(
-                0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply {
-                marginStart = dpToPx(8)
-                marginEnd = dpToPx(8)
-            }
-            max = 100
-            progress = 0
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            text = "0:00"
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 13f
         }
         
-        textDuration = TextView(context) // Unused but kept for compatibility
+        timeRow.addView(textCurrentTime)
+        timeRow.addView(spacer)
+        timeRow.addView(textDuration)
         
-        seekBarRow.addView(textCurrentTime)
-        seekBarRow.addView(seekBar)
-        
-        // Control Buttons Row
-        val controlsRow = LinearLayout(context).apply {
+        // SeekBar
+        seekBar = SeekBar(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = dpToPx(12)
+                topMargin = dpToPx(4)
             }
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            max = 100
+            progress = 0
+            // Red accent like YouTube
+            progressDrawable?.setColorFilter(0xFFFF0000.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+            thumb?.setColorFilter(0xFFFF0000.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
         }
         
-        // Helper to create buttons
-        fun createButton(iconRes: Int, desc: String): ImageButton {
-            return ImageButton(context).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48)).apply {
-                    marginStart = dpToPx(8)
-                    marginEnd = dpToPx(8)
-                }
-                setBackgroundColor(0x00000000) // Transparent
-                setImageResource(iconRes)
-                setColorFilter(0xFFFFFFFF.toInt())
-                contentDescription = desc
-                isFocusable = true
-                isFocusableInTouchMode = true
-            }
-        }
+        bottomBar.addView(timeRow)
+        bottomBar.addView(seekBar)
         
-        btnRewind = createButton(android.R.drawable.ic_media_rew, "Rewind")
-        btnPlayPause = createButton(android.R.drawable.ic_media_pause, "Play/Pause")
-        btnForward = createButton(android.R.drawable.ic_media_ff, "Forward")
-        btnSpeed = createButton(android.R.drawable.ic_menu_recent_history, "Speed")
-        btnQuality = createButton(android.R.drawable.ic_menu_preferences, "Quality")
-        btnCaptions = createButton(android.R.drawable.ic_menu_more, "Captions")
-        btnAudio = createButton(android.R.drawable.ic_lock_silent_mode_off, "Audio")
-        btnExit = createButton(android.R.drawable.ic_menu_close_clear_cancel, "Close")
-        
-        controlsRow.addView(btnRewind)
-        controlsRow.addView(btnPlayPause)
-        controlsRow.addView(btnForward)
-        controlsRow.addView(btnSpeed)
-        controlsRow.addView(btnQuality)
-        controlsRow.addView(btnCaptions)
-        controlsRow.addView(btnAudio)
-        controlsRow.addView(btnExit)
-        
-        bottomBar.addView(seekBarRow)
-        bottomBar.addView(controlsRow)
+        // Add all sections to overlay
+        overlayRoot.addView(topBar)
+        overlayRoot.addView(centerControls)
         overlayRoot.addView(bottomBar)
         
-        Log.d(TAG, "createOverlayUI: Programmatic UI built successfully")
+        Log.d(TAG, "createOverlayUI: Layout built successfully")
     }
 
     private var seekDebouncerRunnable: Runnable? = null
@@ -431,7 +489,8 @@ class YouTubePlayerDialog(
                 if (fromUser) {
                     resetAutoHide() // Keep overlay visible while seeking
                     val time = (progress.toDouble() / 100.0) * videoDuration
-                    textCurrentTime.text = formatTime(time.toInt()) + " / " + formatTime(videoDuration.toInt())
+                    textCurrentTime.text = formatTime(time.toInt())
+                    textDuration.text = formatTime(videoDuration.toInt())
                     
                     if (!isTouching) {
                         // D-Pad Seeking detected
@@ -693,7 +752,8 @@ class YouTubePlayerDialog(
                         if (!isSeeking && dur > 0) {
                             seekBar.progress = ((curr / dur) * 100).toInt()
                             // FIX: Combine Current and Duration
-                            textCurrentTime.text = formatTime(curr.toInt()) + " / " + formatTime(dur.toInt())
+                            textCurrentTime.text = formatTime(curr.toInt())
+                            textDuration.text = formatTime(dur.toInt())
                         }
                         
                         // Force Icon Update if Mismatch
