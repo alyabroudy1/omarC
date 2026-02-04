@@ -145,15 +145,32 @@ abstract class LazyExtractor : ExtractorApi() {
     
     /**
      * Parse embed URL from JSON response.
+     * Handles both direct URLs and Base64-encoded URLs.
      */
     protected open fun parseEmbedUrlFromJson(json: String): String {
         try {
-            // Simple JSON parsing without dependencies
+            // Check for embed_url first
             val embedMatch = Regex(""""embed_url"\s*:\s*"([^"]+)"""").find(json)
             if (embedMatch != null) return embedMatch.groupValues[1].replace("\\/", "/")
             
+            // Then check for server field
             val serverMatch = Regex(""""server"\s*:\s*"([^"]+)"""").find(json)
-            if (serverMatch != null) return serverMatch.groupValues[1].replace("\\/", "/")
+            var serverUrl = serverMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
+            
+            // Handle Base64 encoded URLs (common in Arabseed responses)
+            if (serverUrl.isNotBlank() && !serverUrl.startsWith("http")) {
+                try {
+                    val decoded = String(android.util.Base64.decode(serverUrl, android.util.Base64.DEFAULT))
+                    if (decoded.startsWith("http")) {
+                        serverUrl = decoded
+                        ProviderLogger.d(TAG, "parseEmbedUrlFromJson", "Decoded Base64 URL", "url" to serverUrl.take(60))
+                    }
+                } catch (e: Exception) {
+                    // Not Base64, use as-is
+                }
+            }
+            
+            return serverUrl
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "parseEmbedUrlFromJson", "Parse error", e)
         }

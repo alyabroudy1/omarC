@@ -6,6 +6,7 @@ import android.content.Context
 import com.arabseed.extractors.ArabseedLazyExtractor
 import com.cloudstream.shared.android.PluginContext
 import com.cloudstream.shared.android.ActivityProvider
+import com.cloudstream.shared.extractors.ReviewRateExtractor
 
 @CloudstreamPlugin
 class ArabseedPlugin: Plugin() {
@@ -18,11 +19,13 @@ class ArabseedPlugin: Plugin() {
             ActivityProvider.setActivity(context)
         }
         
-        // Register lazy extractor (handles virtual URLs)
-        registerExtractorAPI(ArabseedLazyExtractor())
+        // Register extractors
+        registerExtractorAPI(ArabseedLazyExtractor())  // Handles virtual /get__watch__server/ URLs
+        registerExtractorAPI(ReviewRateExtractor())    // Handles reviewrate.net URLs
         
         // Register provider
         registerMainAPI(ArabseedV2())
     }
 }
+
 
