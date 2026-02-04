@@ -935,20 +935,79 @@ class YouTubePlayerDialog(
 
 
     private fun showQualityDialog() {
-        val names = qualityOptions.map { it.second }.toTypedArray()
-        val checkedItem = qualityOptions.indexOfFirst { it.first == currentQuality }.coerceAtLeast(0)
+        // Fetch real available qualities from YouTube player
+        val js = """
+            (function() {
+                try {
+                    var p = document.getElementById('movie_player');
+                    if (p && p.getAvailableQualityLevels) {
+                        var levels = p.getAvailableQualityLevels() || [];
+                        var current = p.getPlaybackQuality() || 'auto';
+                        return JSON.stringify({ levels: levels, current: current });
+                    }
+                } catch(e) { console.error(e); }
+                return JSON.stringify({ levels: ['auto'], current: 'auto' });
+            })();
+        """.trimIndent()
 
-        val builder = android.app.AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-        builder.setTitle("Quality")
-        builder.setSingleChoiceItems(names, checkedItem) { dialog, which ->
-            val (v, l) = qualityOptions[which]
-            setQuality(v, l)
-            dialog.dismiss()
+        webView.evaluateJavascript(js) { res ->
+            try {
+                val json = res?.replace("\\\"", "\"")?.removeSurrounding("\"") ?: "{}"
+                val obj = JSONObject(json)
+                val levelsArray = obj.optJSONArray("levels") ?: org.json.JSONArray()
+                val currentLevel = obj.optString("current", "auto")
+
+                val qualities = ArrayList<Pair<String, String>>()
+                
+                // Map quality codes to display names
+                val qualityLabels = mapOf(
+                    "auto" to "Auto",
+                    "hd2160" to "4K (2160p)",
+                    "hd1440" to "1440p",
+                    "hd1080" to "1080p",
+                    "hd720" to "720p",
+                    "large" to "480p",
+                    "medium" to "360p",
+                    "small" to "240p",
+                    "tiny" to "144p"
+                )
+
+                for (i in 0 until levelsArray.length()) {
+                    val level = levelsArray.getString(i)
+                    val label = qualityLabels[level] ?: level.uppercase()
+                    qualities.add(level to label)
+                }
+
+                if (qualities.isEmpty()) {
+                    qualities.add("auto" to "Auto")
+                }
+
+                // Build menu with current quality highlighted
+                val names = qualities.map { (level, label) ->
+                    if (level == currentLevel) "✓ $label" else "   $label"
+                }.toTypedArray()
+                
+                val checkedItem = qualities.indexOfFirst { it.first == currentLevel }.coerceAtLeast(0)
+
+                android.app.AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Quality (Current: ${qualityLabels[currentLevel] ?: currentLevel})")
+                    .setSingleChoiceItems(names, checkedItem) { dialog, which ->
+                        val (level, label) = qualities[which]
+                        setQuality(level, label)
+                        dialog.dismiss()
+                    }
+                    .show()
+
+            } catch (e: Exception) {
+                // Fallback to basic quality menu
+                showToast("Could not fetch qualities")
+                Log.e(TAG, "showQualityDialog error: ${e.message}")
+            }
         }
-        builder.show()
     }
 
     private fun setQuality(q: String, l: String) {
+        currentQuality = q
         executeJs("var p = document.getElementById('movie_player'); if(p && p.setPlaybackQualityRange) { p.setPlaybackQualityRange('$q'); }")
         showToast("Quality: $l")
     }
@@ -1262,76 +1321,94 @@ class YouTubePlayerDialog(
        val js = """
             (function() {
                 try {
-                    // Source 1: API
-                    var p = document.querySelector('#movie_player');
-                    if (p && typeof p.getOption === 'function') {
-                        var tracks = p.getOption('audioTrack', 'tracklist');
-                        if (tracks && tracks.length > 0) return JSON.stringify(tracks);
-                    }
-                    
-                    // Source 2: ytInitialPlayerResponse
-                    if (window.ytInitialPlayerResponse && 
-                        window.ytInitialPlayerResponse.captions && 
-                        window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer &&
-                        window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.audioTracks) {
+                    var p = document.getElementById('movie_player');
+                    if (p && p.getAvailableAudioTracks) {
+                        var tracks = p.getAvailableAudioTracks() || [];
+                        var current = p.getAudioTrack();
+                        var currentId = current ? (current.id || '') : '';
                         
-                        // Return FULL objects
-                        return JSON.stringify(window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.audioTracks);
+                        var result = tracks.map(function(t, idx) {
+                            // Extract name from various nested locations
+                            var name = '';
+                            
+                            // Try displayName first (most reliable)
+                            if (t.displayName) name = t.displayName;
+                            // Try qD.name (MrBeast-style multi-audio videos)
+                            else if (t.qD && t.qD.name) name = t.qD.name;
+                            // Try direct name property
+                            else if (t.name) name = t.name;
+                            // Try languageName
+                            else if (t.languageName) name = t.languageName;
+                            // Try to extract from xtags if present (format: "lang=en")
+                            else if (t.xtags) {
+                                var langMatch = t.xtags.match(/lang=([a-z]{2})/i);
+                                if (langMatch) name = langMatch[1].toUpperCase();
+                            }
+                            // Last resort: language code
+                            else if (t.languageCode) name = t.languageCode.toUpperCase();
+                            else name = 'Track ' + (idx + 1);
+                            
+                            return {
+                                id: t.id || '',
+                                name: name,
+                                languageCode: t.languageCode || '',
+                                isDefault: t.isDefault || false,
+                                isCurrent: t.id === currentId
+                            };
+                        });
+                        
+                        return JSON.stringify({ tracks: result, currentId: currentId });
                     }
-                    
-                    return "[]";
+                    return JSON.stringify({ tracks: [], currentId: '' });
                 } catch(e) {
-                    return "[]";
+                    console.error(e);
+                    return JSON.stringify({ tracks: [], currentId: '' });
                 }
             })();
        """.trimIndent()
+
        
        webView.evaluateJavascript(js) { res ->
            try {
-               val json = res?.replace("\\\"", "\"")?.removeSurrounding("\"") ?: "[]"
-               val jsonArray = org.json.JSONArray(json)
+               val json = res?.replace("\\\"", "\"")?.removeSurrounding("\"") ?: "{}"
+               val obj = JSONObject(json)
+               val tracksArray = obj.optJSONArray("tracks") ?: org.json.JSONArray()
+               val currentId = obj.optString("currentId", "")
                
-               if (jsonArray.length() == 0) {
+               if (tracksArray.length() == 0) {
                    showToast("No Audio Tracks Available")
                    return@evaluateJavascript
                }
 
                val labels = ArrayList<String>()
-               val trackJsons = ArrayList<String>()
+               val trackIds = ArrayList<String>()
+               var currentIndex = 0
 
-               for (i in 0 until jsonArray.length()) {
-                   val t = jsonArray.getJSONObject(i)
+               for (i in 0 until tracksArray.length()) {
+                   val t = tracksArray.getJSONObject(i)
+                   val id = t.optString("id", "")
+                   val name = t.optString("name", "Track ${i + 1}")
+                   val isCurrent = t.optBoolean("isCurrent", false)
                    
-                   // Name Extraction Strategy
-                   var name = t.optString("displayName")
-                   if (name.isEmpty()) name = t.optJSONObject("name")?.optString("simpleText") ?: ""
-                   if (name.isNullOrEmpty()) name = t.optString("label") // Common fallback
-                   if (name.isNullOrEmpty()) name = t.optString("languageName") // Another fallback
-                   if (name.isNullOrEmpty()) name = t.optString("name") // Another fallback
+                   if (isCurrent) currentIndex = i
                    
-                   if (name.isNullOrEmpty()) {
-                       // Last Resort: Formatted Language Code
-                       val code = t.optString("languageCode", "").uppercase()
-                       if (code.isNotEmpty()) name = "Track $code"
-                       else name = "Track ${i + 1}"
-                   }
-                   
-                   labels.add("\uD83D\uDD0A $name")
-                   trackJsons.add(t.toString())
+                   val prefix = if (isCurrent) "✓ 🔊" else "   🔊"
+                   labels.add("$prefix $name")
+                   trackIds.add(id)
                }
 
                android.app.AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Audio Track")
-                .setItems(labels.toTypedArray()) { _, which ->
-                    val trackJson = trackJsons[which]
-                    val trackName = labels[which]
-                    showToast("Selecting: $trackName") // Immediate feedback
-                    setAudioTrack(trackJson)
+                .setSingleChoiceItems(labels.toTypedArray(), currentIndex) { dialog, which ->
+                    val trackId = trackIds[which]
+                    setAudioTrackById(trackId, which)
+                    dialog.dismiss()
                 }
                 .show()
 
            } catch(e: Exception) {
                showToast("Audio Tracks Unavailable")
+               Log.e(TAG, "showAudioMenu error: ${e.message}")
            }
        }
     }
@@ -1380,6 +1457,32 @@ class YouTubePlayerDialog(
         webView.evaluateJavascript(js) { res ->
             showToast("Audio: $res")
         }
+    }
+    
+    private fun setAudioTrackById(trackId: String, index: Int) {
+        // Use the track index to select from getAvailableAudioTracks()
+        val js = """
+            (function() {
+                try {
+                    var p = document.getElementById('movie_player');
+                    if (p && p.getAvailableAudioTracks && p.setAudioTrack) {
+                        var tracks = p.getAvailableAudioTracks();
+                        if (tracks && tracks[$index]) {
+                            p.setAudioTrack(tracks[$index]);
+                            return 'Selected track $index';
+                        }
+                    }
+                    return 'Failed to select track';
+                } catch(e) {
+                    return 'Error: ' + e.message;
+                }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { res ->
+            Log.d(TAG, "setAudioTrackById result: $res")
+        }
+        showToast("Audio Track Changed")
     }
     
     // Stats for Nerds (Video Info)
