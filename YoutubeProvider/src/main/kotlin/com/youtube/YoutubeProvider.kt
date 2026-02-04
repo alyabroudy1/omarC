@@ -128,11 +128,31 @@ class YoutubeProvider : MainAPI() {
         
         if (jsonText.isEmpty()) return null
 
+        // Fix: Sanitize JSON string to remove unescaped control characters (newlines, tabs, etc.)
+        // formatting code 10 is newline \n
+        // Replace unescaped newlines/tabs with spaces or escaped versions
+        /* 
+           YouTube often embeds raw JS code or non-JSON compliant strings in the HTML.
+           We'll try to use a lenient mapper first. 
+        */
+
         return try {
-            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(jsonText)
+            val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().apply {
+                configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS, true)
+                configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER, true)
+            }
+            mapper.readTree(jsonText)
         } catch (e: Exception) {
-            com.lagradost.api.Log.e("YoutubeProvider", "Failed to parse JSON: ${e.message}")
-            null
+            // Fallback: aggressive string sanitization
+            try {
+                // Remove literal newlines/tabs from string values which are invalid in JSON
+                // Use a simple regex to replace raw \n, \r with space
+                 val sanitized = jsonText.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(sanitized)
+             } catch (e2: Exception) {
+                 com.lagradost.api.Log.e("YoutubeProvider", "Failed to parse JSON (Sanitized): ${e2.message}")
+                 null
+             }
         }
     }
 
@@ -204,19 +224,36 @@ class YoutubeProvider : MainAPI() {
     }
 
     private fun parsePlaylistRenderer(p: com.fasterxml.jackson.databind.JsonNode): SearchResponse? {
-        val playlistId = p["playlistId"]?.textValue() ?: return null
-        val title = p["title"]?.get("simpleText")?.textValue()
+        var playlistId = p["playlistId"]?.textValue()
+        var title = p["title"]?.get("simpleText")?.textValue()
             ?: p["title"]?.get("runs")?.get(0)?.get("text")?.textValue()
-            ?: "Playlist"
-        val poster = p["thumbnails"]?.get(0)?.get("thumbnails")?.lastOrNull()?.get("url")?.textValue()
+        var poster = p["thumbnails"]?.get(0)?.get("thumbnails")?.lastOrNull()?.get("url")?.textValue()
             ?: p["thumbnail"]?.get("thumbnails")?.lastOrNull()?.get("url")?.textValue()
-        val videoCount = p["videoCount"]?.textValue()
+        var videoCount = p["videoCount"]?.textValue()
             ?: p["videoCountText"]?.get("runs")?.get(0)?.get("text")?.textValue()
+            
+        // Handle lockupViewModel format
+        if (playlistId == null && p.has("contentId")) {
+            playlistId = p["contentId"]?.textValue()
+            title = p["metadata"]?.get("lockupMetadataViewModel")?.get("title")?.get("content")?.textValue()
+            val imageNode = p["contentImage"]?.get("collectionThumbnailViewModel")?.get("primaryThumbnail")?.get("thumbnailViewModel")?.get("image")?.get("sources") 
+                    ?: p["contentImage"]?.get("thumbnailViewModel")?.get("image")?.get("sources")
+            poster = imageNode?.lastOrNull()?.get("url")?.textValue()
+            
+            // Try to find video count in metadata
+            val metaParts = p["metadata"]?.get("lockupMetadataViewModel")?.get("metadata")?.get("content")?.textValue()
+            if (metaParts != null && metaParts.contains("video")) {
+                videoCount = metaParts
+            }
+        }
+
+        if (playlistId == null) return null
+        val finalTitle = title ?: "Playlist"
         
         val displayTitle = if (videoCount != null) {
-            "$title ($videoCount videos)"
+            "$finalTitle ($videoCount)"
         } else {
-            title
+            finalTitle
         }
         
         val playlistUrl = "https://www.youtube.com/playlist?list=$playlistId"
@@ -265,6 +302,16 @@ class YoutubeProvider : MainAPI() {
     private fun findAllPlaylistRenderers(node: com.fasterxml.jackson.databind.JsonNode, list: MutableList<com.fasterxml.jackson.databind.JsonNode>) {
         if (node.has("playlistRenderer")) {
             list.add(node.get("playlistRenderer"))
+        }
+        
+        // Support for new YouTube Mobile "Lockup" format for playlists
+        if (node.has("lockupViewModel")) {
+            val renderer = node.get("lockupViewModel")
+            val contentType = renderer["contentType"]?.textValue()
+            // Playlists are usually "PLAYLIST" or "COLLECTION"
+            if (contentType == "PLAYLIST" || contentType == "COLLECTION") {
+                list.add(renderer)
+            }
         }
         
         if (node.isArray) {
