@@ -303,17 +303,36 @@ class YouTubePlayerDialog(
             )
         }
         
-        // Helper to create header buttons (smaller, icon-based)
+        // Helper to create header buttons (smaller, icon-based) with focus effect
         fun createHeaderButton(iconRes: Int, desc: String): ImageButton {
+            // Create focus state drawable for header
+            val normalBg = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x00000000) // Transparent
+            }
+            val focusedBg = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x33FFFFFF) // Light tint
+                setStroke(dpToPx(2), 0xFFFF0000.toInt()) // Red border
+            }
+            val stateList = android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), focusedBg)
+                addState(intArrayOf(android.R.attr.state_pressed), focusedBg)
+                addState(intArrayOf(), normalBg)
+            }
+            
             return ImageButton(context).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(40), dpToPx(40)).apply {
-                    marginStart = dpToPx(12)
+                layoutParams = LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)).apply {
+                    marginStart = dpToPx(8)
                 }
-                setBackgroundColor(0x00000000)
+                background = stateList
                 setImageResource(iconRes)
                 setColorFilter(0xFFFFFFFF.toInt())
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
                 contentDescription = desc
                 isFocusable = true
+                isFocusableInTouchMode = true
             }
         }
         
@@ -342,25 +361,45 @@ class YouTubePlayerDialog(
             setBackgroundColor(0x00000000) // Transparent
         }
         
-        // Helper to create large center buttons
+        // Create circular background drawable with focus state
+        fun createCircleBackground(normalColor: Int, focusColor: Int, size: Int): android.graphics.drawable.StateListDrawable {
+            val normalDrawable = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(normalColor)
+            }
+            val focusedDrawable = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x33FFFFFF) // Light translucent
+                setStroke(dpToPx(3), focusColor) // Red border when focused
+            }
+            return android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), focusedDrawable)
+                addState(intArrayOf(android.R.attr.state_pressed), focusedDrawable)
+                addState(intArrayOf(), normalDrawable)
+            }
+        }
+        
+        // Helper to create large center buttons with circular bg and focus effect
         fun createCenterButton(iconRes: Int, desc: String, size: Int = 72): ImageButton {
             return ImageButton(context).apply {
                 layoutParams = LinearLayout.LayoutParams(dpToPx(size), dpToPx(size)).apply {
-                    marginStart = dpToPx(24)
-                    marginEnd = dpToPx(24)
+                    marginStart = dpToPx(20)
+                    marginEnd = dpToPx(20)
                 }
-                setBackgroundResource(android.R.drawable.dialog_holo_light_frame) // Slight circle bg
+                background = createCircleBackground(0x44000000, 0xFFFF0000.toInt(), size)
                 setImageResource(iconRes)
                 setColorFilter(0xFFFFFFFF.toInt())
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dpToPx(12), dpToPx(12), dpToPx(12), dpToPx(12))
                 contentDescription = desc
                 isFocusable = true
                 isFocusableInTouchMode = true
             }
         }
         
-        btnRewind = createCenterButton(android.R.drawable.ic_media_rew, "Rewind 10s", 56)
-        btnPlayPause = createCenterButton(android.R.drawable.ic_media_pause, "Play/Pause", 80)
-        btnForward = createCenterButton(android.R.drawable.ic_media_ff, "Forward 10s", 56)
+        btnRewind = createCenterButton(android.R.drawable.ic_media_rew, "Rewind 10s", 64)
+        btnPlayPause = createCenterButton(android.R.drawable.ic_media_pause, "Play/Pause", 88)
+        btnForward = createCenterButton(android.R.drawable.ic_media_ff, "Forward 10s", 64)
         
         centerControls.addView(btnRewind)
         centerControls.addView(btnPlayPause)
@@ -375,11 +414,11 @@ class YouTubePlayerDialog(
                 gravity = Gravity.BOTTOM
             }
             orientation = LinearLayout.VERTICAL
-            setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(24))
+            setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(32))
             // Gradient background from transparent to black
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
-                intArrayOf(0xCC000000.toInt(), 0x00000000)
+                intArrayOf(0xDD000000.toInt(), 0x00000000)
             )
         }
         
@@ -400,7 +439,8 @@ class YouTubePlayerDialog(
             )
             text = "0:00"
             setTextColor(0xFFFFFFFF.toInt())
-            textSize = 13f
+            textSize = 12f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
         
         val spacer = View(context).apply {
@@ -413,31 +453,63 @@ class YouTubePlayerDialog(
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             text = "0:00"
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 13f
+            setTextColor(0xAAFFFFFF.toInt())
+            textSize = 12f
         }
         
         timeRow.addView(textCurrentTime)
         timeRow.addView(spacer)
         timeRow.addView(textDuration)
         
-        // SeekBar
+        // Custom SeekBar with thin gray track + red progress + large red thumb
         seekBar = SeekBar(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                dpToPx(24) // Height for touch target
             ).apply {
-                topMargin = dpToPx(4)
+                topMargin = dpToPx(8)
             }
             max = 100
             progress = 0
-            // Red accent like YouTube
-            progressDrawable?.setColorFilter(0xFFFF0000.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
-            thumb?.setColorFilter(0xFFFF0000.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+            isFocusable = true
+            isFocusableInTouchMode = true
+            
+            // Create thin custom track drawable
+            val trackHeight = dpToPx(3)
+            val trackBg = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dpToPx(2).toFloat()
+                setColor(0x66FFFFFF) // Gray track
+                setSize(0, trackHeight)
+            }
+            val trackProgress = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = dpToPx(2).toFloat()
+                setColor(0xFFFF0000.toInt()) // Red progress
+                setSize(0, trackHeight)
+            }
+            val clip = android.graphics.drawable.ClipDrawable(
+                trackProgress, 
+                Gravity.START, 
+                android.graphics.drawable.ClipDrawable.HORIZONTAL
+            )
+            progressDrawable = android.graphics.drawable.LayerDrawable(arrayOf(trackBg, clip)).apply {
+                setId(0, android.R.id.background)
+                setId(1, android.R.id.progress)
+            }
+            
+            // Large red thumb
+            thumb = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0xFFFF0000.toInt())
+                setSize(dpToPx(16), dpToPx(16))
+                setStroke(dpToPx(2), 0xFFFFFFFF.toInt())
+            }
+            thumbOffset = dpToPx(8)
         }
         
-        bottomBar.addView(timeRow)
-        bottomBar.addView(seekBar)
+        bottomBar.addView(seekBar) // SeekBar first (on top)
+        bottomBar.addView(timeRow)  // Time below
         
         // Add all sections to overlay
         overlayRoot.addView(topBar)
