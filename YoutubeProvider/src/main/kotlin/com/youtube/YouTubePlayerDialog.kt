@@ -973,9 +973,6 @@ class YouTubePlayerDialog(
                         style.id = 'cloudstream-scale-mode';
                         document.head.appendChild(style);
                     }
-                    style.id = 'cloudstream-scale-mode';
-                        document.head.appendChild(style);
-                    }
                     // Use textContent to comply with Trusted Types (innerHTML is blocked)
                     style.textContent = 'video, .video-stream, .html5-main-video, .html5-video-container { object-fit: $objectFit !important; }';
                     console.log('Scaled video to: $objectFit');

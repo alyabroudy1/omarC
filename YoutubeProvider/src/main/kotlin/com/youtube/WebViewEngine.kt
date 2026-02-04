@@ -115,6 +115,7 @@ class WebViewEngine(
                     
                     CoroutineScope(Dispatchers.Main).launch {
                         delay(2000) // Wait specifically for consent reload if clicked
+                        if (resultDelivered) return@launch
                         try {
                             val html = getHtmlFromWebView(view!!)
                             
