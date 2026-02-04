@@ -1,4 +1,4 @@
-package com.arabseed.utils
+package com.cloudstream.shared.android
 
 import android.app.Activity
 import android.app.Application
@@ -65,7 +65,7 @@ object ActivityProvider {
                 }
             }
         } catch (e: Exception) {
-            // Log.w(TAG, "Reflection for activity failed: ${e.message}") // Silence to avoid spam
+            // Silence to avoid spam
         }
         return null
     }
@@ -99,7 +99,6 @@ object ActivityProvider {
         application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 Log.d(TAG, "Activity created: ${activity.javaClass.simpleName}")
-                // Set on create as well to catch already-running Activities
                 activityRef = WeakReference(activity)
             }
             
@@ -116,7 +115,6 @@ object ActivityProvider {
             override fun onActivityPaused(activity: Activity) {}
             
             override fun onActivityStopped(activity: Activity) {
-                // Only clear if this is the currently tracked activity
                 if (activityRef?.get() === activity) {
                     Log.d(TAG, "Activity stopped, clearing ref: ${activity.javaClass.simpleName}")
                     activityRef = null

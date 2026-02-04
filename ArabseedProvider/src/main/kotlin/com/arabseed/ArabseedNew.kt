@@ -3,10 +3,10 @@ package com.arabseed
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.provider.ProviderConfig
-import com.arabseed.service.ProviderHttpService
-import com.arabseed.service.parsing.ParserInterface.ParsedEpisode
-import com.arabseed.utils.ActivityProvider
-import com.arabseed.utils.PluginContext
+import com.cloudstream.shared.service.ProviderHttpService
+import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
+import com.cloudstream.shared.android.ActivityProvider
+import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities

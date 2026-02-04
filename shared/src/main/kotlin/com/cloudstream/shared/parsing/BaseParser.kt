@@ -1,4 +1,4 @@
-package com.arabseed.service.parsing
+package com.cloudstream.shared.parsing
 
 import com.lagradost.api.Log
 import org.jsoup.nodes.Document
@@ -10,7 +10,7 @@ import org.jsoup.nodes.Element
  */
 abstract class BaseParser : ParserInterface {
     
-    protected val TAG = "ArabseedBaseParser"
+    protected val TAG = "BaseParser"
     
     abstract val providerName: String
     abstract val mainUrl: String

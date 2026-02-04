@@ -3,16 +3,16 @@ package com.arabseed
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.TvType
-import com.arabseed.utils.LinkResolvers
+import com.cloudstream.shared.extractors.LinkResolvers
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import com.arabseed.service.parsing.BaseParser
-import com.arabseed.service.parsing.ParserInterface.ParsedItem
-import com.arabseed.service.parsing.ParserInterface.ParsedLoadData
-import com.arabseed.service.parsing.ParserInterface.ParsedEpisode
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.parsing.ParserInterface.ParsedItem
+import com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
+import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 
 /**
  * Arabseed specific parsing logic.

@@ -1,4 +1,4 @@
-package com.arabseed.service.parsing
+package com.cloudstream.shared.parsing
 
 import com.lagradost.cloudstream3.TvType
 import org.jsoup.nodes.Document
@@ -17,7 +17,7 @@ interface ParserInterface {
     )
 
     /**
-     * Complete load page data matching built-in Arabseed structure.
+     * Complete load page data.
      */
     data class ParsedLoadData(
         val title: String,
@@ -61,4 +61,3 @@ interface ParserInterface {
     // Helpers
     fun resolveServerLink(serverUrl: String): String? = null
 }
-

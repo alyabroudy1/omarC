@@ -1,7 +1,7 @@
-package com.arabseed.service
+package com.cloudstream.shared.service
 
 import android.content.Context
-import com.arabseed.service.parsing.ParserInterface
+import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
@@ -25,7 +25,7 @@ import java.net.URI
 /**
  * THE GATEWAY - Single entry point for all provider HTTP operations.
  * 
- * Now uses shared module components for CloudflareDetector, RequestQueue,
+ * Uses shared module components for CloudflareDetector, RequestQueue,
  * SessionState, SessionStore, WebViewEngine, DomainManager.
  */
 class ProviderHttpService private constructor(

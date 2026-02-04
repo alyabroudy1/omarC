@@ -4,7 +4,8 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import com.arabseed.extractors.ArabseedLazyExtractor
-import com.arabseed.utils.PluginContext
+import com.cloudstream.shared.android.PluginContext
+import com.cloudstream.shared.android.ActivityProvider
 
 @CloudstreamPlugin
 class ArabseedPlugin: Plugin() {
@@ -12,9 +13,9 @@ class ArabseedPlugin: Plugin() {
         PluginContext.init(context)
         
         // Initialize ActivityProvider safely
-        com.arabseed.utils.ActivityProvider.initCompat(context)
+        ActivityProvider.initCompat(context)
         if (context is android.app.Activity) {
-            com.arabseed.utils.ActivityProvider.setActivity(context)
+            ActivityProvider.setActivity(context)
         }
         
         // Register lazy extractor (handles virtual URLs)
@@ -24,3 +25,4 @@ class ArabseedPlugin: Plugin() {
         registerMainAPI(ArabseedV2())
     }
 }
+
