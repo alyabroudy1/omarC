@@ -151,43 +151,54 @@ class ArabseedV2 : MainAPI() {
     ): Boolean {
         Log.d(name, "[loadLinks] START data='${data.take(80)}...'")
         
-        // 1. Get the watch page document
+        // 1. Get the document
         val doc = httpService.getDocument(data)
         if (doc == null) {
             Log.e(name, "[loadLinks] Failed to get document for data URL")
-            // Fallback: try to get player URLs directly
             return loadLinksFromService(data, subtitleCallback, callback)
         }
         
         // 2. Check if we need to navigate to watch page
-        var watchDoc = doc
-        val isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
+        var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
                          doc.select("iframe[name=player_iframe]").isNotEmpty()
         
-        if (!isWatchPage) {
+        var watchDoc = if (isWatchPage) doc else null
+        
+        if (watchDoc == null) {
             val watchUrl = doc.select("a.watch__btn").attr("href")
             if (watchUrl.isNotBlank()) {
-                Log.d(name, "[loadLinks] Following watch button: ${watchUrl.take(60)}")
-                watchDoc = httpService.getDocument(watchUrl) ?: doc
-            } else {
-                Log.w(name, "[loadLinks] No watch button, trying data URL directly")
+                Log.d(name, "[loadLinks] Found watch button, following to: ${watchUrl.take(60)}")
+                watchDoc = httpService.getDocument(watchUrl)
             }
         }
         
-        // 3. Extract direct embeds FIRST (priority)
-        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
-        Log.d(name, "[loadLinks] Direct embeds found: ${directEmbeds.size}")
+        if (watchDoc == null) {
+            Log.e(name, "[loadLinks] Could not get watch page")
+            return false
+        }
+        
+        // 3. Dynamic Quality Extraction
+        val availableQualities = parser.extractQualities(watchDoc)
+        val postId = parser.extractPostId(watchDoc) ?: ""
+        val csrfToken = parser.extractCsrfToken(doc) ?: ""
+        
+        Log.d(name, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
+        Log.d(name, "[loadLinks] PostID: $postId, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
         var found = false
         
-        directEmbeds.forEach { embedUrl ->
-            Log.d(name, "[loadLinks] Processing embed: ${embedUrl.take(60)}")
-            val isPrivate = embedUrl.contains("arabseed") || embedUrl.contains("asd") || embedUrl.contains("reviewrate")
+        // ==================== DIRECT EMBEDS (PRIORITY 0) ====================
+        // Process this BEFORE Checking PostID/CSRF to ensure it runs even if AJAX logic fails
+        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
+        Log.i(name, "[loadLinks] Found ${directEmbeds.size} direct embeds - Processing FIRST")
+        
+        if (directEmbeds.isNotEmpty()) found = true
+        
+        directEmbeds.forEachIndexed { i, embedUrl ->
+            Log.i(name, "[loadLinks] Processing Direct Embed #${i+1}: $embedUrl")
             
-            if (isPrivate) {
-                // Pass directly to callback for lazy resolution via getVideoInterceptor
-                // (Matches built-in Arabseed.kt:361-371)
-                Log.d(name, "[loadLinks] Passing private embed directly for lazy resolution")
+            // Custom handling for ReviewRate/Arabseed embeds - Clean Lazy Approach
+            if (embedUrl.contains("reviewrate")) {
                 callback(
                     newExtractorLink(
                         name,
@@ -199,22 +210,39 @@ class ArabseedV2 : MainAPI() {
                         this.quality = Qualities.Unknown.value
                     }
                 )
-                found = true
             } else {
-                loadExtractor(embedUrl, subtitleCallback, callback)
-                found = true
+                // Try global extractors as well (Standard behavior)
+                loadExtractor(embedUrl, watchDoc.location(), subtitleCallback, callback)
             }
         }
         
-        // 4. Extract server links and emit as lazy sources
-        // Following built-in Arabseed.kt:403-427 approach
-        val postId = parser.extractPostId(watchDoc) ?: ""
-        val csrfToken = parser.extractCsrfToken(doc) ?: "" // Use original doc for CSRF
+        Log.i(name, "[loadLinks] Finished Direct Embeds, now processing Servers...")
         
+        // ==================== LAZY SERVER LINKS ====================
         if (postId.isNotBlank() && csrfToken.isNotBlank()) {
-            val servers = parser.extractVisibleServers(watchDoc)
-            Log.d(name, "[loadLinks] Server links found: ${servers.size}, PostID: $postId, CSRF: FOUND")
+            val servers = mutableListOf<ArabseedParser.ServerData>()
             
+            // 1. Extract Visible Servers
+            servers.addAll(parser.extractVisibleServers(watchDoc))
+            Log.d(name, "[loadLinks] Visible servers: ${servers.size}")
+            
+            // 2. Add placeholder logic for missing qualities (Lazy fallback)
+            val processedQualities = servers.map { it.quality }.toSet()
+            val qualitiesToGenerate = availableQualities.filter { it.quality !in processedQualities }
+            
+            if (qualitiesToGenerate.isNotEmpty()) {
+                Log.d(name, "[loadLinks] Generating placeholder links for: ${qualitiesToGenerate.map { it.quality }}")
+                qualitiesToGenerate.forEach { qData ->
+                    servers.add(ArabseedParser.ServerData(
+                        title = "Server 1",
+                        quality = qData.quality,
+                        postId = postId,
+                        serverId = "0"
+                    ))
+                }
+            }
+            
+            // 3. Emit Lazy Links for All Servers
             servers.forEach { server ->
                 val encodedReferer = java.net.URLEncoder.encode(watchDoc.location(), "UTF-8")
                 val currentBaseUrl = try {
@@ -234,38 +262,13 @@ class ArabseedV2 : MainAPI() {
                         ExtractorLinkType.VIDEO
                     ) {
                         this.quality = server.quality
-                        this.referer = watchDoc.location()
                     }
                 )
-                found = true
             }
+            
+            if (servers.isNotEmpty()) found = true
         } else {
-            Log.w(name, "[loadLinks] PostID ($postId) or CSRF ($csrfToken) missing, falling back to simple scraping")
-            val serverLinks = watchDoc.select("ul > li[data-link]")
-            serverLinks.forEach { element ->
-                val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
-                if (rawUrl.isNotBlank()) {
-                    val serverName = element.selectFirst("span")?.text() ?: "Server"
-                    val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
-                    callback(
-                        newExtractorLink(
-                            name,
-                            "$name - $serverName (Fallback)",
-                            resolvedUrl,
-                            ExtractorLinkType.VIDEO
-                        ) {
-                             this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    found = true
-                }
-            }
-        }
-        
-        // 5. Fallback: use getPlayerUrls service
-        if (!found) {
-            Log.w(name, "[loadLinks] No links from page, trying service fallback")
-            return loadLinksFromService(data, subtitleCallback, callback)
+            Log.w(name, "[loadLinks] PostID or CSRF missing, skipping dynamic extraction.")
         }
         
         Log.d(name, "[loadLinks] END found=$found")
