@@ -12,8 +12,6 @@ class YoutubeProvider : MainAPI() {
     override var lang = "en"
     override val hasMainPage = true
 
-    private val cookieStore = InMemoryCookieStore()
-
     // Plugin Context Resources
     var resources: android.content.res.Resources? = null
     var pluginPackageName: String = "com.youtube" // Default fallback
@@ -25,6 +23,11 @@ class YoutubeProvider : MainAPI() {
         // sp=CAMSAhAB = Sort: Upload Date + Filter: Video
         const val SEARCH_FILTER_VIDEO_BY_DATE = "CAISAhAB" // Video type, sorted by upload date
         const val SEARCH_FILTER_VIDEO_ONLY = "EgIQAQ%3D%3D" // Video type only
+        
+        // SOCS cookie to bypass YouTube consent screen
+        // This value indicates "rejected all" consent state
+        private const val SOCS_COOKIE = "SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMTI3GAEgASgB"
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -95,64 +98,50 @@ class YoutubeProvider : MainAPI() {
     }
 
     private suspend fun fetchYouTubeJson(url: String): com.fasterxml.jackson.databind.JsonNode? {
-        val webViewEngine = WebViewEngine(
-            cookieStore,
-            { com.lagradost.cloudstream3.CommonActivity.activity }
-        )
-
-        val result = webViewEngine.runSession(
-            url = url,
-            mode = WebViewEngine.Mode.HEADLESS,
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            exitCondition = ExitCondition.PageLoaded,
-            timeout = 90_000L
-        )
-        
-        val output = when (result) {
-            is WebViewResult.Success -> result.html
-            is WebViewResult.Timeout -> result.partialHtml ?: ""
-            else -> ""
-        }
-        
-        if (output.contains("consent.youtube.com") || output.contains("Before you continue")) {
-            return null
-        }
-
-        var jsonText = ""
-        if (output.trim().startsWith("{")) {
-            jsonText = output
-        } else {
-            jsonText = output.substringAfter("var ytInitialData = ", "")
-                .substringBefore(";</script>", "")
-        }
-        
-        if (jsonText.isEmpty()) return null
-
-        // Fix: Sanitize JSON string to remove unescaped control characters (newlines, tabs, etc.)
-        // formatting code 10 is newline \n
-        // Replace unescaped newlines/tabs with spaces or escaped versions
-        /* 
-           YouTube often embeds raw JS code or non-JSON compliant strings in the HTML.
-           We'll try to use a lenient mapper first. 
-        */
-
         return try {
+            // Direct HTTP request with SOCS cookie to bypass consent
+            val response = app.get(
+                url,
+                headers = mapOf(
+                    "Cookie" to SOCS_COOKIE,
+                    "Accept-Language" to "en-US,en;q=0.9"
+                ),
+                referer = "https://www.youtube.com/",
+                timeout = 30 // 30 seconds is enough for direct HTTP
+            )
+            
+            val output = response.text
+            
+            // Check if we still got consent page (fallback needed)
+            if (output.contains("consent.youtube.com") || output.contains("Before you continue")) {
+                com.lagradost.api.Log.w("YoutubeProvider", "Consent page detected, SOCS cookie may need update")
+                return null
+            }
+            
+            // Extract ytInitialData JSON
+            var jsonText = ""
+            if (output.trim().startsWith("{")) {
+                jsonText = output
+            } else {
+                jsonText = output.substringAfter("var ytInitialData = ", "")
+                    .substringBefore(";</script>", "")
+            }
+            
+            if (jsonText.isEmpty()) {
+                com.lagradost.api.Log.w("YoutubeProvider", "No ytInitialData found in response")
+                return null
+            }
+            
+            // Parse JSON with lenient settings
             val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().apply {
                 configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS, true)
                 configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER, true)
             }
             mapper.readTree(jsonText)
+            
         } catch (e: Exception) {
-            // Fallback: aggressive string sanitization
-            try {
-                // Remove literal newlines/tabs from string values which are invalid in JSON
-                // Use a simple regex to replace raw \n, \r with space
-                 val sanitized = jsonText.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-                 com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(sanitized)
-             } catch (e2: Exception) {
-                 com.lagradost.api.Log.e("YoutubeProvider", "Failed to parse JSON (Sanitized): ${e2.message}")
-                 null
-             }
+            com.lagradost.api.Log.e("YoutubeProvider", "fetchYouTubeJson failed: ${e.message}")
+            null
         }
     }
 
