@@ -197,6 +197,12 @@ class ProviderHttpService private constructor(
         headers["User-Agent"] = sessionState.userAgent
         sessionState.buildCookieHeader()?.let { headers["Cookie"] = it }
         headers["Referer"] = "https://${sessionState.domain}/"
+        
+        ProviderLogger.d(TAG_PROVIDER_HTTP, "getImageHeaders", "Building image headers",
+            "domain" to sessionState.domain,
+            "hasCookies" to (headers["Cookie"] != null),
+            "cookieKeys" to sessionState.cookies.keys.toString()
+        )
         return headers
     }
 
@@ -207,6 +213,13 @@ class ProviderHttpService private constructor(
             val targetUrl = rewriteUrlIfNeeded(url)
             val headers = sessionState.buildHeaders().toMutableMap()
             customHeaders.forEach { (k, v) -> headers[k] = v }
+            
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "executeDirectRequest", "Executing HTTP request",
+                "url" to targetUrl.take(80),
+                "domain" to sessionState.domain,
+                "hasCookie" to (headers["Cookie"] != null),
+                "cookieKeys" to sessionState.cookies.keys.toString()
+            )
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
@@ -223,6 +236,7 @@ class ProviderHttpService private constructor(
             
             executeRequestHelper(directClient, okRequest)
         } catch (e: Exception) {
+            ProviderLogger.e(TAG_PROVIDER_HTTP, "executeDirectRequest", "Failed", e, "url" to url.take(80))
             RequestResult.failure(e)
         }
     }

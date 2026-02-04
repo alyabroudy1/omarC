@@ -113,8 +113,13 @@ class ArabseedParser : BaseParser() {
     // ================= LOAD PAGE (DETAILS) =================
 
     override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
+        return parseLoadPageData(doc, url)
+    }
+    
+    override fun parseLoadPageData(doc: Document, url: String): ParsedLoadData? {
+        Log.d(providerName, "[parseLoadPageData] Parsing: ${url.take(60)}...")
+        
         // TITLE SELECTORS
-        // div.title h1, h1.postTitle, div.h1-title h1
         var title = doc.selectFirst("div.title h1")?.text() 
             ?: doc.selectFirst("h1.postTitle")?.text()
             ?: doc.selectFirst("div.h1-title h1")?.text()
@@ -122,10 +127,13 @@ class ArabseedParser : BaseParser() {
         if (title.isNullOrBlank()) {
              title = doc.title().replace(" - عرب سيد", "").replace("مترجم اون لاين", "").trim()
         }
+        
+        if (title.isNullOrBlank()) {
+            Log.e(providerName, "[parseLoadPageData] Failed to parse title!")
+            return null
+        }
 
         // POSTER SELECTORS
-        // div.posterDiv img, div.poster img, img.poster, div.single-poster img, 
-        // div.postDiv a div img, div.postDiv img, .moviePoster img
         val posterImg = doc.selectFirst("div.posterDiv img")
             ?: doc.selectFirst("div.poster img")
             ?: doc.selectFirst("img.poster")
@@ -146,7 +154,6 @@ class ArabseedParser : BaseParser() {
         }
 
         // PLOT SELECTORS
-        // div.singleInfo span:contains(القصة) p, div.singleDesc p, div.story p, div.post__story p, div.postContent p, meta og:description
         val plot = doc.selectFirst("div.singleInfo span:contains(القصة) p")?.text()
             ?: doc.selectFirst("div.singleDesc p")?.text()
             ?: doc.selectFirst("div.story p")?.text()
@@ -158,27 +165,97 @@ class ArabseedParser : BaseParser() {
         // YEAR SELECTORS
         var year = doc.select("div.singleInfo span:contains(السنة) a").text().toIntOrNull()
         if (year == null) year = doc.select("div.info__area li:has(span:contains(سنة العرض)) ul.tags__list a").text().toIntOrNull()
-        if (year == null) year = Regex("""\d{4}""").find(title ?: "")?.value?.toIntOrNull()
+        if (year == null) year = Regex("""\d{4}""").find(title)?.value?.toIntOrNull()
         
-        // TYPE DETECTION
+        // TYPE DETECTION (matches built-in logic)
         val hasEpisodes = doc.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.seasonEpsCont, div.seasons--list, a.episode__item, div.series-episodes, div#seasons__list, div.list__sub__cats, div.epi__num, ul.episodes__list").isNotEmpty()
-        val isSeriesUrl = url.contains("/seasons/") || url.contains("/series/") || url.contains("/anime/")
+        val seriesKeywords = listOf("انمي", "مسلسل", "موسم", "برنامج", "سلسلة")
+        val isSeriesTitle = seriesKeywords.any { title.contains(it, ignoreCase = true) }
+        val isSeriesUrl = url.contains("/seasons/") || url.contains("/series/") || url.contains("/selary") || url.contains("/anime/")
         
-        val type = if (hasEpisodes || isSeriesUrl) TvType.TvSeries else TvType.Movie
+        val isMovie = !hasEpisodes && !isSeriesUrl && !isSeriesTitle
+        val type = if (isMovie) TvType.Movie else TvType.TvSeries
         
         // TAGS
         var tags = doc.select("div.singleInfo span:contains(النوع) a").map { it.text() }
         if (tags.isEmpty()) tags = doc.select("div.info__area li:has(span:contains(نوع العرض)) ul.tags__list a").map { it.text() }
+        
+        // CSRF Token (for AJAX)
+        val csrfToken = extractCsrfToken(doc)
+        
+        Log.d(providerName, "[parseLoadPageData] title='$title', isMovie=$isMovie, hasEpisodes=$hasEpisodes, csrfToken=${if(csrfToken!=null) "FOUND" else "NULL"}")
+        
+        return if (isMovie) {
+            // MOVIE: Extract watch URL
+            val watchUrl = extractMovieWatchUrl(doc)
+            Log.d(providerName, "[parseLoadPageData] Movie. watchUrl='${watchUrl.take(60)}'")
+            
+            ParsedLoadData(
+                title = title,
+                url = url,
+                posterUrl = fixUrl(poster),
+                plot = plot,
+                year = year,
+                type = type,
+                tags = tags,
+                watchUrl = watchUrl.ifBlank { null },
+                episodes = null,
+                csrfToken = csrfToken
+            )
+        } else {
+            // SERIES: Parse episodes
+            val episodes = parseEpisodes(doc, null)
+            Log.d(providerName, "[parseLoadPageData] Series. episodes=${episodes.size}")
+            
+            ParsedLoadData(
+                title = title,
+                url = url,
+                posterUrl = fixUrl(poster),
+                plot = plot,
+                year = year,
+                type = type,
+                tags = tags,
+                watchUrl = null,
+                episodes = episodes,
+                csrfToken = csrfToken
+            )
+        }
+    }
+    
+    /** Extract movie watch URL from various sources */
+    private fun extractMovieWatchUrl(doc: Document): String {
+        // Try iframe with specific name
+        var watchUrl = doc.select("iframe[name=player_iframe]").attr("src")
+        
+        // Try any iframe that might be the player
+        if (watchUrl.isBlank()) {
+             watchUrl = doc.select("div.Container iframe, div.Content iframe, div.embed-player iframe")
+                 .attr("src")
+        }
 
-        return ParsedLoadData(
-            title = title ?: "",
-            url = url,
-            posterUrl = fixUrl(poster),
-            plot = plot,
-            year = year,
-            type = type,
-            tags = tags
-        )
+        // Fallback: Watch Button (critical for loadLinks)
+        if (watchUrl.isBlank()) {
+            watchUrl = doc.select("a.watch__btn").attr("href")
+            if (watchUrl.isNotBlank()) Log.d(providerName, "Found watch button URL: $watchUrl")
+        }
+
+        // Fallback: onclick
+        if (watchUrl.isBlank()) {
+            val onClick = doc.select("ul.tabs-ul li.active").attr("onclick")
+            watchUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
+        }
+        
+        // Fallback: any list item
+        if (watchUrl.isBlank()) {
+            doc.select("ul.tabs-ul li").forEach { li ->
+                if (watchUrl.isBlank()) {
+                    val onClick = li.attr("onclick")
+                    watchUrl = Regex("""href\s*=\s*'([^']+)'""").find(onClick)?.groupValues?.get(1) ?: ""
+                }
+            }
+        }
+        
+        return watchUrl
     }
 
     // ================= EPISODES & SEASONS =================

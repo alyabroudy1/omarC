@@ -1,5 +1,7 @@
 package com.cloudstream.shared.session
 
+import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger.TAG_SESSION
 import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 
 /**
@@ -63,22 +65,35 @@ data class SessionState(
     }
     
     /** Build all headers for HTTP requests */
-    fun buildHeaders(): Map<String, String> = buildMap {
-        put("User-Agent", userAgent)
-        put("Referer", "https://$domain/")
-        put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-        put("Accept-Language", "en-US,en;q=0.9")
-        // Critical Client Hints for Chrome 120+ spoofing
-        put("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
-        put("Sec-Ch-Ua-Mobile", "?1")
-        put("Sec-Ch-Ua-Platform", "\"Android\"")
-        put("Upgrade-Insecure-Requests", "1")
-        put("Sec-Fetch-Dest", "document")
-        put("Sec-Fetch-Mode", "navigate")
-        put("Sec-Fetch-Site", "none")
-        put("Sec-Fetch-User", "?1")
+    fun buildHeaders(): Map<String, String> {
+        ProviderLogger.d(TAG_SESSION, "buildHeaders", "Building request headers",
+            "domain" to domain,
+            "cookieCount" to cookies.size,
+            "hasClearance" to hasClearance(),
+            "isValid" to isValid(),
+            "uaHash" to userAgent.hashCode()
+        )
         
-        buildCookieHeader()?.let { put("Cookie", it) }
+        return buildMap {
+            put("User-Agent", userAgent)
+            put("Referer", "https://$domain/")
+            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+            put("Accept-Language", "en-US,en;q=0.9")
+            // Critical Client Hints for Chrome 120+ spoofing
+            put("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+            put("Sec-Ch-Ua-Mobile", "?1")
+            put("Sec-Ch-Ua-Platform", "\"Android\"")
+            put("Upgrade-Insecure-Requests", "1")
+            put("Sec-Fetch-Dest", "document")
+            put("Sec-Fetch-Mode", "navigate")
+            put("Sec-Fetch-Site", "none")
+            put("Sec-Fetch-User", "?1")
+            
+            buildCookieHeader()?.let { 
+                put("Cookie", it) 
+                ProviderLogger.d(TAG_SESSION, "buildHeaders", "Cookie header set", "keys" to cookies.keys.toString())
+            }
+        }
     }
     
     /** Create new state with updated cookies (keeps same UA - critical for CF) */

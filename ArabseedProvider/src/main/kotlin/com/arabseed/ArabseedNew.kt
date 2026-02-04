@@ -87,31 +87,48 @@ class ArabseedV2 : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         httpService.ensureInitialized()
+        Log.d(name, "[load] Loading: ${url.take(60)}...")
         
-        val doc = httpService.getDocument(url) ?: return null
-        val data = parser.parseLoadPage(doc, url) ?: return null
+        val doc = httpService.getDocument(url) ?: run {
+            Log.e(name, "[load] Failed to get document")
+            return null
+        }
         
-        return if (data.type == TvType.Movie) {
-             newMovieLoadResponse(data.title, url, TvType.Movie, data.url) {
-                 this.posterUrl = data.posterUrl
-                 this.year = data.year
-                 this.plot = data.plot
-                 this.tags = data.tags
-             }
+        val data = parser.parseLoadPageData(doc, url) ?: run {
+            Log.e(name, "[load] Failed to parse load page data")
+            return null
+        }
+        
+        Log.d(name, "[load] Parsed: title='${data.title}', isMovie=${data.isMovie}, watchUrl=${data.watchUrl?.take(40)}, episodes=${data.episodes?.size ?: 0}")
+        
+        return if (data.isMovie) {
+            // For movies: pass watchUrl (or url as fallback) for loadLinks
+            val movieDataUrl = data.watchUrl ?: url
+            newMovieLoadResponse(data.title, url, TvType.Movie, movieDataUrl) {
+                this.posterUrl = data.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()  // CRITICAL: Image headers
+                this.year = data.year
+                this.plot = data.plot
+                this.tags = data.tags
+            }
         } else {
-             val episodes = parser.parseEpisodes(doc, null)
-             newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes.map {
-                 newEpisode(it.url) {
-                     this.name = it.name
-                     this.season = it.season
-                     this.episode = it.episode
-                 }
-             }) {
-                 this.posterUrl = data.posterUrl
-                 this.year = data.year
-                 this.plot = data.plot
-                 this.tags = data.tags
-             }
+            // For series: use pre-parsed episodes from ParsedLoadData
+            val episodes = data.episodes ?: parser.parseEpisodes(doc, null)
+            Log.d(name, "[load] Series episodes: ${episodes.size}")
+            
+            newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes.map {
+                newEpisode(it.url) {
+                    this.name = it.name
+                    this.season = it.season
+                    this.episode = it.episode
+                }
+            }) {
+                this.posterUrl = data.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()  // CRITICAL: Image headers
+                this.year = data.year
+                this.plot = data.plot
+                this.tags = data.tags
+            }
         }
     }
 
@@ -121,33 +138,145 @@ class ArabseedV2 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Delegate to service to find links
-        val urls = httpService.getPlayerUrls(data)
+        Log.d(name, "[loadLinks] START data='${data.take(80)}...'")
         
-        urls.forEach { url ->
-            val isPrivateServer = url.contains("arabseed") || url.contains("asd") // TODO: refined check
-            
-            if (isPrivateServer) {
-                 val sources = httpService.sniffVideos(url)
-                 sources.forEach { source ->
-                     callback(
-                         newExtractorLink(
-                             name,
-                             name,
-                             source.url,
-                             if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                         ) {
-                             this.referer = ""
-                             this.quality = getQualityFromName(source.quality)
-                             this.headers = source.headers
-                         }
-                     )
-                 }
+        // 1. Get the watch page document
+        val doc = httpService.getDocument(data)
+        if (doc == null) {
+            Log.e(name, "[loadLinks] Failed to get document for data URL")
+            // Fallback: try to get player URLs directly
+            return loadLinksFromService(data, subtitleCallback, callback)
+        }
+        
+        // 2. Check if we need to navigate to watch page
+        var watchDoc = doc
+        val isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
+                         doc.select("iframe[name=player_iframe]").isNotEmpty()
+        
+        if (!isWatchPage) {
+            val watchUrl = doc.select("a.watch__btn").attr("href")
+            if (watchUrl.isNotBlank()) {
+                Log.d(name, "[loadLinks] Following watch button: ${watchUrl.take(60)}")
+                watchDoc = httpService.getDocument(watchUrl) ?: doc
             } else {
-                 loadExtractor(url, subtitleCallback, callback)
+                Log.w(name, "[loadLinks] No watch button, trying data URL directly")
             }
         }
-        return true
+        
+        // 3. Extract direct embeds FIRST (priority)
+        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
+        Log.d(name, "[loadLinks] Direct embeds found: ${directEmbeds.size}")
+        
+        var found = false
+        
+        directEmbeds.forEach { embedUrl ->
+            Log.d(name, "[loadLinks] Processing embed: ${embedUrl.take(60)}")
+            val isPrivate = embedUrl.contains("arabseed") || embedUrl.contains("asd") || embedUrl.contains("reviewrate")
+            
+            if (isPrivate) {
+                // Sniff video from private player
+                val sources = httpService.sniffVideos(embedUrl)
+                Log.d(name, "[loadLinks] Sniffed ${sources.size} sources from embed")
+                sources.forEach { source ->
+                    callback(
+                        newExtractorLink(
+                            name,
+                            "$name ${source.quality}",
+                            source.url,
+                            if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = data
+                            this.quality = getQualityFromName(source.quality)
+                            this.headers = source.headers
+                        }
+                    )
+                    found = true
+                }
+            } else {
+                loadExtractor(embedUrl, subtitleCallback, callback)
+                found = true
+            }
+        }
+        
+        // 4. Extract server links from page
+        val serverLinks = watchDoc.select("ul > li[data-link]")
+        Log.d(name, "[loadLinks] Server links found: ${serverLinks.size}")
+        
+        serverLinks.forEach { element ->
+            val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
+            if (rawUrl.isNotBlank()) {
+                Log.d(name, "[loadLinks] Server link: ${rawUrl.take(60)}")
+                val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
+                
+                if (resolvedUrl.contains("arabseed") || resolvedUrl.contains("asd")) {
+                    val sources = httpService.sniffVideos(resolvedUrl)
+                    sources.forEach { source ->
+                        callback(
+                            newExtractorLink(
+                                name,
+                                "$name ${source.quality}",
+                                source.url,
+                                if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = data
+                                this.quality = getQualityFromName(source.quality)
+                                this.headers = source.headers
+                            }
+                        )
+                        found = true
+                    }
+                } else {
+                    loadExtractor(resolvedUrl, subtitleCallback, callback)
+                    found = true
+                }
+            }
+        }
+        
+        // 5. Fallback: use getPlayerUrls service
+        if (!found) {
+            Log.w(name, "[loadLinks] No links from page, trying service fallback")
+            return loadLinksFromService(data, subtitleCallback, callback)
+        }
+        
+        Log.d(name, "[loadLinks] END found=$found")
+        return found
+    }
+    
+    private suspend fun loadLinksFromService(
+        data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val urls = httpService.getPlayerUrls(data)
+        Log.d(name, "[loadLinksFromService] URLs: ${urls.size}")
+        
+        var found = false
+        urls.forEach { url ->
+            val isPrivateServer = url.contains("arabseed") || url.contains("asd")
+            
+            if (isPrivateServer) {
+                val sources = httpService.sniffVideos(url)
+                sources.forEach { source ->
+                    callback(
+                        newExtractorLink(
+                            name,
+                            name,
+                            source.url,
+                            if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = ""
+                            this.quality = getQualityFromName(source.quality)
+                            this.headers = source.headers
+                        }
+                    )
+                    found = true
+                }
+            } else {
+                loadExtractor(url, subtitleCallback, callback)
+                found = true
+            }
+        }
+        return found
     }
 
     private fun getQualityFromName(qualityName: String): Int {
