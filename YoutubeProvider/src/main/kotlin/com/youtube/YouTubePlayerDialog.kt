@@ -50,6 +50,7 @@ class YouTubePlayerDialog(
     private lateinit var btnQuality: ImageButton
     private lateinit var btnSpeed: ImageButton
     private lateinit var btnCaptions: ImageButton
+    private lateinit var btnScale: ImageButton
     private lateinit var btnExit: ImageButton
     private lateinit var seekBar: SeekBar
     private lateinit var textCurrentTime: TextView
@@ -58,6 +59,7 @@ class YouTubePlayerDialog(
     // State
     private var isPlaying = true
     private var isVisible = false
+    private var isScaleCover = false // false = contain (fit), true = cover (zoom/fill)
     private var isSeeking = false
     private var videoDuration = 0.0
     private var currentQuality = "auto"
@@ -354,12 +356,14 @@ class YouTubePlayerDialog(
         btnSpeed = createHeaderButton(android.R.drawable.ic_menu_recent_history, "Speed")
         btnQuality = createHeaderButton(android.R.drawable.ic_menu_preferences, "Quality")
         btnCaptions = createHeaderButton(android.R.drawable.ic_menu_more, "Captions")
+        btnScale = createHeaderButton(android.R.drawable.ic_menu_crop, "Scale: Fit") // Default Fit
         btnAudio = createHeaderButton(android.R.drawable.ic_lock_silent_mode_off, "Audio")
         btnExit = createHeaderButton(android.R.drawable.ic_menu_close_clear_cancel, "Close")
         
         topBar.addView(btnSpeed)
         topBar.addView(btnQuality)
         topBar.addView(btnCaptions)
+        topBar.addView(btnScale) // Add before audio
         topBar.addView(btnAudio)
         topBar.addView(btnExit)
         
@@ -570,6 +574,10 @@ class YouTubePlayerDialog(
             showAudioMenu()
         }
 
+        btnScale.setOnClickListener {
+            toggleScaleMode()
+        }
+
         // SeekBar
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -741,6 +749,9 @@ class YouTubePlayerDialog(
                 })();
             """.trimIndent()
             webView.evaluateJavascript(js, null)
+            
+            // Re-apply scale preference (Fit vs Fill)
+            updateScaleMode()
         }
         inject()
         handler.postDelayed({ inject() }, 1500)
@@ -939,6 +950,34 @@ class YouTubePlayerDialog(
     private fun setQuality(q: String, l: String) {
         executeJs("var p = document.getElementById('movie_player'); if(p && p.setPlaybackQualityRange) { p.setPlaybackQualityRange('$q'); }")
         showToast("Quality: $l")
+    }
+
+    private fun toggleScaleMode() {
+        isScaleCover = !isScaleCover
+        updateScaleMode()
+        
+        val mode = if (isScaleCover) "Zoom/Fill" else "Fit to Screen"
+        android.widget.Toast.makeText(context, mode, android.widget.Toast.LENGTH_SHORT).show()
+        btnScale.contentDescription = "Scale: $mode"
+    }
+
+    private fun updateScaleMode() {
+        val objectFit = if (isScaleCover) "cover" else "contain"
+        val js = """
+            (function() {
+                try {
+                    var style = document.getElementById('cloudstream-scale-mode');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'cloudstream-scale-mode';
+                        document.head.appendChild(style);
+                    }
+                    style.innerHTML = 'video, .video-stream, .html5-main-video { object-fit: $objectFit !important; }';
+                    console.log('Scaled video to: $objectFit');
+                } catch(e) { console.error(e); }
+            })();
+        """
+        webView.evaluateJavascript(js, null)
     }
 
     private fun showSpeedMenu() {
