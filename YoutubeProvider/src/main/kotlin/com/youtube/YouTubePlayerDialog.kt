@@ -105,7 +105,11 @@ class YouTubePlayerDialog(
         rootLayout.addView(webView)
 
         createOverlayUI()
-        rootLayout.addView(overlayRoot)
+        if (::overlayRoot.isInitialized) {
+            rootLayout.addView(overlayRoot)
+        } else {
+            Log.e(TAG, "onCreate: overlayRoot not initialized (layout failure?)")
+        }
 
         setContentView(rootLayout)
 
@@ -243,14 +247,27 @@ class YouTubePlayerDialog(
 
     // Externally injected resources from Plugin Context
     var pluginResources: android.content.res.Resources? = null
+    var pluginPackageName: String = "com.youtube"
 
     private fun getResId(name: String, type: String): Int {
         val res = pluginResources ?: context.resources
-        // Try plugin package first
-        val id = res.getIdentifier(name, type, "com.youtube")
+        // 1. Try injected package name
+        var id = res.getIdentifier(name, type, pluginPackageName)
         if (id != 0) return id
-        // Fallback to host app package just in case
-        return res.getIdentifier(name, type, "com.lagradost.cloudstream3")
+        
+        // 2. Try explicit com.youtube (if injected was different)
+        if (pluginPackageName != "com.youtube") {
+             id = res.getIdentifier(name, type, "com.youtube")
+             if (id != 0) return id
+        }
+
+        // 3. Fallback to host app
+        id = res.getIdentifier(name, type, "com.lagradost.cloudstream3")
+        
+        if (id == 0) {
+            Log.e(TAG, "getResId FAILED for $name type $type. Tried: $pluginPackageName, com.youtube, com.lagradost.cloudstream3")
+        }
+        return id
     }
     
     // ... inside createOverlayUI ...

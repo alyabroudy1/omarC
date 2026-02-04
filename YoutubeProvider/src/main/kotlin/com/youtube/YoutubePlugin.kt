@@ -10,6 +10,7 @@ class YoutubePlugin : Plugin() {
         // All providers should be added in this manner
         val provider = YoutubeProvider()
         provider.resources = context.resources
+        provider.pluginPackageName = context.packageName
         registerMainAPI(provider)
     }
 }

@@ -16,6 +16,7 @@ class YoutubeProvider : MainAPI() {
 
     // Plugin Context Resources
     var resources: android.content.res.Resources? = null
+    var pluginPackageName: String = "com.youtube" // Default fallback
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val trendingUrl = "https://www.youtube.com/feed/trending?gl=SY&hl=ar"
@@ -43,6 +44,7 @@ class YoutubeProvider : MainAPI() {
            activity.runOnUiThread {
                val dialog = YouTubePlayerDialog(activity, data)
                dialog.pluginResources = resources // Pass plugin resources
+               dialog.pluginPackageName = pluginPackageName
                dialog.show()
            }
         }
