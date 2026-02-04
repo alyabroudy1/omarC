@@ -28,20 +28,20 @@ class YoutubeProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        // Use search with filter: Video type + sorted by upload date (no shorts)
-        // sp=CAISAhAB filters to Videos only (excludes Shorts, Lives, Playlists) and sorts by upload date
+        // Use search with filter: Video type only (excludes Shorts, Lives, Playlists)
+        // Default sorting (Relevance) is better than strict upload date
         val searchQuery = java.net.URLEncoder.encode("سوريا", "UTF-8")
-        val mainUrl = "https://m.youtube.com/results?search_query=$searchQuery&sp=$SEARCH_FILTER_VIDEO_BY_DATE"
+        val mainUrl = "https://m.youtube.com/results?search_query=$searchQuery&sp=$SEARCH_FILTER_VIDEO_ONLY"
         
         val items = fetchAndParseVideos(mainUrl)
         
-        return newHomePageResponse("Syria - Latest Videos", items)
+        return newHomePageResponse("Syria - Trending Videos", items)
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        // sp=CAISAhAB = Filter: Video only + Sort: Upload Date (excludes shorts)
-        val searchUrl = "https://m.youtube.com/results?search_query=$encodedQuery&sp=$SEARCH_FILTER_VIDEO_BY_DATE"
+        // sp=EgIQAQ%3D%3D = Filter: Video only (relevance sort)
+        val searchUrl = "https://m.youtube.com/results?search_query=$encodedQuery&sp=$SEARCH_FILTER_VIDEO_ONLY"
         
         val results = mutableListOf<SearchResponse>()
         
