@@ -558,16 +558,41 @@ class YouTubePlayerDialog(
                     try {
                         // CSS Content
                         var css = `
-                          html, body, #player, .player-container, .html5-video-container, video, .video-stream {
-                            background: #000 !important; width: 100vw !important; height: 100vh !important;
-                            margin: 0 !important; padding: 0 !important; overflow: hidden !important;
-                            position: fixed !important; top: 0 !important; left: 0 !important; z-index: 9999 !important;
+                          /* Full viewport container */
+                          html, body {
+                            background: #000 !important; 
+                            width: 100% !important; height: 100% !important;
+                            margin: 0 !important; padding: 0 !important; 
+                            overflow: hidden !important;
                           }
+                          
+                          /* Player container fills screen */
+                          #player, .player-container, .html5-video-container {
+                            position: fixed !important; 
+                            top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+                            width: 100% !important; height: 100% !important;
+                            margin: 0 !important; padding: 0 !important;
+                            background: #000 !important;
+                            z-index: 9999 !important;
+                          }
+                          
+                          /* VIDEO: object-fit contain to prevent cropping */
+                          video, .video-stream {
+                            position: absolute !important;
+                            top: 0 !important; left: 0 !important;
+                            width: 100% !important; height: 100% !important;
+                            object-fit: contain !important; /* KEY: scales without cropping */
+                            background: #000 !important;
+                          }
+                          
+                          /* Hide YouTube UI */
                           .mobile-topbar-header, .player-controls-top, .watch-below-the-player, 
                           .ytp-chrome-top, .ytp-chrome-bottom, .ad-showing, .video-ads, .ytp-ad-overlay-container,
-                          .ytp-upnext, .ytp-suggestion-set, .ytp-share-panel, .ytp-watermark { 
+                          .ytp-upnext, .ytp-suggestion-set, .ytp-share-panel, .ytp-watermark,
+                          .ytp-gradient-top, .ytp-gradient-bottom, .ytp-title, .ytp-title-link { 
                               display: none !important; opacity: 0 !important; pointer-events: none !important; 
                           }
+                          
                           video { opacity: 1 !important; visibility: visible !important; }
                           
                           /* Force Captions Visible */
