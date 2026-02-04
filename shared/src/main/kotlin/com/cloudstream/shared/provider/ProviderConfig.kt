@@ -16,6 +16,12 @@ data class ProviderConfig(
     /** CloudFlare Worker URL for domain sync (optional) */
     val syncWorkerUrl: String? = null,
     
+    /** Custom User-Agent (if null, uses UNIFIED_USER_AGENT) */
+    val userAgent: String? = null,
+    
+    /** Whether to enable WebView fallback for CF bypass */
+    val webViewEnabled: Boolean = true,
+    
     /** Skip headless WebView, use visible instead */
     val skipHeadless: Boolean = false,
     

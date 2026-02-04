@@ -85,10 +85,18 @@ data class StrategyResponse(
 
 /**
  * Captured video source.
+ * 
+ * @param url The video URL
+ * @param quality Quality label (e.g., "720p", "1080p", "Auto")
+ * @param headers Optional headers for the video request
+ * @param type Optional ExtractorLinkType for advanced uses
  */
 data class VideoSource(
     val url: String,
-    val label: String,
-    val headers: Map<String, String>,
-    val type: ExtractorLinkType
-)
+    val quality: String = "Auto",
+    val headers: Map<String, String> = emptyMap(),
+    val type: ExtractorLinkType? = null
+) {
+    /** Alias for quality to maintain compatibility */
+    val label: String get() = quality
+}

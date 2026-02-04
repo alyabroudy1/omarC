@@ -2,7 +2,7 @@ package com.arabseed
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.arabseed.service.ProviderConfig
+import com.cloudstream.shared.provider.ProviderConfig
 import com.arabseed.service.ProviderHttpService
 import com.arabseed.service.parsing.ParserInterface.ParsedEpisode
 import com.arabseed.utils.ActivityProvider

@@ -7,11 +7,13 @@ import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
+import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
 import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionStore
+import com.cloudstream.shared.strategy.VideoSource
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.WebViewEngine
 import com.cloudstream.shared.webview.WebViewResult
