@@ -504,17 +504,22 @@ class ArabseedParser : BaseParser() {
     }
 
     fun extractDirectEmbeds(doc: Document): List<String> {
-        // iframe[src]
+        // Broaden selector to find ANY video iframe, filtering out known ads/socials
         return doc.select("iframe[src]").mapNotNull { 
             var src = it.attr("src")
             if (src.isBlank()) return@mapNotNull null
             
+            // Handle /play.php?url=BASE64
             if (src.contains("url=")) {
                 val param = src.substringAfter("url=").substringBefore("&")
                 try {
                     val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
-                    if (decoded.startsWith("http")) src = decoded
-                } catch (e: Exception) { }
+                    if (decoded.startsWith("http")) {
+                        src = decoded
+                    }
+                } catch (e: Exception) {
+                    // Failed to decode, keep original
+                }
             }
             
             if (src.isNotBlank() && 
@@ -525,4 +530,5 @@ class ArabseedParser : BaseParser() {
             ) src else null
         }
     }
+
 }

@@ -14,6 +14,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
+import com.arabseed.extractors.ArabseedLazyExtractor
 
 /**
  * Arabseed V4 - Ported to Plugin Architecture.
@@ -207,35 +208,57 @@ class ArabseedV2 : MainAPI() {
         
         // 4. Extract server links and emit as lazy sources
         // Following built-in Arabseed.kt:403-427 approach
-        val serverLinks = watchDoc.select("ul > li[data-link]")
-        Log.d(name, "[loadLinks] Server links found: ${serverLinks.size}")
+        val postId = parser.extractPostId(watchDoc) ?: ""
+        val csrfToken = parser.extractCsrfToken(doc) ?: "" // Use original doc for CSRF
         
-        var serverIndex = 0
-        serverLinks.forEach { element ->
-            val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
-            if (rawUrl.isNotBlank()) {
-                serverIndex++
-                val serverName = element.selectFirst("span")?.text() ?: "Server $serverIndex"
-                Log.d(name, "[loadLinks] Server link[$serverIndex]: ${rawUrl.take(60)}")
+        if (postId.isNotBlank() && csrfToken.isNotBlank()) {
+            val servers = parser.extractVisibleServers(watchDoc)
+            Log.d(name, "[loadLinks] Server links found: ${servers.size}, PostID: $postId, CSRF: FOUND")
+            
+            servers.forEach { server ->
+                val encodedReferer = java.net.URLEncoder.encode(watchDoc.location(), "UTF-8")
+                val currentBaseUrl = try {
+                    val uri = java.net.URI(watchDoc.location())
+                    "${uri.scheme}://${uri.host}"
+                } catch (e: Exception) {
+                    "https://${httpService.currentDomain}"
+                }
                 
-                val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
-                val fullUrl = if (resolvedUrl.startsWith("/")) {
-                    "https://${java.net.URI(watchDoc.location()).host}$resolvedUrl"
-                } else resolvedUrl
+                val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=${server.quality}&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
                 
-                // Emit as lazy source - will be resolved by getVideoInterceptor
                 callback(
                     newExtractorLink(
                         name,
-                        "$name - $serverName",
-                        fullUrl,
+                        "${server.title} (${server.quality}p)",
+                        virtualUrl,
                         ExtractorLinkType.VIDEO
                     ) {
+                        this.quality = server.quality
                         this.referer = watchDoc.location()
-                        this.quality = Qualities.Unknown.value
                     }
                 )
                 found = true
+            }
+        } else {
+            Log.w(name, "[loadLinks] PostID ($postId) or CSRF ($csrfToken) missing, falling back to simple scraping")
+            val serverLinks = watchDoc.select("ul > li[data-link]")
+            serverLinks.forEach { element ->
+                val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
+                if (rawUrl.isNotBlank()) {
+                    val serverName = element.selectFirst("span")?.text() ?: "Server"
+                    val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
+                    callback(
+                        newExtractorLink(
+                            name,
+                            "$name - $serverName (Fallback)",
+                            resolvedUrl,
+                            ExtractorLinkType.VIDEO
+                        ) {
+                             this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    found = true
+                }
             }
         }
         
@@ -298,13 +321,56 @@ class ArabseedV2 : MainAPI() {
     }
     /**
      * Lazy URL resolution for embed URLs.
-     * Matches built-in Arabseed.kt:436-490
-     * Handles: reviewrate, play.php, asd.pics/play, and other video embeds
+     * Matches built-in Arabseed.kt:436-490 + ArabseedLazyExtractor
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val url = extractorLink.url
         
-        // Check if this is a lazy URL that needs resolution
+        // 1. Handle Lazy Virtual URLs (/get__watch__server/)
+        if (url.contains("/get__watch__server/")) {
+            return Interceptor { chain ->
+                val request = chain.request()
+                val urlString = request.url.toString()
+                
+                Log.d(name, "[getVideoInterceptor] Resolving Lazy URL: ${urlString.take(60)}...")
+                
+                var resolvedLink: ExtractorLink? = null
+                
+                try {
+                    val extractor = ArabseedLazyExtractor { targetUrl, data, referer ->
+                         // Bridge to HttpService post - using runBlocking safely here since we are in interceptor thread
+                         try {
+                              val headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                              httpService.post(targetUrl, data, referer = referer, headers = headers)?.outerHtml()
+                         } catch (e: Exception) {
+                              Log.e(name, "[ArabseedLazyExtractor] Fetch failed: ${e.message}")
+                              null
+                         }
+                    }
+                    
+                    kotlinx.coroutines.runBlocking {
+                        extractor.getUrl(urlString, null, {}) { link ->
+                            resolvedLink = link
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(name, "[getVideoInterceptor] Lazy resolution error: ${e.message}")
+                }
+                
+                if (resolvedLink != null) {
+                    Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedLink!!.url}")
+                    val builder = request.newBuilder().url(resolvedLink!!.url)
+                    if (resolvedLink!!.referer.isNotBlank()) {
+                         builder.header("Referer", resolvedLink!!.referer)
+                    }
+                    return@Interceptor chain.proceed(builder.build())
+                }
+                
+                return@Interceptor chain.proceed(request)
+            }
+        }
+        
+        // 2. Handle Direct Embeds (ReviewRate/Other)
         val needsResolution = url.contains("reviewrate") ||
                              url.contains("/play.php") ||
                              url.contains("/play/?id=") ||
@@ -319,7 +385,7 @@ class ArabseedV2 : MainAPI() {
                 val request = chain.request()
                 val urlString = request.url.toString()
                 
-                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
+                Log.d(name, "[getVideoInterceptor] Resolving Direct Embed: ${urlString.take(80)}")
                 
                 try {
                     val referer = request.header("Referer")
