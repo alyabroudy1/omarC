@@ -270,51 +270,123 @@ class YouTubePlayerDialog(
         return id
     }
     
-    // ... inside createOverlayUI ...
     private fun createOverlayUI() {
-        Log.d(TAG, "createOverlayUI: Inflating XML layout")
+        Log.d(TAG, "createOverlayUI: Building programmatic UI (no XML)")
         
-        // Use reflection to find layout to avoid NoClassDefFoundError on R class
-        val layoutId = getResId("dialog_youtube_player", "layout")
-        if (layoutId == 0) {
-            Log.e(TAG, "FATAL: Could not find layout dialog_youtube_player")
-            Toast.makeText(context, "Error: Player Layout Not Found", Toast.LENGTH_LONG).show()
-            dismiss()
-            return
+        // Root container - full screen overlay
+        overlayRoot = FrameLayout(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(0x80000000.toInt()) // Semi-transparent black
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = true
         }
-
-        val view = layoutInflater.inflate(layoutId, null)
-        overlayRoot = view as ViewGroup
-        overlayRoot.visibility = View.GONE
-        overlayRoot.isClickable = true
-        overlayRoot.isFocusable = true
         
-        // Helper for finding IDs
-        fun findId(name: String): Int = getResId(name, "id")
+        // Bottom Controls Container
+        val bottomBar = LinearLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.BOTTOM
+            }
+            orientation = LinearLayout.VERTICAL
+            setPadding(dpToPx(16), dpToPx(8), dpToPx(16), dpToPx(24))
+            setBackgroundColor(0xCC000000.toInt())
+        }
         
-        // Bind Views
-        btnPlayPause = view.findViewById(findId("btn_play_pause"))
-        btnRewind = view.findViewById(findId("btn_rewind"))
-        btnForward = view.findViewById(findId("btn_forward"))
+        // SeekBar Row
+        val seekBarRow = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         
-        // Extended Controls
-        btnSpeed = view.findViewById(findId("btn_speed"))
-        btnQuality = view.findViewById(findId("btn_quality"))
-        btnCaptions = view.findViewById(findId("btn_captions"))
-        btnAudio = view.findViewById(findId("btn_audio"))
-        btnExit = view.findViewById(findId("btn_close"))
+        textCurrentTime = TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            text = "0:00 / 0:00"
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 12f
+        }
         
-        seekBar = view.findViewById(findId("seekbar"))
-        textCurrentTime = view.findViewById(findId("text_time"))
-        textDuration = TextView(context) 
+        seekBar = SeekBar(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+                marginStart = dpToPx(8)
+                marginEnd = dpToPx(8)
+            }
+            max = 100
+            progress = 0
+        }
         
-        // ... rest of setup ...
-        btnPlayPause.contentDescription = "Play"
-        btnPlayPause.setImageResource(android.R.drawable.ic_media_pause) // Default to Pause icon as we autoplay
-        btnExit.contentDescription = "Close"
-        btnSpeed.contentDescription = "Speed"
-        btnQuality.contentDescription = "Quality"
-        btnCaptions.contentDescription = "Captions"
+        textDuration = TextView(context) // Unused but kept for compatibility
+        
+        seekBarRow.addView(textCurrentTime)
+        seekBarRow.addView(seekBar)
+        
+        // Control Buttons Row
+        val controlsRow = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dpToPx(12)
+            }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        
+        // Helper to create buttons
+        fun createButton(iconRes: Int, desc: String): ImageButton {
+            return ImageButton(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48)).apply {
+                    marginStart = dpToPx(8)
+                    marginEnd = dpToPx(8)
+                }
+                setBackgroundColor(0x00000000) // Transparent
+                setImageResource(iconRes)
+                setColorFilter(0xFFFFFFFF.toInt())
+                contentDescription = desc
+                isFocusable = true
+                isFocusableInTouchMode = true
+            }
+        }
+        
+        btnRewind = createButton(android.R.drawable.ic_media_rew, "Rewind")
+        btnPlayPause = createButton(android.R.drawable.ic_media_pause, "Play/Pause")
+        btnForward = createButton(android.R.drawable.ic_media_ff, "Forward")
+        btnSpeed = createButton(android.R.drawable.ic_menu_recent_history, "Speed")
+        btnQuality = createButton(android.R.drawable.ic_menu_preferences, "Quality")
+        btnCaptions = createButton(android.R.drawable.ic_menu_more, "Captions")
+        btnAudio = createButton(android.R.drawable.ic_lock_silent_mode_off, "Audio")
+        btnExit = createButton(android.R.drawable.ic_menu_close_clear_cancel, "Close")
+        
+        controlsRow.addView(btnRewind)
+        controlsRow.addView(btnPlayPause)
+        controlsRow.addView(btnForward)
+        controlsRow.addView(btnSpeed)
+        controlsRow.addView(btnQuality)
+        controlsRow.addView(btnCaptions)
+        controlsRow.addView(btnAudio)
+        controlsRow.addView(btnExit)
+        
+        bottomBar.addView(seekBarRow)
+        bottomBar.addView(controlsRow)
+        overlayRoot.addView(bottomBar)
+        
+        Log.d(TAG, "createOverlayUI: Programmatic UI built successfully")
     }
 
     private var seekDebouncerRunnable: Runnable? = null
