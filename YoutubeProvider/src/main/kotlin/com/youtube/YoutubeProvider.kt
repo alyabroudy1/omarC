@@ -19,7 +19,7 @@ class YoutubeProvider : MainAPI() {
     var pluginPackageName: String = "com.youtube" // Default fallback
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val trendingUrl = "https://www.youtube.com/feed/trending?gl=SY&hl=ar"
+        val trendingUrl = "https://m.youtube.com/results?search_query=%D8%B3%D9%88%D8%B1%D9%8A%D8%A7&sp=EgIIAw%253D%253D#filters"
         var items = fetchAndParse(trendingUrl)
         
         if (items.isEmpty()) {
@@ -31,7 +31,13 @@ class YoutubeProvider : MainAPI() {
         return newHomePageResponse("Trending - Syria", items)
     }
 
-
+    override suspend fun search(query: String): List<SearchResponse>? {
+        // Encode the query for URL
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        // Use mobile YouTube for better parsing, sp=CAM%3D sorts by upload date
+        val searchUrl = "https://m.youtube.com/results?search_query=$encodedQuery&sp=CAM%3D"
+        return fetchAndParse(searchUrl)
+    }
 
     override suspend fun loadLinks(
         data: String,
