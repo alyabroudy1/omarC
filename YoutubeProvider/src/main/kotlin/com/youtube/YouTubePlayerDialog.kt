@@ -963,7 +963,30 @@ class YouTubePlayerDialog(
     }
 
     private fun updateScaleMode() {
-        val objectFit = if (isScaleCover) "cover" else "contain"
+        // For 'cover' mode: override YouTube's inline pixel dimensions with 100%
+        // For 'contain' mode: reset to default behavior
+        val css = if (isScaleCover) {
+            """
+            video.html5-main-video, video.video-stream, video {
+                width: 100% !important;
+                height: 100% !important;
+                left: 0px !important;
+                top: 0px !important;
+                object-fit: cover !important;
+            }
+            .html5-video-container {
+                width: 100% !important;
+                height: 100% !important;
+            }
+            """
+        } else {
+            """
+            video.html5-main-video, video.video-stream, video {
+                object-fit: contain !important;
+            }
+            """
+        }
+        
         val js = """
             (function() {
                 try {
@@ -973,9 +996,9 @@ class YouTubePlayerDialog(
                         style.id = 'cloudstream-scale-mode';
                         document.head.appendChild(style);
                     }
-                    // Use textContent to comply with Trusted Types (innerHTML is blocked)
-                    style.textContent = 'video, .video-stream, .html5-main-video, .html5-video-container { object-fit: $objectFit !important; }';
-                    console.log('Scaled video to: $objectFit');
+                    // Use textContent to comply with Trusted Types
+                    style.textContent = `$css`;
+                    console.log('Scale mode applied: ${if (isScaleCover) "cover (fill)" else "contain (fit)"}');
                 } catch(e) { console.error(e); }
             })();
         """
