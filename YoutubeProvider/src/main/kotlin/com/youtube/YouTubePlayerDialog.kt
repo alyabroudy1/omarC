@@ -124,13 +124,25 @@ class YouTubePlayerDialog(
         forceLandscape()
         
         try {
-            // Apply Match Parent
-            window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
+            // Apply Match Parent with no padding/margin
+            window?.apply {
+                setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
+                
+                // Remove any default padding from dialog
+                decorView?.setPadding(0, 0, 0, 0)
+                
+                // For API 30+: Handle cutout/notch properly
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    attributes?.layoutInDisplayCutoutMode = 
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
 
-            // Immersive Mode
+            // Immersive Mode - setDecorFitsSystemWindows(true) to properly handle insets
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                window?.setDecorFitsSystemWindows(false)
+                // Use TRUE here so content fits within safe area, then hide bars
+                window?.setDecorFitsSystemWindows(true)
                 window?.insetsController?.hide(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars())
                 window?.insetsController?.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             } else {
@@ -200,6 +212,9 @@ class YouTubePlayerDialog(
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 userAgentString = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
+                // Enable viewport meta tag support
+                useWideViewPort = true
+                loadWithOverviewMode = true
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -623,46 +638,76 @@ class YouTubePlayerDialog(
     }
 
     private fun injectFullscreenCSS() {
-        Log.d(TAG, "injectFullscreenCSS: Injecting CSS with Trusted Types Fix")
+        Log.d(TAG, "injectFullscreenCSS: Injecting CSS with viewport fix")
         val inject = {
             val js = """
                 (function() {
                     try {
-                        // CSS Content
+                        // Inject viewport meta tag for proper scaling
+                        var viewport = document.querySelector('meta[name="viewport"]');
+                        if (!viewport) {
+                            viewport = document.createElement('meta');
+                            viewport.name = 'viewport';
+                            document.head.appendChild(viewport);
+                        }
+                        viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+                        
+                        // CSS Content - aggressive fullscreen
                         var css = `
+                          /* Reset everything */
+                          * { box-sizing: border-box !important; }
+                          
                           /* Full viewport container */
                           html, body {
                             background: #000 !important; 
                             width: 100% !important; height: 100% !important;
+                            min-height: 100% !important;
                             margin: 0 !important; padding: 0 !important; 
                             overflow: hidden !important;
+                            position: fixed !important;
+                            top: 0 !important; left: 0 !important;
                           }
                           
-                          /* Player container fills screen */
-                          #player, .player-container, .html5-video-container {
+                          /* YouTube's main container */
+                          #page, #content, ytd-app, ytd-watch-flexy, #player-theater-container,
+                          #player, .player-container, #movie_player, .html5-video-player,
+                          .html5-video-container {
                             position: fixed !important; 
                             top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
                             width: 100% !important; height: 100% !important;
+                            min-height: 100% !important;
                             margin: 0 !important; padding: 0 !important;
                             background: #000 !important;
                             z-index: 9999 !important;
+                            transform: none !important;
                           }
                           
-                          /* VIDEO: object-fit contain to prevent cropping */
-                          video, .video-stream {
+                          /* VIDEO element - object-fit cover to fill, or contain to fit */
+                          video, .video-stream, .html5-main-video {
                             position: absolute !important;
                             top: 0 !important; left: 0 !important;
                             width: 100% !important; height: 100% !important;
-                            object-fit: contain !important; /* KEY: scales without cropping */
+                            min-height: 100% !important;
+                            object-fit: contain !important;
+                            object-position: center center !important;
                             background: #000 !important;
+                            z-index: 1 !important;
                           }
                           
-                          /* Hide YouTube UI */
+                          /* Hide ALL YouTube chrome/UI elements */
                           .mobile-topbar-header, .player-controls-top, .watch-below-the-player, 
-                          .ytp-chrome-top, .ytp-chrome-bottom, .ad-showing, .video-ads, .ytp-ad-overlay-container,
+                          .ytp-chrome-top, .ytp-chrome-bottom, .ytp-gradient-top, .ytp-gradient-bottom,
+                          .ad-showing, .video-ads, .ytp-ad-overlay-container, .ytp-ad-module,
                           .ytp-upnext, .ytp-suggestion-set, .ytp-share-panel, .ytp-watermark,
-                          .ytp-gradient-top, .ytp-gradient-bottom, .ytp-title, .ytp-title-link { 
-                              display: none !important; opacity: 0 !important; pointer-events: none !important; 
+                          .ytp-title, .ytp-title-link, .ytp-show-cards-title,
+                          #secondary, #related, #comments, #masthead, #guide,
+                          ytd-watch-next-secondary-results-renderer, ytd-compact-video-renderer { 
+                              display: none !important; 
+                              opacity: 0 !important; 
+                              visibility: hidden !important;
+                              pointer-events: none !important;
+                              height: 0 !important;
+                              width: 0 !important;
                           }
                           
                           video { opacity: 1 !important; visibility: visible !important; }
