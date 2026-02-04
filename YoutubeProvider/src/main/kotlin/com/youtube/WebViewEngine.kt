@@ -181,16 +181,21 @@ class WebViewEngine(
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun getHtmlFromWebView(webView: WebView): String = suspendCancellableCoroutine { cont ->
         Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return (window.ytInitialData ? JSON.stringify(window.ytInitialData) : document.documentElement.outerHTML); })();"
-            ) { result ->
-                val html = result
-                    ?.removeSurrounding("\"")
-                    ?.replace("\\n", "\n")
-                    ?.replace("\\\"", "\"")
-                    ?.replace("\\\\", "\\")
-                    ?: ""
-                cont.resume(html) {}
+            try {
+                webView.evaluateJavascript(
+                    "(function() { return (window.ytInitialData ? JSON.stringify(window.ytInitialData) : document.documentElement.outerHTML); })();"
+                ) { result ->
+                    val html = result
+                        ?.removeSurrounding("\"")
+                        ?.replace("\\n", "\n")
+                        ?.replace("\\\"", "\"")
+                        ?.replace("\\\\", "\\")
+                        ?: ""
+                    if (cont.isActive) cont.resume(html) {}
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "WebView evaluateJavascript failed: ${t.message}")
+                if (cont.isActive) cont.resume("") {}
             }
         }
     }

@@ -59,6 +59,7 @@ class YouTubePlayerDialog(
     // State
     private var isPlaying = true
     private var isVisible = false
+    private var isDestroyed = false // Prevent calls after destroy
     private var isScaleCover = false // false = contain (fit), true = cover (zoom/fill)
     private var isSeeking = false
     private var videoDuration = 0.0
@@ -972,12 +973,18 @@ class YouTubePlayerDialog(
                         style.id = 'cloudstream-scale-mode';
                         document.head.appendChild(style);
                     }
-                    style.innerHTML = 'video, .video-stream, .html5-main-video { object-fit: $objectFit !important; }';
+                    style.id = 'cloudstream-scale-mode';
+                        document.head.appendChild(style);
+                    }
+                    // Use textContent to comply with Trusted Types (innerHTML is blocked)
+                    style.textContent = 'video, .video-stream, .html5-main-video, .html5-video-container { object-fit: $objectFit !important; }';
                     console.log('Scaled video to: $objectFit');
                 } catch(e) { console.error(e); }
             })();
         """
-        webView.evaluateJavascript(js, null)
+        if (!isDestroyed) {
+             try { webView.evaluateJavascript(js, null) } catch(e: Exception) {}
+        }
     }
 
     private fun showSpeedMenu() {
@@ -1364,7 +1371,13 @@ class YouTubePlayerDialog(
     }
 
     private fun executeJs(js: String) {
-        webView.evaluateJavascript("(function(){ $js })();", null)
+        if (!isDestroyed) {
+             try {
+                webView.evaluateJavascript("(function(){ $js })();", null)
+             } catch(e: Exception) {
+                 Log.e(TAG, "executeJs failed: ${e.message}")
+             }
+        }
     }
 
     private fun showToast(msg: String) {
@@ -1389,6 +1402,8 @@ class YouTubePlayerDialog(
     }
 
     override fun dismiss() {
+        if (isDestroyed) return
+        isDestroyed = true
         Log.d(TAG, "dismiss: destroying player")
         try {
             activity.requestedOrientation = previousOrientation // Restore orientation
