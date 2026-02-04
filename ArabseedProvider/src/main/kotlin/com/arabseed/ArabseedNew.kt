@@ -68,10 +68,18 @@ class ArabseedV2 : MainAPI() {
         
         if (items.isEmpty()) return null
         
-        val responses = items.map { item ->
+        // Get headers ONCE after CF is solved
+        val imageHeaders = httpService.getImageHeaders()
+        Log.d(name, "[getMainPage] Image headers for ${items.size} items: hasCookies=${imageHeaders.containsKey("Cookie")}, cookieLen=${imageHeaders["Cookie"]?.length ?: 0}")
+        
+        val responses = items.mapIndexed { idx, item ->
+            // Log first 3 items for debugging
+            if (idx < 3) {
+                Log.d(name, "[getMainPage] Item[$idx]: poster=${item.posterUrl?.take(60) ?: "NULL"}...")
+            }
             newMovieSearchResponse(item.title, item.url, TvType.Movie) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = imageHeaders
             }
         }
         return newHomePageResponse(request.name, responses)
@@ -197,37 +205,37 @@ class ArabseedV2 : MainAPI() {
             }
         }
         
-        // 4. Extract server links from page
+        // 4. Extract server links and emit as lazy sources
+        // Following built-in Arabseed.kt:403-427 approach
         val serverLinks = watchDoc.select("ul > li[data-link]")
         Log.d(name, "[loadLinks] Server links found: ${serverLinks.size}")
         
+        var serverIndex = 0
         serverLinks.forEach { element ->
             val rawUrl = element.attr("data-link").ifBlank { element.attr("data-url") }
             if (rawUrl.isNotBlank()) {
-                Log.d(name, "[loadLinks] Server link: ${rawUrl.take(60)}")
-                val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
+                serverIndex++
+                val serverName = element.selectFirst("span")?.text() ?: "Server $serverIndex"
+                Log.d(name, "[loadLinks] Server link[$serverIndex]: ${rawUrl.take(60)}")
                 
-                if (resolvedUrl.contains("arabseed") || resolvedUrl.contains("asd")) {
-                    val sources = httpService.sniffVideos(resolvedUrl)
-                    sources.forEach { source ->
-                        callback(
-                            newExtractorLink(
-                                name,
-                                "$name ${source.quality}",
-                                source.url,
-                                if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = data
-                                this.quality = getQualityFromName(source.quality)
-                                this.headers = source.headers
-                            }
-                        )
-                        found = true
+                val resolvedUrl = parser.resolveServerLink(rawUrl) ?: rawUrl
+                val fullUrl = if (resolvedUrl.startsWith("/")) {
+                    "https://${java.net.URI(watchDoc.location()).host}$resolvedUrl"
+                } else resolvedUrl
+                
+                // Emit as lazy source - will be resolved by getVideoInterceptor
+                callback(
+                    newExtractorLink(
+                        name,
+                        "$name - $serverName",
+                        fullUrl,
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = watchDoc.location()
+                        this.quality = Qualities.Unknown.value
                     }
-                } else {
-                    loadExtractor(resolvedUrl, subtitleCallback, callback)
-                    found = true
-                }
+                )
+                found = true
             }
         }
         
@@ -288,33 +296,50 @@ class ArabseedV2 : MainAPI() {
             else -> Qualities.Unknown.value
         }
     }
-    
     /**
-     * Lazy URL resolution for reviewrate embeds.
+     * Lazy URL resolution for embed URLs.
      * Matches built-in Arabseed.kt:436-490
+     * Handles: reviewrate, play.php, asd.pics/play, and other video embeds
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        if (extractorLink.url.contains("reviewrate")) {
+        val url = extractorLink.url
+        
+        // Check if this is a lazy URL that needs resolution
+        val needsResolution = url.contains("reviewrate") ||
+                             url.contains("/play.php") ||
+                             url.contains("/play/?id=") ||
+                             url.contains("stmix.io") ||
+                             url.contains("vidmoly") ||
+                             url.contains("up4fun") ||
+                             url.contains("savefiles") ||
+                             url.contains("bysezejataos")
+        
+        if (needsResolution) {
             return Interceptor { chain ->
                 val request = chain.request()
                 val urlString = request.url.toString()
                 
-                Log.d(name, "[getVideoInterceptor] Resolving reviewrate: ${urlString.take(60)}")
+                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
                 
                 try {
                     val referer = request.header("Referer")
-                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
+                    val headers = mutableMapOf<String, String>()
+                    if (!referer.isNullOrBlank()) headers["Referer"] = referer
+                    
+                    // Add session headers
+                    httpService.getImageHeaders().forEach { (k, v) -> headers[k] = v }
                     
                     // Fetch the embed page
                     val html = kotlinx.coroutines.runBlocking {
                         try {
                             app.get(urlString, headers = headers).text
                         } catch (e: Exception) {
-                            app.get(urlString).text
+                            Log.w(name, "[getVideoInterceptor] First attempt failed: ${e.message}")
+                            try { app.get(urlString).text } catch (e2: Exception) { "" }
                         }
                     }
                     
-                    // Extract video URL
+                    // Extract video URL using multiple patterns
                     var videoUrl: String? = null
                     
                     // Pattern 1: file: "..."
@@ -329,18 +354,26 @@ class ArabseedV2 : MainAPI() {
                     if (videoUrl == null) {
                         videoUrl = Regex("""sources:\s*\[\{[^}]*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
                     }
+                    // Pattern 4: Direct video URL in response (m3u8/mp4)
+                    if (videoUrl == null) {
+                        videoUrl = Regex("""(https?://[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)""").find(html)?.groupValues?.get(1)
+                    }
+                    // Pattern 5: JWPlayer setup
+                    if (videoUrl == null) {
+                        videoUrl = Regex("""jwplayer.*?file:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
+                    }
                     
-                    Log.d(name, "[getVideoInterceptor] Resolved URL: ${videoUrl?.take(60)}")
+                    Log.d(name, "[getVideoInterceptor] Resolved: ${videoUrl?.take(80)}")
                     
-                    if (videoUrl != null) {
+                    if (videoUrl != null && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
                         val newRequest = request.newBuilder().url(videoUrl).build()
                         chain.proceed(newRequest)
                     } else {
-                        Log.w(name, "[getVideoInterceptor] Could not extract video URL from reviewrate")
+                        Log.w(name, "[getVideoInterceptor] Could not extract video URL")
                         chain.proceed(request)
                     }
                 } catch (e: Exception) {
-                    Log.e(name, "[getVideoInterceptor] Error resolving reviewrate: ${e.message}")
+                    Log.e(name, "[getVideoInterceptor] Error: ${e.message}")
                     chain.proceed(request)
                 }
             }
