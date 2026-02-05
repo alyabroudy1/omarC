@@ -382,16 +382,19 @@ class ArabseedV2 : MainAPI() {
                 
                 try {
                     // Use LazyExtractor for EVERYTHING - it now handles decoding, extraction, and VideoSniffer fallback
-                    val extractor = ArabseedLazyExtractor { targetUrl, data, referer ->
-                         // Bridge to HttpService post - using runBlocking safely here since we are in interceptor thread
-                         try {
-                              val headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                              httpService.post(targetUrl, data, referer = referer, headers = headers)?.outerHtml()
-                         } catch (e: Exception) {
-                              Log.e(name, "[ArabseedLazyExtractor] Fetch failed: ${e.message}")
-                              null
-                         }
-                    }
+                    val extractor = ArabseedLazyExtractor(
+                        fetcher = { targetUrl, data, referer ->
+                             // Bridge to HttpService post - using runBlocking safely here since we are in interceptor thread
+                             try {
+                                  val headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                                  httpService.post(targetUrl, data, referer = referer, headers = headers)?.outerHtml()
+                             } catch (e: Exception) {
+                                  Log.e(name, "[ArabseedLazyExtractor] Fetch failed: ${e.message}")
+                                  null
+                             }
+                        },
+                        engine = httpService.engine
+                    )
                     
                     kotlinx.coroutines.runBlocking {
                         // Pass URL to extractor (LazyExtractor handles routing to Virtual vs Direct)

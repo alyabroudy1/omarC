@@ -56,6 +56,9 @@ class ProviderHttpService private constructor(
 
     val cookies: Map<String, String>
         get() = sessionState.cookies
+        
+    val engine: WebViewEngine
+        get() = webViewEngine
     
     suspend fun ensureInitialized() {
         val persisted = sessionStore.load(config.fallbackDomain)

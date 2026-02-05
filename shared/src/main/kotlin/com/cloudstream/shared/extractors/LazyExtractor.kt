@@ -1,7 +1,10 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.strategy.VideoSniffingStrategy
+import com.cloudstream.shared.webview.ExitCondition
+import com.cloudstream.shared.webview.WebViewEngine
+import com.cloudstream.shared.webview.WebViewEngine.Mode
+import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -42,6 +45,7 @@ abstract class LazyExtractor : ExtractorApi() {
     // Properties to allow passing session context without changing getUrl signature
     var userAgent: String? = null
     var sessionCookies: Map<String, String> = emptyMap()
+    var webViewEngine: WebViewEngine? = null
     
     private val TAG = "LazyExtractor"
     
@@ -173,90 +177,49 @@ abstract class LazyExtractor : ExtractorApi() {
             }
         }
         
-        // ===== VIDEO SNIFFER FALLBACK (WebView-based) =====
-        // Last resort: use headless WebView to capture video URLs from the embed page
+        // ===== VIDEO SNIFFER FALLBACK (Visible WebView) =====
         if (!foundVideo) {
-            ProviderLogger.d(TAG, "processVirtualUrl", "Trying VideoSniffer fallback")
-            try {
-                val context = AcraApplication.context
-                if (context != null) {
-                    val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
-                    val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-                    
-                    // Prioritize passed session cookies, fallback to CookieManager
-                    val cookies = if (sessionCookies.isNotEmpty()) {
-                        sessionCookies
-                    } else {
-                        try {
-                            val cookieManager = android.webkit.CookieManager.getInstance()
-                            val cookieString = cookieManager.getCookie(embedUrl)
-                            if (!cookieString.isNullOrBlank()) {
-                                cookieString.split(";").associate { 
-                                    val parts = it.split("=", limit = 2)
-                                    (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-                                }.filterKeys { it.isNotEmpty() }
-                            } else emptyMap()
-                        } catch (e: Exception) {
-                            emptyMap()
-                        }
-                    }
-                    
-                    ProviderLogger.d(TAG, "processVirtualUrl", "Passing cookies to sniffer", 
-                        "domain" to (java.net.URI(embedUrl).host ?: ""), 
-                        "count" to cookies.size)
-                    
-                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
-                    val sources = sniffer.sniff(embedUrl, snifferUserAgent, cookies, headers)
-                    
-                    if (sources.isNotEmpty()) {
-                        ProviderLogger.d(TAG, "processVirtualUrl", "VideoSniffer found ${sources.size} sources")
-                        sources.forEach { source ->
-                            callback(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name ${source.quality}",
-                                    url = source.url,
-                                    type = source.type ?: ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = embedUrl
-                                    this.quality = when {
-                                        source.quality.contains("1080") -> Qualities.P1080.value
-                                        source.quality.contains("720") -> Qualities.P720.value
-                                        source.quality.contains("480") -> Qualities.P480.value
-                                        source.quality.contains("360") -> Qualities.P360.value
-                                        else -> Qualities.Unknown.value
-                                    }
-                                    // CRITICAL: Pass the same User-Agent used by WebView to the player
-                                    val uaHeaders = if (snifferUserAgent.contains("Chrome")) {
-                                        mapOf(
-                                            "Sec-Ch-Ua" to "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"",
-                                            "Sec-Ch-Ua-Mobile" to "?1",
-                                            "Sec-Ch-Ua-Platform" to "\"Android\""
-                                        )
-                                    } else emptyMap()
+            val engine = webViewEngine
+            if (engine != null) {
+                ProviderLogger.d(TAG, "processVirtualUrl", "Trying WebViewEngine sniffing (Visible)")
+                val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                
+                val result = engine.runSession(
+                    url = embedUrl,
+                    mode = Mode.FULLSCREEN,
+                    userAgent = snifferUserAgent,
+                    exitCondition = ExitCondition.VideoFound(minCount = 1),
+                    timeout = 60_000L
+                )
 
-                                    // CRITICAL: Explicitly inject session cookies into player headers
-                                    // source.headers might miss them if CookieManager lookup fails for the specific video domain
-                                    val cookieHeader = if (cookies.isNotEmpty()) {
-                                        mapOf("Cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
-                                    } else emptyMap()
-
-                                    this.headers = source.headers + uaHeaders + cookieHeader + mapOf(
-                                        "Referer" to embedUrl,
-                                        "User-Agent" to snifferUserAgent,
-                                        "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
-                                        "Sec-Fetch-Site" to "cross-site",
-                                        "Sec-Fetch-Mode" to "navigate",
-                                        "Priority" to "u=1"
-                                    )
+                if (result is WebViewResult.Success) {
+                    ProviderLogger.d(TAG, "processVirtualUrl", "WebViewEngine found ${result.foundLinks.size} sources")
+                    result.foundLinks.forEach { source ->
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name ${source.qualityLabel}",
+                                url = source.url,
+                                type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = embedUrl
+                                this.quality = when {
+                                    source.qualityLabel.contains("1080") -> Qualities.P1080.value
+                                    source.qualityLabel.contains("720") -> Qualities.P720.value
+                                    source.qualityLabel.contains("480") -> Qualities.P480.value
+                                    else -> Qualities.Unknown.value
                                 }
-                            )
-                        }
-                        foundVideo = true
+                                this.headers = source.headers + mapOf(
+                                    "Referer" to embedUrl,
+                                    "User-Agent" to snifferUserAgent
+                                )
+                            }
+                        )
                     }
+                    foundVideo = result.foundLinks.isNotEmpty()
                 }
-            } catch (e: Exception) {
-                ProviderLogger.e(TAG, "processVirtualUrl", "VideoSniffer failed", e)
+            } else {
+                ProviderLogger.w(TAG, "processVirtualUrl", "Skip sniffing fallback - WebViewEngine not provided")
             }
         }
     }
@@ -324,87 +287,49 @@ abstract class LazyExtractor : ExtractorApi() {
             }
         }
         
-        // ===== VIDEO SNIFFER FALLBACK (WebView-based) =====
+        // ===== VIDEO SNIFFER FALLBACK (Visible WebView) =====
         if (!foundVideo) {
-            ProviderLogger.d(TAG, "processDirectUrl", "Trying VideoSniffer fallback")
-            try {
-                val context = AcraApplication.context
-                if (context != null) {
-                    val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
-                    val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-                    
-                    // Prioritize passed session cookies, fallback to CookieManager
-                    val cookies = if (sessionCookies.isNotEmpty()) {
-                        sessionCookies
-                    } else {
-                        try {
-                            val cookieManager = android.webkit.CookieManager.getInstance()
-                            val cookieString = cookieManager.getCookie(finalUrl)
-                            if (!cookieString.isNullOrBlank()) {
-                                cookieString.split(";").associate { 
-                                    val parts = it.split("=", limit = 2)
-                                    (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-                                }.filterKeys { it.isNotEmpty() }
-                            } else emptyMap()
-                        } catch (e: Exception) {
-                            emptyMap()
-                        }
-                    }
-                    
-                    ProviderLogger.d(TAG, "processDirectUrl", "Passing cookies to sniffer", 
-                        "domain" to (java.net.URI(finalUrl).host ?: ""), 
-                        "count" to cookies.size)
-                    
-                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
-                    val sources = sniffer.sniff(finalUrl, snifferUserAgent, cookies, headers)
-                    
-                    if (sources.isNotEmpty()) {
-                        ProviderLogger.d(TAG, "processDirectUrl", "VideoSniffer found ${sources.size} sources")
-                        sources.forEach { source ->
-                            callback(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name ${source.quality}",
-                                    url = source.url,
-                                    type = source.type ?: ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = finalUrl
-                                    this.quality = when {
-                                        source.quality.contains("1080") -> Qualities.P1080.value
-                                        source.quality.contains("720") -> Qualities.P720.value
-                                        source.quality.contains("480") -> Qualities.P480.value
-                                        source.quality.contains("360") -> Qualities.P360.value
-                                        else -> Qualities.Unknown.value
-                                    }
-                                    // CRITICAL: Pass the same User-Agent used by WebView to the player
-                                    val uaHeaders = if (snifferUserAgent.contains("Chrome")) {
-                                        mapOf(
-                                            "Sec-Ch-Ua" to "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"",
-                                            "Sec-Ch-Ua-Mobile" to "?1",
-                                            "Sec-Ch-Ua-Platform" to "\"Android\""
-                                        )
-                                    } else emptyMap()
+            val engine = webViewEngine
+            if (engine != null) {
+                ProviderLogger.d(TAG, "processDirectUrl", "Trying WebViewEngine sniffing (Visible)")
+                val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                
+                val result = engine.runSession(
+                    url = finalUrl,
+                    mode = Mode.FULLSCREEN,
+                    userAgent = snifferUserAgent,
+                    exitCondition = ExitCondition.VideoFound(minCount = 1),
+                    timeout = 60_000L
+                )
 
-                                    // CRITICAL: Explicitly inject session cookies into player headers
-                                    val cookieHeader = if (cookies.isNotEmpty()) {
-                                        mapOf("Cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
-                                    } else emptyMap()
-
-                                    this.headers = source.headers + uaHeaders + cookieHeader + mapOf(
-                                        "Referer" to finalUrl,
-                                        "User-Agent" to snifferUserAgent,
-                                        "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
-                                        "Sec-Fetch-Site" to "cross-site",
-                                        "Sec-Fetch-Mode" to "navigate",
-                                        "Priority" to "u=1"
-                                    )
+                if (result is WebViewResult.Success) {
+                    ProviderLogger.d(TAG, "processDirectUrl", "WebViewEngine found ${result.foundLinks.size} sources")
+                    result.foundLinks.forEach { source ->
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name ${source.qualityLabel}",
+                                url = source.url,
+                                type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = finalUrl
+                                this.quality = when {
+                                    source.qualityLabel.contains("1080") -> Qualities.P1080.value
+                                    source.qualityLabel.contains("720") -> Qualities.P720.value
+                                    source.qualityLabel.contains("480") -> Qualities.P480.value
+                                    else -> Qualities.Unknown.value
                                 }
-                            )
-                        }
+                                this.headers = source.headers + mapOf(
+                                    "Referer" to finalUrl,
+                                    "User-Agent" to snifferUserAgent
+                                )
+                            }
+                        )
                     }
+                    foundVideo = result.foundLinks.isNotEmpty()
                 }
-            } catch (e: Exception) {
-                ProviderLogger.e(TAG, "processDirectUrl", "VideoSniffer failed", e)
+            } else {
+                ProviderLogger.w(TAG, "processDirectUrl", "Skip sniffing fallback - WebViewEngine not provided")
             }
         }
     }
