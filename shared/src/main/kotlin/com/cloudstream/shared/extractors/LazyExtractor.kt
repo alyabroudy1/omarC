@@ -194,7 +194,11 @@ abstract class LazyExtractor : ExtractorApi() {
                                         source.quality.contains("360") -> Qualities.P360.value
                                         else -> Qualities.Unknown.value
                                     }
-                                    this.headers = source.headers + mapOf("Referer" to embedUrl)
+                                    // CRITICAL: Pass the same User-Agent used by WebView to the player
+                                    this.headers = source.headers + mapOf(
+                                        "Referer" to embedUrl,
+                                        "User-Agent" to userAgent
+                                    )
                                 }
                             )
                         }
