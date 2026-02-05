@@ -60,6 +60,8 @@ class VideoSniffingStrategy(
         sourcesDeferred = CompletableDeferred()
         
         ProviderLogger.i(TAG_VIDEO_SNIFFER, "sniff", "Starting", "url" to url.take(80))
+        ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "UserAgent", "ua" to userAgent)
+        ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "Cookies provided", "count" to cookies.size)
         
         var webView: WebView? = null
         val startTime = System.currentTimeMillis()
@@ -88,6 +90,14 @@ class VideoSniffingStrategy(
             ProviderLogger.i(TAG_VIDEO_SNIFFER, "sniff", "Complete",
                 "jsSources" to jsSources.size, "networkSources" to capturedSources.size,
                 "total" to allSources.size, "durationMs" to durationMs)
+            
+            if (allSources.isNotEmpty()) {
+                allSources.forEachIndexed { index, source ->
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "Found source #$index", "url" to source.url.take(60), "quality" to source.quality)
+                }
+            } else {
+                ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "No sources found", "durationMs" to durationMs)
+            }
             
             allSources
             
@@ -133,6 +143,7 @@ class VideoSniffingStrategy(
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
                 val url = request?.url?.toString() ?: return null
                 if (isVideoUrl(url)) {
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "intercept", "Video URL detected", "url" to url.take(80))
                     captureVideoUrl(url, request.requestHeaders ?: emptyMap())
                 }
                 return null
@@ -247,7 +258,10 @@ class VideoSniffingStrategy(
             try {
                 val sources = parseSourcesJson(json)
                 if (sources.isNotEmpty()) {
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "SnifferBridge", "Parsed ${sources.size} sources from JS")
                     sourcesDeferred?.complete(sources)
+                } else {
+                    ProviderLogger.w(TAG_VIDEO_SNIFFER, "SnifferBridge", "No sources parsed from JS JSON")
                 }
             } catch (e: Exception) {
                 ProviderLogger.e(TAG_VIDEO_SNIFFER, "SnifferBridge", "Parse failed", e)
