@@ -235,7 +235,13 @@ abstract class LazyExtractor : ExtractorApi() {
                                         )
                                     } else emptyMap()
 
-                                    this.headers = source.headers + uaHeaders + mapOf(
+                                    // CRITICAL: Explicitly inject session cookies into player headers
+                                    // source.headers might miss them if CookieManager lookup fails for the specific video domain
+                                    val cookieHeader = if (cookies.isNotEmpty()) {
+                                        mapOf("Cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+                                    } else emptyMap()
+
+                                    this.headers = source.headers + uaHeaders + cookieHeader + mapOf(
                                         "Referer" to embedUrl,
                                         "User-Agent" to snifferUserAgent,
                                         "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
@@ -379,7 +385,12 @@ abstract class LazyExtractor : ExtractorApi() {
                                         )
                                     } else emptyMap()
 
-                                    this.headers = source.headers + uaHeaders + mapOf(
+                                    // CRITICAL: Explicitly inject session cookies into player headers
+                                    val cookieHeader = if (cookies.isNotEmpty()) {
+                                        mapOf("Cookie" to cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+                                    } else emptyMap()
+
+                                    this.headers = source.headers + uaHeaders + cookieHeader + mapOf(
                                         "Referer" to finalUrl,
                                         "User-Agent" to snifferUserAgent,
                                         "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
