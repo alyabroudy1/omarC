@@ -91,6 +91,12 @@ class ReviewRateExtractor : ExtractorApi() {
                 ) {
                     this.referer = url
                     this.quality = quality
+                    this.headers = mapOf(
+                        "Origin" to "https://reviewrate.net",
+                        "Referer" to url,
+                        "Accept" to "*/*",
+                        "Accept-Language" to "en-US,en;q=0.9"
+                    )
                 }
             )
             

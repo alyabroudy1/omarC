@@ -109,6 +109,10 @@ abstract class LazyExtractor : ExtractorApi() {
                     ) {
                         this.referer = embedUrl
                         this.quality = quality.toIntOrNull() ?: 0
+                        this.headers = mapOf(
+                            "Referer" to embedUrl,
+                            "Accept" to "*/*"
+                        )
                     }
                 )
             }
@@ -164,6 +168,10 @@ abstract class LazyExtractor : ExtractorApi() {
                     ) {
                         this.referer = finalUrl
                         this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "Referer" to finalUrl,
+                            "Accept" to "*/*"
+                        )
                     }
                 )
             }
