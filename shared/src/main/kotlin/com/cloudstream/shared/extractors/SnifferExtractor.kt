@@ -129,7 +129,17 @@ class SnifferExtractor : ExtractorApi() {
                                 source.qualityLabel.contains("360") -> Qualities.P360.value
                                 else -> Qualities.Unknown.value
                             }
-                            this.headers = source.headers + mapOf(
+                            // Filter out forbidden headers that can cause protocol errors (like Host mismatch)
+                            val filteredHeaders = source.headers.filterKeys { key ->
+                                !key.equals("Host", ignoreCase = true) &&
+                                !key.equals("Connection", ignoreCase = true) &&
+                                !key.equals("Content-Length", ignoreCase = true) &&
+                                !key.equals("Content-Type", ignoreCase = true) &&
+                                !key.equals("Upgrade", ignoreCase = true) &&
+                                !key.equals("Transfer-Encoding", ignoreCase = true)
+                            }
+
+                            this.headers = filteredHeaders + mapOf(
                                 "Referer" to embedUrl,
                                 "User-Agent" to snifferUserAgent
                             )

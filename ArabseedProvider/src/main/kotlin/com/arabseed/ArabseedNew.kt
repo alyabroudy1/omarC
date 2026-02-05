@@ -351,27 +351,19 @@ class ArabseedV2 : MainAPI() {
         }
     }
     /**
-     * Lazy URL resolution for embed URLs.
-     * Uses LazyExtractor to handle both virtual URLs and direct embeds.
+     * Intercepts and resolves lazy video links on-the-fly.
+     * Uses LazyExtractor to handle decoding and sniffer fallback.
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val url = extractorLink.url
         
-        // Check if resolution is needed
-        val isVirtual = url.contains("/get__watch__server/")
-        val needsResolution = isVirtual || 
+        // ONLY intercept actual virtual or embed URLs that need resolution
+        val needsResolution = url.contains("/get__watch__server/") || 
                              url.contains("reviewrate") ||
                              url.contains("/play.php") ||
-                             url.contains("/play/?id=") ||
-                             url.contains("stmix.io") ||
-                             url.contains("vidmoly") ||
-                             url.contains("up4fun") ||
-                             url.contains("savefiles") ||
-                             url.contains("bysezejataos")
+                             url.contains("/play/?id=")
         
-        val isArabseedDomain = url.contains("asd.") || url.contains("arabseed")
-        
-        if (needsResolution || isArabseedDomain) {
+        if (needsResolution) {
             return Interceptor { chain ->
                 val request = chain.request()
                 val urlString = request.url.toString()
