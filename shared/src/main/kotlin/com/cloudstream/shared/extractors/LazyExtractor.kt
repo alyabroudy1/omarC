@@ -88,19 +88,43 @@ abstract class LazyExtractor : ExtractorApi() {
         
         ProviderLogger.d(TAG, "processVirtualUrl", "Got embed URL", "url" to embedUrl.take(80))
         
-        // Try global extractors with proper referer
-        ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor", 
-            "embedUrl" to embedUrl.take(80),
-            "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
-        
         var foundVideo = false
-        loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
-            ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
-                "source" to link.source,
-                "url" to link.url.take(60),
-                "referer" to link.referer.take(40))
-            callback(link)
-            foundVideo = true
+        
+        // ===== TRY OUR FIXED EXTRACTORS FIRST (with proper referer handling) =====
+        // These fix 403 errors that CloudStream's built-in extractors cause
+        when {
+            embedUrl.contains("up4fun.top") || embedUrl.contains("up4stream.com") -> {
+                ProviderLogger.d(TAG, "processVirtualUrl", "Using fixed Up4FunExtractor")
+                Up4FunExtractor().getUrl(embedUrl, pageReferer, subtitleCallback) { link ->
+                    ProviderLogger.d(TAG, "processVirtualUrl", "Up4FunExtractor returned link", "url" to link.url.take(60))
+                    callback(link)
+                    foundVideo = true
+                }
+            }
+            embedUrl.contains("reviewrate.net") -> {
+                ProviderLogger.d(TAG, "processVirtualUrl", "Using ReviewRateExtractor")
+                ReviewRateExtractor().getUrl(embedUrl, pageReferer, subtitleCallback) { link ->
+                    ProviderLogger.d(TAG, "processVirtualUrl", "ReviewRateExtractor returned link", "url" to link.url.take(60))
+                    callback(link)
+                    foundVideo = true
+                }
+            }
+        }
+        
+        // ===== FALLBACK TO CLOUDSTREAM EXTRACTORS =====
+        if (!foundVideo) {
+            ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor", 
+                "embedUrl" to embedUrl.take(80),
+                "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
+            
+            loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
+                ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
+                    "source" to link.source,
+                    "url" to link.url.take(60),
+                    "referer" to link.referer.take(40))
+                callback(link)
+                foundVideo = true
+            }
         }
         
         // Manual extraction fallback
