@@ -119,7 +119,7 @@ abstract class LazyExtractor : ExtractorApi() {
         if (!foundVideo) {
             ProviderLogger.d(TAG, "processVirtualUrl", "Calling tryLoadExtractor with 15s timeout", 
                 "embedUrl" to embedUrl.take(80),
-                "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
+                "referer" to (pageReferer.ifBlank { "EMPTY" }))
             
             try {
                 // Use tryLoadExtractor to catch 403s
