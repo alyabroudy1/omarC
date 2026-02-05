@@ -54,6 +54,10 @@ class WebViewEngine(
         var dialog: Dialog? = null
         var webView: WebView? = null
         
+        // BUGFIX: Clear capturedLinks at the start of each session
+        capturedLinks.clear()
+        ProviderLogger.d(TAG_WEBVIEW, "runSession", "Session started, capturedLinks cleared")
+        
         // Timeout handler
         val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeout)
@@ -64,9 +68,37 @@ class WebViewEngine(
                 } catch (e: Exception) { null }
                 
                 cleanup(webView, dialog)
-                deferred.complete(WebViewResult.Timeout(url, partialHtml))
+                // Include any captured links on timeout
+                val foundLinks = capturedLinks.toList()
+                if (foundLinks.isNotEmpty()) {
+                    ProviderLogger.d(TAG_WEBVIEW, "runSession", "Timeout with ${foundLinks.size} captured links")
+                    deferred.complete(WebViewResult.Success(extractCookies(url), "", url, foundLinks))
+                } else {
+                    deferred.complete(WebViewResult.Timeout(url, partialHtml))
+                }
             }
         }
+        
+        // BUGFIX: Proactive video monitoring job - checks every 300ms for captured videos
+        val videoMonitorJob = if (exitCondition is ExitCondition.VideoFound) {
+            CoroutineScope(Dispatchers.Main).launch {
+                val requiredCount = (exitCondition as ExitCondition.VideoFound).minCount
+                ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor started", "requiredCount" to requiredCount)
+                while (!resultDelivered) {
+                    delay(300)
+                    if (capturedLinks.size >= requiredCount) {
+                        resultDelivered = true
+                        timeoutJob.cancel()
+                        val cookies = extractCookies(url)
+                        val foundLinks = capturedLinks.toList()
+                        ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor found ${foundLinks.size} videos - exiting early!")
+                        cleanup(webView, dialog)
+                        deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
+                        break
+                    }
+                }
+            }
+        } else null
         
         try {
             // Create WebView
@@ -184,6 +216,7 @@ class WebViewEngine(
                             if (shouldExit) {
                                 resultDelivered = true
                                 timeoutJob.cancel()
+                                videoMonitorJob?.cancel()
                                 
                                 val cookies = extractCookies(currentUrl)
                                 ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Exit successful",
@@ -223,6 +256,7 @@ class WebViewEngine(
         } catch (e: Exception) {
             resultDelivered = true
             timeoutJob.cancel()
+            videoMonitorJob?.cancel()
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }

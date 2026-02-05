@@ -418,11 +418,21 @@ class ArabseedV2 : MainAPI() {
                     if (resolvedLink!!.referer.isNotBlank()) {
                          builder.header("Referer", resolvedLink!!.referer)
                     }
+                    resolvedLink!!.headers.forEach { (key, value) ->
+                        builder.header(key, value)
+                    }
                     return@Interceptor chain.proceed(builder.build())
                 }
                 
-                Log.w(name, "[getVideoInterceptor] No resolution found, proceeding with original")
-                return@Interceptor chain.proceed(request)
+                // BUGFIX: Return 404 error instead of original URL to trigger proper fallback
+                Log.e(name, "[getVideoInterceptor] Video extraction failed, returning 404")
+                return@Interceptor okhttp3.Response.Builder()
+                    .request(request)
+                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(404)
+                    .message("Video extraction failed - no resolution found")
+                    .body(okhttp3.ResponseBody.create(null, ""))
+                    .build()
             }
         }
         return null
