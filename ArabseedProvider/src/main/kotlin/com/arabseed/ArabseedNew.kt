@@ -289,7 +289,7 @@ class ArabseedV2 : MainAPI() {
                         embedUrl,
                         ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = watchDoc.location()
+                        this.referer = "$currentBaseUrl/"
                         this.quality = Qualities.Unknown.value
                     }
                 )
