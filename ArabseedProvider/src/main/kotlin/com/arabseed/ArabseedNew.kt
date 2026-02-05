@@ -398,7 +398,7 @@ class ArabseedV2 : MainAPI() {
             }
         }
         
-        // 2. Handle Direct Embeds (ReviewRate/Other)
+        // 2. Handle Direct Embeds (ReviewRate/Other) + Arabseed play URLs
         val needsResolution = url.contains("reviewrate") ||
                              url.contains("/play.php") ||
                              url.contains("/play/?id=") ||
@@ -408,28 +408,40 @@ class ArabseedV2 : MainAPI() {
                              url.contains("savefiles") ||
                              url.contains("bysezejataos")
         
-        if (needsResolution) {
+        // Check if this is an Arabseed domain URL (needs session cookies)
+        val isArabseedDomain = url.contains("asd.") || url.contains("arabseed")
+        
+        if (needsResolution || isArabseedDomain) {
             return Interceptor { chain ->
                 val request = chain.request()
                 val urlString = request.url.toString()
                 
-                Log.d(name, "[getVideoInterceptor] Resolving Direct Embed: ${urlString.take(80)}")
+                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
                 
                 try {
-                    val referer = request.header("Referer")
-                    val headers = mutableMapOf<String, String>()
-                    if (!referer.isNullOrBlank()) headers["Referer"] = referer
+                    // ===== STEP 1: Handle play/?id= URLs (decode Base64, no HTTP request) =====
+                    if (urlString.contains("id=")) {
+                        val param = urlString.substringAfter("id=").substringBefore("&")
+                        try {
+                            val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
+                            if (decoded.startsWith("http")) {
+                                Log.d(name, "[getVideoInterceptor] Decoded Base64 to embed URL: ${decoded.take(80)}")
+                                // Redirect to the decoded embed URL - no HTTP request to asd.pics needed!
+                                val newRequest = request.newBuilder().url(decoded).build()
+                                return@Interceptor chain.proceed(newRequest)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(name, "[getVideoInterceptor] Base64 decode failed: ${e.message}")
+                        }
+                    }
                     
-                    // Add session headers
-                    httpService.getImageHeaders().forEach { (k, v) -> headers[k] = v }
-                    
-                    // Fetch the embed page
+                    // ===== STEP 2: Fetch HTML for embed pages that need extraction =====
                     val html = kotlinx.coroutines.runBlocking {
                         try {
-                            app.get(urlString, headers = headers).text
+                            httpService.getDocument(urlString)?.html() ?: ""
                         } catch (e: Exception) {
-                            Log.w(name, "[getVideoInterceptor] First attempt failed: ${e.message}")
-                            try { app.get(urlString).text } catch (e2: Exception) { "" }
+                            Log.e(name, "[getVideoInterceptor] httpService failed: ${e.message}")
+                            ""
                         }
                     }
                     
