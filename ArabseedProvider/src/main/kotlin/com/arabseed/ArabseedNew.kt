@@ -201,7 +201,6 @@ class ArabseedV2 : MainAPI() {
         } catch (e: Exception) {
             "https://${httpService.currentDomain}"
         }
-        val encodedReferer = java.net.URLEncoder.encode(watchDoc.location(), "UTF-8")
         
         var found = false
         
@@ -217,7 +216,7 @@ class ArabseedV2 : MainAPI() {
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     for (serverId in 1..5) {
-                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&referer=$encodedReferer"
+                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
                         Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual)")
                         callback(
@@ -256,7 +255,7 @@ class ArabseedV2 : MainAPI() {
                         found = true
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                         // Fallback to virtual URL if no data-link
-                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
+                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
                         Log.d(name, "[loadLinks] Emitting ${quality}p server ${server.serverId} (virtual fallback)")
                         callback(
