@@ -226,7 +226,7 @@ class ArabseedV2 : MainAPI() {
                                 virtualUrl,
                                 ExtractorLinkType.VIDEO
                             ) {
-                                this.referer = watchDoc.location() // CRITICAL: Use full referer
+                                this.referer = "$currentBaseUrl/" // Use domain root as referer
                                 this.quality = quality
                             }
                         )
@@ -248,7 +248,7 @@ class ArabseedV2 : MainAPI() {
                                 server.dataLink,
                                 ExtractorLinkType.VIDEO
                             ) {
-                                this.referer = watchDoc.location()
+                                this.referer = "$currentBaseUrl/"
                                 this.quality = quality
                             }
                         )
@@ -265,7 +265,7 @@ class ArabseedV2 : MainAPI() {
                                 virtualUrl,
                                 ExtractorLinkType.VIDEO
                             ) {
-                                this.referer = watchDoc.location() // CRITICAL: Use full referer
+                                this.referer = "$currentBaseUrl/" // Use domain root as referer
                                 this.quality = quality
                             }
                         )
