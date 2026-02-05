@@ -314,14 +314,9 @@ class ArabseedV2 : MainAPI() {
             val isPrivateServer = url.contains("arabseed") || url.contains("asd")
             
             if (isPrivateServer) {
-                var sources = httpService.sniffVideos(url)
+                // Use visible sniffer directly as per user request
+                val sources = httpService.sniffVideosVisible(url)
                 
-                // Fallback to visible sniffing if background failed
-                if (sources.isEmpty()) {
-                    Log.i(name, "[loadLinksFromService] Background sniff failed, trying visible...")
-                    sources = httpService.sniffVideosVisible(url)
-                }
-
                 sources.forEach { source ->
                     callback(
                         newExtractorLink(
