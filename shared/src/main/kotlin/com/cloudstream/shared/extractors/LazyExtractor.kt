@@ -115,17 +115,22 @@ abstract class LazyExtractor : ExtractorApi() {
         
         // ===== FALLBACK TO CLOUDSTREAM EXTRACTORS =====
         if (!foundVideo) {
-            ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor", 
+            ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor with 15s timeout", 
                 "embedUrl" to embedUrl.take(80),
                 "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
             
-            loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
-                ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
-                    "source" to link.source,
-                    "url" to link.url.take(60),
-                    "referer" to link.referer.take(40))
-                callback(link)
-                foundVideo = true
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                    loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
+                        ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
+                            "source" to link.source,
+                            "url" to link.url.take(60))
+                        callback(link)
+                        foundVideo = true
+                    }
+                } ?: ProviderLogger.w(TAG, "processVirtualUrl", "loadExtractor timed out after 15s")
+            } catch (e: Exception) {
+                ProviderLogger.e(TAG, "processVirtualUrl", "loadExtractor failed", e)
             }
         }
         
@@ -351,6 +356,6 @@ abstract class LazyExtractor : ExtractorApi() {
     }
     
     protected fun getQueryParam(url: String, key: String): String? {
-        return Regex("[?&]$key=([^&]+)").find(url)?.groupValues?.get(1)
+        return Regex("""[?&]$key=([^&]+)""").find(url)?.groupValues?.get(1)
     }
 }
