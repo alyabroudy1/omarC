@@ -117,7 +117,8 @@ abstract class LazyExtractor : ExtractorApi() {
     
     /**
      * Process direct URLs (e.g., https://reviewrate.net/...).
-     * Passes directly to CloudStream extractors.
+     * Handles Base64 decoding for play/?id=... format.
+     * Passes to CloudStream extractors.
      */
     protected open suspend fun processDirectUrl(
         url: String,
@@ -125,11 +126,26 @@ abstract class LazyExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        ProviderLogger.d(TAG, "processDirectUrl", "Passing to extractors", "url" to url.take(80))
+        // Decode Base64 if URL contains play/?id= or play.php?id=
+        var finalUrl = url
+        if (url.contains("id=")) {
+            val param = url.substringAfter("id=").substringBefore("&")
+            try {
+                val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
+                if (decoded.startsWith("http")) {
+                    finalUrl = decoded
+                    ProviderLogger.d(TAG, "processDirectUrl", "Decoded Base64", "url" to finalUrl.take(80))
+                }
+            } catch (e: Exception) {
+                ProviderLogger.d(TAG, "processDirectUrl", "Base64 decode failed, using original URL")
+            }
+        }
+        
+        ProviderLogger.d(TAG, "processDirectUrl", "Passing to extractors", "url" to finalUrl.take(80))
         
         // Try global extractors first
         var foundVideo = false
-        loadExtractor(url, referer ?: "", subtitleCallback) { link ->
+        loadExtractor(finalUrl, referer ?: "", subtitleCallback) { link ->
             callback(link)
             foundVideo = true
         }
@@ -137,7 +153,7 @@ abstract class LazyExtractor : ExtractorApi() {
         // Manual extraction fallback
         if (!foundVideo) {
             ProviderLogger.d(TAG, "processDirectUrl", "Trying manual extraction")
-            val directUrl = extractDirectVideoUrl(url)
+            val directUrl = extractDirectVideoUrl(finalUrl)
             if (directUrl.isNotBlank()) {
                 callback(
                     newExtractorLink(
@@ -146,7 +162,7 @@ abstract class LazyExtractor : ExtractorApi() {
                         url = directUrl,
                         type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = url
+                        this.referer = finalUrl
                         this.quality = Qualities.Unknown.value
                     }
                 )
