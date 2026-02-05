@@ -241,10 +241,15 @@ abstract class LazyExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Decode Base64 if URL contains play/?id= or play.php?id=
+        // Decode Base64 if URL contains play/?id= or play.php?id=, or play.php?url=
         var finalUrl = url
-        if (url.contains("id=")) {
-            val param = url.substringAfter("id=").substringBefore("&")
+        if (url.contains("id=") || url.contains("url=")) {
+            val param = if (url.contains("id=")) {
+                url.substringAfter("id=").substringBefore("&")
+            } else {
+                url.substringAfter("url=").substringBefore("&")
+            }
+            
             try {
                 val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
                 if (decoded.startsWith("http")) {
@@ -285,6 +290,68 @@ abstract class LazyExtractor : ExtractorApi() {
                         )
                     }
                 )
+            }
+        }
+        
+        // ===== VIDEO SNIFFER FALLBACK (WebView-based) =====
+        if (!foundVideo) {
+            ProviderLogger.d(TAG, "processDirectUrl", "Trying VideoSniffer fallback")
+            try {
+                val context = AcraApplication.context
+                if (context != null) {
+                    val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
+                    val userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                    
+                    // Fetch existing session cookies for the domain via CookieManager
+                    val cookies = try {
+                        val cookieManager = android.webkit.CookieManager.getInstance()
+                        val cookieString = cookieManager.getCookie(finalUrl)
+                        if (!cookieString.isNullOrBlank()) {
+                            cookieString.split(";").associate { 
+                                val parts = it.split("=", limit = 2)
+                                (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+                            }.filterKeys { it.isNotEmpty() }
+                        } else emptyMap()
+                    } catch (e: Exception) {
+                        emptyMap()
+                    }
+                    
+                    ProviderLogger.d(TAG, "processDirectUrl", "Passing cookies to sniffer", 
+                        "domain" to (java.net.URI(finalUrl).host ?: ""), 
+                        "count" to cookies.size)
+                    
+                    val sources = sniffer.sniff(finalUrl, userAgent, cookies)
+                    
+                    if (sources.isNotEmpty()) {
+                        ProviderLogger.d(TAG, "processDirectUrl", "VideoSniffer found ${sources.size} sources")
+                        sources.forEach { source ->
+                            callback(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "$name ${source.quality}",
+                                    url = source.url,
+                                    type = source.type ?: ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = finalUrl
+                                    this.quality = when {
+                                        source.quality.contains("1080") -> Qualities.P1080.value
+                                        source.quality.contains("720") -> Qualities.P720.value
+                                        source.quality.contains("480") -> Qualities.P480.value
+                                        source.quality.contains("360") -> Qualities.P360.value
+                                        else -> Qualities.Unknown.value
+                                    }
+                                    // CRITICAL: Pass the same User-Agent used by WebView to the player
+                                    this.headers = source.headers + mapOf(
+                                        "Referer" to finalUrl,
+                                        "User-Agent" to userAgent
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                ProviderLogger.e(TAG, "processDirectUrl", "VideoSniffer failed", e)
             }
         }
     }

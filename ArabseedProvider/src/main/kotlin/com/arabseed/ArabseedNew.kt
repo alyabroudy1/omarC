@@ -349,22 +349,36 @@ class ArabseedV2 : MainAPI() {
     }
     /**
      * Lazy URL resolution for embed URLs.
-     * Matches built-in Arabseed.kt:436-490 + ArabseedLazyExtractor
+     * Uses LazyExtractor to handle both virtual URLs and direct embeds.
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
         val url = extractorLink.url
         
-        // 1. Handle Lazy Virtual URLs (/get__watch__server/)
-        if (url.contains("/get__watch__server/")) {
+        // Check if resolution is needed
+        val isVirtual = url.contains("/get__watch__server/")
+        val needsResolution = isVirtual || 
+                             url.contains("reviewrate") ||
+                             url.contains("/play.php") ||
+                             url.contains("/play/?id=") ||
+                             url.contains("stmix.io") ||
+                             url.contains("vidmoly") ||
+                             url.contains("up4fun") ||
+                             url.contains("savefiles") ||
+                             url.contains("bysezejataos")
+        
+        val isArabseedDomain = url.contains("asd.") || url.contains("arabseed")
+        
+        if (needsResolution || isArabseedDomain) {
             return Interceptor { chain ->
                 val request = chain.request()
                 val urlString = request.url.toString()
                 
-                Log.d(name, "[getVideoInterceptor] Resolving Lazy URL: ${urlString.take(60)}...")
+                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
                 
                 var resolvedLink: ExtractorLink? = null
                 
                 try {
+                    // Use LazyExtractor for EVERYTHING - it now handles decoding, extraction, and VideoSniffer fallback
                     val extractor = ArabseedLazyExtractor { targetUrl, data, referer ->
                          // Bridge to HttpService post - using runBlocking safely here since we are in interceptor thread
                          try {
@@ -377,12 +391,13 @@ class ArabseedV2 : MainAPI() {
                     }
                     
                     kotlinx.coroutines.runBlocking {
+                        // Pass URL to extractor (LazyExtractor handles routing to Virtual vs Direct)
                         extractor.getUrl(urlString, null, {}) { link ->
                             resolvedLink = link
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(name, "[getVideoInterceptor] Lazy resolution error: ${e.message}")
+                    Log.e(name, "[getVideoInterceptor] Resolution error: ${e.message}")
                 }
                 
                 if (resolvedLink != null) {
@@ -394,94 +409,8 @@ class ArabseedV2 : MainAPI() {
                     return@Interceptor chain.proceed(builder.build())
                 }
                 
+                Log.w(name, "[getVideoInterceptor] No resolution found, proceeding with original")
                 return@Interceptor chain.proceed(request)
-            }
-        }
-        
-        // 2. Handle Direct Embeds (ReviewRate/Other) + Arabseed play URLs
-        val needsResolution = url.contains("reviewrate") ||
-                             url.contains("/play.php") ||
-                             url.contains("/play/?id=") ||
-                             url.contains("stmix.io") ||
-                             url.contains("vidmoly") ||
-                             url.contains("up4fun") ||
-                             url.contains("savefiles") ||
-                             url.contains("bysezejataos")
-        
-        // Check if this is an Arabseed domain URL (needs session cookies)
-        val isArabseedDomain = url.contains("asd.") || url.contains("arabseed")
-        
-        if (needsResolution || isArabseedDomain) {
-            return Interceptor { chain ->
-                val request = chain.request()
-                val urlString = request.url.toString()
-                
-                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
-                
-                try {
-                    // ===== STEP 1: Handle play/?id= URLs (decode Base64, no HTTP request) =====
-                    if (urlString.contains("id=")) {
-                        val param = urlString.substringAfter("id=").substringBefore("&")
-                        try {
-                            val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
-                            if (decoded.startsWith("http")) {
-                                Log.d(name, "[getVideoInterceptor] Decoded Base64 to embed URL: ${decoded.take(80)}")
-                                // Redirect to the decoded embed URL - no HTTP request to asd.pics needed!
-                                val newRequest = request.newBuilder().url(decoded).build()
-                                return@Interceptor chain.proceed(newRequest)
-                            }
-                        } catch (e: Exception) {
-                            Log.w(name, "[getVideoInterceptor] Base64 decode failed: ${e.message}")
-                        }
-                    }
-                    
-                    // ===== STEP 2: Fetch HTML for embed pages that need extraction =====
-                    val html = kotlinx.coroutines.runBlocking {
-                        try {
-                            httpService.getDocument(urlString)?.html() ?: ""
-                        } catch (e: Exception) {
-                            Log.e(name, "[getVideoInterceptor] httpService failed: ${e.message}")
-                            ""
-                        }
-                    }
-                    
-                    // Extract video URL using multiple patterns
-                    var videoUrl: String? = null
-                    
-                    // Pattern 1: file: "..."
-                    if (videoUrl == null) {
-                        videoUrl = Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                    }
-                    // Pattern 2: <source src="...">
-                    if (videoUrl == null) {
-                        videoUrl = Regex("""<source[^>]+src=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                    }
-                    // Pattern 3: sources: [{file: "..."}]
-                    if (videoUrl == null) {
-                        videoUrl = Regex("""sources:\s*\[\{[^}]*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                    }
-                    // Pattern 4: Direct video URL in response (m3u8/mp4)
-                    if (videoUrl == null) {
-                        videoUrl = Regex("""(https?://[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)""").find(html)?.groupValues?.get(1)
-                    }
-                    // Pattern 5: JWPlayer setup
-                    if (videoUrl == null) {
-                        videoUrl = Regex("""jwplayer.*?file:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
-                    }
-                    
-                    Log.d(name, "[getVideoInterceptor] Resolved: ${videoUrl?.take(80)}")
-                    
-                    if (videoUrl != null && (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4"))) {
-                        val newRequest = request.newBuilder().url(videoUrl).build()
-                        chain.proceed(newRequest)
-                    } else {
-                        Log.w(name, "[getVideoInterceptor] Could not extract video URL")
-                        chain.proceed(request)
-                    }
-                } catch (e: Exception) {
-                    Log.e(name, "[getVideoInterceptor] Error: ${e.message}")
-                    chain.proceed(request)
-                }
             }
         }
         return null
