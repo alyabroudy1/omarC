@@ -72,9 +72,11 @@ abstract class LazyExtractor : ExtractorApi() {
         val server = getQueryParam(url, "server") ?: "0"
         val csrfToken = getQueryParam(url, "csrf_token") ?: ""
         val rawReferer = getQueryParam(url, "referer")
-        val pageReferer = rawReferer?.let { 
+        // Prioritize the passed referer (from Interceptor/Builder) as it's cleaner.
+        // Fallback to URL param if passed referer is empty.
+        val pageReferer = referer?.ifBlank { null } ?: rawReferer?.let { 
             try { URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it }
-        } ?: referer ?: ""
+        } ?: ""
         
         val baseUrl = url.substringBefore(serverEndpoint)
         

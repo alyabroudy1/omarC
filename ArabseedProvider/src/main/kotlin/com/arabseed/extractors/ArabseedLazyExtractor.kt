@@ -15,6 +15,6 @@ class ArabseedLazyExtractor(
 ) : LazyExtractor() {
     
     override val name = "ArabseedLazy"
-    override val mainUrl = "https://arabseed.show"
+    override val mainUrl = "https://asd.pics"
     override val jsonFetcher: JsonFetcher? get() = fetcher
 }
