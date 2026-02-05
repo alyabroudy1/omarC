@@ -183,7 +183,7 @@ class ArabseedV2 : MainAPI() {
         val csrfToken = parser.extractCsrfToken(doc) ?: ""
         
         Log.d(name, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
-        Log.d(name, "[loadLinks] GlobalPostID: ${if(globalPostId.isNotBlank()) globalPostId else "MISSING"}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
+        Log.d(name, "[loadLinks] GlobalPostID: ${globalPostId.ifBlank { "N/A (will use server data-post)" }}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
         var found = false
         
@@ -214,9 +214,9 @@ class ArabseedV2 : MainAPI() {
         Log.i(name, "[loadLinks] Finished Direct Embeds, now processing Servers...")
         
         // ==================== SERVER LINKS ====================
-        // ALWAYS extract servers - they have their own postId in data-post
+        // ALWAYS extract servers - they have their own postId in data-post attribute
         val servers = parser.extractVisibleServers(watchDoc)
-        Log.d(name, "[loadLinks] Visible servers: ${servers.size}")
+        Log.d(name, "[loadLinks] Found ${servers.size} servers with data-post IDs: ${servers.map { "${it.quality}p:${it.postId.ifBlank { "N/A" }}" }}")
         
         if (servers.isNotEmpty()) found = true
         
