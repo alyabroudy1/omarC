@@ -163,12 +163,30 @@ class VideoSniffingStrategy(
     
     private fun captureVideoUrl(url: String, headers: Map<String, String>) {
         val quality = detectQuality(url)
-        val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        // STRICT M3U8 detection: check extension and query params
+        val isM3u8 = url.contains(".m3u8", ignoreCase = true)
+        val type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         
-        capturedSources.add(VideoSource(url, quality, headers, type))
+        // Capture cookies specifically for this video URL
+        val videoCookies = try {
+            val cookieManager = CookieManager.getInstance()
+            val cookiesRaw = cookieManager.getCookie(url)
+            if (!cookiesRaw.isNullOrBlank()) {
+                 mapOf("Cookie" to cookiesRaw)
+            } else {
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        
+        // Merge headers: Original request headers + Video specific cookies
+        val finalHeaders = headers + videoCookies
+        
+        capturedSources.add(VideoSource(url, quality, finalHeaders, type))
         
         ProviderLogger.i(TAG_VIDEO_SNIFFER, "captureVideoUrl", "Captured",
-            "quality" to quality, "type" to type.name, "total" to capturedSources.size)
+            "quality" to quality, "type" to type.name, "cookies" to (if (videoCookies.isNotEmpty()) "YES" else "NO"))
     }
     
     private fun detectQuality(url: String): String {
