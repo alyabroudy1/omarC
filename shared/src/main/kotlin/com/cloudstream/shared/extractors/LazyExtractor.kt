@@ -37,6 +37,12 @@ abstract class LazyExtractor : ExtractorApi() {
         """var\s+url\s*=\s*["']([^"']+)["']"""
     )
     
+
+    
+    // Properties to allow passing session context without changing getUrl signature
+    var userAgent: String? = null
+    var sessionCookies: Map<String, String> = emptyMap()
+    
     private val TAG = "LazyExtractor"
     
     override suspend fun getUrl(
@@ -175,20 +181,24 @@ abstract class LazyExtractor : ExtractorApi() {
                 val context = AcraApplication.context
                 if (context != null) {
                     val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
-                    val userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                    val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
                     
-                    // Fetch existing session cookies for the embed domain via CookieManager
-                    val cookies = try {
-                        val cookieManager = android.webkit.CookieManager.getInstance()
-                        val cookieString = cookieManager.getCookie(embedUrl)
-                        if (!cookieString.isNullOrBlank()) {
-                            cookieString.split(";").associate { 
-                                val parts = it.split("=", limit = 2)
-                                (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-                            }.filterKeys { it.isNotEmpty() }
-                        } else emptyMap()
-                    } catch (e: Exception) {
-                        emptyMap()
+                    // Prioritize passed session cookies, fallback to CookieManager
+                    val cookies = if (sessionCookies.isNotEmpty()) {
+                        sessionCookies
+                    } else {
+                        try {
+                            val cookieManager = android.webkit.CookieManager.getInstance()
+                            val cookieString = cookieManager.getCookie(embedUrl)
+                            if (!cookieString.isNullOrBlank()) {
+                                cookieString.split(";").associate { 
+                                    val parts = it.split("=", limit = 2)
+                                    (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+                                }.filterKeys { it.isNotEmpty() }
+                            } else emptyMap()
+                        } catch (e: Exception) {
+                            emptyMap()
+                        }
                     }
                     
                     ProviderLogger.d(TAG, "processVirtualUrl", "Passing cookies to sniffer", 
@@ -196,7 +206,7 @@ abstract class LazyExtractor : ExtractorApi() {
                         "count" to cookies.size)
                     
                     val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
-                    val sources = sniffer.sniff(embedUrl, userAgent, cookies, headers)
+                    val sources = sniffer.sniff(embedUrl, snifferUserAgent, cookies, headers)
                     
                     if (sources.isNotEmpty()) {
                         ProviderLogger.d(TAG, "processVirtualUrl", "VideoSniffer found ${sources.size} sources")
@@ -217,7 +227,7 @@ abstract class LazyExtractor : ExtractorApi() {
                                         else -> Qualities.Unknown.value
                                     }
                                     // CRITICAL: Pass the same User-Agent used by WebView to the player
-                                    val uaHeaders = if (userAgent.contains("Chrome")) {
+                                    val uaHeaders = if (snifferUserAgent.contains("Chrome")) {
                                         mapOf(
                                             "Sec-Ch-Ua" to "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"",
                                             "Sec-Ch-Ua-Mobile" to "?1",
@@ -227,7 +237,7 @@ abstract class LazyExtractor : ExtractorApi() {
 
                                     this.headers = source.headers + uaHeaders + mapOf(
                                         "Referer" to embedUrl,
-                                        "User-Agent" to userAgent,
+                                        "User-Agent" to snifferUserAgent,
                                         "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
                                         "Sec-Fetch-Site" to "cross-site",
                                         "Sec-Fetch-Mode" to "navigate",
@@ -315,20 +325,24 @@ abstract class LazyExtractor : ExtractorApi() {
                 val context = AcraApplication.context
                 if (context != null) {
                     val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
-                    val userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                    val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
                     
-                    // Fetch existing session cookies for the domain via CookieManager
-                    val cookies = try {
-                        val cookieManager = android.webkit.CookieManager.getInstance()
-                        val cookieString = cookieManager.getCookie(finalUrl)
-                        if (!cookieString.isNullOrBlank()) {
-                            cookieString.split(";").associate { 
-                                val parts = it.split("=", limit = 2)
-                                (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-                            }.filterKeys { it.isNotEmpty() }
-                        } else emptyMap()
-                    } catch (e: Exception) {
-                        emptyMap()
+                    // Prioritize passed session cookies, fallback to CookieManager
+                    val cookies = if (sessionCookies.isNotEmpty()) {
+                        sessionCookies
+                    } else {
+                        try {
+                            val cookieManager = android.webkit.CookieManager.getInstance()
+                            val cookieString = cookieManager.getCookie(finalUrl)
+                            if (!cookieString.isNullOrBlank()) {
+                                cookieString.split(";").associate { 
+                                    val parts = it.split("=", limit = 2)
+                                    (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+                                }.filterKeys { it.isNotEmpty() }
+                            } else emptyMap()
+                        } catch (e: Exception) {
+                            emptyMap()
+                        }
                     }
                     
                     ProviderLogger.d(TAG, "processDirectUrl", "Passing cookies to sniffer", 
@@ -336,7 +350,7 @@ abstract class LazyExtractor : ExtractorApi() {
                         "count" to cookies.size)
                     
                     val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
-                    val sources = sniffer.sniff(finalUrl, userAgent, cookies, headers)
+                    val sources = sniffer.sniff(finalUrl, snifferUserAgent, cookies, headers)
                     
                     if (sources.isNotEmpty()) {
                         ProviderLogger.d(TAG, "processDirectUrl", "VideoSniffer found ${sources.size} sources")
@@ -357,9 +371,21 @@ abstract class LazyExtractor : ExtractorApi() {
                                         else -> Qualities.Unknown.value
                                     }
                                     // CRITICAL: Pass the same User-Agent used by WebView to the player
-                                    this.headers = source.headers + mapOf(
+                                    val uaHeaders = if (snifferUserAgent.contains("Chrome")) {
+                                        mapOf(
+                                            "Sec-Ch-Ua" to "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"",
+                                            "Sec-Ch-Ua-Mobile" to "?1",
+                                            "Sec-Ch-Ua-Platform" to "\"Android\""
+                                        )
+                                    } else emptyMap()
+
+                                    this.headers = source.headers + uaHeaders + mapOf(
                                         "Referer" to finalUrl,
-                                        "User-Agent" to userAgent
+                                        "User-Agent" to snifferUserAgent,
+                                        "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
+                                        "Sec-Fetch-Site" to "cross-site",
+                                        "Sec-Fetch-Mode" to "navigate",
+                                        "Priority" to "u=1"
                                     )
                                 }
                             )

@@ -393,7 +393,12 @@ class ArabseedV2 : MainAPI() {
                     
                     kotlinx.coroutines.runBlocking {
                         // Pass URL to extractor (LazyExtractor handles routing to Virtual vs Direct)
-                        // CRITICAL: Pass referer from the extractor link so LazyExtractor has the correct one
+                        
+                        // CRITICAL: Sync session state (UA + Cookies) to extractor properties
+                        extractor.userAgent = httpService.userAgent
+                        extractor.sessionCookies = httpService.cookies
+                        
+                        // Pass referer from the extractor link so LazyExtractor has the correct one
                         extractor.getUrl(urlString, extractorLink.referer, {}) { link ->
                             resolvedLink = link
                         }

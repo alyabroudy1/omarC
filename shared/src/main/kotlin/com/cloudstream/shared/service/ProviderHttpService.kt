@@ -50,6 +50,12 @@ class ProviderHttpService private constructor(
     
     val currentDomain: String
         get() = sessionState.domain
+
+    val userAgent: String
+        get() = sessionState.userAgent
+
+    val cookies: Map<String, String>
+        get() = sessionState.cookies
     
     suspend fun ensureInitialized() {
         val persisted = sessionStore.load(config.fallbackDomain)
