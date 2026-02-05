@@ -513,7 +513,7 @@ class ArabseedParser : BaseParser() {
     fun extractDirectEmbeds(doc: Document): List<String> {
         // Broaden selector to find ANY video iframe, filtering out known ads/socials
         return doc.select("iframe[src]").mapNotNull { 
-            var src = it.attr("src")
+            var src = fixUrl(it.attr("src"))
             if (src.isBlank()) return@mapNotNull null
             
             // Handle /play.php?url=BASE64

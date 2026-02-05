@@ -54,7 +54,8 @@ class VideoSniffingStrategy(
     suspend fun sniff(
         url: String,
         userAgent: String,
-        cookies: Map<String, String> = emptyMap()
+        cookies: Map<String, String> = emptyMap(),
+        extraHeaders: Map<String, String> = emptyMap()
     ): List<VideoSource> = withContext(Dispatchers.Main) {
         capturedSources.clear()
         sourcesDeferred = CompletableDeferred()
@@ -62,13 +63,18 @@ class VideoSniffingStrategy(
         ProviderLogger.i(TAG_VIDEO_SNIFFER, "sniff", "Starting", "url" to url.take(80))
         ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "UserAgent", "ua" to userAgent)
         ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "Cookies provided", "count" to cookies.size)
+        ProviderLogger.d(TAG_VIDEO_SNIFFER, "sniff", "Headers provided", "keys" to extraHeaders.keys.joinToString())
         
         var webView: WebView? = null
         val startTime = System.currentTimeMillis()
         
         try {
             webView = createWebView(url, userAgent, cookies)
-            webView.loadUrl(url)
+            if (extraHeaders.isNotEmpty()) {
+                webView.loadUrl(url, extraHeaders)
+            } else {
+                webView.loadUrl(url)
+            }
             
             val jsSources = withTimeoutOrNull(timeout) {
                 var attempts = 0

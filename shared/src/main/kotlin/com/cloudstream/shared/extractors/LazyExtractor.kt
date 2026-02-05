@@ -193,7 +193,8 @@ abstract class LazyExtractor : ExtractorApi() {
                         "domain" to (java.net.URI(embedUrl).host ?: ""), 
                         "count" to cookies.size)
                     
-                    val sources = sniffer.sniff(embedUrl, userAgent, cookies)
+                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
+                    val sources = sniffer.sniff(embedUrl, userAgent, cookies, headers)
                     
                     if (sources.isNotEmpty()) {
                         ProviderLogger.d(TAG, "processVirtualUrl", "VideoSniffer found ${sources.size} sources")
@@ -320,7 +321,8 @@ abstract class LazyExtractor : ExtractorApi() {
                         "domain" to (java.net.URI(finalUrl).host ?: ""), 
                         "count" to cookies.size)
                     
-                    val sources = sniffer.sniff(finalUrl, userAgent, cookies)
+                    val headers = if (!referer.isNullOrBlank()) mapOf("Referer" to referer) else emptyMap()
+                    val sources = sniffer.sniff(finalUrl, userAgent, cookies, headers)
                     
                     if (sources.isNotEmpty()) {
                         ProviderLogger.d(TAG, "processDirectUrl", "VideoSniffer found ${sources.size} sources")
