@@ -227,6 +227,7 @@ class ArabseedV2 : MainAPI() {
                                 virtualUrl,
                                 ExtractorLinkType.VIDEO
                             ) {
+                                this.referer = watchDoc.location() // CRITICAL: Use full referer
                                 this.quality = quality
                             }
                         )
@@ -265,6 +266,7 @@ class ArabseedV2 : MainAPI() {
                                 virtualUrl,
                                 ExtractorLinkType.VIDEO
                             ) {
+                                this.referer = watchDoc.location() // CRITICAL: Use full referer
                                 this.quality = quality
                             }
                         )
