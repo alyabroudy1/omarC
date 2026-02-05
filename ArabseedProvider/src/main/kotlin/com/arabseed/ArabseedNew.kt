@@ -392,7 +392,8 @@ class ArabseedV2 : MainAPI() {
                     
                     kotlinx.coroutines.runBlocking {
                         // Pass URL to extractor (LazyExtractor handles routing to Virtual vs Direct)
-                        extractor.getUrl(urlString, null, {}) { link ->
+                        // CRITICAL: Pass referer from the extractor link so LazyExtractor has the correct one
+                        extractor.getUrl(urlString, extractorLink.referer, {}) { link ->
                             resolvedLink = link
                         }
                     }
