@@ -405,34 +405,44 @@ class ArabseedV2 : MainAPI() {
                 }
                 
                 if (resolvedLink != null) {
-                    Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedLink!!.url}")
+                    val resolvedUrl = resolvedLink!!.url
+                    Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedUrl.take(80)}")
                     
-                    // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors)
-                    val useHttp11 = resolvedLink!!.url.contains("savefiles.com") || 
-                                   resolvedLink!!.url.contains("stmix.io")
+                    // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors like "invalid stream 1")
+                    // These domains often have misconfigured HTTP/2 or don't like Host header changes mid-stream.
+                    val forceHttp11 = resolvedUrl.contains("savefiles.com") || 
+                                     resolvedUrl.contains("stmix.io") ||
+                                     resolvedUrl.contains("vidmoly")
                     
-                    val builder = request.newBuilder().url(resolvedLink!!.url)
+                    val builder = request.newBuilder().url(resolvedUrl)
                     
-                    if (useHttp11) {
-                         // Note: Interceptor can't easily force protocol per-request in OkHttp without changing the client,
-                         // but we can try to "dirty" the request to avoid protocol reuse if needed.
-                         // Actually, the best way is to let the client handle it, but we can filter headers that break HTTP/2.
-                         Log.d(name, "[getVideoInterceptor] Potential protocol issue domain detected, filtering headers")
-                    }
-
                     if (resolvedLink!!.referer.isNotBlank()) {
                          builder.header("Referer", resolvedLink!!.referer)
                     }
                     
-                    // Add resolved link headers, filtering out dangerous ones
+                    // Add resolved link headers, filtering out dangerous ones that break HTTP/2 or cause Host mismatches
                     resolvedLink!!.headers.forEach { (key, value) ->
                         if (!key.equals("Host", ignoreCase = true) && 
-                            !key.equals("Connection", ignoreCase = true)) {
+                            !key.equals("Connection", ignoreCase = true) &&
+                            !key.equals("TE", ignoreCase = true) &&
+                            !key.equals("Upgrade", ignoreCase = true)) {
                             builder.header(key, value)
                         }
                     }
                     
-                    return@Interceptor chain.proceed(builder.build())
+                    val finalRequest = builder.build()
+                    
+                    if (forceHttp11) {
+                        Log.d(name, "[getVideoInterceptor] Forcing HTTP/1.1 for domain: ${resolvedUrl.take(40)}")
+                        // Use app.baseClient which is the standard CloudStream OkHttpClient
+                        val http11Client = com.lagradost.cloudstream3.app.baseClient.newBuilder()
+                            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                            .build()
+                        // Execute directly and return the response, bypassing the rest of this chain
+                        return@Interceptor http11Client.newCall(finalRequest).execute()
+                    }
+
+                    return@Interceptor chain.proceed(finalRequest)
                 }
                 
                 // BUGFIX: Return 404 error instead of original URL to trigger proper fallback

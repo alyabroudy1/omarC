@@ -28,7 +28,7 @@ import java.net.URLEncoder
 class SnifferExtractor : ExtractorApi() {
     
     override val name = "VideoSniffer"
-    override val mainUrl = "sniffer://"  // Matches URLs starting with sniffer://
+    override val mainUrl = "sniff://"  // Matches URLs starting with sniff://
     override val requiresReferer = false
     
     private val TAG = "SnifferExtractor"
@@ -42,15 +42,15 @@ class SnifferExtractor : ExtractorApi() {
         fun createSnifferUrl(embedUrl: String, referer: String = ""): String {
             val encodedUrl = URLEncoder.encode(embedUrl, "UTF-8")
             val encodedReferer = URLEncoder.encode(referer, "UTF-8")
-            return "sniffer://$encodedUrl?referer=$encodedReferer"
+            return "sniff://$encodedUrl?referer=$encodedReferer"
         }
         
         // Parse sniffer URL to get embed URL and referer
         fun parseSnifferUrl(snifferUrl: String): Pair<String, String>? {
-            if (!snifferUrl.startsWith("sniffer://")) return null
+            if (!snifferUrl.startsWith("sniff://")) return null
             
             try {
-                val content = snifferUrl.removePrefix("sniffer://")
+                val content = snifferUrl.removePrefix("sniff://")
                 val parts = content.split("?referer=", limit = 2)
                 val embedUrl = URLDecoder.decode(parts[0], "UTF-8")
                 val referer = if (parts.size > 1) URLDecoder.decode(parts[1], "UTF-8") else ""
