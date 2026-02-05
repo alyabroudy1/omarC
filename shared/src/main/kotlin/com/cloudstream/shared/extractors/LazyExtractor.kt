@@ -1,6 +1,8 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.strategy.VideoSniffingStrategy
+import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
@@ -147,6 +149,48 @@ abstract class LazyExtractor : ExtractorApi() {
                         )
                     }
                 )
+                foundVideo = true
+            }
+        }
+        
+        // ===== VIDEO SNIFFER FALLBACK (WebView-based) =====
+        // Last resort: use headless WebView to capture video URLs from the embed page
+        if (!foundVideo) {
+            ProviderLogger.d(TAG, "processVirtualUrl", "Trying VideoSniffer fallback")
+            try {
+                val context = AcraApplication.context
+                if (context != null) {
+                    val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
+                    val userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+                    val sources = sniffer.sniff(embedUrl, userAgent)
+                    
+                    if (sources.isNotEmpty()) {
+                        ProviderLogger.d(TAG, "processVirtualUrl", "VideoSniffer found ${sources.size} sources")
+                        sources.forEach { source ->
+                            callback(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "$name ${source.quality}",
+                                    url = source.url,
+                                    type = source.type ?: ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = embedUrl
+                                    this.quality = when {
+                                        source.quality.contains("1080") -> Qualities.P1080.value
+                                        source.quality.contains("720") -> Qualities.P720.value
+                                        source.quality.contains("480") -> Qualities.P480.value
+                                        source.quality.contains("360") -> Qualities.P360.value
+                                        else -> Qualities.Unknown.value
+                                    }
+                                    this.headers = source.headers + mapOf("Referer" to embedUrl)
+                                }
+                            )
+                        }
+                        foundVideo = true
+                    }
+                }
+            } catch (e: Exception) {
+                ProviderLogger.e(TAG, "processVirtualUrl", "VideoSniffer failed", e)
             }
         }
     }
