@@ -88,9 +88,17 @@ abstract class LazyExtractor : ExtractorApi() {
         
         ProviderLogger.d(TAG, "processVirtualUrl", "Got embed URL", "url" to embedUrl.take(80))
         
-        // Try global extractors
+        // Try global extractors with proper referer
+        ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor", 
+            "embedUrl" to embedUrl.take(80),
+            "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
+        
         var foundVideo = false
         loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
+            ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
+                "source" to link.source,
+                "url" to link.url.take(60),
+                "referer" to link.referer.take(40))
             callback(link)
             foundVideo = true
         }
