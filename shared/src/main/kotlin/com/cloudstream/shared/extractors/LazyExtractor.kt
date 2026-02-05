@@ -323,28 +323,39 @@ abstract class LazyExtractor : ExtractorApi() {
      */
     protected open fun parseEmbedUrlFromJson(json: String): String {
         try {
+            var url = ""
+            
             // Check for embed_url first
             val embedMatch = Regex(""""embed_url"\s*:\s*"([^"]+)"""").find(json)
-            if (embedMatch != null) return embedMatch.groupValues[1].replace("\\/", "/")
+            if (embedMatch != null) {
+                url = embedMatch.groupValues[1].replace("\\/", "/")
+            }
             
             // Then check for server field
-            val serverMatch = Regex(""""server"\s*:\s*"([^"]+)"""").find(json)
-            var serverUrl = serverMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
+            if (url.isBlank()) {
+                val serverMatch = Regex(""""server"\s*:\s*"([^"]+)"""").find(json)
+                url = serverMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: ""
+            }
             
-            // Handle Base64 encoded URLs (common in Arabseed responses)
-            if (serverUrl.isNotBlank() && !serverUrl.startsWith("http")) {
+            // Handle Base64 encoded URLs
+            if (url.isNotBlank() && !url.startsWith("http")) {
                 try {
-                    val decoded = String(android.util.Base64.decode(serverUrl, android.util.Base64.DEFAULT))
+                    val decoded = String(android.util.Base64.decode(url, android.util.Base64.DEFAULT))
                     if (decoded.startsWith("http")) {
-                        serverUrl = decoded
-                        ProviderLogger.d(TAG, "parseEmbedUrlFromJson", "Decoded Base64 URL", "url" to serverUrl.take(60))
+                        url = decoded
+                        ProviderLogger.d(TAG, "parseEmbedUrlFromJson", "Decoded Base64 URL", "url" to url.take(60))
                     }
                 } catch (e: Exception) {
                     // Not Base64, use as-is
                 }
             }
             
-            return serverUrl
+            // Final validation: must be a valid http/https URL
+            if (url.startsWith("http")) {
+                return url
+            } else {
+                if (url.isNotBlank()) ProviderLogger.w(TAG, "parseEmbedUrlFromJson", "Parsed content is not a URL", "content" to url.take(100))
+            }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "parseEmbedUrlFromJson", "Parse error", e)
         }
@@ -358,7 +369,8 @@ abstract class LazyExtractor : ExtractorApi() {
         try {
             val html = app.get(embedUrl).text
             return videoPatterns.firstNotNullOfOrNull { pattern ->
-                Regex(pattern, RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                val match = Regex(pattern, RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                if (match != null && match.startsWith("http")) match else null
             } ?: ""
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "extractDirectVideoUrl", "Error", e)
@@ -382,6 +394,7 @@ abstract class LazyExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val currentUrl = unshortenLinkSafe(url)
+        val schemaStripRegex = Regex("""^(https:|)//(www\.|)""")
         val compareUrl = currentUrl.lowercase().replace(schemaStripRegex, "")
         
         // Iterate extractors (reversed as per original logic)
