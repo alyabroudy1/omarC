@@ -7,6 +7,7 @@ import com.arabseed.extractors.ArabseedLazyExtractor
 import com.cloudstream.shared.android.PluginContext
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.extractors.ReviewRateExtractor
+import com.cloudstream.shared.extractors.SnifferExtractor
 
 @CloudstreamPlugin
 class ArabseedPlugin: Plugin() {
@@ -22,6 +23,7 @@ class ArabseedPlugin: Plugin() {
         // Register extractors
         registerExtractorAPI(ArabseedLazyExtractor())  // Handles virtual /get__watch__server/ URLs
         registerExtractorAPI(ReviewRateExtractor())    // Handles reviewrate.net URLs
+        registerExtractorAPI(SnifferExtractor())       // Handles sniffer:// URLs (video sniffing fallback)
         
         // Register provider
         registerMainAPI(ArabseedV2())

@@ -177,49 +177,19 @@ abstract class LazyExtractor : ExtractorApi() {
             }
         }
         
-        // ===== VIDEO SNIFFER FALLBACK (Visible WebView) =====
+        // ===== VIDEO SNIFFER FALLBACK (via SnifferExtractor) =====
         if (!foundVideo) {
-            val engine = webViewEngine
-            if (engine != null) {
-                ProviderLogger.d(TAG, "processVirtualUrl", "Trying WebViewEngine sniffing (Visible)")
-                val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-                
-                val result = engine.runSession(
-                    url = embedUrl,
-                    mode = Mode.FULLSCREEN,
-                    userAgent = snifferUserAgent,
-                    exitCondition = ExitCondition.VideoFound(minCount = 1),
-                    timeout = 60_000L
-                )
-
-                if (result is WebViewResult.Success) {
-                    ProviderLogger.d(TAG, "processVirtualUrl", "WebViewEngine found ${result.foundLinks.size} sources")
-                    result.foundLinks.forEach { source ->
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name ${source.qualityLabel}",
-                                url = source.url,
-                                type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = embedUrl
-                                this.quality = when {
-                                    source.qualityLabel.contains("1080") -> Qualities.P1080.value
-                                    source.qualityLabel.contains("720") -> Qualities.P720.value
-                                    source.qualityLabel.contains("480") -> Qualities.P480.value
-                                    else -> Qualities.Unknown.value
-                                }
-                                this.headers = source.headers + mapOf(
-                                    "Referer" to embedUrl,
-                                    "User-Agent" to snifferUserAgent
-                                )
-                            }
-                        )
-                    }
-                    foundVideo = result.foundLinks.isNotEmpty()
-                }
-            } else {
-                ProviderLogger.w(TAG, "processVirtualUrl", "Skip sniffing fallback - WebViewEngine not provided")
+            ProviderLogger.d(TAG, "processVirtualUrl", "Trying SnifferExtractor fallback")
+            
+            // Create sniffer URL and call loadExtractor - SnifferExtractor will handle the WebView sniffing
+            val snifferUrl = SnifferExtractor.createSnifferUrl(embedUrl, pageReferer)
+            ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor with sniffer URL", "snifferUrl" to snifferUrl.take(80))
+            
+            loadExtractor(snifferUrl, pageReferer, subtitleCallback) { link ->
+                ProviderLogger.d(TAG, "processVirtualUrl", "SnifferExtractor returned link", 
+                    "url" to link.url.take(60))
+                callback(link)
+                foundVideo = true
             }
         }
     }
@@ -287,49 +257,17 @@ abstract class LazyExtractor : ExtractorApi() {
             }
         }
         
-        // ===== VIDEO SNIFFER FALLBACK (Visible WebView) =====
+        // ===== VIDEO SNIFFER FALLBACK (via SnifferExtractor) =====
         if (!foundVideo) {
-            val engine = webViewEngine
-            if (engine != null) {
-                ProviderLogger.d(TAG, "processDirectUrl", "Trying WebViewEngine sniffing (Visible)")
-                val snifferUserAgent = userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-                
-                val result = engine.runSession(
-                    url = finalUrl,
-                    mode = Mode.FULLSCREEN,
-                    userAgent = snifferUserAgent,
-                    exitCondition = ExitCondition.VideoFound(minCount = 1),
-                    timeout = 60_000L
-                )
-
-                if (result is WebViewResult.Success) {
-                    ProviderLogger.d(TAG, "processDirectUrl", "WebViewEngine found ${result.foundLinks.size} sources")
-                    result.foundLinks.forEach { source ->
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name ${source.qualityLabel}",
-                                url = source.url,
-                                type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = finalUrl
-                                this.quality = when {
-                                    source.qualityLabel.contains("1080") -> Qualities.P1080.value
-                                    source.qualityLabel.contains("720") -> Qualities.P720.value
-                                    source.qualityLabel.contains("480") -> Qualities.P480.value
-                                    else -> Qualities.Unknown.value
-                                }
-                                this.headers = source.headers + mapOf(
-                                    "Referer" to finalUrl,
-                                    "User-Agent" to snifferUserAgent
-                                )
-                            }
-                        )
-                    }
-                    foundVideo = result.foundLinks.isNotEmpty()
-                }
-            } else {
-                ProviderLogger.w(TAG, "processDirectUrl", "Skip sniffing fallback - WebViewEngine not provided")
+            ProviderLogger.d(TAG, "processDirectUrl", "Trying SnifferExtractor fallback")
+            
+            // Create sniffer URL and call loadExtractor - SnifferExtractor will handle the WebView sniffing
+            val snifferUrl = SnifferExtractor.createSnifferUrl(finalUrl, referer ?: "")
+            loadExtractor(snifferUrl, referer, subtitleCallback) { link ->
+                ProviderLogger.d(TAG, "processDirectUrl", "SnifferExtractor returned link", 
+                    "url" to link.url.take(60))
+                callback(link)
+                foundVideo = true
             }
         }
     }
