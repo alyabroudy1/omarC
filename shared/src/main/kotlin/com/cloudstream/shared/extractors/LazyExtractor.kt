@@ -174,7 +174,26 @@ abstract class LazyExtractor : ExtractorApi() {
                 if (context != null) {
                     val sniffer = VideoSniffingStrategy(context, timeout = 30_000)
                     val userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-                    val sources = sniffer.sniff(embedUrl, userAgent)
+                    
+                    // Fetch existing session cookies for the embed domain via CookieManager
+                    val cookies = try {
+                        val cookieManager = android.webkit.CookieManager.getInstance()
+                        val cookieString = cookieManager.getCookie(embedUrl)
+                        if (!cookieString.isNullOrBlank()) {
+                            cookieString.split(";").associate { 
+                                val parts = it.split("=", limit = 2)
+                                (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+                            }.filterKeys { it.isNotEmpty() }
+                        } else emptyMap()
+                    } catch (e: Exception) {
+                        emptyMap()
+                    }
+                    
+                    ProviderLogger.d(TAG, "processVirtualUrl", "Passing cookies to sniffer", 
+                        "domain" to (java.net.URI(embedUrl).host ?: ""), 
+                        "count" to cookies.size)
+                    
+                    val sources = sniffer.sniff(embedUrl, userAgent, cookies)
                     
                     if (sources.isNotEmpty()) {
                         ProviderLogger.d(TAG, "processVirtualUrl", "VideoSniffer found ${sources.size} sources")
