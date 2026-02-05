@@ -45,6 +45,74 @@ class VideoSniffingStrategy(
     
     companion object {
         const val MIN_VIDEO_URL_LENGTH = 50
+        
+        val JS_SCRIPT = """
+        (function() {
+            var sourcesSent = false;
+            
+            function skipAds() {
+                try {
+                    document.querySelectorAll('video').forEach(function(v) {
+                        if (v.duration > 0 && v.duration < 30) {
+                            v.playbackRate = 16;
+                            v.muted = true;
+                            v.currentTime = v.duration - 0.5;
+                        }
+                    });
+                    
+                    ['.jw-skip', '.skip-button', '.skip-ad', '[class*="skip"]'].forEach(function(sel) {
+                        var btn = document.querySelector(sel);
+                        if (btn && btn.offsetParent) btn.click();
+                    });
+                } catch(e) {}
+            }
+            
+            function autoPlay() {
+                try {
+                    if (typeof jwplayer !== 'undefined') {
+                        var player = jwplayer();
+                        if (player) {
+                            if (player.setMute) player.setMute(true);
+                            if (player.play) player.play();
+                        }
+                    }
+                    
+                    document.querySelectorAll('video').forEach(function(v) {
+                        if (v.paused) { v.muted = true; v.play(); }
+                    });
+                } catch(e) {}
+            }
+            
+            function extractSources() {
+                if (sourcesSent) return;
+                try {
+                    if (typeof jwplayer !== 'undefined') {
+                        var player = jwplayer();
+                        if (player && player.getPlaylistItem) {
+                            var item = player.getPlaylistItem();
+                            if (item && item.sources && item.sources.length > 0) {
+                                var sources = [];
+                                item.sources.forEach(function(src) {
+                                    if (src.file && src.file.length > 40) {
+                                        sources.push({url: src.file, label: src.label || 'Auto'});
+                                    }
+                                });
+                                
+                                if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
+                                    sourcesSent = true;
+                                    SnifferBridge.onSourcesFound(JSON.stringify(sources));
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {}
+            }
+            
+            autoPlay();
+            skipAds();
+            setInterval(function() { autoPlay(); skipAds(); extractSources(); }, 1000);
+        })();
+    """.trimIndent()
     }
     
     /**
@@ -157,7 +225,7 @@ class VideoSniffingStrategy(
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                view?.evaluateJavascript(buildJsScript()) { }
+                view?.evaluateJavascript(JS_SCRIPT) { }
             }
         }
     }
@@ -207,73 +275,7 @@ class VideoSniffingStrategy(
         }
     }
     
-    private fun buildJsScript(): String = """
-        (function() {
-            var sourcesSent = false;
-            
-            function skipAds() {
-                try {
-                    document.querySelectorAll('video').forEach(function(v) {
-                        if (v.duration > 0 && v.duration < 30) {
-                            v.playbackRate = 16;
-                            v.muted = true;
-                            v.currentTime = v.duration - 0.5;
-                        }
-                    });
-                    
-                    ['.jw-skip', '.skip-button', '.skip-ad', '[class*="skip"]'].forEach(function(sel) {
-                        var btn = document.querySelector(sel);
-                        if (btn && btn.offsetParent) btn.click();
-                    });
-                } catch(e) {}
-            }
-            
-            function autoPlay() {
-                try {
-                    if (typeof jwplayer !== 'undefined') {
-                        var player = jwplayer();
-                        if (player) {
-                            if (player.setMute) player.setMute(true);
-                            if (player.play) player.play();
-                        }
-                    }
-                    
-                    document.querySelectorAll('video').forEach(function(v) {
-                        if (v.paused) { v.muted = true; v.play(); }
-                    });
-                } catch(e) {}
-            }
-            
-            function extractSources() {
-                if (sourcesSent) return;
-                try {
-                    if (typeof jwplayer !== 'undefined') {
-                        var player = jwplayer();
-                        if (player && player.getPlaylistItem) {
-                            var item = player.getPlaylistItem();
-                            if (item && item.sources && item.sources.length > 0) {
-                                var sources = [];
-                                item.sources.forEach(function(src) {
-                                    if (src.file && src.file.length > 40) {
-                                        sources.push({url: src.file, label: src.label || 'Auto'});
-                                    }
-                                });
-                                
-                                if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
-                                    sourcesSent = true;
-                                    SnifferBridge.onSourcesFound(JSON.stringify(sources));
-                                }
-                            }
-                        }
-                    }
-                } catch(e) {}
-            }
-            
-            autoPlay();
-            skipAds();
-            setInterval(function() { autoPlay(); skipAds(); extractSources(); }, 1000);
-        })();
-    """.trimIndent()
+
     
     inner class SnifferBridge {
         @JavascriptInterface

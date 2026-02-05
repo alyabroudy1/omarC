@@ -147,7 +147,7 @@ class ProviderHttpService private constructor(
                          url = url,
                          mode = WebViewEngine.Mode.FULLSCREEN,
                          userAgent = sessionState.userAgent,
-                         exitCondition = ExitCondition.PageLoaded,
+                         exitCondition = ExitCondition.PageLoaded, // Still PageLoaded for CF bypass
                          timeout = 120_000L
                      )
                      if (retry is WebViewResult.Success) {
@@ -159,6 +159,36 @@ class ProviderHttpService private constructor(
             else -> emptyList()
         }
         return sources.distinctBy { it.url }
+    }
+
+    suspend fun sniffVideosVisible(url: String): List<VideoSource> {
+        val result = webViewEngine.runSession(
+            url = url,
+            mode = WebViewEngine.Mode.FULLSCREEN,
+            userAgent = sessionState.userAgent,
+            exitCondition = ExitCondition.VideoFound(minCount = 1),
+            timeout = 60_000L
+        )
+
+        return when (result) {
+            is WebViewResult.Success -> {
+                 if (result.foundLinks.isNotEmpty()) {
+                     result.foundLinks.map { 
+                         VideoSource(it.url, it.qualityLabel, it.headers) 
+                     }
+                 } else {
+                     extractVideoSources(result.html)
+                 }
+            }
+            is WebViewResult.Timeout -> {
+                 // Return whatever we found so far? 
+                 // WebViewEngine currently doesn't return partial found links in Timeout.
+                 // We might need to update WebViewEngineResult.Timeout to include foundLinks too?
+                 // For now, assume empty.
+                 emptyList()
+            }
+            else -> emptyList()
+        }
     }
 
     private fun extractVideoSources(html: String): List<VideoSource> {

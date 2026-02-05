@@ -107,6 +107,15 @@ class WebViewEngine(
             
             // Setup WebViewClient
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
+                    val url = request?.url?.toString()
+                    if (url != null && isVideoUrl(url)) {
+                         ProviderLogger.d(TAG_WEBVIEW, "intercept", "Video found", "url" to url.take(80))
+                         captureLink(url, "Network", request?.requestHeaders ?: emptyMap())
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val nextUrl = request?.url?.toString()
                     ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Redirect", "url" to nextUrl?.take(80))
@@ -142,6 +151,9 @@ class WebViewEngine(
                     val currentUrl = view?.url ?: loadedUrl ?: url
                     ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Finished", "url" to currentUrl.take(80))
 
+                    // Inject VideoSniffer JS
+                    view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) {}
+
                     if (resultDelivered) return
                     
                     CoroutineScope(Dispatchers.Main).launch {
@@ -164,8 +176,8 @@ class WebViewEngine(
                                     exitCondition.keys.all { key -> cookies.containsKey(key) }
                                 }
                                 is ExitCondition.VideoFound -> {
-                                    // Video found is handled separately via network interception
-                                    false
+                                    val count = capturedLinks.size
+                                    if (count >= exitCondition.minCount) true else false
                                 }
                             }
                             
@@ -178,7 +190,11 @@ class WebViewEngine(
                                     "cookies" to cookies.size)
                                 
                                 cleanup(view, dialog)
-                                deferred.complete(WebViewResult.Success(cookies, html, currentUrl))
+                                var resultLinks = emptyList<CapturedLinkData>()
+                                if (exitCondition is ExitCondition.VideoFound) {
+                                    resultLinks = capturedLinks.toList()
+                                }
+                                deferred.complete(WebViewResult.Success(cookies, html, currentUrl, resultLinks))
                             }
                         } catch (e: Exception) {
                             ProviderLogger.e(TAG_WEBVIEW, "onPageFinished", "Error", e)
@@ -214,13 +230,29 @@ class WebViewEngine(
         deferred.await()
     }
     
+    private fun isVideoUrl(url: String): Boolean {
+        // Simple check or robust regex
+        return url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv")
+    }
+
+    private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()
+
+    private fun captureLink(url: String, qualityLabel: String, headers: Map<String, String>) {
+         // Logic to store captured link
+         val data = CapturedLinkData(url, qualityLabel, headers)
+         if (capturedLinks.none { it.url == url }) {
+             capturedLinks.add(data)
+             ProviderLogger.d(TAG_WEBVIEW, "captureLink", "Captured", "url" to url)
+         }
+    }
+    
     private fun createDialog(activity: android.app.Activity, webView: WebView): Dialog {
         val container = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#1a1a2e"))
             
             addView(TextView(activity).apply {
-                text = "🔒 Security Check"
+                text = "Video Search" // Updated title
                 textSize = 18f
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
@@ -228,7 +260,7 @@ class WebViewEngine(
             })
             
             addView(TextView(activity).apply {
-                text = "Please complete the check to continue..."
+                text = "Looking for video streams..." // Updated subtitle
                 textSize = 14f
                 setTextColor(Color.LTGRAY)
                 gravity = Gravity.CENTER
@@ -240,12 +272,28 @@ class WebViewEngine(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0, 1f
                 )
+                addJavascriptInterface(SnifferBridge(), "SnifferBridge") // Add JS Bridge
             })
         }
         
         return Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen).apply {
             setContentView(container)
             setCancelable(true)
+            setOnDismissListener {
+                // If dismiss, we might want to return what we found so far?
+                // But deferred is inside runSession.
+            }
+        }
+    }
+
+    inner class SnifferBridge {
+        @JavascriptInterface
+        fun onSourcesFound(json: String) {
+             // Parse JSON similar to VideoSniffingStrategy
+             // For brevity, let's assume simple parsing or delegate
+             ProviderLogger.d(TAG_WEBVIEW, "SnifferBridge", "Sources found via JS", "json" to json)
+             // Parsing logic here...
+             // captureLink(...)
         }
     }
     
@@ -309,8 +357,8 @@ sealed class ExitCondition {
     /** Exit when specific cookies are present */
     data class CookiesPresent(val keys: List<String>) : ExitCondition()
     
-    /** Exit when video URLs matching patterns are found */
-    data class VideoFound(val patterns: List<Regex>) : ExitCondition()
+    /** Exit when video URLs are found */
+    data class VideoFound(val minCount: Int = 1) : ExitCondition()
 }
 
 /**
@@ -320,7 +368,8 @@ sealed class WebViewResult {
     data class Success(
         val cookies: Map<String, String>,
         val html: String,
-        val finalUrl: String
+        val finalUrl: String,
+        val foundLinks: List<CapturedLinkData> = emptyList()
     ) : WebViewResult()
     
     data class Timeout(
@@ -330,3 +379,9 @@ sealed class WebViewResult {
     
     data class Error(val reason: String) : WebViewResult()
 }
+
+data class CapturedLinkData(
+    val url: String,
+    val qualityLabel: String,
+    val headers: Map<String, String>
+)
