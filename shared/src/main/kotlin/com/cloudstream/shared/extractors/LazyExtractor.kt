@@ -115,22 +115,29 @@ abstract class LazyExtractor : ExtractorApi() {
         
         // ===== FALLBACK TO CLOUDSTREAM EXTRACTORS =====
         if (!foundVideo) {
-            ProviderLogger.d(TAG, "processVirtualUrl", "Calling loadExtractor with 15s timeout", 
+            ProviderLogger.d(TAG, "processVirtualUrl", "Calling tryLoadExtractor with 15s timeout", 
                 "embedUrl" to embedUrl.take(80),
                 "referer" to (pageReferer.take(60).ifBlank { "EMPTY" }))
             
             try {
-                kotlinx.coroutines.withTimeoutOrNull(15_000) {
-                    loadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
+                // Use tryLoadExtractor to catch 403s
+                val result = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                    tryLoadExtractor(embedUrl, pageReferer, subtitleCallback) { link ->
                         ProviderLogger.d(TAG, "processVirtualUrl", "loadExtractor returned link",
                             "source" to link.source,
                             "url" to link.url.take(60))
                         callback(link)
                         foundVideo = true
                     }
-                } ?: ProviderLogger.w(TAG, "processVirtualUrl", "loadExtractor timed out after 15s")
+                }
+                
+                if (result == null) {
+                    ProviderLogger.w(TAG, "processVirtualUrl", "loadExtractor timed out after 15s")
+                } else if (!result && !foundVideo) {
+                    ProviderLogger.d(TAG, "processVirtualUrl", "tryLoadExtractor returned false (possibly 403), skipping to fallbacks")
+                }
             } catch (e: Exception) {
-                ProviderLogger.e(TAG, "processVirtualUrl", "loadExtractor failed", e)
+                ProviderLogger.e(TAG, "processVirtualUrl", "tryLoadExtractor failed", e)
             }
         }
         
@@ -357,5 +364,56 @@ abstract class LazyExtractor : ExtractorApi() {
     
     protected fun getQueryParam(url: String, key: String): String? {
         return Regex("""[?&]$key=([^&]+)""").find(url)?.groupValues?.get(1)
+    }
+    
+    /**
+     * Custom loadExtractor that catches 403/Forbidden errors.
+     * Returns true if an extractor was found and executed (even if it failed).
+     * Returns false if no extractor matched OR if it caught a 403 (to trigger fallback).
+     */
+    protected suspend fun tryLoadExtractor(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val currentUrl = unshortenLinkSafe(url)
+        val compareUrl = currentUrl.lowercase().replace(schemaStripRegex, "")
+        
+        // Iterate extractors (reversed as per original logic)
+        for (index in extractorApis.lastIndex downTo 0) {
+            val extractor = extractorApis[index]
+            if (compareUrl.startsWith(extractor.mainUrl.replace(schemaStripRegex, ""))) {
+                try {
+                    ProviderLogger.d(TAG, "tryLoadExtractor", "Trying extractor", "name" to extractor.name)
+                    extractor.getUrl(currentUrl, referer, subtitleCallback, callback)
+                    return true
+                } catch (e: Exception) {
+                    // Check for 403 or similar "Forbidden" errors
+                    val msg = e.message?.lowercase() ?: ""
+                    if (msg.contains("403") || msg.contains("forbidden")) {
+                        ProviderLogger.e(TAG, "tryLoadExtractor", "Caught 403 Forbidden from ${extractor.name} - triggering immediate fallback")
+                        return false // Return FALSE to indicate "pretend we didn't handle it so we fallback"
+                    }
+                    ProviderLogger.e(TAG, "tryLoadExtractor", "Extractor ${extractor.name} failed", e)
+                    return true // Handled, just failed
+                }
+            }
+        }
+        
+        // Fuzzy match loop
+        for (index in extractorApis.lastIndex downTo 0) {
+            val extractor = extractorApis[index]
+            try {
+                // We use simple contains check or reimplement fuzzy if possible, 
+                // but since we lack fuzzywuzzy, we skip fuzzy matching or use simple startsWith/contains
+                if (url.contains(extractor.mainUrl.replace(schemaStripRegex, "")) || 
+                    extractor.mainUrl.contains(url.replace(schemaStripRegex, ""))) {
+                     // Simple fallback check
+                }
+            } catch (e: Exception) {}
+        }
+        
+        return false
     }
 }
