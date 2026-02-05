@@ -45,7 +45,26 @@ abstract class LazyExtractor : ExtractorApi() {
     ) {
         ProviderLogger.d(TAG, "getUrl", "Processing", "url" to url.take(80))
         
-        // Parse virtual URL parameters
+        // Check if this is a virtual URL or a direct URL
+        if (url.contains(serverEndpoint)) {
+            // Virtual URL path - parse parameters and fetch embed URL
+            processVirtualUrl(url, referer, subtitleCallback, callback)
+        } else {
+            // Direct URL path - pass directly to extractors
+            processDirectUrl(url, referer, subtitleCallback, callback)
+        }
+    }
+    
+    /**
+     * Process virtual URLs (e.g., /get__watch__server/?post_id=...).
+     * Makes POST request, parses JSON, decodes Base64 if needed.
+     */
+    protected open suspend fun processVirtualUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
         val postId = getQueryParam(url, "post_id") ?: return
         val quality = getQueryParam(url, "quality") ?: "720"
         val server = getQueryParam(url, "server") ?: "0"
@@ -57,17 +76,17 @@ abstract class LazyExtractor : ExtractorApi() {
         
         val baseUrl = url.substringBefore(serverEndpoint)
         
-        ProviderLogger.d(TAG, "getUrl", "Params parsed",
+        ProviderLogger.d(TAG, "processVirtualUrl", "Params parsed",
             "postId" to postId, "quality" to quality, "server" to server)
         
-        // Fetch embed URL
+        // Fetch embed URL via POST
         val embedUrl = fetchEmbedUrl(baseUrl, postId, quality, server, csrfToken, pageReferer)
         if (embedUrl.isBlank()) {
-            ProviderLogger.e(TAG, "getUrl", "Failed to get embed URL")
+            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL")
             return
         }
         
-        ProviderLogger.d(TAG, "getUrl", "Got embed URL", "url" to embedUrl.take(80))
+        ProviderLogger.d(TAG, "processVirtualUrl", "Got embed URL", "url" to embedUrl.take(80))
         
         // Try global extractors
         var foundVideo = false
@@ -78,7 +97,7 @@ abstract class LazyExtractor : ExtractorApi() {
         
         // Manual extraction fallback
         if (!foundVideo) {
-            ProviderLogger.d(TAG, "getUrl", "Trying manual extraction")
+            ProviderLogger.d(TAG, "processVirtualUrl", "Trying manual extraction")
             val directUrl = extractDirectVideoUrl(embedUrl)
             if (directUrl.isNotBlank()) {
                 callback(
@@ -90,6 +109,45 @@ abstract class LazyExtractor : ExtractorApi() {
                     ) {
                         this.referer = embedUrl
                         this.quality = quality.toIntOrNull() ?: 0
+                    }
+                )
+            }
+        }
+    }
+    
+    /**
+     * Process direct URLs (e.g., https://reviewrate.net/...).
+     * Passes directly to CloudStream extractors.
+     */
+    protected open suspend fun processDirectUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        ProviderLogger.d(TAG, "processDirectUrl", "Passing to extractors", "url" to url.take(80))
+        
+        // Try global extractors first
+        var foundVideo = false
+        loadExtractor(url, referer ?: "", subtitleCallback) { link ->
+            callback(link)
+            foundVideo = true
+        }
+        
+        // Manual extraction fallback
+        if (!foundVideo) {
+            ProviderLogger.d(TAG, "processDirectUrl", "Trying manual extraction")
+            val directUrl = extractDirectVideoUrl(url)
+            if (directUrl.isNotBlank()) {
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = directUrl,
+                        type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = url
+                        this.quality = Qualities.Unknown.value
                     }
                 )
             }

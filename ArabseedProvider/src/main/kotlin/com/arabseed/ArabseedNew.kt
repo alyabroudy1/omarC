@@ -179,24 +179,16 @@ class ArabseedV2 : MainAPI() {
         
         // 3. Dynamic Quality Extraction
         val availableQualities = parser.extractQualities(watchDoc)
-        val postId = parser.extractPostId(watchDoc) ?: ""
+        val globalPostId = parser.extractPostId(watchDoc) ?: ""
         val csrfToken = parser.extractCsrfToken(doc) ?: ""
         
         Log.d(name, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
-        Log.d(name, "[loadLinks] PostID: $postId, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
-        
-        if (postId.isBlank()) {
-            Log.e(name, "CRITICAL: PostID is MISSING. Dumping HTML for debugging:")
-            // Dump full HTML in chunks to avoid logcat truncation
-            watchDoc.html().chunked(3500).forEachIndexed { i, chunk ->
-                Log.e(name, "HTML_DUMP_P$i: $chunk")
-            }
-        }
+        Log.d(name, "[loadLinks] GlobalPostID: ${if(globalPostId.isNotBlank()) globalPostId else "MISSING"}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
         var found = false
         
         // ==================== DIRECT EMBEDS (PRIORITY 0) ====================
-        // Process this BEFORE Checking PostID/CSRF to ensure it runs even if AJAX logic fails
+        // Process this FIRST - always runs regardless of postId/csrf
         val directEmbeds = parser.extractDirectEmbeds(watchDoc)
         Log.i(name, "[loadLinks] Found ${directEmbeds.size} direct embeds - Processing FIRST")
         
@@ -205,78 +197,109 @@ class ArabseedV2 : MainAPI() {
         directEmbeds.forEachIndexed { i, embedUrl ->
             Log.i(name, "[loadLinks] Processing Direct Embed #${i+1}: $embedUrl")
             
-            // Custom handling for ReviewRate/Arabseed embeds - Clean Lazy Approach
-            if (embedUrl.contains("reviewrate")) {
-                callback(
-                    newExtractorLink(
-                        name,
-                        "$name Direct",
-                        embedUrl,
-                        ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = watchDoc.location()
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-            } else {
-                // Try global extractors as well (Standard behavior)
-                loadExtractor(embedUrl, watchDoc.location(), subtitleCallback, callback)
-            }
+            // Emit directly - let extractors handle it
+            callback(
+                newExtractorLink(
+                    name,
+                    "$name Direct",
+                    embedUrl,
+                    ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = watchDoc.location()
+                    this.quality = Qualities.Unknown.value
+                }
+            )
         }
         
         Log.i(name, "[loadLinks] Finished Direct Embeds, now processing Servers...")
         
-        // ==================== LAZY SERVER LINKS ====================
-        if (postId.isNotBlank() && csrfToken.isNotBlank()) {
-            val servers = mutableListOf<ArabseedParser.ServerData>()
+        // ==================== SERVER LINKS ====================
+        // ALWAYS extract servers - they have their own postId in data-post
+        val servers = parser.extractVisibleServers(watchDoc)
+        Log.d(name, "[loadLinks] Visible servers: ${servers.size}")
+        
+        if (servers.isNotEmpty()) found = true
+        
+        val currentBaseUrl = try {
+            val uri = java.net.URI(watchDoc.location())
+            "${uri.scheme}://${uri.host}"
+        } catch (e: Exception) {
+            "https://${httpService.currentDomain}"
+        }
+        val encodedReferer = java.net.URLEncoder.encode(watchDoc.location(), "UTF-8")
+        
+        servers.forEach { server ->
+            // Use server's own postId (from data-post), fallback to global
+            val serverPostId = server.postId.ifBlank { globalPostId }
             
-            // 1. Extract Visible Servers
-            servers.addAll(parser.extractVisibleServers(watchDoc))
-            Log.d(name, "[loadLinks] Visible servers: ${servers.size}")
-            
-            // 2. Add placeholder logic for missing qualities (Lazy fallback)
-            val processedQualities = servers.map { it.quality }.toSet()
-            val qualitiesToGenerate = availableQualities.filter { it.quality !in processedQualities }
-            
-            if (qualitiesToGenerate.isNotEmpty()) {
-                Log.d(name, "[loadLinks] Generating placeholder links for: ${qualitiesToGenerate.map { it.quality }}")
-                qualitiesToGenerate.forEach { qData ->
-                    servers.add(ArabseedParser.ServerData(
-                        title = "Server 1",
-                        quality = qData.quality,
-                        postId = postId,
-                        serverId = "0"
-                    ))
-                }
-            }
-            
-            // 3. Emit Lazy Links for All Servers
-            servers.forEach { server ->
-                val encodedReferer = java.net.URLEncoder.encode(watchDoc.location(), "UTF-8")
-                val currentBaseUrl = try {
-                    val uri = java.net.URI(watchDoc.location())
-                    "${uri.scheme}://${uri.host}"
-                } catch (e: Exception) {
-                    "https://${httpService.currentDomain}"
-                }
+            if (serverPostId.isNotBlank() && csrfToken.isNotBlank()) {
+                // Normal path: Build virtual URL for lazy extraction
+                val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$serverPostId&quality=${server.quality}&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
                 
-                val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=${server.quality}&server=${server.serverId}&csrf_token=$csrfToken&referer=$encodedReferer"
-                
+                Log.d(name, "[loadLinks] Emitting lazy link: ${server.quality}p via virtual URL")
                 callback(
                     newExtractorLink(
                         name,
-                        "${server.title} (${server.quality}p)",
+                        "${server.title.ifBlank { "Server" }} (${server.quality}p)",
                         virtualUrl,
                         ExtractorLinkType.VIDEO
                     ) {
                         this.quality = server.quality
                     }
                 )
+            } else if (server.dataLink.isNotBlank()) {
+                // Fallback: Use data-link directly (decode if needed)
+                var directUrl = server.dataLink
+                
+                // Handle /play.php?id=BASE64 format
+                if (directUrl.contains("id=")) {
+                    val param = directUrl.substringAfter("id=").substringBefore("&")
+                    try {
+                        val decoded = String(android.util.Base64.decode(param, android.util.Base64.DEFAULT))
+                        if (decoded.startsWith("http")) {
+                            directUrl = decoded
+                        }
+                    } catch (e: Exception) { /* use as-is */ }
+                }
+                
+                Log.d(name, "[loadLinks] Emitting fallback link: ${server.quality}p via data-link: ${directUrl.take(60)}")
+                callback(
+                    newExtractorLink(
+                        name,
+                        "${server.title.ifBlank { "Server" }} (${server.quality}p)",
+                        directUrl,
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = watchDoc.location()
+                        this.quality = server.quality
+                    }
+                )
+            } else {
+                Log.w(name, "[loadLinks] Server ${server.quality}p has no postId and no data-link, skipping")
             }
+        }
+        
+        // Add placeholder links for missing qualities (only if we have csrf)
+        if (csrfToken.isNotBlank()) {
+            val processedQualities = servers.map { it.quality }.toSet()
+            val qualitiesToGenerate = availableQualities.filter { it.quality !in processedQualities }
             
-            if (servers.isNotEmpty()) found = true
-        } else {
-            Log.w(name, "[loadLinks] PostID or CSRF missing, skipping dynamic extraction.")
+            if (qualitiesToGenerate.isNotEmpty() && globalPostId.isNotBlank()) {
+                Log.d(name, "[loadLinks] Generating placeholder links for: ${qualitiesToGenerate.map { it.quality }}")
+                qualitiesToGenerate.forEach { qData ->
+                    val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$globalPostId&quality=${qData.quality}&server=0&csrf_token=$csrfToken&referer=$encodedReferer"
+                    callback(
+                        newExtractorLink(
+                            name,
+                            "Server (${qData.quality}p)",
+                            virtualUrl,
+                            ExtractorLinkType.VIDEO
+                        ) {
+                            this.quality = qData.quality
+                        }
+                    )
+                }
+            }
         }
         
         Log.d(name, "[loadLinks] END found=$found")

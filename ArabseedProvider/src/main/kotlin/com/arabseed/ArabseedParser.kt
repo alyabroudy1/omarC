@@ -460,7 +460,13 @@ class ArabseedParser : BaseParser() {
         return qualities.sortedByDescending { it.quality }
     }
 
-    data class ServerData(val postId: String, val quality: Int, val serverId: String, val title: String)
+    data class ServerData(
+        val postId: String, 
+        val quality: Int, 
+        val serverId: String, 
+        val title: String,
+        val dataLink: String = ""  // Fallback direct URL from data-link attribute
+    )
 
     fun extractVisibleServers(doc: Document): List<ServerData> {
         val servers = mutableListOf<ServerData>()
@@ -470,9 +476,10 @@ class ArabseedParser : BaseParser() {
             val serverId = li.attr("data-server")
             val quality = li.attr("data-qu").toIntOrNull() ?: 0
             val title = li.select("span").text()
+            val dataLink = li.attr("data-link")  // Direct link fallback
             
             if (serverId.isNotBlank() && quality > 0) {
-                servers.add(ServerData(postId, quality, serverId, title))
+                servers.add(ServerData(postId, quality, serverId, title, dataLink))
             }
         }
         return servers
