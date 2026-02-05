@@ -217,9 +217,21 @@ abstract class LazyExtractor : ExtractorApi() {
                                         else -> Qualities.Unknown.value
                                     }
                                     // CRITICAL: Pass the same User-Agent used by WebView to the player
-                                    this.headers = source.headers + mapOf(
+                                    val uaHeaders = if (userAgent.contains("Chrome")) {
+                                        mapOf(
+                                            "Sec-Ch-Ua" to "\"Google Chrome\";v=\"123\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"123\"",
+                                            "Sec-Ch-Ua-Mobile" to "?1",
+                                            "Sec-Ch-Ua-Platform" to "\"Android\""
+                                        )
+                                    } else emptyMap()
+
+                                    this.headers = source.headers + uaHeaders + mapOf(
                                         "Referer" to embedUrl,
-                                        "User-Agent" to userAgent
+                                        "User-Agent" to userAgent,
+                                        "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
+                                        "Sec-Fetch-Site" to "cross-site",
+                                        "Sec-Fetch-Mode" to "navigate",
+                                        "Priority" to "u=1"
                                     )
                                 }
                             )

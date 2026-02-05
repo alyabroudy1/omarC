@@ -298,6 +298,20 @@ class VideoSniffingStrategy(
         }
     }
     
+    private fun getCookieHeaders(url: String): Map<String, String> {
+        return try {
+            val cookieManager = CookieManager.getInstance()
+            val cookiesRaw = cookieManager.getCookie(url)
+            if (!cookiesRaw.isNullOrBlank()) {
+                 mapOf("Cookie" to cookiesRaw)
+            } else {
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
     private fun parseSourcesJson(json: String): List<VideoSource> {
         val sources = mutableListOf<VideoSource>()
         try {
@@ -310,7 +324,9 @@ class VideoSniffingStrategy(
                 
                 if (url.length > MIN_VIDEO_URL_LENGTH) {
                     val type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    sources.add(VideoSource(url, label, emptyMap(), type))
+                    // FIX: Capture cookies for JS sources too
+                    val headers = getCookieHeaders(url)
+                    sources.add(VideoSource(url, label, headers, type))
                 }
             }
         } catch (e: Exception) {
