@@ -185,6 +185,14 @@ class ArabseedV2 : MainAPI() {
         Log.d(name, "[loadLinks] Found qualities: ${availableQualities.map { it.quality }}")
         Log.d(name, "[loadLinks] PostID: $postId, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
+        if (postId.isBlank()) {
+            Log.e(name, "CRITICAL: PostID is MISSING. Dumping HTML for debugging:")
+            // Dump full HTML in chunks to avoid logcat truncation
+            watchDoc.html().chunked(3500).forEachIndexed { i, chunk ->
+                Log.e(name, "HTML_DUMP_P$i: $chunk")
+            }
+        }
+        
         var found = false
         
         // ==================== DIRECT EMBEDS (PRIORITY 0) ====================
