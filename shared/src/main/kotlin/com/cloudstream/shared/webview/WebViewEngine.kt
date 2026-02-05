@@ -266,7 +266,8 @@ class WebViewEngine(
     
     private fun isVideoUrl(url: String): Boolean {
         // Simple check or robust regex
-        return url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv")
+        return url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv") || 
+               url.contains(".urls") || url.contains(".urlset") || url.contains("/master.m3u8")
     }
 
     private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()

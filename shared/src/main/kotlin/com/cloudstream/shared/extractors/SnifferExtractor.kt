@@ -139,10 +139,17 @@ class SnifferExtractor : ExtractorApi() {
                                 !key.equals("Transfer-Encoding", ignoreCase = true)
                             }
 
+                            // CAPTURE COOKIES: Crucial for savefiles.com and similar protected servers
+                            val cookieHeader = try {
+                                android.webkit.CookieManager.getInstance().getCookie(source.url)
+                            } catch (e: Exception) {
+                                null
+                            }
+
                             this.headers = filteredHeaders + mapOf(
                                 "Referer" to embedUrl,
                                 "User-Agent" to snifferUserAgent
-                            )
+                            ) + (cookieHeader?.let { mapOf("Cookie" to it) } ?: emptyMap())
                         }
                     )
                 }

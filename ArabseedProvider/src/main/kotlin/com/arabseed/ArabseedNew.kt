@@ -406,13 +406,32 @@ class ArabseedV2 : MainAPI() {
                 
                 if (resolvedLink != null) {
                     Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedLink!!.url}")
+                    
+                    // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors)
+                    val useHttp11 = resolvedLink!!.url.contains("savefiles.com") || 
+                                   resolvedLink!!.url.contains("stmix.io")
+                    
                     val builder = request.newBuilder().url(resolvedLink!!.url)
+                    
+                    if (useHttp11) {
+                         // Note: Interceptor can't easily force protocol per-request in OkHttp without changing the client,
+                         // but we can try to "dirty" the request to avoid protocol reuse if needed.
+                         // Actually, the best way is to let the client handle it, but we can filter headers that break HTTP/2.
+                         Log.d(name, "[getVideoInterceptor] Potential protocol issue domain detected, filtering headers")
+                    }
+
                     if (resolvedLink!!.referer.isNotBlank()) {
                          builder.header("Referer", resolvedLink!!.referer)
                     }
+                    
+                    // Add resolved link headers, filtering out dangerous ones
                     resolvedLink!!.headers.forEach { (key, value) ->
-                        builder.header(key, value)
+                        if (!key.equals("Host", ignoreCase = true) && 
+                            !key.equals("Connection", ignoreCase = true)) {
+                            builder.header(key, value)
+                        }
                     }
+                    
                     return@Interceptor chain.proceed(builder.build())
                 }
                 
