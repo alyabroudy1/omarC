@@ -6,44 +6,36 @@ import java.util.concurrent.TimeUnit
 
 buildscript {
     repositories {
+        // Jitpack MUST be first for CloudStream gradle plugin
+        maven("https://jitpack.io")
         google()
         mavenCentral()
-        // Shitpack repo which contains our tools and dependencies
-        maven("https://jitpack.io") {
-            // FIX: Add cache control for SNAPSHOT dependencies
-            content {
-                includeGroup("com.github.recloudstream")
-            }
-        }
     }
     
-    // FIX: Add dependency resolution strategy with retry logic
-    configurations.classpath {
-        resolutionStrategy {
-            // Cache dynamic versions for 10 minutes
-            cacheDynamicVersionsFor(10, TimeUnit.MINUTES)
-            // Cache changing modules for 10 minutes  
-            cacheChangingModulesFor(10, TimeUnit.MINUTES)
-            // Retry on network failure
-            failOnVersionConflict()
-        }
-    }
-
     dependencies {
         classpath("com.android.tools.build:gradle:8.7.3")
-        // Cloudstream gradle plugin which makes everything work and builds plugins
-        // FIX: Pin to specific commit to avoid SNAPSHOT resolution failures
-        // Latest stable as of 2026-02-06: cce1b8d84d (or use a tagged version)
-        classpath("com.github.recloudstream:gradle:cce1b8d84d")
+        // Cloudstream gradle plugin - using SNAPSHOT with caching
+        classpath("com.github.recloudstream:gradle:-SNAPSHOT")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
+    }
+    
+    // FIX: Resolve aapt2-proto version conflict
+    configurations.classpath {
+        resolutionStrategy {
+            // Force consistent versions
+            force("com.android.tools.build:aapt2-proto:8.7.3-12006047")
+            // Cache dynamic versions
+            cacheDynamicVersionsFor(5, TimeUnit.MINUTES)
+            cacheChangingModulesFor(5, TimeUnit.MINUTES)
+        }
     }
 }
 
 allprojects {
     repositories {
+        maven("https://jitpack.io")
         google()
         mavenCentral()
-        maven("https://jitpack.io")
     }
 }
 
@@ -111,4 +103,4 @@ subprojects {
 
 task<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
-} 
+}

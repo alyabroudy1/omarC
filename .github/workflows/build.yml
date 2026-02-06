@@ -18,6 +18,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # FIX: Disable Gradle daemon and configure JVM settings
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Xmx4g -XX:MaxMetaspaceSize=512m"
+  # Force consistent Java version
+  JAVA_TOOL_OPTIONS: "-Xmx4g"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,19 +47,10 @@ jobs:
         with:
           java-version: 17
           distribution: 'temurin'
+          cache: 'gradle'  # Use built-in Gradle cache
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Cache Gradle dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
 
       - name: Build Plugins
         id: build
@@ -61,21 +58,23 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make makePluginsJson --no-daemon
+          ./gradlew make makePluginsJson --no-daemon --stacktrace
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
       # FIX: Retry build if first attempt fails (SNAPSHOT resolution issue)
-      - name: Build Plugins (Retry with refresh)
+      - name: Build Plugins (Retry)
         if: steps.build.outcome == 'failure'
         run: |
           cd $GITHUB_WORKSPACE/src
-          echo "First build failed, retrying with --refresh-dependencies..."
-          ./gradlew make makePluginsJson --no-daemon --refresh-dependencies
+          echo "First build failed, cleaning and retrying..."
+          ./gradlew clean --no-daemon
+          ./gradlew make makePluginsJson --no-daemon --refresh-dependencies --stacktrace
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
       - name: Push builds
+        if: always()  # Push even if build partially succeeded
         run: |
           cd $GITHUB_WORKSPACE/builds
           git config --local user.email "actions@github.com"

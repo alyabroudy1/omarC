@@ -13,6 +13,7 @@ import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
 import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionStore
+import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.WebViewEngine
@@ -68,6 +69,9 @@ class ProviderHttpService private constructor(
             sessionState = SessionState.initial(config.fallbackDomain)
         }
         
+        // CRITICAL: Sync to SessionProvider so ALL components use same UA/cookies
+        SessionProvider.initialize(sessionState)
+        
         domainManager.ensureInitialized()
         val remoteDomain = domainManager.currentDomain
         if (remoteDomain != sessionState.domain) {
@@ -79,6 +83,9 @@ class ProviderHttpService private constructor(
     private fun updateCookies(cookies: Map<String, String>, fromWebView: Boolean) {
         sessionState = sessionState.withCookies(cookies, fromWebView)
         sessionStore.save(sessionState)
+        
+        // CRITICAL: Update SessionProvider so SnifferExtractor gets same cookies
+        SessionProvider.update(sessionState)
         
         // Also update cookie manager for domain
         if (cookies.isNotEmpty()) {

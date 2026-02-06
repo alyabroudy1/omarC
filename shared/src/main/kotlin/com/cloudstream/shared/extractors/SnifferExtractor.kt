@@ -2,6 +2,7 @@ package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.WebViewEngine
 import com.cloudstream.shared.webview.WebViewResult
@@ -90,8 +91,12 @@ class SnifferExtractor : ExtractorApi() {
             WebViewEngine { ActivityProvider.currentActivity }
         }
         
-        val snifferUserAgent = userAgent 
-            ?: "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+        // CRITICAL: Use SessionProvider to get the SAME UA used for CF challenge
+        // This ensures cookies are valid for this UA
+        val snifferUserAgent = SessionProvider.getUserAgent()
+        ProviderLogger.d(TAG, "getUrl", "Using SessionProvider UA",
+            "uaHash" to snifferUserAgent.hashCode(),
+            "hasSession" to SessionProvider.hasValidSession())
         
         ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
         
@@ -153,18 +158,42 @@ class SnifferExtractor : ExtractorApi() {
                         !key.equals("Transfer-Encoding", ignoreCase = true)
                     }.toMutableMap()
 
-                    // CAPTURE COOKIES: Crucial for savefiles.com and similar protected servers
-                    // Try multiple times to get cookies with delays
-                    var cookieHeader: String? = null
-                    for (i in 0..3) {
-                        try {
-                            cookieHeader = android.webkit.CookieManager.getInstance().getCookie(source.url)
-                            if (!cookieHeader.isNullOrBlank()) break
-                            kotlinx.coroutines.delay(50)
-                        } catch (e: Exception) {
-                            break
+                    // CAPTURE COOKIES: From BOTH WebView AND SessionProvider
+                    // This ensures we have cf_clearance from main domain + video domain cookies
+                    val webViewCookies = try {
+                        android.webkit.CookieManager.getInstance().getCookie(source.url)
+                    } catch (e: Exception) { null }
+                    
+                    // Get cookies from SessionProvider (includes cf_clearance from CF solve)
+                    val sessionCookies = SessionProvider.buildCookieHeader()
+                    
+                    // Merge cookies - SessionProvider cookies take precedence
+                    val mergedCookies = mutableMapOf<String, String>()
+                    
+                    // Parse WebView cookies
+                    webViewCookies?.split(";")?.forEach { cookie ->
+                        val trimmed = cookie.trim()
+                        if (trimmed.isNotBlank()) {
+                            val key = trimmed.substringBefore("=")
+                            val value = trimmed.substringAfter("=", "")
+                            mergedCookies[key] = value
                         }
                     }
+                    
+                    // Override with SessionProvider cookies (ensures cf_clearance is correct)
+                    SessionProvider.getCookies().forEach { (key, value) ->
+                        mergedCookies[key] = value
+                    }
+                    
+                    // Build cookie header
+                    val cookieHeader = if (mergedCookies.isNotEmpty()) {
+                        mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                    } else null
+                    
+                    ProviderLogger.d(TAG, "getUrl", "Cookies merged",
+                        "webViewCookies" to (webViewCookies?.length ?: 0),
+                        "sessionCookies" to SessionProvider.getCookies().size,
+                        "mergedCookies" to mergedCookies.size)
                     
                     // Build headers map - CRITICAL: Must include all necessary headers
                     val finalHeaders = mutableMapOf<String, String>()
@@ -175,13 +204,15 @@ class SnifferExtractor : ExtractorApi() {
                     // Always add Referer - CRITICAL for 403 prevention
                     finalHeaders["Referer"] = embedUrl
                     
-                    // Always add User-Agent
+                    // Always add User-Agent - MUST match CF challenge UA
                     finalHeaders["User-Agent"] = snifferUserAgent
                     
-                    // Add cookies if available - CRITICAL for 403 prevention
+                    // Add merged cookies - CRITICAL for 403 prevention
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
-                        ProviderLogger.d(TAG, "getUrl", "Added cookies to headers", "cookiesLen" to cookieHeader.length)
+                        ProviderLogger.d(TAG, "getUrl", "Added merged cookies", 
+                            "cookiesLen" to cookieHeader.length,
+                            "hasCfClearance" to mergedCookies.containsKey("cf_clearance"))
                     }
                     
                     // Accept header for video
