@@ -55,16 +55,24 @@ abstract class LazyExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        ProviderLogger.d(TAG, "getUrl", "Processing", "url" to url.take(80))
+        ProviderLogger.i(TAG, "getUrl", "=== START ===", 
+            "url" to url.take(80),
+            "referer" to (referer?.take(60) ?: "null"),
+            "isVirtual" to url.contains(serverEndpoint),
+            "userAgentHash" to (userAgent?.hashCode()?.toString() ?: "null"))
         
         // Check if this is a virtual URL or a direct URL
         if (url.contains(serverEndpoint)) {
             // Virtual URL path - parse parameters and fetch embed URL
+            ProviderLogger.d(TAG, "getUrl", "Routing to processVirtualUrl (virtual URL detected)")
             processVirtualUrl(url, referer, subtitleCallback, callback)
         } else {
             // Direct URL path - pass directly to extractors
+            ProviderLogger.d(TAG, "getUrl", "Routing to processDirectUrl (direct URL detected)")
             processDirectUrl(url, referer, subtitleCallback, callback)
         }
+        
+        ProviderLogger.i(TAG, "getUrl", "=== END ===")
     }
     
     /**
@@ -77,7 +85,12 @@ abstract class LazyExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val postId = getQueryParam(url, "post_id") ?: return
+        ProviderLogger.i(TAG, "processVirtualUrl", "=== START ===", "url" to url.take(80))
+        
+        val postId = getQueryParam(url, "post_id") ?: run {
+            ProviderLogger.e(TAG, "processVirtualUrl", "Missing post_id parameter")
+            return
+        }
         val quality = getQueryParam(url, "quality") ?: "720"
         val server = getQueryParam(url, "server") ?: "0"
         val csrfToken = getQueryParam(url, "csrf_token") ?: ""
@@ -90,17 +103,24 @@ abstract class LazyExtractor : ExtractorApi() {
         
         val baseUrl = url.substringBefore(serverEndpoint)
         
-        ProviderLogger.d(TAG, "processVirtualUrl", "Params parsed",
-            "postId" to postId, "quality" to quality, "server" to server)
+        ProviderLogger.d(TAG, "processVirtualUrl", "Parameters parsed",
+            "postId" to postId, 
+            "quality" to quality, 
+            "server" to server,
+            "baseUrl" to baseUrl,
+            "pageReferer" to pageReferer.take(60))
         
         // Fetch embed URL via POST
+        ProviderLogger.d(TAG, "processVirtualUrl", "Fetching embed URL from server...")
         val embedUrl = fetchEmbedUrl(baseUrl, postId, quality, server, csrfToken, pageReferer)
         if (embedUrl.isBlank()) {
-            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL")
+            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL - aborting")
             return
         }
         
-        ProviderLogger.d(TAG, "processVirtualUrl", "Got embed URL", "url" to embedUrl.take(80))
+        ProviderLogger.i(TAG, "processVirtualUrl", "Got embed URL", 
+            "embedUrl" to embedUrl.take(80),
+            "domain" to embedUrl.substringAfter("https://").substringBefore("/"))
         
         var foundVideo = false
         

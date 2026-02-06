@@ -108,9 +108,13 @@ class SnifferExtractor : ExtractorApi() {
             timeout = 60_000L
         )
         
+        var callbackCount = 0
+        var totalFound = 0
+        
         when (result) {
             is WebViewResult.Success -> {
-                ProviderLogger.d(TAG, "getUrl", "Found ${result.foundLinks.size} video sources")
+                totalFound = result.foundLinks.size
+                ProviderLogger.d(TAG, "getUrl", "Found $totalFound video sources")
                 
                 // BUGFIX: Flush cookies from WebView to ensure they're available
                 try {
@@ -245,7 +249,10 @@ class SnifferExtractor : ExtractorApi() {
                         }
                     )
                     
-                    ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback invoked successfully")
+                    callbackCount++
+                    ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback #$callbackCount invoked successfully",
+                        "url" to source.url.take(60),
+                        "type" to linkType.name)
                 }
             }
             is WebViewResult.Timeout -> {
@@ -255,6 +262,10 @@ class SnifferExtractor : ExtractorApi() {
                 ProviderLogger.e(TAG, "getUrl", "WebViewEngine error: ${result.reason}")
             }
         }
+        
+        ProviderLogger.i(TAG, "getUrl", "=== END ===", 
+            "totalFound" to totalFound,
+            "successfulCallbacks" to callbackCount)
     }
     
     /**

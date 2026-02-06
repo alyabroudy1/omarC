@@ -208,29 +208,26 @@ class ArabseedV2 : MainAPI() {
         // Sort qualities from highest to lowest
         val sortedQualities = availableQualities.sortedByDescending { it.quality }
         
+        Log.i(name, "[loadLinks] Processing ${sortedQualities.size} qualities, ${visibleServers.size} visible servers")
+        
         sortedQualities.forEach { qData ->
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Build virtual URLs (need AJAX to fetch servers)
+                // NON-DEFAULT QUALITY: Build virtual URLs and pass to loadExtractor
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual)")
-                        callback(
-                            newExtractorLink(
-                                name,
-                                "سيرفر $serverId (${quality}p)",
-                                virtualUrl,
-                                ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/" // Use domain root as referer
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via loadExtractor")
+                        // CRITICAL FIX: Use loadExtractor instead of callback() directly
+                        // This allows LazyExtractor to resolve the URL and return proper ExtractorLink
+                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d(name, "[loadLinks] LazyExtractor resolved server $serverId: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     }
                 } else {
                     Log.w(name, "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
@@ -239,37 +236,23 @@ class ArabseedV2 : MainAPI() {
                 // DEFAULT QUALITY: Use visible servers with data-link (already fetched)
                 visibleServers.forEachIndexed { idx, server ->
                     if (server.dataLink.isNotBlank()) {
-                        // Emit the data-link URL - LazyExtractor will decode Base64 if needed
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server ${idx+1} (data-link): ${server.dataLink.take(50)}")
-                        callback(
-                            newExtractorLink(
-                                name,
-                                "${server.title.ifBlank { "سيرفر ${idx+1}" }} (${quality}p)",
-                                server.dataLink,
-                                ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/"
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        // Process data-link URL via loadExtractor
+                        Log.d(name, "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
+                        loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d(name, "[loadLinks] LazyExtractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                         // Fallback to virtual URL if no data-link
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server ${server.serverId} (virtual fallback)")
-                        callback(
-                            newExtractorLink(
-                                name,
-                                "${server.title.ifBlank { "سيرفر ${server.serverId}" }} (${quality}p)",
-                                virtualUrl,
-                                ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/" // Use domain root as referer
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        Log.d(name, "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual fallback) via loadExtractor")
+                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d(name, "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     }
                 }
             }
@@ -282,18 +265,12 @@ class ArabseedV2 : MainAPI() {
             
             directEmbeds.forEachIndexed { i, embedUrl ->
                 Log.i(name, "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
-                callback(
-                    newExtractorLink(
-                        name,
-                        "$name Direct",
-                        embedUrl,
-                        ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$currentBaseUrl/"
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                found = true
+                // Use loadExtractor for direct embeds too - allows proper extraction
+                loadExtractor(embedUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                    Log.d(name, "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
+                    callback(link)
+                    found = true
+                }
             }
         }
         
@@ -351,130 +328,20 @@ class ArabseedV2 : MainAPI() {
         }
     }
     /**
-     * Intercepts and resolves lazy video links on-the-fly.
-     * Uses LazyExtractor to handle decoding and sniffer fallback.
+     * INTERCEPTOR DISABLED - Using proper extractor flow instead.
+     * 
+     * Old approach: Used interceptor to resolve URLs during playback (BROKEN)
+     * New approach: loadLinks() calls loadExtractor() which triggers LazyExtractor
+     *               to resolve URLs BEFORE ExoPlayer starts
+     * 
+     * This fixes:
+     * 1. MediaHTTPConnection vs OkHttp mismatch
+     * 2. URL resolution timing (too late before)
+     * 3. ExtractorLink type detection (M3U8 vs VIDEO)
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val url = extractorLink.url
-        
-        // ONLY intercept actual virtual or embed URLs that need resolution
-        val needsResolution = url.contains("/get__watch__server/") || 
-                             url.contains("reviewrate") ||
-                             url.contains("/play.php") ||
-                             url.contains("/play/?id=")
-        
-        if (needsResolution) {
-            return Interceptor { chain ->
-                val request = chain.request()
-                val urlString = request.url.toString()
-                
-                Log.d(name, "[getVideoInterceptor] Resolving: ${urlString.take(80)}")
-                
-                var resolvedLink: ExtractorLink? = null
-                
-                try {
-                    // Use LazyExtractor for EVERYTHING - it now handles decoding, extraction, and VideoSniffer fallback
-                    val extractor = ArabseedLazyExtractor(
-                        fetcher = { targetUrl, data, referer ->
-                             // Bridge to HttpService post - using runBlocking safely here since we are in interceptor thread
-                             try {
-                                  val headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                                  httpService.post(targetUrl, data, referer = referer, headers = headers)?.outerHtml()
-                             } catch (e: Exception) {
-                                  Log.e(name, "[ArabseedLazyExtractor] Fetch failed: ${e.message}")
-                                  null
-                             }
-                        },
-                        engine = httpService.engine
-                    )
-                    
-                    kotlinx.coroutines.runBlocking {
-                        // Pass URL to extractor (LazyExtractor handles routing to Virtual vs Direct)
-                        
-                        // CRITICAL: Sync session state (UA + Cookies) to extractor properties
-                        extractor.userAgent = httpService.userAgent
-                        extractor.sessionCookies = httpService.cookies
-                        
-                        // Pass referer from the extractor link so LazyExtractor has the correct one
-                        extractor.getUrl(urlString, extractorLink.referer, {}) { link ->
-                            resolvedLink = link
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(name, "[getVideoInterceptor] Resolution error: ${e.message}")
-                }
-                
-                if (resolvedLink != null) {
-                    val resolvedUrl = resolvedLink!!.url
-                    Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedUrl.take(80)}")
-                    Log.d(name, "[getVideoInterceptor] Headers count: ${resolvedLink!!.headers.size}, keys: ${resolvedLink!!.headers.keys.joinToString()}")
-                    
-                    // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors like "invalid stream 1")
-                    // These domains often have misconfigured HTTP/2 or don't like Host header changes mid-stream.
-                    // CRITICAL FIX: Added s3.savefiles.com and other CDN subdomains that serve actual video content
-                    val forceHttp11 = resolvedUrl.contains("savefiles.com") || 
-                                     resolvedUrl.contains("stmix.io") ||
-                                     resolvedUrl.contains("vidmoly") ||
-                                     resolvedUrl.contains("s3.savefiles.com") ||
-                                     resolvedUrl.contains("hls2") ||
-                                     resolvedUrl.contains("vidara.to") ||
-                                     resolvedUrl.contains("up4fun.top") ||
-                                     resolvedUrl.contains("up4stream.com") ||
-                                     resolvedUrl.contains("reviewrate.net")
-                    
-                    val builder = request.newBuilder().url(resolvedUrl)
-                    
-                    // CRITICAL: Add ALL headers from resolvedLink first
-                    // Then override with specific values if needed
-                    val headersToAdd = mutableMapOf<String, String>()
-                    
-                    // First add all headers from the resolved link
-                    resolvedLink!!.headers.forEach { (key, value) ->
-                        if (!key.equals("Host", ignoreCase = true) && 
-                            !key.equals("Connection", ignoreCase = true) &&
-                            !key.equals("TE", ignoreCase = true) &&
-                            !key.equals("Upgrade", ignoreCase = true)) {
-                            headersToAdd[key] = value
-                        }
-                    }
-                    
-                    // Override with explicit referer if present (it takes priority)
-                    if (resolvedLink!!.referer.isNotBlank()) {
-                        headersToAdd["Referer"] = resolvedLink!!.referer
-                    }
-                    
-                    // Apply all headers to builder
-                    headersToAdd.forEach { (key, value) ->
-                        builder.header(key, value)
-                        Log.d(name, "[getVideoInterceptor] Header: $key = ${if (key.equals("Cookie", ignoreCase = true)) "[${value.length} chars]" else value.take(40)}")
-                    }
-                    
-                    val finalRequest = builder.build()
-                    
-                    if (forceHttp11) {
-                        Log.d(name, "[getVideoInterceptor] Forcing HTTP/1.1 for domain: ${resolvedUrl.take(40)}")
-                        // Use app.baseClient which is the standard CloudStream OkHttpClient
-                        val http11Client = com.lagradost.cloudstream3.app.baseClient.newBuilder()
-                            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                            .build()
-                        // Execute directly and return the response, bypassing the rest of this chain
-                        return@Interceptor http11Client.newCall(finalRequest).execute()
-                    }
-
-                    return@Interceptor chain.proceed(finalRequest)
-                }
-                
-                // BUGFIX: Return 404 error instead of original URL to trigger proper fallback
-                Log.e(name, "[getVideoInterceptor] Video extraction failed, returning 404")
-                return@Interceptor okhttp3.Response.Builder()
-                    .request(request)
-                    .protocol(okhttp3.Protocol.HTTP_1_1)
-                    .code(404)
-                    .message("Video extraction failed - no resolution found")
-                    .body(okhttp3.ResponseBody.create(null, ""))
-                    .build()
-            }
-        }
+        // DISABLED - We now use proper extractor flow via loadExtractor() in loadLinks()
+        Log.d(name, "[getVideoInterceptor] DISABLED - Using extractor flow instead")
         return null
     }
 }
