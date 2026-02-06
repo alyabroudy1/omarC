@@ -15,6 +15,8 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
 import com.arabseed.extractors.ArabseedLazyExtractor
+import kotlinx.coroutines.*
+import kotlin.coroutines.resume
 
 /**
  * Arabseed V4 - Ported to Plugin Architecture.
@@ -263,11 +265,10 @@ class ArabseedV2 : MainAPI() {
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     // OPTIMIZATION: Stop after finding first working server for this quality
-                    var qualityFound = false
                     for (serverId in 1..5) {
-                        if (qualityFound) {
-                            Log.d(name, "[loadLinks] Skipping ${quality}p server $serverId - already found working link for this quality")
-                            continue
+                        if (found) {
+                            Log.d(name, "[loadLinks] Skipping ${quality}p server $serverId - already found working link")
+                            break  // Exit loop completely
                         }
                         
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
@@ -275,11 +276,24 @@ class ArabseedV2 : MainAPI() {
                         Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via LazyExtractor with http.postText")
                         
                         // Use LazyExtractor directly to resolve virtual URL
+                        // Use CompletableDeferred to wait for async result
+                        val linkFound = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                        
                         extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
                             Log.d(name, "[loadLinks] LazyExtractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
-                            qualityFound = true  // Mark that we found a working link for this quality
+                            linkFound.complete(true)
+                        }
+                        
+                        // Wait for extraction with timeout
+                        val foundResult = withTimeoutOrNull(30_000) { linkFound.await() } ?: false
+                        
+                        if (foundResult) {
+                            Log.d(name, "[loadLinks] Found working link for ${quality}p, stopping server loop")
+                            break  // Exit loop after finding first working server
+                        } else {
+                            Log.d(name, "[loadLinks] ${quality}p server $serverId did not return valid link, trying next...")
                         }
                     }
                 } else {
