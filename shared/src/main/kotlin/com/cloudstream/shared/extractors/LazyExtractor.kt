@@ -122,11 +122,9 @@ abstract class LazyExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "processVirtualUrl", "Fetching embed URL from server...")
         val embedUrl = fetchEmbedUrl(baseUrl, postId, quality, server, csrfToken, pageReferer)
         if (embedUrl.isBlank()) {
-            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL - aborting. Will try fallback extractors if available.")
-            // Don't return here - try to use the original URL with extractors as fallback
-            ProviderLogger.d(TAG, "processVirtualUrl", "Attempting fallback: treating virtual URL as direct embed")
-            // Try to extract directly from the virtual URL pattern
-            processDirectUrl(url, referer, subtitleCallback, callback)
+            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL - aborting")
+            // CRITICAL: Do NOT call processDirectUrl here - it creates infinite loop
+            // because processDirectUrl calls loadExtractor which routes back to getUrl
             return
         }
         
