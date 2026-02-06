@@ -45,11 +45,33 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: Build Plugins
+        id: build
+        continue-on-error: true
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make makePluginsJson
+          ./gradlew make makePluginsJson --no-daemon
+          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
+          cp build/plugins.json $GITHUB_WORKSPACE/builds
+
+      # FIX: Retry build if first attempt fails (SNAPSHOT resolution issue)
+      - name: Build Plugins (Retry with refresh)
+        if: steps.build.outcome == 'failure'
+        run: |
+          cd $GITHUB_WORKSPACE/src
+          echo "First build failed, retrying with --refresh-dependencies..."
+          ./gradlew make makePluginsJson --no-daemon --refresh-dependencies
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 

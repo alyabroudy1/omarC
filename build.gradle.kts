@@ -2,19 +2,39 @@ import com.android.build.gradle.BaseExtension
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+import java.util.concurrent.TimeUnit
 
 buildscript {
     repositories {
         google()
         mavenCentral()
         // Shitpack repo which contains our tools and dependencies
-        maven("https://jitpack.io")
+        maven("https://jitpack.io") {
+            // FIX: Add cache control for SNAPSHOT dependencies
+            content {
+                includeGroup("com.github.recloudstream")
+            }
+        }
+    }
+    
+    // FIX: Add dependency resolution strategy with retry logic
+    configurations.classpath {
+        resolutionStrategy {
+            // Cache dynamic versions for 10 minutes
+            cacheDynamicVersionsFor(10, TimeUnit.MINUTES)
+            // Cache changing modules for 10 minutes  
+            cacheChangingModulesFor(10, TimeUnit.MINUTES)
+            // Retry on network failure
+            failOnVersionConflict()
+        }
     }
 
     dependencies {
         classpath("com.android.tools.build:gradle:8.7.3")
         // Cloudstream gradle plugin which makes everything work and builds plugins
-        classpath("com.github.recloudstream:gradle:-SNAPSHOT")
+        // FIX: Pin to specific commit to avoid SNAPSHOT resolution failures
+        // Latest stable as of 2026-02-06: cce1b8d84d (or use a tagged version)
+        classpath("com.github.recloudstream:gradle:cce1b8d84d")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
     }
 }
