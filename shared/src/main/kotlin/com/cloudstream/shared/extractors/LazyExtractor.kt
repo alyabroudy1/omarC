@@ -335,8 +335,9 @@ abstract class LazyExtractor : ExtractorApi() {
                 put("Referer", referer)
                 put("X-Requested-With", "XMLHttpRequest")
                 put("Content-Type", "application/x-www-form-urlencoded")
-                put("Accept", "application/json, text/javascript, */*")
+                put("Accept", "application/json, text/javascript, */*;q=0.01")
                 put("Accept-Language", "en-US,en;q=0.9")
+                put("Accept-Encoding", "gzip, deflate, br")
                 
                 // Add User-Agent from SessionProvider (critical for Cloudflare)
                 val ua = SessionProvider.getUserAgent()
@@ -347,10 +348,25 @@ abstract class LazyExtractor : ExtractorApi() {
                 val cookies = SessionProvider.buildCookieHeader()
                 if (!cookies.isNullOrBlank()) {
                     put("Cookie", cookies)
-                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added session cookies", "cookieLen" to cookies.length)
+                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added session cookies", "cookieLen" to cookies.length, "hasCfClearance" to cookies.contains("cf_clearance"))
                 } else {
                     ProviderLogger.w(TAG, "fetchEmbedUrl", "No session cookies available!")
                 }
+                
+                // CRITICAL: Add Origin header for Cloudflare
+                val origin = referer.substringBeforeLast("/")
+                if (origin.startsWith("http")) {
+                    put("Origin", origin)
+                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added Origin header", "origin" to origin)
+                }
+                
+                // Cloudflare security headers
+                put("sec-ch-ua", """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"""")
+                put("sec-ch-ua-mobile", "?1")
+                put("sec-ch-ua-platform", "Android")
+                put("Sec-Fetch-Dest", "empty")
+                put("Sec-Fetch-Mode", "cors")
+                put("Sec-Fetch-Site", "same-origin")
             }
             
             // Use delegated fetcher if available
