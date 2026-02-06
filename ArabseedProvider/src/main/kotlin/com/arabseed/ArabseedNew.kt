@@ -217,18 +217,21 @@ class ArabseedV2 : MainAPI() {
                 // NON-DEFAULT QUALITY: Build virtual URLs and resolve via LazyExtractor with http.postText
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     // Create LazyExtractor with fetcher that uses httpService.postDebug (has CF session!)
+                    // CRITICAL: Pass RELATIVE PATH only (e.g., "/get__watch__server/"), NOT full URL!
+                    // The ProviderHttpService.buildUrl() will construct the full URL with proper domain
                     val extractor = ArabseedLazyExtractor(
                         fetcher = { endpoint, data, referer ->
-                            // Use full URL if endpoint is relative
-                            val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
-                            Log.d(name, "[LazyExtractor.fetcher] POST to: ${fullUrl.take(60)}")
+                            // endpoint is already the relative path "/get__watch__server/"
+                            // DO NOT construct full URL - let ProviderHttpService.handle it!
+                            Log.d(name, "[LazyExtractor.fetcher] POST to endpoint: $endpoint")
                             Log.d(name, "[LazyExtractor.fetcher] POST data: $data")
                             
                             kotlinx.coroutines.runBlocking {
                                 try {
                                     // Use postDebug to get full response details
+                                    // Pass endpoint directly (relative path), NOT full URL!
                                     val result = httpService.postDebug(
-                                        url = fullUrl,
+                                        url = endpoint,  // <-- RELATIVE PATH! "/get__watch__server/"
                                         data = data,
                                         referer = referer,
                                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
@@ -289,13 +292,13 @@ class ArabseedV2 : MainAPI() {
                         // Fallback to virtual URL if no data-link - resolve via LazyExtractor
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        // Create LazyExtractor with fetcher for this server (DEBUG version)
+                        // Create LazyExtractor with fetcher for this server
+                        // CRITICAL: Pass RELATIVE PATH only to let ProviderHttpService build the URL!
                         val extractor = ArabseedLazyExtractor(
                             fetcher = { endpoint, data, referer ->
-                                val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
                                 kotlinx.coroutines.runBlocking {
                                     val result = httpService.postDebug(
-                                        url = fullUrl,
+                                        url = endpoint,  // <-- RELATIVE PATH! "/get__watch__server/"
                                         data = data,
                                         referer = referer,
                                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
