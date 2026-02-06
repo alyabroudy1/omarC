@@ -214,27 +214,37 @@ class ArabseedV2 : MainAPI() {
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Build virtual URLs and emit directly (interceptor will resolve)
+                // NON-DEFAULT QUALITY: Build virtual URLs and resolve via LazyExtractor with http.postText
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
+                    // Create LazyExtractor with fetcher that uses httpService.postText (has CF session!)
+                    val extractor = ArabseedLazyExtractor(
+                        fetcher = { endpoint, data, referer ->
+                            // Use full URL if endpoint is relative
+                            val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
+                            Log.d(name, "[LazyExtractor.fetcher] POST to: ${fullUrl.take(60)}")
+                            kotlinx.coroutines.runBlocking {
+                                httpService.postText(
+                                    url = fullUrl,
+                                    data = data,
+                                    referer = referer,
+                                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                                )
+                            }
+                        }
+                    )
+                    
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for interceptor)")
-                        // CRITICAL: Emit virtual URL directly with type=VIDEO
-                        // The getVideoInterceptor will resolve it when ExoPlayer tries to play
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "Server $serverId (${quality}p)",
-                                url = virtualUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/"
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via LazyExtractor with http.postText")
+                        
+                        // Use LazyExtractor directly to resolve virtual URL
+                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d(name, "[loadLinks] LazyExtractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     }
                 } else {
                     Log.w(name, "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
@@ -251,22 +261,30 @@ class ArabseedV2 : MainAPI() {
                             found = true
                         }
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                        // Fallback to virtual URL if no data-link - emit directly for interceptor
+                        // Fallback to virtual URL if no data-link - resolve via LazyExtractor
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server ${server.serverId} (virtual URL for interceptor)")
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "${server.title} (${quality}p)",
-                                url = virtualUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/"
-                                this.quality = quality
+                        // Create LazyExtractor with fetcher for this server
+                        val extractor = ArabseedLazyExtractor(
+                            fetcher = { endpoint, data, referer ->
+                                val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
+                                kotlinx.coroutines.runBlocking {
+                                    httpService.postText(
+                                        url = fullUrl,
+                                        data = data,
+                                        referer = referer,
+                                        headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                                    )
+                                }
                             }
                         )
-                        found = true
+                        
+                        Log.d(name, "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via LazyExtractor")
+                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d(name, "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     }
                 }
             }
