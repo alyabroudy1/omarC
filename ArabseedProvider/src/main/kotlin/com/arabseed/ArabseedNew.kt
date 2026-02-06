@@ -328,20 +328,110 @@ class ArabseedV2 : MainAPI() {
         }
     }
     /**
-     * INTERCEPTOR DISABLED - Using proper extractor flow instead.
+     * CRITICAL: Interceptor to resolve virtual URLs via POST using ProviderHttpService.
      * 
-     * Old approach: Used interceptor to resolve URLs during playback (BROKEN)
-     * New approach: loadLinks() calls loadExtractor() which triggers LazyExtractor
-     *               to resolve URLs BEFORE ExoPlayer starts
+     * This solves the 403 error by using httpService.postText() which includes:
+     * - Cloudflare session cookies (cf_clearance)
+     * - Proper User-Agent
+     * - All necessary headers from the solved session
      * 
-     * This fixes:
-     * 1. MediaHTTPConnection vs OkHttp mismatch
-     * 2. URL resolution timing (too late before)
-     * 3. ExtractorLink type detection (M3U8 vs VIDEO)
+     * The virtual URLs (1080p, 720p) need this because they require POST to /get__watch__server/
+     * which is protected by Cloudflare.
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        // DISABLED - We now use proper extractor flow via loadExtractor() in loadLinks()
-        Log.d(name, "[getVideoInterceptor] DISABLED - Using extractor flow instead")
+        val url = extractorLink.url
+        
+        // Only intercept virtual URLs that need resolution
+        if (url.contains("/get__watch__server/")) {
+            return Interceptor { chain ->
+                val request = chain.request()
+                val urlString = request.url.toString()
+                
+                Log.d(name, "[getVideoInterceptor] Resolving virtual URL: ${urlString.take(80)}")
+                
+                var resolvedUrl: String? = null
+                
+                try {
+                    kotlinx.coroutines.runBlocking {
+                        // Parse parameters from virtual URL
+                        val postId = getQueryParam(urlString, "post_id") ?: return@runBlocking
+                        val quality = getQueryParam(urlString, "quality") ?: "720"
+                        val server = getQueryParam(urlString, "server") ?: "0"
+                        val csrfToken = getQueryParam(urlString, "csrf_token") ?: ""
+                        val rawReferer = getQueryParam(urlString, "referer")
+                        val referer = rawReferer?.let { 
+                            java.net.URLDecoder.decode(it, "UTF-8") 
+                        } ?: extractorLink.referer ?: ""
+                        
+                        // CRITICAL: Use httpService.postText() which has CF session cookies!
+                        val data = mapOf(
+                            "post_id" to postId,
+                            "quality" to quality,
+                            "server" to server,
+                            "csrf_token" to csrfToken
+                        )
+                        
+                        Log.d(name, "[getVideoInterceptor] POST to /get__watch__server/ with data: $data")
+                        Log.d(name, "[getVideoInterceptor] Referer: ${referer.take(60)}")
+                        
+                        val jsonResponse = httpService.postText(
+                            url = "/get__watch__server/",
+                            data = data,
+                            referer = referer,
+                            headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                        )
+                        
+                        if (!jsonResponse.isNullOrBlank()) {
+                            // Parse JSON response to get embed URL
+                            resolvedUrl = parseEmbedUrlFromJson(jsonResponse)
+                            Log.i(name, "[getVideoInterceptor] Resolved to: ${resolvedUrl?.take(60)}")
+                        } else {
+                            Log.e(name, "[getVideoInterceptor] Empty response from POST")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(name, "[getVideoInterceptor] Error: ${e.message}")
+                    e.printStackTrace()
+                }
+                
+                if (!resolvedUrl.isNullOrBlank()) {
+                    // Return resolved URL to ExoPlayer
+                    Log.i(name, "[getVideoInterceptor] Proceeding with resolved URL")
+                    return@Interceptor chain.proceed(
+                        request.newBuilder()
+                            .url(resolvedUrl!!)
+                            .header("Referer", urlString)
+                            .build()
+                    )
+                }
+                
+                // If resolution failed, proceed with original request (will likely fail with 403)
+                Log.w(name, "[getVideoInterceptor] Resolution failed, proceeding with original URL")
+                chain.proceed(request)
+            }
+        }
+        
         return null
+    }
+    
+    private fun getQueryParam(url: String, key: String): String? {
+        return Regex("[?&]$key=([^&]+)").find(url)?.groupValues?.get(1)
+    }
+    
+    private fun parseEmbedUrlFromJson(json: String): String? {
+        return try {
+            when {
+                json.contains("\"embed_url\"") -> {
+                    Regex("\"embed_url\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1)?.replace("\\/", "/")
+                }
+                json.contains("\"server\"") -> {
+                    Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1)?.replace("\\/", "/")
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            Log.e(name, "[parseEmbedUrlFromJson] Error: ${e.message}")
+            null
+        }
     }
 }
