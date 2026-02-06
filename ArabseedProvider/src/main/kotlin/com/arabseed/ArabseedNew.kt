@@ -411,9 +411,16 @@ class ArabseedV2 : MainAPI() {
                     
                     // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors like "invalid stream 1")
                     // These domains often have misconfigured HTTP/2 or don't like Host header changes mid-stream.
+                    // CRITICAL FIX: Added s3.savefiles.com and other CDN subdomains that serve actual video content
                     val forceHttp11 = resolvedUrl.contains("savefiles.com") || 
                                      resolvedUrl.contains("stmix.io") ||
-                                     resolvedUrl.contains("vidmoly")
+                                     resolvedUrl.contains("vidmoly") ||
+                                     resolvedUrl.contains("s3.savefiles.com") ||
+                                     resolvedUrl.contains("hls2") ||
+                                     resolvedUrl.contains("vidara.to") ||
+                                     resolvedUrl.contains("up4fun.top") ||
+                                     resolvedUrl.contains("up4stream.com") ||
+                                     resolvedUrl.contains("reviewrate.net")
                     
                     val builder = request.newBuilder().url(resolvedUrl)
                     

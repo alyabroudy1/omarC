@@ -229,24 +229,22 @@ class SnifferExtractor : ExtractorApi() {
     /**
      * Check if a URL appears to be truncated/incomplete.
      * This detects URLs that were cut off during processing.
+     * 
+     * FIX: Relaxed validation to allow valid HLS URLs that have unconventional naming
      */
     private fun isUrlTruncated(url: String): Boolean {
         // Check for obvious truncation patterns
         return when {
-            // URL ends with a dash (e.g., "index-" instead of "index-v1-a1.m3u8")
-            url.endsWith("-") -> true
-            // URL ends with ".urls" instead of ".urlset/master.m3u8"
-            url.endsWith(".urls") -> true
-            // URL ends with incomplete file extension
+            // URL ends with incomplete file extension (just a dot)
             url.endsWith(".") -> true
-            // URL contains ".." (double dots, often a truncation artifact)
-            url.contains("..") -> true
-            // M3U8 URL without .m3u8 extension
-            (url.contains("/index-") || url.contains("/master")) && !url.contains(".m3u8") -> true
-            // URLset URL without proper suffix
-            url.contains(".urlset") && !url.contains("/master.m3u8") && !url.contains("/index-") -> true
-            // URL is suspiciously short for a video URL
-            url.length < 60 -> true
+            // URL contains ".." (double dots, often a truncation artifact) - but not "..."
+            url.contains("..") && !url.contains("...") -> true
+            // URL is suspiciously short for a video URL (< 40 chars is definitely too short)
+            url.length < 40 -> true
+            // URL ends with just a dash AND doesn't contain hls or urlset patterns
+            url.endsWith("-") && !url.contains("hls") && !url.contains("urlset") -> true
+            // URLset URL without proper suffix AND no index path
+            url.contains(".urlset") && !url.contains("/master") && !url.contains("/index-") && url.length < 80 -> true
             else -> false
         }
     }
