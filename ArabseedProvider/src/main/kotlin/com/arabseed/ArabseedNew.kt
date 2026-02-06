@@ -262,7 +262,14 @@ class ArabseedV2 : MainAPI() {
                     )
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
+                    // OPTIMIZATION: Stop after finding first working server for this quality
+                    var qualityFound = false
                     for (serverId in 1..5) {
+                        if (qualityFound) {
+                            Log.d(name, "[loadLinks] Skipping ${quality}p server $serverId - already found working link for this quality")
+                            continue
+                        }
+                        
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
                         Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via LazyExtractor with http.postText")
@@ -272,6 +279,7 @@ class ArabseedV2 : MainAPI() {
                             Log.d(name, "[loadLinks] LazyExtractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
+                            qualityFound = true  // Mark that we found a working link for this quality
                         }
                     }
                 } else {
