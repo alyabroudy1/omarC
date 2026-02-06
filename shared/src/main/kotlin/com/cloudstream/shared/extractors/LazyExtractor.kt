@@ -1,10 +1,10 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.WebViewEngine
 import com.cloudstream.shared.webview.WebViewEngine.Mode
-import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -55,11 +55,18 @@ abstract class LazyExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        // CRITICAL FIX: Always use SessionProvider for consistent UA/cookies
+        // Ignore the userAgent property - it's not reliably set
+        val effectiveUserAgent = SessionProvider.getUserAgent()
+        val hasSession = SessionProvider.hasValidSession()
+        
         ProviderLogger.i(TAG, "getUrl", "=== START ===", 
             "url" to url.take(80),
             "referer" to (referer?.take(60) ?: "null"),
             "isVirtual" to url.contains(serverEndpoint),
-            "userAgentHash" to (userAgent?.hashCode()?.toString() ?: "null"))
+            "uaHash" to effectiveUserAgent.hashCode(),
+            "hasSession" to hasSession,
+            "sessionCookieCount" to SessionProvider.getCookies().size)
         
         // Check if this is a virtual URL or a direct URL
         if (url.contains(serverEndpoint)) {
@@ -108,13 +115,18 @@ abstract class LazyExtractor : ExtractorApi() {
             "quality" to quality, 
             "server" to server,
             "baseUrl" to baseUrl,
-            "pageReferer" to pageReferer.take(60))
+            "pageReferer" to pageReferer.take(60),
+            "sessionAvailable" to SessionProvider.hasValidSession())
         
         // Fetch embed URL via POST
         ProviderLogger.d(TAG, "processVirtualUrl", "Fetching embed URL from server...")
         val embedUrl = fetchEmbedUrl(baseUrl, postId, quality, server, csrfToken, pageReferer)
         if (embedUrl.isBlank()) {
-            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL - aborting")
+            ProviderLogger.e(TAG, "processVirtualUrl", "Failed to get embed URL - aborting. Will try fallback extractors if available.")
+            // Don't return here - try to use the original URL with extractors as fallback
+            ProviderLogger.d(TAG, "processVirtualUrl", "Attempting fallback: treating virtual URL as direct embed")
+            // Try to extract directly from the virtual URL pattern
+            processDirectUrl(url, referer, subtitleCallback, callback)
             return
         }
         
@@ -294,6 +306,7 @@ abstract class LazyExtractor : ExtractorApi() {
     
     /**
      * Fetch embed URL from server endpoint.
+     * CRITICAL FIX: Added detailed error logging and proper Cloudflare headers
      */
     protected open suspend fun fetchEmbedUrl(
         baseUrl: String,
@@ -303,6 +316,14 @@ abstract class LazyExtractor : ExtractorApi() {
         csrfToken: String,
         referer: String
     ): String {
+        ProviderLogger.i(TAG, "fetchEmbedUrl", "=== START ===",
+            "baseUrl" to baseUrl,
+            "postId" to postId,
+            "quality" to quality,
+            "server" to server,
+            "csrfToken" to csrfToken.take(20),
+            "hasSession" to SessionProvider.hasValidSession())
+        
         try {
             val data = mapOf(
                 "post_id" to postId,
@@ -311,30 +332,81 @@ abstract class LazyExtractor : ExtractorApi() {
                 "csrf_token" to csrfToken
             )
             
+            // CRITICAL: Build headers with session cookies and User-Agent
+            val headers = buildMap {
+                put("Referer", referer)
+                put("X-Requested-With", "XMLHttpRequest")
+                put("Content-Type", "application/x-www-form-urlencoded")
+                put("Accept", "application/json, text/javascript, */*")
+                put("Accept-Language", "en-US,en;q=0.9")
+                
+                // Add User-Agent from SessionProvider (critical for Cloudflare)
+                val ua = SessionProvider.getUserAgent()
+                put("User-Agent", ua)
+                ProviderLogger.d(TAG, "fetchEmbedUrl", "Using UA from SessionProvider", "uaHash" to ua.hashCode())
+                
+                // Add cookies from SessionProvider (critical for cf_clearance)
+                val cookies = SessionProvider.buildCookieHeader()
+                if (!cookies.isNullOrBlank()) {
+                    put("Cookie", cookies)
+                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added session cookies", "cookieLen" to cookies.length)
+                } else {
+                    ProviderLogger.w(TAG, "fetchEmbedUrl", "No session cookies available!")
+                }
+            }
+            
             // Use delegated fetcher if available
             jsonFetcher?.let { fetcher ->
                 ProviderLogger.d(TAG, "fetchEmbedUrl", "Using delegated fetcher")
                 val json = fetcher.invoke(serverEndpoint, data, referer)
                 if (!json.isNullOrBlank()) {
+                    ProviderLogger.i(TAG, "fetchEmbedUrl", "Delegated fetcher success")
                     return parseEmbedUrlFromJson(json)
                 }
+                ProviderLogger.w(TAG, "fetchEmbedUrl", "Delegated fetcher returned empty")
                 return ""
             }
             
             // Fallback to app.post
             val endpoint = "$baseUrl$serverEndpoint"
+            ProviderLogger.d(TAG, "fetchEmbedUrl", "Making POST request", "endpoint" to endpoint)
+            
             val response = app.post(
                 endpoint,
-                headers = mapOf(
-                    "Referer" to referer,
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Content-Type" to "application/x-www-form-urlencoded"
-                ),
+                headers = headers,
                 data = data
             )
-            return parseEmbedUrlFromJson(response.text)
+            
+            ProviderLogger.d(TAG, "fetchEmbedUrl", "POST response received",
+                "statusCode" to response.code,
+                "contentLength" to response.text.length)
+            
+            // Log response if it looks like an error
+            if (response.code != 200) {
+                ProviderLogger.e(TAG, "fetchEmbedUrl", "HTTP error status=${response.code}",
+                    params = arrayOf("response" to response.text.take(200)))
+                return ""
+            }
+            
+            // Check if response contains expected fields
+            if (!response.text.contains("embed_url") && !response.text.contains("server")) {
+                ProviderLogger.w(TAG, "fetchEmbedUrl", "Response missing expected fields",
+                    "response" to response.text.take(200))
+            }
+            
+            val embedUrl = parseEmbedUrlFromJson(response.text)
+            if (embedUrl.isBlank()) {
+                ProviderLogger.e(TAG, "fetchEmbedUrl", "Failed to parse embed URL from response",
+                    params = arrayOf("response" to response.text.take(200)))
+            } else {
+                ProviderLogger.i(TAG, "fetchEmbedUrl", "=== SUCCESS ===", "embedUrl" to embedUrl.take(60))
+            }
+            
+            return embedUrl
+            
         } catch (e: Exception) {
-            ProviderLogger.e(TAG, "fetchEmbedUrl", "Error", e)
+            ProviderLogger.e(TAG, "fetchEmbedUrl", "=== ERROR ===", e,
+                *arrayOf("errorType" to e.javaClass.simpleName, "errorMessage" to (e.message ?: "null")))
             return ""
         }
     }
