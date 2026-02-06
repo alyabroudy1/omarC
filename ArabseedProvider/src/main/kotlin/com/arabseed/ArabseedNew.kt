@@ -214,20 +214,27 @@ class ArabseedV2 : MainAPI() {
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Build virtual URLs and pass to loadExtractor
+                // NON-DEFAULT QUALITY: Build virtual URLs and emit directly (interceptor will resolve)
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via loadExtractor")
-                        // CRITICAL FIX: Use loadExtractor instead of callback() directly
-                        // This allows LazyExtractor to resolve the URL and return proper ExtractorLink
-                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] LazyExtractor resolved server $serverId: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                        }
+                        Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for interceptor)")
+                        // CRITICAL: Emit virtual URL directly with type=VIDEO
+                        // The getVideoInterceptor will resolve it when ExoPlayer tries to play
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "Server $serverId (${quality}p)",
+                                url = virtualUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "$currentBaseUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
                     }
                 } else {
                     Log.w(name, "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
@@ -236,23 +243,30 @@ class ArabseedV2 : MainAPI() {
                 // DEFAULT QUALITY: Use visible servers with data-link (already fetched)
                 visibleServers.forEachIndexed { idx, server ->
                     if (server.dataLink.isNotBlank()) {
-                        // Process data-link URL via loadExtractor
+                        // Process data-link URL via loadExtractor (these are actual embed URLs)
                         Log.d(name, "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
                         loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] LazyExtractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
+                            Log.d(name, "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
                         }
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                        // Fallback to virtual URL if no data-link
+                        // Fallback to virtual URL if no data-link - emit directly for interceptor
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual fallback) via loadExtractor")
-                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                        }
+                        Log.d(name, "[loadLinks] Emitting ${quality}p server ${server.serverId} (virtual URL for interceptor)")
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "${server.title} (${quality}p)",
+                                url = virtualUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "$currentBaseUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
                     }
                 }
             }
