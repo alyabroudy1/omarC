@@ -13,28 +13,18 @@ on:
       - main
     paths-ignore:
       - '*.md'
-      - 'configs/**'
-
-permissions:
-  contents: write
-
-env:
-  # FIX: Disable Gradle daemon and configure JVM settings
-  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Xmx4g -XX:MaxMetaspaceSize=512m"
-  # Force consistent Java version
-  JAVA_TOOL_OPTIONS: "-Xmx4g"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@master
         with:
           path: "src"
 
       - name: Checkout builds
-        uses: actions/checkout@v4
+        uses: actions/checkout@master
         with:
           ref: "builds"
           path: "builds"
@@ -43,48 +33,22 @@ jobs:
         run: rm $GITHUB_WORKSPACE/builds/*.cs3 || true
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v1
         with:
           java-version: 17
-          distribution: 'temurin'
-          # FIX: Don't cache Gradle - causes issues with Jitpack resolution
-          cache: null
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # FIX: Clear Gradle cache to avoid stale SNAPSHOT issues
-      - name: Clear Gradle Cache
-        run: |
-          rm -rf ~/.gradle/caches/build-cache-1
-          rm -rf ~/.gradle/caches/modules-2/files-2.1/com.github.recloudstream
-          echo "Gradle cache cleared"
+        uses: android-actions/setup-android@v2
 
       - name: Build Plugins
-        id: build
-        continue-on-error: true
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew make makePluginsJson --no-daemon --stacktrace
-          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
-          cp build/plugins.json $GITHUB_WORKSPACE/builds
-
-      # FIX: Retry build if first attempt fails
-      - name: Build Plugins (Retry)
-        if: steps.build.outcome == 'failure'
-        run: |
-          cd $GITHUB_WORKSPACE/src
-          echo "First build failed, cleaning and retrying..."
-          rm -rf ~/.gradle/caches/build-cache-1
-          rm -rf ~/.gradle/caches/modules-2/files-2.1/com.github.recloudstream
-          ./gradlew clean --no-daemon
-          ./gradlew make makePluginsJson --no-daemon --refresh-dependencies --stacktrace
+          ./gradlew make makePluginsJson
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
       - name: Push builds
-        if: always()  # Push even if build partially succeeded
         run: |
           cd $GITHUB_WORKSPACE/builds
           git config --local user.email "actions@github.com"

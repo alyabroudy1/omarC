@@ -2,7 +2,6 @@ import com.android.build.gradle.BaseExtension
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
-import java.util.concurrent.TimeUnit
 
 buildscript {
     repositories {
@@ -14,22 +13,12 @@ buildscript {
     
     dependencies {
         classpath("com.android.tools.build:gradle:8.7.3")
-        // Cloudstream gradle plugin - PINNED to specific commit to avoid SNAPSHOT issues
-        // If this commit fails, find a working one at: https://jitpack.io/#recloudstream/gradle
-        classpath("com.github.recloudstream:gradle:1.0.0")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
+        // Cloudstream gradle plugin which makes everything work and builds plugins
+        classpath("com.github.recloudstream:gradle:-SNAPSHOT")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")
     }
     
-    // FIX: Resolve aapt2-proto version conflict
-    configurations.classpath {
-        resolutionStrategy {
-            // Force consistent versions
-            force("com.android.tools.build:aapt2-proto:8.7.3-12006047")
-            // Cache dynamic versions
-            cacheDynamicVersionsFor(5, TimeUnit.MINUTES)
-            cacheChangingModulesFor(5, TimeUnit.MINUTES)
-        }
-    }
+
 }
 
 allprojects {
