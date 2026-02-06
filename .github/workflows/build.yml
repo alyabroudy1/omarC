@@ -47,10 +47,18 @@ jobs:
         with:
           java-version: 17
           distribution: 'temurin'
-          cache: 'gradle'  # Use built-in Gradle cache
+          # FIX: Don't cache Gradle - causes issues with Jitpack resolution
+          cache: null
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      # FIX: Clear Gradle cache to avoid stale SNAPSHOT issues
+      - name: Clear Gradle Cache
+        run: |
+          rm -rf ~/.gradle/caches/build-cache-1
+          rm -rf ~/.gradle/caches/modules-2/files-2.1/com.github.recloudstream
+          echo "Gradle cache cleared"
 
       - name: Build Plugins
         id: build
@@ -62,12 +70,14 @@ jobs:
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
-      # FIX: Retry build if first attempt fails (SNAPSHOT resolution issue)
+      # FIX: Retry build if first attempt fails
       - name: Build Plugins (Retry)
         if: steps.build.outcome == 'failure'
         run: |
           cd $GITHUB_WORKSPACE/src
           echo "First build failed, cleaning and retrying..."
+          rm -rf ~/.gradle/caches/build-cache-1
+          rm -rf ~/.gradle/caches/modules-2/files-2.1/com.github.recloudstream
           ./gradlew clean --no-daemon
           ./gradlew make makePluginsJson --no-daemon --refresh-dependencies --stacktrace
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds

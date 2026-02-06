@@ -14,8 +14,9 @@ buildscript {
     
     dependencies {
         classpath("com.android.tools.build:gradle:8.7.3")
-        // Cloudstream gradle plugin - using SNAPSHOT with caching
-        classpath("com.github.recloudstream:gradle:-SNAPSHOT")
+        // Cloudstream gradle plugin - PINNED to specific commit to avoid SNAPSHOT issues
+        // If this commit fails, find a working one at: https://jitpack.io/#recloudstream/gradle
+        classpath("com.github.recloudstream:gradle:1.0.0")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
     }
     
