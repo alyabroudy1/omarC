@@ -139,6 +139,14 @@ class ProviderHttpService private constructor(
         val result = executePostRequest(fullUrl, data, referer, headers)
         return result.html
     }
+    
+    /**
+     * DEBUG: Post request with full result details for troubleshooting
+     */
+    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): RequestResult {
+        val fullUrl = buildUrl(url)
+        return executePostRequest(fullUrl, data, referer, headers)
+    }
 
     suspend fun sniffVideos(url: String): List<VideoSource> {
         val result = webViewEngine.runSession(

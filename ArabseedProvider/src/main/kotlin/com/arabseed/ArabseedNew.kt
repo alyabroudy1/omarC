@@ -216,19 +216,44 @@ class ArabseedV2 : MainAPI() {
             if (quality != defaultQuality) {
                 // NON-DEFAULT QUALITY: Build virtual URLs and resolve via LazyExtractor with http.postText
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                    // Create LazyExtractor with fetcher that uses httpService.postText (has CF session!)
+                    // Create LazyExtractor with fetcher that uses httpService.postDebug (has CF session!)
                     val extractor = ArabseedLazyExtractor(
                         fetcher = { endpoint, data, referer ->
                             // Use full URL if endpoint is relative
                             val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
                             Log.d(name, "[LazyExtractor.fetcher] POST to: ${fullUrl.take(60)}")
+                            Log.d(name, "[LazyExtractor.fetcher] POST data: $data")
+                            
                             kotlinx.coroutines.runBlocking {
-                                httpService.postText(
-                                    url = fullUrl,
-                                    data = data,
-                                    referer = referer,
-                                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                                )
+                                try {
+                                    // Use postDebug to get full response details
+                                    val result = httpService.postDebug(
+                                        url = fullUrl,
+                                        data = data,
+                                        referer = referer,
+                                        headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                                    )
+                                    
+                                    Log.d(name, "[LazyExtractor.fetcher] Response code: ${result.responseCode}")
+                                    Log.d(name, "[LazyExtractor.fetcher] Success: ${result.success}")
+                                    Log.d(name, "[LazyExtractor.fetcher] isCloudflareBlocked: ${result.isCloudflareBlocked}")
+                                    
+                                    if (!result.success) {
+                                        Log.e(name, "[LazyExtractor.fetcher] REQUEST FAILED!")
+                                        Log.e(name, "[LazyExtractor.fetcher] Error: ${result.error?.message}")
+                                    } else if (result.html.isNullOrBlank()) {
+                                        Log.e(name, "[LazyExtractor.fetcher] SUCCESS BUT EMPTY RESPONSE")
+                                    } else {
+                                        Log.d(name, "[LazyExtractor.fetcher] SUCCESS: Response length=${result.html.length}")
+                                        Log.d(name, "[LazyExtractor.fetcher] Response preview: ${result.html.take(200)}")
+                                    }
+                                    
+                                    result.html
+                                } catch (e: Exception) {
+                                    Log.e(name, "[LazyExtractor.fetcher] POST EXCEPTION: ${e.message}")
+                                    e.printStackTrace()
+                                    null
+                                }
                             }
                         }
                     )
@@ -264,17 +289,19 @@ class ArabseedV2 : MainAPI() {
                         // Fallback to virtual URL if no data-link - resolve via LazyExtractor
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        // Create LazyExtractor with fetcher for this server
+                        // Create LazyExtractor with fetcher for this server (DEBUG version)
                         val extractor = ArabseedLazyExtractor(
                             fetcher = { endpoint, data, referer ->
                                 val fullUrl = if (endpoint.startsWith("http")) endpoint else "$currentBaseUrl$endpoint"
                                 kotlinx.coroutines.runBlocking {
-                                    httpService.postText(
+                                    val result = httpService.postDebug(
                                         url = fullUrl,
                                         data = data,
                                         referer = referer,
                                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                                     )
+                                    Log.d(name, "[LazyExtractor.fetcher] Response code: ${result.responseCode}, Success: ${result.success}")
+                                    result.html
                                 }
                             }
                         )
