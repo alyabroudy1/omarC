@@ -407,6 +407,7 @@ class ArabseedV2 : MainAPI() {
                 if (resolvedLink != null) {
                     val resolvedUrl = resolvedLink!!.url
                     Log.d(name, "[getVideoInterceptor] Resolved to: ${resolvedUrl.take(80)}")
+                    Log.d(name, "[getVideoInterceptor] Headers count: ${resolvedLink!!.headers.size}, keys: ${resolvedLink!!.headers.keys.joinToString()}")
                     
                     // FORCE HTTP/1.1 for problematic domains (fixes SPDY/HTTP2 protocol errors like "invalid stream 1")
                     // These domains often have misconfigured HTTP/2 or don't like Host header changes mid-stream.
@@ -416,18 +417,29 @@ class ArabseedV2 : MainAPI() {
                     
                     val builder = request.newBuilder().url(resolvedUrl)
                     
-                    if (resolvedLink!!.referer.isNotBlank()) {
-                         builder.header("Referer", resolvedLink!!.referer)
-                    }
+                    // CRITICAL: Add ALL headers from resolvedLink first
+                    // Then override with specific values if needed
+                    val headersToAdd = mutableMapOf<String, String>()
                     
-                    // Add resolved link headers, filtering out dangerous ones that break HTTP/2 or cause Host mismatches
+                    // First add all headers from the resolved link
                     resolvedLink!!.headers.forEach { (key, value) ->
                         if (!key.equals("Host", ignoreCase = true) && 
                             !key.equals("Connection", ignoreCase = true) &&
                             !key.equals("TE", ignoreCase = true) &&
                             !key.equals("Upgrade", ignoreCase = true)) {
-                            builder.header(key, value)
+                            headersToAdd[key] = value
                         }
+                    }
+                    
+                    // Override with explicit referer if present (it takes priority)
+                    if (resolvedLink!!.referer.isNotBlank()) {
+                        headersToAdd["Referer"] = resolvedLink!!.referer
+                    }
+                    
+                    // Apply all headers to builder
+                    headersToAdd.forEach { (key, value) ->
+                        builder.header(key, value)
+                        Log.d(name, "[getVideoInterceptor] Header: $key = ${if (key.equals("Cookie", ignoreCase = true)) "[${value.length} chars]" else value.take(40)}")
                     }
                     
                     val finalRequest = builder.build()

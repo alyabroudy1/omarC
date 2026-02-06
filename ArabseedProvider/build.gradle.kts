@@ -1,4 +1,4 @@
-version = 5  // Bumped for shared module update
+version = 6  // Fixed video sniffing: cookie sync, header handling, interceptor improvements
 
 // Include shared source directory
 android {

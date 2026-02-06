@@ -87,6 +87,10 @@ class WebViewEngine(
                 while (!resultDelivered) {
                     delay(300)
                     if (capturedLinks.size >= requiredCount) {
+                        // BUGFIX: Add delay to ensure all headers/cookies are captured
+                        ProviderLogger.d(TAG_WEBVIEW, "runSession", "Videos found, waiting for headers to sync...")
+                        delay(500)  // Give time for headers to be captured
+                        
                         resultDelivered = true
                         timeoutJob.cancel()
                         val cookies = extractCookies(url)
