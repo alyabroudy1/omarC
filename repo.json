@@ -1,11 +1,11 @@
 {
-    "name": "FaselHD Provider",
-    "description": "Custom FaselHD streaming provider for CloudStream with video sniffing support",
+    "name": "OmarC Providers Repository",
+    "description": "Custom streaming providers for CloudStream with video sniffing support - Arabseed, FaselHD, and more",
     "manifestVersion": 1,
     "authors": [
         "omarC"
     ],
     "pluginLists": [
-        "https://raw.githubusercontent.com/alyabroudy1/omarC/builds/plugins.json"
+        "https://raw.githubusercontent.com/alyabroudy1/omarC/main/builds/plugins.json"
     ]
 }
