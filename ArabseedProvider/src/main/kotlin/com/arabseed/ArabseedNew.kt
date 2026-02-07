@@ -73,12 +73,12 @@ class ArabseedV2 : MainAPI() {
         
         // Get headers ONCE after CF is solved
         val imageHeaders = httpService.getImageHeaders()
-        Log.d(name, "[getMainPage] Image headers for ${items.size} items: hasCookies=${imageHeaders.containsKey("Cookie")}, cookieLen=${imageHeaders["Cookie"]?.length ?: 0}")
+        Log.d("ArabseedV2", "[getMainPage] Image headers for ${items.size} items: hasCookies=${imageHeaders.containsKey("Cookie")}, cookieLen=${imageHeaders["Cookie"]?.length ?: 0}")
         
         val responses = items.mapIndexed { idx, item ->
             // Log first 3 items for debugging
             if (idx < 3) {
-                Log.d(name, "[getMainPage] Item[$idx]: poster=${item.posterUrl?.take(60) ?: "NULL"}...")
+                Log.d("ArabseedV2", "[getMainPage] Item[$idx]: poster=${item.posterUrl?.take(60) ?: "NULL"}...")
             }
             newMovieSearchResponse(item.title, item.url, TvType.Movie) {
                 this.posterUrl = item.posterUrl
@@ -100,19 +100,19 @@ class ArabseedV2 : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         httpService.ensureInitialized()
-        Log.d(name, "[load] Loading: ${url.take(60)}...")
+        Log.d("ArabseedV2", "[load] Loading: ${url.take(60)}...")
         
         val doc = httpService.getDocument(url) ?: run {
-            Log.e(name, "[load] Failed to get document")
+            Log.e("ArabseedV2", "[load] Failed to get document")
             return null
         }
         
         val data = parser.parseLoadPageData(doc, url) ?: run {
-            Log.e(name, "[load] Failed to parse load page data")
+            Log.e("ArabseedV2", "[load] Failed to parse load page data")
             return null
         }
         
-        Log.d(name, "[load] Parsed: title='${data.title}', isMovie=${data.isMovie}, watchUrl=${data.watchUrl?.take(40)}, episodes=${data.episodes?.size ?: 0}")
+        Log.d("ArabseedV2", "[load] Parsed: title='${data.title}', isMovie=${data.isMovie}, watchUrl=${data.watchUrl?.take(40)}, episodes=${data.episodes?.size ?: 0}")
         
         return if (data.isMovie) {
             // For movies: pass watchUrl (or url as fallback) for loadLinks
@@ -127,7 +127,7 @@ class ArabseedV2 : MainAPI() {
         } else {
             // For series: use pre-parsed episodes from ParsedLoadData
             val episodes = data.episodes ?: parser.parseEpisodes(doc, null)
-            Log.d(name, "[load] Series episodes: ${episodes.size}")
+            Log.d("ArabseedV2", "[load] Series episodes: ${episodes.size}")
             
             newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes.map {
                 newEpisode(it.url) {
@@ -151,12 +151,12 @@ class ArabseedV2 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(name, "[loadLinks] START data='${data.take(80)}...'")
+        Log.d("ArabseedV2", "[loadLinks] START data='${data.take(80)}...'")
         
         // 1. Get the document
         val doc = httpService.getDocument(data)
         if (doc == null) {
-            Log.e(name, "[loadLinks] Failed to get document for data URL")
+            Log.e("ArabseedV2", "[loadLinks] Failed to get document for data URL")
             return loadLinksFromService(data, subtitleCallback, callback)
         }
         
@@ -169,13 +169,13 @@ class ArabseedV2 : MainAPI() {
         if (watchDoc == null) {
             val watchUrl = doc.select("a.watch__btn").attr("href")
             if (watchUrl.isNotBlank()) {
-                Log.d(name, "[loadLinks] Found watch button, following to: ${watchUrl.take(60)}")
+                Log.d("ArabseedV2", "[loadLinks] Found watch button, following to: ${watchUrl.take(60)}")
                 watchDoc = httpService.getDocument(watchUrl)
             }
         }
         
         if (watchDoc == null) {
-            Log.e(name, "[loadLinks] Could not get watch page")
+            Log.e("ArabseedV2", "[loadLinks] Could not get watch page")
             return false
         }
         
@@ -187,12 +187,12 @@ class ArabseedV2 : MainAPI() {
         val globalPostId = parser.extractPostId(watchDoc) ?: ""
         val csrfToken = parser.extractCsrfToken(doc) ?: ""
         
-        Log.d(name, "[loadLinks] Qualities: ${availableQualities.map { it.quality }}, Default: $defaultQuality")
-        Log.d(name, "[loadLinks] GlobalPostID: ${globalPostId.ifBlank { "N/A" }}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
+        Log.d("ArabseedV2", "[loadLinks] Qualities: ${availableQualities.map { it.quality }}, Default: $defaultQuality")
+        Log.d("ArabseedV2", "[loadLinks] GlobalPostID: ${globalPostId.ifBlank { "N/A" }}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
         
         // 4. Extract visible servers (these are for the DEFAULT quality)
         val visibleServers = parser.extractVisibleServers(watchDoc)
-        Log.d(name, "[loadLinks] Visible servers (${defaultQuality}p): ${visibleServers.size}")
+        Log.d("ArabseedV2", "[loadLinks] Visible servers (${defaultQuality}p): ${visibleServers.size}")
         
         // Get any server's postId for generating other quality URLs
         val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
@@ -210,7 +210,7 @@ class ArabseedV2 : MainAPI() {
         // Sort qualities from highest to lowest
         val sortedQualities = availableQualities.sortedByDescending { it.quality }
         
-        Log.i(name, "[loadLinks] Processing ${sortedQualities.size} qualities, ${visibleServers.size} visible servers")
+        Log.i("ArabseedV2", "[loadLinks] Processing ${sortedQualities.size} qualities, ${visibleServers.size} visible servers")
         
         sortedQualities.forEach { qData ->
             val quality = qData.quality
@@ -225,8 +225,8 @@ class ArabseedV2 : MainAPI() {
                         fetcher = { endpoint, data, referer ->
                             // endpoint is already the relative path "/get__watch__server/"
                             // DO NOT construct full URL - let ProviderHttpService.handle it!
-                            Log.d(name, "[LazyExtractor.fetcher] POST to endpoint: $endpoint")
-                            Log.d(name, "[LazyExtractor.fetcher] POST data: $data")
+                            Log.d("ArabseedV2", "[LazyExtractor.fetcher] POST to endpoint: $endpoint")
+                            Log.d("ArabseedV2", "[LazyExtractor.fetcher] POST data: $data")
                             
                             kotlinx.coroutines.runBlocking {
                                 try {
@@ -239,23 +239,23 @@ class ArabseedV2 : MainAPI() {
                                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                                     )
                                     
-                                    Log.d(name, "[LazyExtractor.fetcher] Response code: ${result.responseCode}")
-                                    Log.d(name, "[LazyExtractor.fetcher] Success: ${result.success}")
-                                    Log.d(name, "[LazyExtractor.fetcher] isCloudflareBlocked: ${result.isCloudflareBlocked}")
+                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response code: ${result.responseCode}")
+                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Success: ${result.success}")
+                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] isCloudflareBlocked: ${result.isCloudflareBlocked}")
                                     
                                     if (!result.success) {
-                                        Log.e(name, "[LazyExtractor.fetcher] REQUEST FAILED!")
-                                        Log.e(name, "[LazyExtractor.fetcher] Error: ${result.error?.message}")
+                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] REQUEST FAILED!")
+                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] Error: ${result.error?.message}")
                                     } else if (result.html.isNullOrBlank()) {
-                                        Log.e(name, "[LazyExtractor.fetcher] SUCCESS BUT EMPTY RESPONSE")
+                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] SUCCESS BUT EMPTY RESPONSE")
                                     } else {
-                                        Log.d(name, "[LazyExtractor.fetcher] SUCCESS: Response length=${result.html.length}")
-                                        Log.d(name, "[LazyExtractor.fetcher] Response preview: ${result.html.take(200)}")
+                                        Log.d("ArabseedV2", "[LazyExtractor.fetcher] SUCCESS: Response length=${result.html.length}")
+                                        Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response preview: ${result.html.take(200)}")
                                     }
                                     
                                     result.html
                                 } catch (e: Exception) {
-                                    Log.e(name, "[LazyExtractor.fetcher] POST EXCEPTION: ${e.message}")
+                                    Log.e("ArabseedV2", "[LazyExtractor.fetcher] POST EXCEPTION: ${e.message}")
                                     e.printStackTrace()
                                     null
                                 }
@@ -264,13 +264,14 @@ class ArabseedV2 : MainAPI() {
                     )
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
-                    // Emit virtual URLs - resolution happens on-demand in getVideoInterceptor
+                    // These URLs will be resolved on-demand by ArabseedVirtualExtractor
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual URL)")
+                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for extractor)")
                         
-                        // Emit virtual URL directly - resolution happens when played
+                        // Emit virtual URL - ArabseedVirtualExtractor will resolve it when played
+                        // Extractor will detect the URL pattern and handle the POST resolution
                         callback(
                             newExtractorLink(
                                 source = name,
@@ -285,27 +286,27 @@ class ArabseedV2 : MainAPI() {
                         found = true
                     }
                 } else {
-                    Log.w(name, "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
+                    Log.w("ArabseedV2", "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
                 }
             } else {
                 // DEFAULT QUALITY: Use visible servers with data-link (already fetched)
                 // OPTIMIZATION: Skip if we already found enough videos from other qualities
                 if (found) {
-                    Log.d(name, "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
+                    Log.d("ArabseedV2", "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
                     return@forEach
                 }
                 
                 visibleServers.forEachIndexed { idx, server ->
                     if (found) {
-                        Log.d(name, "[loadLinks] Skipping remaining ${quality}p servers - already found")
+                        Log.d("ArabseedV2", "[loadLinks] Skipping remaining ${quality}p servers - already found")
                         return@forEachIndexed
                     }
                     
                     if (server.dataLink.isNotBlank()) {
                         // Process data-link URL via loadExtractor (these are actual embed URLs)
-                        Log.d(name, "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
                         loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
+                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
                         }
@@ -324,15 +325,15 @@ class ArabseedV2 : MainAPI() {
                                         referer = referer,
                                         headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                                     )
-                                    Log.d(name, "[LazyExtractor.fetcher] Response code: ${result.responseCode}, Success: ${result.success}")
+                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response code: ${result.responseCode}, Success: ${result.success}")
                                     result.html
                                 }
                             }
                         )
                         
-                        Log.d(name, "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via LazyExtractor")
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via LazyExtractor")
                         extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
+                            Log.d("ArabseedV2", "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
                         }
@@ -344,20 +345,20 @@ class ArabseedV2 : MainAPI() {
         // ==================== DIRECT EMBEDS (FALLBACK) ====================
         if (!found) {
             val directEmbeds = parser.extractDirectEmbeds(watchDoc)
-            Log.i(name, "[loadLinks] No servers found, using ${directEmbeds.size} direct embeds as fallback")
+            Log.i("ArabseedV2", "[loadLinks] No servers found, using ${directEmbeds.size} direct embeds as fallback")
             
             directEmbeds.forEachIndexed { i, embedUrl ->
-                Log.i(name, "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
+                Log.i("ArabseedV2", "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
                 // Use loadExtractor for direct embeds too - allows proper extraction
                 loadExtractor(embedUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                    Log.d(name, "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
+                    Log.d("ArabseedV2", "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
                     callback(link)
                     found = true
                 }
             }
         }
         
-        Log.d(name, "[loadLinks] END found=$found")
+        Log.d("ArabseedV2", "[loadLinks] END found=$found")
         return found
     }
     
@@ -367,7 +368,7 @@ class ArabseedV2 : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val urls = httpService.getPlayerUrls(data)
-        Log.d(name, "[loadLinksFromService] URLs: ${urls.size}")
+        Log.d("ArabseedV2", "[loadLinksFromService] URLs: ${urls.size}")
         
         var found = false
         urls.forEach { url ->
@@ -430,7 +431,7 @@ class ArabseedV2 : MainAPI() {
                 val request = chain.request()
                 val urlString = request.url.toString()
                 
-                Log.d(name, "[getVideoInterceptor] Resolving virtual URL: ${urlString.take(80)}")
+                Log.d("ArabseedV2", "[getVideoInterceptor] Resolving virtual URL: ${urlString.take(80)}")
                 
                 var resolvedUrl: String? = null
                 
@@ -454,8 +455,8 @@ class ArabseedV2 : MainAPI() {
                             "csrf_token" to csrfToken
                         )
                         
-                        Log.d(name, "[getVideoInterceptor] POST to /get__watch__server/ with data: $data")
-                        Log.d(name, "[getVideoInterceptor] Referer: ${referer.take(60)}")
+                        Log.d("ArabseedV2", "[getVideoInterceptor] POST to /get__watch__server/ with data: $data")
+                        Log.d("ArabseedV2", "[getVideoInterceptor] Referer: ${referer.take(60)}")
                         
                         val jsonResponse = httpService.postText(
                             url = "/get__watch__server/",
@@ -466,20 +467,21 @@ class ArabseedV2 : MainAPI() {
                         
                         if (!jsonResponse.isNullOrBlank()) {
                             // Parse JSON response to get embed URL
-                            resolvedUrl = parseEmbedUrlFromJson(jsonResponse)
-                            Log.i(name, "[getVideoInterceptor] Resolved to: ${resolvedUrl?.take(60)}")
+                            val parsedUrl: String? = parseEmbedUrlFromJson(jsonResponse)
+                            resolvedUrl = parsedUrl
+                            Log.i("ArabseedV2", "[getVideoInterceptor] Resolved to: ${parsedUrl?.take(60)}")
                         } else {
-                            Log.e(name, "[getVideoInterceptor] Empty response from POST")
+                            Log.e("ArabseedV2", "[getVideoInterceptor] Empty response from POST")
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(name, "[getVideoInterceptor] Error: ${e.message}")
+                    Log.e("ArabseedV2", "[getVideoInterceptor] Error: ${e.message}")
                     e.printStackTrace()
                 }
                 
                 if (!resolvedUrl.isNullOrBlank()) {
                     // Return resolved URL to ExoPlayer
-                    Log.i(name, "[getVideoInterceptor] Proceeding with resolved URL")
+                    Log.i("ArabseedV2", "[getVideoInterceptor] Proceeding with resolved URL")
                     return@Interceptor chain.proceed(
                         request.newBuilder()
                             .url(resolvedUrl!!)
@@ -489,7 +491,7 @@ class ArabseedV2 : MainAPI() {
                 }
                 
                 // If resolution failed, return 404 error so ExoPlayer tries next source
-                Log.e(name, "[getVideoInterceptor] Resolution failed, returning 404 to trigger next source")
+                Log.e("ArabseedV2", "[getVideoInterceptor] Resolution failed, returning 404 to trigger next source")
                 return@Interceptor okhttp3.Response.Builder()
                     .request(request)
                     .protocol(okhttp3.Protocol.HTTP_1_1)
@@ -519,7 +521,7 @@ class ArabseedV2 : MainAPI() {
                 else -> null
             }
         } catch (e: Exception) {
-            Log.e(name, "[parseEmbedUrlFromJson] Error: ${e.message}")
+            Log.e("ArabseedV2", "[parseExtractor] Error: ${e.message}")
             null
         }
     }
