@@ -214,64 +214,20 @@ class ArabseedV2 : MainAPI() {
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Build virtual URLs and resolve via LazyExtractor with http.postText
+                // NON-DEFAULT QUALITY: Build virtual URLs and resolve via ArabseedVirtualExtractor
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                    // Create LazyExtractor with fetcher that uses httpService.postDebug (has CF session!)
-                    // CRITICAL: Pass RELATIVE PATH only (e.g., "/get__watch__server/"), NOT full URL!
-                    // The ProviderHttpService.buildUrl() will construct the full URL with proper domain
-                    val extractor = ArabseedLazyExtractor(
-                        fetcher = { endpoint, data, referer ->
-                            // endpoint is already the relative path "/get__watch__server/"
-                            // DO NOT construct full URL - let ProviderHttpService.handle it!
-                            Log.d("ArabseedV2", "[LazyExtractor.fetcher] POST to endpoint: $endpoint")
-                            Log.d("ArabseedV2", "[LazyExtractor.fetcher] POST data: $data")
-                            
-                            kotlinx.coroutines.runBlocking {
-                                try {
-                                    // Use postDebug to get full response details
-                                    // Pass endpoint directly (relative path), NOT full URL!
-                                    val result = httpService.postDebug(
-                                        url = endpoint,  // <-- RELATIVE PATH! "/get__watch__server/"
-                                        data = data,
-                                        referer = referer,
-                                        headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                                    )
-                                    
-                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response code: ${result.responseCode}")
-                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Success: ${result.success}")
-                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] isCloudflareBlocked: ${result.isCloudflareBlocked}")
-                                    
-                                    if (!result.success) {
-                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] REQUEST FAILED!")
-                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] Error: ${result.error?.message}")
-                                    } else if (result.html.isNullOrBlank()) {
-                                        Log.e("ArabseedV2", "[LazyExtractor.fetcher] SUCCESS BUT EMPTY RESPONSE")
-                                    } else {
-                                        Log.d("ArabseedV2", "[LazyExtractor.fetcher] SUCCESS: Response length=${result.html.length}")
-                                        Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response preview: ${result.html.take(200)}")
-                                    }
-                                    
-                                    result.html
-                                } catch (e: Exception) {
-                                    Log.e("ArabseedV2", "[LazyExtractor.fetcher] POST EXCEPTION: ${e.message}")
-                                    e.printStackTrace()
-                                    null
-                                }
-                            }
-                        }
-                    )
+                    // Create ArabseedVirtualExtractor instance directly
+                    val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
-                    // CRITICAL FIX: Use loadExtractor() to route through ArabseedVirtualExtractor
-                    // This ensures URLs are resolved BEFORE reaching ExoPlayer
+                    // CRITICAL: Call extractor directly instead of loadExtractor() to avoid routing to LazyExtractor
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server $serverId via loadExtractor -> ArabseedVirtualExtractor")
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server $serverId via ArabseedVirtualExtractor")
                         
-                        // Use loadExtractor to route virtual URL through our custom extractor
-                        // ArabseedVirtualExtractor will resolve the URL and return proper ExtractorLink
-                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                        // Call extractor directly - this bypasses CloudStream's extractor routing
+                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
                             Log.d("ArabseedV2", "[loadLinks] Extractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
@@ -303,11 +259,12 @@ class ArabseedV2 : MainAPI() {
                             found = true
                         }
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                        // Fallback to virtual URL if no data-link - use loadExtractor
+                        // Fallback to virtual URL if no data-link - use ArabseedVirtualExtractor directly
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via loadExtractor")
-                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via ArabseedVirtualExtractor")
+                        val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
+                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
                             Log.d("ArabseedV2", "[loadLinks] Extractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
