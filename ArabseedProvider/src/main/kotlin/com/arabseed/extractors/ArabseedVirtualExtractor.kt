@@ -1,7 +1,7 @@
 package com.arabseed.extractors
 
 import android.net.Uri
-import com.cloudstream.shared.service.ProviderHttpService
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -75,41 +75,74 @@ class ArabseedVirtualExtractor : ExtractorApi() {
         )
         
         try {
-            val response = app.post(
-                url = actualUrl,
-                data = data,
-                referer = pageReferer,
-                headers = mapOf(
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Content-Type" to "application/x-www-form-urlencoded"
+            // CRITICAL: Use singleton HTTP service to get CF session cookies
+            val httpService = ProviderHttpServiceHolder.getInstance()
+            
+            if (httpService == null) {
+                android.util.Log.e("ArabseedVirtual", "[getUrl] HTTP Service not initialized!")
+                // Fallback to app.post
+                val response = app.post(
+                    url = actualUrl,
+                    data = data,
+                    referer = pageReferer,
+                    headers = mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Content-Type" to "application/x-www-form-urlencoded"
+                    )
                 )
-            )
-            
-            android.util.Log.d("ArabseedVirtual", "[getUrl] POST response code: ${response.code}")
-            
-            if (response.code != 200) {
-                android.util.Log.e("ArabseedVirtual", "[getUrl] POST failed with code ${response.code}")
+                handleResponse(response.text, pageReferer, callback)
                 return
             }
             
-            // Parse JSON response
-            val embedUrl = parseEmbedUrlFromJson(response.text)
+            android.util.Log.d("ArabseedVirtual", "[getUrl] Using singleton HTTP service with CF session")
             
-            if (embedUrl.isNullOrBlank()) {
-                android.util.Log.e("ArabseedVirtual", "[getUrl] Failed to parse embed URL from response")
-                android.util.Log.e("ArabseedVirtual", "[getUrl] Response: ${response.text.take(200)}")
+            // Use HTTP service which has CF session cookies
+            val jsonResponse = runBlocking {
+                httpService.postText(
+                    url = "/get__watch__server/",
+                    data = data,
+                    referer = pageReferer,
+                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                )
+            }
+            
+            if (jsonResponse.isNullOrBlank()) {
+                android.util.Log.e("ArabseedVirtual", "[getUrl] Empty response from HTTP service")
                 return
             }
             
-            android.util.Log.i("ArabseedVirtual", "[getUrl] Resolved to embed URL: ${embedUrl.take(60)}")
-            
-            // Now extract from the embed URL
-            extractFromEmbedUrl(embedUrl, pageReferer, callback)
+            android.util.Log.d("ArabseedVirtual", "[getUrl] Got response from HTTP service, length=${jsonResponse.length}")
+            handleJsonResponse(jsonResponse, pageReferer, callback)
             
         } catch (e: Exception) {
             android.util.Log.e("ArabseedVirtual", "[getUrl] Error during resolution: ${e.message}")
             e.printStackTrace()
         }
+    }
+    
+    private suspend fun handleResponse(responseText: String, referer: String, callback: (ExtractorLink) -> Unit) {
+        val embedUrl = parseEmbedUrlFromJson(responseText)
+        
+        if (embedUrl.isNullOrBlank()) {
+            android.util.Log.e("ArabseedVirtual", "[handleResponse] Failed to parse embed URL")
+            return
+        }
+        
+        android.util.Log.i("ArabseedVirtual", "[handleResponse] Resolved to: ${embedUrl.take(60)}")
+        extractFromEmbedUrl(embedUrl, referer, callback)
+    }
+    
+    private suspend fun handleJsonResponse(jsonResponse: String, referer: String, callback: (ExtractorLink) -> Unit) {
+        val embedUrl = parseEmbedUrlFromJson(jsonResponse)
+        
+        if (embedUrl.isNullOrBlank()) {
+            android.util.Log.e("ArabseedVirtual", "[handleJsonResponse] Failed to parse embed URL from JSON")
+            android.util.Log.e("ArabseedVirtual", "[handleJsonResponse] Response: ${jsonResponse.take(200)}")
+            return
+        }
+        
+        android.util.Log.i("ArabseedVirtual", "[handleJsonResponse] Resolved to embed URL: ${embedUrl.take(60)}")
+        extractFromEmbedUrl(embedUrl, referer, callback)
     }
     
     /**

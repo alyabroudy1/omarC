@@ -4,6 +4,7 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.service.ProviderHttpService
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
@@ -45,7 +46,7 @@ class ArabseedV2 : MainAPI() {
         // Ensure context is available
         val context = PluginContext.context ?: (com.lagradost.cloudstream3.app as android.content.Context)
         
-        ProviderHttpService.create(
+        val service = ProviderHttpService.create(
             context = context,
             config = ProviderConfig(
                 name = name,
@@ -59,6 +60,11 @@ class ArabseedV2 : MainAPI() {
             parser = parser,
             activityProvider = { ActivityProvider.currentActivity }
         )
+        
+        // Initialize singleton so extractors can access it
+        ProviderHttpServiceHolder.initialize(service)
+        
+        service
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -214,24 +220,29 @@ class ArabseedV2 : MainAPI() {
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Build virtual URLs and resolve via ArabseedVirtualExtractor
+                // NON-DEFAULT QUALITY: Emit virtual URLs for on-demand resolution
+                // URLs will be resolved by ArabseedVirtualExtractor when user clicks Play
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                    // Create ArabseedVirtualExtractor instance directly
-                    val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
-                    
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
-                    // CRITICAL: Call extractor directly instead of loadExtractor() to avoid routing to LazyExtractor
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server $serverId via ArabseedVirtualExtractor")
+                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for on-demand resolution)")
                         
-                        // Call extractor directly - this bypasses CloudStream's extractor routing
-                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                        }
+                        // Emit virtual URL directly - resolution happens when user clicks Play
+                        // ArabseedVirtualExtractor will handle the POST request with CF session
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "Server $serverId (${quality}p)",
+                                url = virtualUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "$currentBaseUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
                     }
                 } else {
                     Log.w("ArabseedV2", "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
