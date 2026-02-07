@@ -301,7 +301,18 @@ class ArabseedV2 : MainAPI() {
                 }
             } else {
                 // DEFAULT QUALITY: Use visible servers with data-link (already fetched)
+                // OPTIMIZATION: Skip if we already found enough videos from other qualities
+                if (found) {
+                    Log.d(name, "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
+                    return@forEach
+                }
+                
                 visibleServers.forEachIndexed { idx, server ->
+                    if (found) {
+                        Log.d(name, "[loadLinks] Skipping remaining ${quality}p servers - already found")
+                        return@forEachIndexed
+                    }
+                    
                     if (server.dataLink.isNotBlank()) {
                         // Process data-link URL via loadExtractor (these are actual embed URLs)
                         Log.d(name, "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
