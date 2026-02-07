@@ -12,8 +12,6 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import okhttp3.Interceptor
-import okhttp3.Response
 import com.arabseed.extractors.ArabseedLazyExtractor
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
@@ -264,26 +262,20 @@ class ArabseedV2 : MainAPI() {
                     )
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
-                    // These URLs will be resolved on-demand by ArabseedVirtualExtractor
+                    // CRITICAL FIX: Use loadExtractor() to route through ArabseedVirtualExtractor
+                    // This ensures URLs are resolved BEFORE reaching ExoPlayer
                     for (serverId in 1..5) {
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for extractor)")
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server $serverId via loadExtractor -> ArabseedVirtualExtractor")
                         
-                        // Emit virtual URL - ArabseedVirtualExtractor will resolve it when played
-                        // Extractor will detect the URL pattern and handle the POST resolution
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "Server $serverId (${quality}p)",
-                                url = virtualUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/"
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        // Use loadExtractor to route virtual URL through our custom extractor
+                        // ArabseedVirtualExtractor will resolve the URL and return proper ExtractorLink
+                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
+                            callback(link)
+                            found = true
+                        }
                     }
                 } else {
                     Log.w("ArabseedV2", "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
@@ -311,29 +303,12 @@ class ArabseedV2 : MainAPI() {
                             found = true
                         }
                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                        // Fallback to virtual URL if no data-link - resolve via LazyExtractor
+                        // Fallback to virtual URL if no data-link - use loadExtractor
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
                         
-                        // Create LazyExtractor with fetcher for this server
-                        // CRITICAL: Pass RELATIVE PATH only to let ProviderHttpService build the URL!
-                        val extractor = ArabseedLazyExtractor(
-                            fetcher = { endpoint, data, referer ->
-                                kotlinx.coroutines.runBlocking {
-                                    val result = httpService.postDebug(
-                                        url = endpoint,  // <-- RELATIVE PATH! "/get__watch__server/"
-                                        data = data,
-                                        referer = referer,
-                                        headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                                    )
-                                    Log.d("ArabseedV2", "[LazyExtractor.fetcher] Response code: ${result.responseCode}, Success: ${result.success}")
-                                    result.html
-                                }
-                            }
-                        )
-                        
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via LazyExtractor")
-                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d("ArabseedV2", "[loadLinks] LazyExtractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
+                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via loadExtractor")
+                        loadExtractor(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
                             callback(link)
                             found = true
                         }
@@ -412,117 +387,13 @@ class ArabseedV2 : MainAPI() {
         }
     }
     /**
-     * CRITICAL: Interceptor to resolve virtual URLs via POST using ProviderHttpService.
+     * REMOVED: getVideoInterceptor() - This approach doesn't work because:
+     * 1. ExoPlayer uses MediaHTTPConnection (not OkHttp) for playback
+     * 2. MediaHTTPConnection bypasses OkHttp interceptors entirely
+     * 3. The interceptor runs but ExoPlayer ignores the resolved URL
      * 
-     * This solves the 403 error by using httpService.postText() which includes:
-     * - Cloudflare session cookies (cf_clearance)
-     * - Proper User-Agent
-     * - All necessary headers from the solved session
-     * 
-     * The virtual URLs (1080p, 720p) need this because they require POST to /get__watch__server/
-     * which is protected by Cloudflare.
+     * SOLUTION: Use loadExtractor() in loadLinks() to route virtual URLs
+     * through ArabseedVirtualExtractor. The extractor resolves URLs BEFORE
+     * they reach ExoPlayer, which is the proper CloudStream pattern.
      */
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        val url = extractorLink.url
-        
-        // Only intercept virtual URLs that need resolution
-        if (url.contains("/get__watch__server/")) {
-            return Interceptor { chain ->
-                val request = chain.request()
-                val urlString = request.url.toString()
-                
-                Log.d("ArabseedV2", "[getVideoInterceptor] Resolving virtual URL: ${urlString.take(80)}")
-                
-                var resolvedUrl: String? = null
-                
-                try {
-                    kotlinx.coroutines.runBlocking {
-                        // Parse parameters from virtual URL
-                        val postId = getQueryParam(urlString, "post_id") ?: return@runBlocking
-                        val quality = getQueryParam(urlString, "quality") ?: "720"
-                        val server = getQueryParam(urlString, "server") ?: "0"
-                        val csrfToken = getQueryParam(urlString, "csrf_token") ?: ""
-                        val rawReferer = getQueryParam(urlString, "referer")
-                        val referer = rawReferer?.let { 
-                            java.net.URLDecoder.decode(it, "UTF-8") 
-                        } ?: extractorLink.referer ?: ""
-                        
-                        // CRITICAL: Use httpService.postText() which has CF session cookies!
-                        val data = mapOf(
-                            "post_id" to postId,
-                            "quality" to quality,
-                            "server" to server,
-                            "csrf_token" to csrfToken
-                        )
-                        
-                        Log.d("ArabseedV2", "[getVideoInterceptor] POST to /get__watch__server/ with data: $data")
-                        Log.d("ArabseedV2", "[getVideoInterceptor] Referer: ${referer.take(60)}")
-                        
-                        val jsonResponse = httpService.postText(
-                            url = "/get__watch__server/",
-                            data = data,
-                            referer = referer,
-                            headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                        )
-                        
-                        if (!jsonResponse.isNullOrBlank()) {
-                            // Parse JSON response to get embed URL
-                            val parsedUrl: String? = parseEmbedUrlFromJson(jsonResponse)
-                            resolvedUrl = parsedUrl
-                            Log.i("ArabseedV2", "[getVideoInterceptor] Resolved to: ${parsedUrl?.take(60)}")
-                        } else {
-                            Log.e("ArabseedV2", "[getVideoInterceptor] Empty response from POST")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("ArabseedV2", "[getVideoInterceptor] Error: ${e.message}")
-                    e.printStackTrace()
-                }
-                
-                if (!resolvedUrl.isNullOrBlank()) {
-                    // Return resolved URL to ExoPlayer
-                    Log.i("ArabseedV2", "[getVideoInterceptor] Proceeding with resolved URL")
-                    return@Interceptor chain.proceed(
-                        request.newBuilder()
-                            .url(resolvedUrl!!)
-                            .header("Referer", urlString)
-                            .build()
-                    )
-                }
-                
-                // If resolution failed, return 404 error so ExoPlayer tries next source
-                Log.e("ArabseedV2", "[getVideoInterceptor] Resolution failed, returning 404 to trigger next source")
-                return@Interceptor okhttp3.Response.Builder()
-                    .request(request)
-                    .protocol(okhttp3.Protocol.HTTP_1_1)
-                    .code(404)
-                    .message("Video extraction failed - source unavailable")
-                    .body(okhttp3.ResponseBody.create(null, ""))
-                    .build()
-            }
-        }
-        
-        return null
-    }
-    
-    private fun getQueryParam(url: String, key: String): String? {
-        return Regex("[?&]$key=([^&]+)").find(url)?.groupValues?.get(1)
-    }
-    
-    private fun parseEmbedUrlFromJson(json: String): String? {
-        return try {
-            when {
-                json.contains("\"embed_url\"") -> {
-                    Regex("\"embed_url\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1)?.replace("\\/", "/")
-                }
-                json.contains("\"server\"") -> {
-                    Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1)?.replace("\\/", "/")
-                }
-                else -> null
-            }
-        } catch (e: Exception) {
-            Log.e("ArabseedV2", "[parseExtractor] Error: ${e.message}")
-            null
-        }
-    }
 }
