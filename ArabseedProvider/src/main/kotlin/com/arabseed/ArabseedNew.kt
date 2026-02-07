@@ -264,37 +264,25 @@ class ArabseedV2 : MainAPI() {
                     )
                     
                     // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
-                    // OPTIMIZATION: Stop after finding first working server for this quality
+                    // Emit virtual URLs - resolution happens on-demand in getVideoInterceptor
                     for (serverId in 1..5) {
-                        if (found) {
-                            Log.d(name, "[loadLinks] Skipping ${quality}p server $serverId - already found working link")
-                            break  // Exit loop completely
-                        }
-                        
                         val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
                         
-                        Log.d(name, "[loadLinks] Processing ${quality}p server $serverId via LazyExtractor with http.postText")
+                        Log.d(name, "[loadLinks] Emitting ${quality}p server $serverId (virtual URL)")
                         
-                        // Use LazyExtractor directly to resolve virtual URL
-                        // Use CompletableDeferred to wait for async result
-                        val linkFound = kotlinx.coroutines.CompletableDeferred<Boolean>()
-                        
-                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d(name, "[loadLinks] LazyExtractor resolved ${quality}p server $serverId: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                            linkFound.complete(true)
-                        }
-                        
-                        // Wait for extraction with timeout
-                        val foundResult = withTimeoutOrNull(30_000) { linkFound.await() } ?: false
-                        
-                        if (foundResult) {
-                            Log.d(name, "[loadLinks] Found working link for ${quality}p, stopping server loop")
-                            break  // Exit loop after finding first working server
-                        } else {
-                            Log.d(name, "[loadLinks] ${quality}p server $serverId did not return valid link, trying next...")
-                        }
+                        // Emit virtual URL directly - resolution happens when played
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "Server $serverId (${quality}p)",
+                                url = virtualUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "$currentBaseUrl/"
+                                this.quality = quality
+                            }
+                        )
+                        found = true
                     }
                 } else {
                     Log.w(name, "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
@@ -500,9 +488,15 @@ class ArabseedV2 : MainAPI() {
                     )
                 }
                 
-                // If resolution failed, proceed with original request (will likely fail with 403)
-                Log.w(name, "[getVideoInterceptor] Resolution failed, proceeding with original URL")
-                chain.proceed(request)
+                // If resolution failed, return 404 error so ExoPlayer tries next source
+                Log.e(name, "[getVideoInterceptor] Resolution failed, returning 404 to trigger next source")
+                return@Interceptor okhttp3.Response.Builder()
+                    .request(request)
+                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(404)
+                    .message("Video extraction failed - source unavailable")
+                    .body(okhttp3.ResponseBody.create(null, ""))
+                    .build()
             }
         }
         
