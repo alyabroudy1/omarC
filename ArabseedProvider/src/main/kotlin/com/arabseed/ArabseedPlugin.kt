@@ -22,6 +22,7 @@ class ArabseedPlugin: Plugin() {
         
         // Register extractors
         registerExtractorAPI(ArabseedLazyExtractor())  // Handles virtual /get__watch__server/ URLs
+        registerExtractorAPI(com.arabseed.extractors.ArabseedVirtualExtractor()) // Handles arabseed-virtual:// URLs
         registerExtractorAPI(ReviewRateExtractor())    // Handles reviewrate.net URLs
         registerExtractorAPI(SnifferExtractor())       // Handles sniffer:// URLs (video sniffing fallback)
         
