@@ -224,6 +224,67 @@ class ArabseedV2 : MainAPI() {
      * - Non-default qualities: Generates virtual URLs for on-demand resolution.
      * - Default quality: Processes visible servers directly.
      */
+    override fun getVideoInterceptor(linker: ExtractorLink): okhttp3.Interceptor {
+        return okhttp3.Interceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+
+            if (url.startsWith("arabseed-lazy://")) {
+                val realUrl = runBlocking {
+                     resolveLazyLink(url)
+                } ?: throw java.io.IOException("Failed to resolve lazy link")
+                
+                // Redirect to the real URL
+                val newRequest = request.newBuilder()
+                    .url(realUrl)
+                    .build()
+                    
+                return@Interceptor chain.proceed(newRequest)
+            }
+            return@Interceptor chain.proceed(request)
+        }
+    }
+
+    private suspend fun resolveLazyLink(url: String): String? {
+        val uri = java.net.URI(url)
+        val queryParams = uri.query.split("&").associate { 
+            val (key, value) = it.split("=")
+            key to value 
+        }
+        
+        val postId = queryParams["post_id"] ?: return null
+        val quality = queryParams["quality"] ?: return null
+        val server = queryParams["server"] ?: return null
+        val csrfToken = queryParams["csrf_token"] ?: return null
+        val baseUrl = "${uri.scheme}://${uri.host}".replace("arabseed-lazy", "https") // Reconstruct base URL
+
+        val body = mapOf(
+            "action" to "get__watch__server",
+            "post_id" to postId,
+            "quality" to quality,
+            "server" to server,
+            "csrf_token" to csrfToken
+        )
+
+        val serverDoc = httpService.post(
+            "$baseUrl/wp-admin/admin-ajax.php",
+            data = body,
+            headers = mapOf(
+                "X-Requested-With" to "XMLHttpRequest",
+                "Origin" to baseUrl,
+                "Referer" to "$baseUrl/"
+            )
+        ) ?: return null
+        
+        val iframeSrc = serverDoc.select("iframe").attr("src")
+        
+        return if (iframeSrc.isNotBlank()) {
+            iframeSrc
+        } else {
+             null
+        }
+    }
+
     private suspend fun processQualities(
         watchDoc: Document,
         availableQualities: List<com.arabseed.ArabseedParser.QualityData>,
@@ -248,18 +309,16 @@ class ArabseedV2 : MainAPI() {
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Emit virtual URLs
+                // NON-DEFAULT QUALITY: Emit lazy URLs
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     for (serverId in 1..5) {
-                        // Use arabseed-virtual:// scheme to trigger ArabseedVirtualExtractor
-                        // This ensures proper lazy loading and extraction via loadExtractor
-                        val virtualUrl = "arabseed-virtual://$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
-                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy virtual URL)")
+                        val lazyUrl = "arabseed-lazy://$currentBaseUrl/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
+                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy URL)")
                         callback(
                             newExtractorLink(
-                                source = name,
+                                source = name, // Must match this.name
                                 name = "Server $serverId (${quality}p)",
-                                url = virtualUrl,
+                                url = lazyUrl,
                                 type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = "$currentBaseUrl/"
@@ -268,17 +327,10 @@ class ArabseedV2 : MainAPI() {
                         )
                         found = true
                     }
-                } else {
-                    Log.w("ArabseedV2", "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
                 }
             } else {
                 // DEFAULT QUALITY: Use visible servers
-                if (found) {
-                     Log.d("ArabseedV2", "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
-                     return@forEach
-                }
-
-                if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback)) {
+                 if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback)) {
                      found = true
                 }
             }
@@ -286,10 +338,6 @@ class ArabseedV2 : MainAPI() {
         return found
     }
 
-    /**
-     * Processes a list of visible servers for a specific quality.
-     * Handles both direct data-links (embedded) and virtual servers (AJAX-based).
-     */
     private suspend fun processVisibleServers(
         visibleServers: List<com.arabseed.ArabseedParser.ServerData>,
         quality: Int,
@@ -300,36 +348,33 @@ class ArabseedV2 : MainAPI() {
     ): Boolean {
         var found = false
         visibleServers.forEachIndexed { idx, server ->
-             if (found) {
-                Log.d("ArabseedV2", "[loadLinks] Skipping remaining ${quality}p servers - already found")
-                return@forEachIndexed
+             if (found && idx > 0) {
+                 // Optimization
              }
 
              if (server.dataLink.isNotBlank()) {
-                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
-                loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
-                    Log.d("ArabseedV2", "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
-                    callback(link)
-                    found = true
-                }
+                 loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback, callback)
+                 found = true
             } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                val virtualUrl = "arabseed-virtual://$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
-                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via ArabseedVirtualExtractor")
-                val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
-                extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                    Log.d("ArabseedV2", "[loadLinks] Extractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
-                    callback(link)
-                    found = true
-                }
+                val lazyUrl = "arabseed-lazy://$currentBaseUrl/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
+                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (lazy) via Interceptor")
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "Server ${server.serverId} (${quality}p)",
+                        url = lazyUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = "$currentBaseUrl/"
+                        this.quality = quality
+                    }
+                )
+                found = true
             }
         }
         return found
     }
 
-    /**
-     * Fallback mechanism that extracts direct iframes/embeds from the page 
-     * if no standard servers were found.
-     */
     private suspend fun processDirectEmbeds(
         watchDoc: Document,
         currentBaseUrl: String,
@@ -364,7 +409,6 @@ class ArabseedV2 : MainAPI() {
             val isPrivateServer = url.contains("arabseed") || url.contains("asd")
             
             if (isPrivateServer) {
-                // Use visible sniffer directly as per user request
                 val sources = httpService.sniffVideosVisible(url)
                 
                 sources.forEach { source ->
@@ -400,14 +444,5 @@ class ArabseedV2 : MainAPI() {
             else -> Qualities.Unknown.value
         }
     }
-    /**
-     * REMOVED: getVideoInterceptor() - This approach doesn't work because:
-     * 1. ExoPlayer uses MediaHTTPConnection (not OkHttp) for playback
-     * 2. MediaHTTPConnection bypasses OkHttp interceptors entirely
-     * 3. The interceptor runs but ExoPlayer ignores the resolved URL
-     * 
-     * SOLUTION: Use loadExtractor() in loadLinks() to route virtual URLs
-     * through ArabseedVirtualExtractor. The extractor resolves URLs BEFORE
-     * they reach ExoPlayer, which is the proper CloudStream pattern.
-     */
 }
+
