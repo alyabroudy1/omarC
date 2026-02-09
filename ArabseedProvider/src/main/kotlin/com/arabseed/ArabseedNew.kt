@@ -16,6 +16,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.arabseed.extractors.ArabseedLazyExtractor
 import kotlinx.coroutines.*
 import kotlin.coroutines.resume
+import org.jsoup.nodes.Document
 
 /**
  * Arabseed V4 - Ported to Plugin Architecture.
@@ -157,80 +158,103 @@ class ArabseedV2 : MainAPI() {
     ): Boolean {
         Log.d("ArabseedV2", "[loadLinks] START data='${data.take(80)}...'")
         
-        // 1. Get the document
-        val doc = httpService.getDocument(data)
-        if (doc == null) {
+        val doc = httpService.getDocument(data) ?: run {
             Log.e("ArabseedV2", "[loadLinks] Failed to get document for data URL")
             return loadLinksFromService(data, subtitleCallback, callback)
         }
         
-        // 2. Check if we need to navigate to watch page
-        var isWatchPage = doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
-                         doc.select("iframe[name=player_iframe]").isNotEmpty()
-        
-        var watchDoc = if (isWatchPage) doc else null
-        
-        if (watchDoc == null) {
-            val watchUrl = doc.select("a.watch__btn").attr("href")
-            if (watchUrl.isNotBlank()) {
-                Log.d("ArabseedV2", "[loadLinks] Found watch button, following to: ${watchUrl.take(60)}")
-                watchDoc = httpService.getDocument(watchUrl)
-            }
-        }
-        
-        if (watchDoc == null) {
+        val watchDoc = resolveWatchDocument(doc) ?: run {
             Log.e("ArabseedV2", "[loadLinks] Could not get watch page")
             return false
         }
         
-        // 3. Extract available qualities and identify default
+        Log.d("ArabseedV2", "[loadLinks] Watch page resolved. Parsing qualities...")
         val availableQualities = parser.extractQualities(watchDoc)
-        val defaultQuality = watchDoc.selectFirst("ul.qualities__list li.active")
-            ?.attr("data-quality")?.toIntOrNull() ?: availableQualities.lastOrNull()?.quality ?: 480
-        
+        val defaultQuality = parser.extractDefaultQuality(watchDoc, availableQualities)
         val globalPostId = parser.extractPostId(watchDoc) ?: ""
         val csrfToken = parser.extractCsrfToken(doc) ?: ""
         
         Log.d("ArabseedV2", "[loadLinks] Qualities: ${availableQualities.map { it.quality }}, Default: $defaultQuality")
         Log.d("ArabseedV2", "[loadLinks] GlobalPostID: ${globalPostId.ifBlank { "N/A" }}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
-        
-        // 4. Extract visible servers (these are for the DEFAULT quality)
-        val visibleServers = parser.extractVisibleServers(watchDoc)
-        Log.d("ArabseedV2", "[loadLinks] Visible servers (${defaultQuality}p): ${visibleServers.size}")
-        
-        // Get any server's postId for generating other quality URLs
-        val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
-        
+
         val currentBaseUrl = try {
             val uri = java.net.URI(watchDoc.location())
             "${uri.scheme}://${uri.host}"
         } catch (e: Exception) {
             "https://${httpService.currentDomain}"
         }
+
+        var found = processQualities(
+            watchDoc, 
+            availableQualities, 
+            defaultQuality, 
+            globalPostId, 
+            csrfToken, 
+            currentBaseUrl, 
+            subtitleCallback, 
+            callback
+        )
         
+        if (!found) {
+             found = processDirectEmbeds(watchDoc, currentBaseUrl, subtitleCallback, callback)
+        }
+        
+        Log.d("ArabseedV2", "[loadLinks] END found=$found")
+        return found
+    }
+
+    /**
+     * Resolves the watch page document. 
+     * If the current document is already a watch page, returns it.
+     * Otherwise, finds the watch button and loads that page.
+     */
+    private suspend fun resolveWatchDocument(doc: Document): Document? {
+        if (parser.isWatchPage(doc)) return doc
+        
+        val watchUrl = parser.getWatchUrl(doc)
+        if (watchUrl.isNotBlank()) {
+            Log.d("ArabseedV2", "[resolveWatchDocument] Found watch button, following to: ${watchUrl.take(60)}")
+            return httpService.getDocument(watchUrl)
+        }
+        return null
+    }
+
+    /**
+     * Iterates through available qualities and generates sources.
+     * - Non-default qualities: Generates virtual URLs for on-demand resolution.
+     * - Default quality: Processes visible servers directly.
+     */
+    private suspend fun processQualities(
+        watchDoc: Document,
+        availableQualities: List<com.arabseed.ArabseedParser.QualityData>,
+        defaultQuality: Int,
+        globalPostId: String,
+        csrfToken: String,
+        currentBaseUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         var found = false
+        val visibleServers = parser.extractVisibleServers(watchDoc)
+        val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
         
-        // ==================== QUALITY-BASED SOURCE GENERATION ====================
+        Log.d("ArabseedV2", "[loadLinks] Visible servers (${defaultQuality}p): ${visibleServers.size}")
+
         // Sort qualities from highest to lowest
         val sortedQualities = availableQualities.sortedByDescending { it.quality }
-        
-        Log.i("ArabseedV2", "[loadLinks] Processing ${sortedQualities.size} qualities, ${visibleServers.size} visible servers")
-        
+        Log.i("ArabseedV2", "[loadLinks] Processing ${sortedQualities.size} qualities")
+
         sortedQualities.forEach { qData ->
             val quality = qData.quality
             
             if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Emit virtual URLs for on-demand resolution
-                // URLs will be resolved by ArabseedVirtualExtractor when user clicks Play
+                // NON-DEFAULT QUALITY: Emit virtual URLs
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                    // Generate virtual URLs for server 1, 2, 3... (up to 5 servers typically)
                     for (serverId in 1..5) {
-                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
-                        
-                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (virtual URL for on-demand resolution)")
-                        
-                        // Emit virtual URL directly - resolution happens when user clicks Play
-                        // ArabseedVirtualExtractor will handle the POST request with CF session
+                        // Use arabseed-virtual:// scheme to trigger ArabseedVirtualExtractor
+                        // This ensures proper lazy loading and extraction via loadExtractor
+                        val virtualUrl = "arabseed-virtual://$currentBaseUrl/get__watch__server/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
+                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy virtual URL)")
                         callback(
                             newExtractorLink(
                                 source = name,
@@ -248,60 +272,82 @@ class ArabseedV2 : MainAPI() {
                     Log.w("ArabseedV2", "[loadLinks] Cannot generate ${quality}p sources - missing postId or csrf")
                 }
             } else {
-                // DEFAULT QUALITY: Use visible servers with data-link (already fetched)
-                // OPTIMIZATION: Skip if we already found enough videos from other qualities
+                // DEFAULT QUALITY: Use visible servers
                 if (found) {
-                    Log.d("ArabseedV2", "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
-                    return@forEach
+                     Log.d("ArabseedV2", "[loadLinks] Skipping ${quality}p data-link servers - already found working links")
+                     return@forEach
                 }
-                
-                visibleServers.forEachIndexed { idx, server ->
-                    if (found) {
-                        Log.d("ArabseedV2", "[loadLinks] Skipping remaining ${quality}p servers - already found")
-                        return@forEachIndexed
-                    }
-                    
-                    if (server.dataLink.isNotBlank()) {
-                        // Process data-link URL via loadExtractor (these are actual embed URLs)
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
-                        loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                        }
-                    } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                        // Fallback to virtual URL if no data-link - use ArabseedVirtualExtractor directly
-                        val virtualUrl = "$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
-                        
-                        Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via ArabseedVirtualExtractor")
-                        val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
-                        extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                            Log.d("ArabseedV2", "[loadLinks] Extractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
-                            callback(link)
-                            found = true
-                        }
-                    }
+
+                if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback)) {
+                     found = true
                 }
             }
         }
-        
-        // ==================== DIRECT EMBEDS (FALLBACK) ====================
-        if (!found) {
-            val directEmbeds = parser.extractDirectEmbeds(watchDoc)
-            Log.i("ArabseedV2", "[loadLinks] No servers found, using ${directEmbeds.size} direct embeds as fallback")
-            
-            directEmbeds.forEachIndexed { i, embedUrl ->
-                Log.i("ArabseedV2", "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
-                // Use loadExtractor for direct embeds too - allows proper extraction
-                loadExtractor(embedUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                    Log.d("ArabseedV2", "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
+        return found
+    }
+
+    /**
+     * Processes a list of visible servers for a specific quality.
+     * Handles both direct data-links (embedded) and virtual servers (AJAX-based).
+     */
+    private suspend fun processVisibleServers(
+        visibleServers: List<com.arabseed.ArabseedParser.ServerData>,
+        quality: Int,
+        csrfToken: String,
+        currentBaseUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var found = false
+        visibleServers.forEachIndexed { idx, server ->
+             if (found) {
+                Log.d("ArabseedV2", "[loadLinks] Skipping remaining ${quality}p servers - already found")
+                return@forEachIndexed
+             }
+
+             if (server.dataLink.isNotBlank()) {
+                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${idx+1} (data-link) via loadExtractor: ${server.dataLink.take(50)}")
+                loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback) { link ->
+                    Log.d("ArabseedV2", "[loadLinks] Extractor resolved data-link: ${link.url.take(60)} (type=${link.type})")
+                    callback(link)
+                    found = true
+                }
+            } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
+                val virtualUrl = "arabseed-virtual://$currentBaseUrl/get__watch__server/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
+                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (virtual) via ArabseedVirtualExtractor")
+                val extractor = com.arabseed.extractors.ArabseedVirtualExtractor()
+                extractor.getUrl(virtualUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                    Log.d("ArabseedV2", "[loadLinks] Extractor resolved virtual: ${link.url.take(60)} (type=${link.type})")
                     callback(link)
                     found = true
                 }
             }
         }
-        
-        Log.d("ArabseedV2", "[loadLinks] END found=$found")
+        return found
+    }
+
+    /**
+     * Fallback mechanism that extracts direct iframes/embeds from the page 
+     * if no standard servers were found.
+     */
+    private suspend fun processDirectEmbeds(
+        watchDoc: Document,
+        currentBaseUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var found = false
+        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
+        Log.i("ArabseedV2", "[loadLinks] No servers found, using ${directEmbeds.size} direct embeds as fallback")
+
+        directEmbeds.forEachIndexed { i, embedUrl ->
+            Log.i("ArabseedV2", "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
+            loadExtractor(embedUrl, "$currentBaseUrl/", subtitleCallback) { link ->
+                Log.d("ArabseedV2", "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
+                callback(link)
+                found = true
+            }
+        }
         return found
     }
     

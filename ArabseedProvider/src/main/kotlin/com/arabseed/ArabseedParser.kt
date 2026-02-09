@@ -25,6 +25,33 @@ class ArabseedParser : BaseParser() {
 
     override val isMovieSelector = "span.category:not(:contains(مسلسلات))"
 
+    /**
+     * Checks if the current document is a watch page (contains video player or quality list).
+     */
+    fun isWatchPage(doc: Document): Boolean {
+        return doc.select("ul > li[data-link], ul > h3").isNotEmpty() || 
+               doc.select("iframe[name=player_iframe]").isNotEmpty()
+    }
+
+    /**
+     * Extracts the watch URL from a movie details page.
+     * @return URL string or empty string if not found.
+     */
+    fun getWatchUrl(doc: Document): String {
+        return extractMovieWatchUrl(doc)
+    }
+
+    /**
+     * Identifies the default quality from the quality list or falls back to the highest available.
+     * @return Quality value (e.g. 1080, 720) or 480 default.
+     */
+    fun extractDefaultQuality(doc: Document, availableQualities: List<QualityData>): Int {
+        return doc.selectFirst("ul.qualities__list li.active")
+            ?.attr("data-quality")?.toIntOrNull() 
+            ?: availableQualities.lastOrNull()?.quality 
+            ?: 480
+    }
+
     // ================= MAIN PAGE & SEARCH =================
     
     // Exact selectors from built-in ArabseedParser.kt:56
