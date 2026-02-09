@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.runBlocking
+import android.util.Base64
 import com.lagradost.api.Log
 
 /**
@@ -27,7 +28,7 @@ class ArabseedVirtualExtractor : ExtractorApi() {
     // Accept arabseed-virtual:// as a valid input for this extractor
     // We strictly use this prefix to route traffic here
     override fun getExtractorUrl(url: String): String {
-        return if (url.startsWith("arabseed-virtual://")) {
+        return if (url.startsWith("arabseed-virtual://") || url.contains("asd.pics/play/?id=")) {
             url
         } else {
             ""
@@ -44,8 +45,30 @@ class ArabseedVirtualExtractor : ExtractorApi() {
         Log.d(tag, "[getUrl] START Processing URL: ${url.take(80)}")
         
         // 1. Check schema
+        if (url.contains("asd.pics/play/?id=")) {
+            val uri = Uri.parse(url)
+            val id = uri.getQueryParameter("id")
+            
+            if (!id.isNullOrBlank()) {
+                try {
+                    val decodedUrl = String(Base64.decode(id, Base64.DEFAULT))
+                    Log.d(tag, "[getUrl] Decoded ID to: $decodedUrl")
+                    
+                    loadExtractor(
+                        url = decodedUrl,
+                        referer = referer,
+                        subtitleCallback = subtitleCallback,
+                        callback = callback
+                    )
+                    return
+                } catch (e: Exception) {
+                    Log.e(tag, "[getUrl] Failed to decode ID: ${e.message}")
+                }
+            }
+        }
+
         if (!url.startsWith("arabseed-virtual://")) {
-            Log.e(tag, "[getUrl] Invalid scheme, expected arabseed-virtual://")
+            Log.e(tag, "[getUrl] Invalid scheme, expected arabseed-virtual:// or asd.pics ID")
             return
         }
         
