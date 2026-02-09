@@ -229,7 +229,7 @@ class ArabseedV2 : MainAPI() {
             val request = chain.request()
             val url = request.url.toString()
 
-            if (url.startsWith("arabseed-lazy://")) {
+            if (url.contains("arabseed-lazy.com")) {
                 val realUrl = runBlocking {
                      resolveLazyLink(url)
                 } ?: throw java.io.IOException("Failed to resolve lazy link")
@@ -256,7 +256,7 @@ class ArabseedV2 : MainAPI() {
         val quality = queryParams["quality"] ?: return null
         val server = queryParams["server"] ?: return null
         val csrfToken = queryParams["csrf_token"] ?: return null
-        val baseUrl = "${uri.scheme}://${uri.host}".replace("arabseed-lazy", "https") // Reconstruct base URL
+        val baseUrl = queryParams["base"] ?: "https://arabseed.show" // Extract base URL from param
 
         val body = mapOf(
             "action" to "get__watch__server",
@@ -312,7 +312,7 @@ class ArabseedV2 : MainAPI() {
                 // NON-DEFAULT QUALITY: Emit lazy URLs
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     for (serverId in 1..5) {
-                        val lazyUrl = "arabseed-lazy://$currentBaseUrl/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken"
+                        val lazyUrl = "https://arabseed-lazy.com/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&base=$currentBaseUrl"
                         Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy URL)")
                         callback(
                             newExtractorLink(
@@ -356,7 +356,7 @@ class ArabseedV2 : MainAPI() {
                  loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback, callback)
                  found = true
             } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                val lazyUrl = "arabseed-lazy://$currentBaseUrl/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken"
+                val lazyUrl = "https://arabseed-lazy.com/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&base=$currentBaseUrl"
                 Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (lazy) via Interceptor")
                 callback(
                     newExtractorLink(
