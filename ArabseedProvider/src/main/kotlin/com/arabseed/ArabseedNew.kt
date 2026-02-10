@@ -405,64 +405,32 @@ class ArabseedV2 : MainAPI() {
     }
     
     /**
-     * Runs video sniffer using VideoSniffingStrategy with auto-play, auto-mute, skip ads.
-     * This runs HEADLESS (no UI) and automatically interacts with the player.
+     * Uses visible SnifferExtractor (FULLSCREEN mode) to sniff video.
+     * This shows the WebView UI and properly renders the player.
+     * Returns immediately when first video is found.
      */
     private suspend fun awaitSnifferResult(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
-        Log.d("ArabseedV2", "[awaitSnifferResult] Starting VideoSniffingStrategy for: ${targetUrl.take(80)}")
+        Log.d("ArabseedV2", "[awaitSnifferResult] Starting VISIBLE SnifferExtractor for: ${targetUrl.take(80)}")
         
         return try {
-            val activity = ActivityProvider.currentActivity
-            if (activity == null) {
-                Log.e("ArabseedV2", "[awaitSnifferResult] No activity available")
-                return null
-            }
-            
-            // Use VideoSniffingStrategy which has auto-play, auto-mute, skip ads built-in
-            // Reduced timeout to 30s and enable HTML dump on timeout for debugging
-            val sniffer = com.cloudstream.shared.strategy.VideoSniffingStrategy(
-                context = activity,
-                timeout = 30_000,
-                dumpHtmlOnTimeout = true
-            )
-            
-            // Get cookies from SessionProvider
-            val cookies = com.cloudstream.shared.session.SessionProvider.getCookies()
-            val userAgent = com.cloudstream.shared.session.SessionProvider.getUserAgent()
-            
-            Log.d("ArabseedV2", "[awaitSnifferResult] Starting sniff with cookies: ${cookies.size}")
-            
-            val sources = sniffer.sniff(
-                url = targetUrl,
-                userAgent = userAgent,
-                cookies = cookies,
-                extraHeaders = mapOf("Referer" to referer)
-            )
-            
-            if (sources.isNotEmpty()) {
-                val source = sources.first()
-                Log.i("ArabseedV2", "[awaitSnifferResult] Video found: ${source.url.take(80)}")
+            withTimeoutOrNull(timeoutMs) {
+                val deferred = CompletableDeferred<ResolvedLink?>()
+                var found = false
                 
-                // Build headers
-                val finalHeaders = mutableMapOf<String, String>()
-                finalHeaders["Referer"] = targetUrl
-                finalHeaders["User-Agent"] = userAgent
-                finalHeaders.putAll(source.headers)
-                finalHeaders["Accept"] = "*/*"
+                // Create sniffer URL
+                val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(targetUrl, referer)
+                Log.d("ArabseedV2", "[awaitSnifferResult] Sniffer URL: $sniffUrl")
                 
-                // Add cookies
-                val webViewCookies = try {
-                    android.webkit.CookieManager.getInstance().getCookie(source.url)
-                } catch (e: Exception) { null }
+                // Use loadExtractor which will trigger SnifferExtractor with FULLSCREEN mode
+                loadExtractor(sniffUrl, referer, {}, { link ->
+                    if (!found) {
+                        found = true
+                        Log.i("ArabseedV2", "[awaitSnifferResult] Video found via visible sniffer: ${link.url.take(80)}")
+                        deferred.complete(ResolvedLink(link.url, link.headers))
+                    }
+                })
                 
-                if (!webViewCookies.isNullOrBlank()) {
-                    finalHeaders["Cookie"] = webViewCookies
-                }
-                
-                return ResolvedLink(source.url, finalHeaders)
-            } else {
-                Log.w("ArabseedV2", "[awaitSnifferResult] No video sources found")
-                null
+                deferred.await()
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e

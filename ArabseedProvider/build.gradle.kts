@@ -1,4 +1,4 @@
-version = 32 // Add iframe detection logging to debug savefiles.com player loading (v32)
+version = 33 // Switch back to visible SnifferExtractor for better player rendering (v33)
 
 // Include shared source directory
 android {
