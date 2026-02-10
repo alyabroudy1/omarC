@@ -1,4 +1,4 @@
-version = 18 // Strict HLS validation and fast exit (v18)
+version = 19 // Diagnostic dummy link injection (v19)
 
 // Include shared source directory
 android {
