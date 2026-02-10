@@ -405,89 +405,67 @@ class ArabseedV2 : MainAPI() {
     }
     
     /**
-     * Runs video sniffer using WebViewEngine in HEADLESS mode.
-     * This extracts the video URL without showing WebView UI, then immediately returns.
+     * Runs video sniffer using VideoSniffingStrategy with auto-play, auto-mute, skip ads.
+     * This runs HEADLESS (no UI) and automatically interacts with the player.
      */
     private suspend fun awaitSnifferResult(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
-        Log.d("ArabseedV2", "[awaitSnifferResult] Starting HEADLESS sniffer for: ${targetUrl.take(80)}")
+        Log.d("ArabseedV2", "[awaitSnifferResult] Starting VideoSniffingStrategy for: ${targetUrl.take(80)}")
         
         return try {
-            withTimeoutOrNull(timeoutMs) {
-                // Get activity for WebView
-                val activity = ActivityProvider.currentActivity
-                if (activity == null) {
-                    Log.e("ArabseedV2", "[awaitSnifferResult] No activity available")
-                    return@withTimeoutOrNull null
+            val activity = ActivityProvider.currentActivity
+            if (activity == null) {
+                Log.e("ArabseedV2", "[awaitSnifferResult] No activity available")
+                return null
+            }
+            
+            // Use VideoSniffingStrategy which has auto-play, auto-mute, skip ads built-in
+            val sniffer = com.cloudstream.shared.strategy.VideoSniffingStrategy(
+                context = activity,
+                timeout = timeoutMs
+            )
+            
+            // Get cookies from SessionProvider
+            val cookies = com.cloudstream.shared.session.SessionProvider.getCookies()
+            val userAgent = com.cloudstream.shared.session.SessionProvider.getUserAgent()
+            
+            Log.d("ArabseedV2", "[awaitSnifferResult] Starting sniff with cookies: ${cookies.size}")
+            
+            val sources = sniffer.sniff(
+                url = targetUrl,
+                userAgent = userAgent,
+                cookies = cookies,
+                extraHeaders = mapOf("Referer" to referer)
+            )
+            
+            if (sources.isNotEmpty()) {
+                val source = sources.first()
+                Log.i("ArabseedV2", "[awaitSnifferResult] Video found: ${source.url.take(80)}")
+                
+                // Build headers
+                val finalHeaders = mutableMapOf<String, String>()
+                finalHeaders["Referer"] = targetUrl
+                finalHeaders["User-Agent"] = userAgent
+                finalHeaders.putAll(source.headers)
+                finalHeaders["Accept"] = "*/*"
+                
+                // Add cookies
+                val webViewCookies = try {
+                    android.webkit.CookieManager.getInstance().getCookie(source.url)
+                } catch (e: Exception) { null }
+                
+                if (!webViewCookies.isNullOrBlank()) {
+                    finalHeaders["Cookie"] = webViewCookies
                 }
                 
-                // Create WebViewEngine
-                val engine = com.cloudstream.shared.webview.WebViewEngine { ActivityProvider.currentActivity }
-                
-                // Run in HEADLESS mode - NO UI shown, runs in background
-                val result = engine.runSession(
-                    url = targetUrl,
-                    mode = com.cloudstream.shared.webview.WebViewEngine.Mode.HEADLESS,
-                    userAgent = com.cloudstream.shared.session.SessionProvider.getUserAgent(),
-                    exitCondition = com.cloudstream.shared.webview.ExitCondition.VideoFound(minCount = 1),
-                    timeout = timeoutMs
-                )
-                
-                when (result) {
-                    is com.cloudstream.shared.webview.WebViewResult.Success -> {
-                        if (result.foundLinks.isNotEmpty()) {
-                            val source = result.foundLinks.first()
-                            Log.i("ArabseedV2", "[awaitSnifferResult] Video found: ${source.url.take(80)}")
-                            
-                            // Build headers like SnifferExtractor does
-                            val finalHeaders = mutableMapOf<String, String>()
-                            finalHeaders["Referer"] = targetUrl
-                            finalHeaders["User-Agent"] = com.cloudstream.shared.session.SessionProvider.getUserAgent()
-                            
-                            // Add source headers
-                            finalHeaders.putAll(source.headers)
-                            
-                            // Add cookies
-                            val webViewCookies = try {
-                                android.webkit.CookieManager.getInstance().getCookie(source.url)
-                            } catch (e: Exception) { null }
-                            
-                            if (!webViewCookies.isNullOrBlank()) {
-                                finalHeaders["Cookie"] = webViewCookies
-                            }
-                            
-                            // Add security headers
-                            finalHeaders["Accept"] = "*/*"
-                            finalHeaders["Origin"] = extractOrigin(targetUrl)
-                            
-                            return@withTimeoutOrNull ResolvedLink(source.url, finalHeaders)
-                        }
-                    }
-                    is com.cloudstream.shared.webview.WebViewResult.Timeout -> {
-                        Log.w("ArabseedV2", "[awaitSnifferResult] Sniffer timed out")
-                    }
-                    is com.cloudstream.shared.webview.WebViewResult.Error -> {
-                        Log.e("ArabseedV2", "[awaitSnifferResult] Sniffer error: ${result.reason}")
-                    }
-                }
-                
+                return ResolvedLink(source.url, finalHeaders)
+            } else {
+                Log.w("ArabseedV2", "[awaitSnifferResult] No video sources found")
                 null
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.e("ArabseedV2", "[awaitSnifferResult] Error: ${e.message}")
             null
-        }
-    }
-    
-    /**
-     * Extract origin from URL for headers.
-     */
-    private fun extractOrigin(url: String): String {
-        return try {
-            val uri = java.net.URI(url)
-            "${uri.scheme}://${uri.host}${if (uri.port != -1 && uri.port != 80 && uri.port != 443) ":${uri.port}" else ""}"
-        } catch (e: Exception) {
-            url
         }
     }
     

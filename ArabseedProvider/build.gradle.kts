@@ -1,4 +1,4 @@
-version = 28 // Fix: Use HEADLESS sniffer mode to prevent WebView playback (v28)
+version = 29 // Fix: Use VideoSniffingStrategy with auto-play, auto-mute, skip ads (v29)
 
 // Include shared source directory
 android {
