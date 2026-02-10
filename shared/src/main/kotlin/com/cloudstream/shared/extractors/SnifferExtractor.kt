@@ -115,7 +115,7 @@ class SnifferExtractor : ExtractorApi() {
         var isFinished = false
 
         // =====================================================================
-        // DIAGNOSTIC DUMMY INJECTION (v19)
+        // DIAGNOSTIC DUMMY INJECTION (v20 - Manual Proxy Test)
         // =====================================================================
         ProviderLogger.i(TAG, "getUrl", "DIAGNOSTIC - Injecting dummy Big Buck Bunny HLS link")
         callback(

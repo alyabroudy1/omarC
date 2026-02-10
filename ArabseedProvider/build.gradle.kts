@@ -1,4 +1,4 @@
-version = 19 // Diagnostic dummy link injection (v19)
+version = 20 // Manual Proxy Execution for Interceptor (v20)
 
 // Include shared source directory
 android {

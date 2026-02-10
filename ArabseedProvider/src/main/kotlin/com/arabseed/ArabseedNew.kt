@@ -276,7 +276,19 @@ class ArabseedV2 : MainAPI() {
                     newRequestBuilder.header("Referer", "https://asd.pics/")
                 }
                     
-                return@Interceptor chain.proceed(newRequestBuilder.build())
+                // MANUAL PROXY EXECUTION (v20)
+                // Instead of chain.proceed (which reuses the connection and breaks on host change),
+                // we execute a FRESH request with a new connection and return the response.
+                val client = okhttp3.OkHttpClient.Builder()
+                    .followRedirects(true)
+                    .followSslRedirects(true)
+                    .build()
+                
+                Log.d("ArabseedV2", "[getVideoInterceptor] Executing manual proxy request to: ${newRequestBuilder.build().url}")
+                val response = client.newCall(newRequestBuilder.build()).execute()
+                
+                Log.d("ArabseedV2", "[getVideoInterceptor] Proxy response: Code=${response.code}, Message=${response.message}")
+                return@Interceptor response
             }
             
             // 2. Automated Header Propagation (Fix for Segment 403s / Source Error)
