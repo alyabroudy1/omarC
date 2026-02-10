@@ -115,9 +115,15 @@ class SnifferExtractor : ExtractorApi() {
         // Fast exit flag to avoid race conditions when multiple links are found
         var isFinished = false
 
+        android.util.Log.i("SnifferExtractor", "[getUrl] WebViewEngine returned: ${result.javaClass.simpleName}")
+        
         when (result) {
             is WebViewResult.Success -> {
                 totalFound = result.foundLinks.size
+                android.util.Log.i("SnifferExtractor", "[getUrl] SUCCESS! Found $totalFound video sources")
+                result.foundLinks.forEachIndexed { index, link ->
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Link #$index: ${link.url.take(100)}")
+                }
                 ProviderLogger.d(TAG, "getUrl", "Found $totalFound video sources")
                 
                 // BUGFIX: Flush cookies from WebView to ensure they're available
@@ -244,6 +250,8 @@ class SnifferExtractor : ExtractorApi() {
                         "quality" to source.qualityLabel,
                         "headers" to finalHeaders.keys.joinToString())
                     
+                    android.util.Log.i("SnifferExtractor", "[getUrl] INVOKING CALLBACK with URL: ${source.url.take(100)}")
+                    
                     callback(
                         newExtractorLink(
                             source = name,
@@ -258,19 +266,23 @@ class SnifferExtractor : ExtractorApi() {
                     )
                     
                     callbackCount++
+                    android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK #$callbackCount INVOKED SUCCESSFULLY!")
                     ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback #$callbackCount invoked successfully",
                         "url" to source.url.take(60),
                         "type" to linkType.name)
                 }
             }
             is WebViewResult.Timeout -> {
+                android.util.Log.w("SnifferExtractor", "[getUrl] TIMEOUT! Last URL: ${result.lastUrl.take(60)}")
                 ProviderLogger.w(TAG, "getUrl", "WebViewEngine timed out", "lastUrl" to result.lastUrl.take(60))
             }
             is WebViewResult.Error -> {
+                android.util.Log.e("SnifferExtractor", "[getUrl] ERROR: ${result.reason}")
                 ProviderLogger.e(TAG, "getUrl", "WebViewEngine error: ${result.reason}")
             }
         }
         
+        android.util.Log.i("SnifferExtractor", "[getUrl] === END === totalFound=$totalFound callbacks=$callbackCount")
         ProviderLogger.i(TAG, "getUrl", "=== END ===", 
             "totalFound" to totalFound,
             "successfulCallbacks" to callbackCount)

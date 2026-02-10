@@ -108,9 +108,13 @@ class WebViewEngine(
                              
                              val cookies = extractCookies(url)
                              val foundLinks = capturedLinks.toList()
+                             android.util.Log.i("WebViewEngine", "[videoMonitorJob] FALLBACK EXIT with ${foundLinks.size} links")
+                             android.util.Log.i("WebViewEngine", "[videoMonitorJob] First link: ${foundLinks.firstOrNull()?.url?.take(100)}")
                              ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor forced exit")
                              cleanup(webView, dialog)
+                             android.util.Log.i("WebViewEngine", "[videoMonitorJob] Completing deferred with ${foundLinks.size} links")
                              deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
+                             android.util.Log.i("WebViewEngine", "[videoMonitorJob] Deferred completed!")
                         }
                         break
                     }
@@ -380,6 +384,7 @@ class WebViewEngine(
          val data = CapturedLinkData(url, qualityLabel, headers)
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
+             android.util.Log.i("WebViewEngine", "[captureLink] LINK CAPTURED #$capturedLinks.size | url=${url.take(80)}")
              ProviderLogger.i(TAG_WEBVIEW, "captureLink", "LINK CAPTURED SUCCESSFULLY!", 
                  "url" to url.take(100),
                  "quality" to qualityLabel,
@@ -390,6 +395,7 @@ class WebViewEngine(
              // Update UI and Check Exit
              CoroutineScope(Dispatchers.Main).launch {
                  updateDialogText("Found ${capturedLinks.size} video stream(s)...")
+                 android.util.Log.i("WebViewEngine", "[captureLink] Updated UI: Found ${capturedLinks.size} video stream(s)")
                  // Trigger exit check immediately
                  checkExitCondition()
              }

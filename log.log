@@ -1,277 +1,42 @@
-2026-02-10 16:34:01.484 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
-2026-02-10 16:34:01.484 12608-12608 NavComponent            com.lagradost.cloudstream3           I  Navigating to fragment: 2131362284
-2026-02-10 16:34:01.487 12608-12608 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:cfc3dfb: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false
-2026-02-10 16:34:01.487 12608-12608 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:cfc3dfb: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
-2026-02-10 16:34:01.488 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-02-10 16:34:01.489 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-02-10 16:34:01.489 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
-2026-02-10 16:34:01.491 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-02-10 16:34:01.491 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-02-10 16:34:01.533 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-02-10 16:34:01.535 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-02-10 16:34:01.535 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-02-10 16:34:01.536 12608-12646 SYNCVM                  com.lagradost.cloudstream3           I  updateUserData
-2026-02-10 16:34:01.536 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-02-10 16:34:01.536 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] START data='https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%...'
-2026-02-10 16:34:01.537 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-02-10 16:34:01.537 12608-12646 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=asd.pics, url=https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%
-2026-02-10 16:34:01.537 12608-12646 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Building request headers | domain=asd.pics, cookieCount=3, hasClearance=true, isValid=true, uaHash=803669695
-2026-02-10 16:34:01.537 12608-12646 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Cookie header set | keys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
-2026-02-10 16:34:01.537 12608-12646 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%, domain=asd.pics, hasCookie=true, cookieKeys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
-2026-02-10 16:34:01.583 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-02-10 16:34:01.583 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-02-10 16:34:01.583 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-02-10 16:34:01.611 12608-12608 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:01.611 12608-12608 BufferQueueProducer     com.lagradost.cloudstream3           I  [](id:314000000008,api:0,p:0,c:12608) setDequeueTimeout:2077252342
-2026-02-10 16:34:01.612 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## c276f3f SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238553 cornerRadius=0.000000
-2026-02-10 16:34:01.612 12608-12608 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:01.614 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-02-10 16:34:01.614 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-02-10 16:34:01.615 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-02-10 16:34:01.615 12608-12608 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-02-10 16:34:01.619 12608-12608 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:ee8991b0: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false
-2026-02-10 16:34:01.619 12608-12608 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:ee8991b0: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
-2026-02-10 16:34:01.625 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## c276f3f SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238553 cornerRadius=0.000000
-2026-02-10 16:34:01.626 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9c85c0a SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238546 cornerRadius=0.000000
-2026-02-10 16:34:01.732 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9c85c0a SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238546 cornerRadius=0.000000
-2026-02-10 16:34:01.732 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9c85c0a SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238546 cornerRadius=0.000000
-2026-02-10 16:34:02.000 12608-12646 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=asd.pics
-2026-02-10 16:34:02.005 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] Watch page resolved. Parsing sources...
-2026-02-10 16:34:02.016 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] Qualities: [1080, 720, 480], Default: 480
-2026-02-10 16:34:02.016 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] GlobalPostID: N/A, CSRF: FOUND
-2026-02-10 16:34:02.016 12608-12646 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Collected 16 sources. Starting sequential processing...
-2026-02-10 16:34:02.016 12608-12646 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Resolving Lazy URL: https://arabseed-lazy.com/?post_id=832389&quality=1080&server=1&csrf_token=29664af2be&base=https://asd.pics
-2026-02-10 16:34:02.016 12608-12646 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Building request headers | domain=asd.pics, cookieCount=3, hasClearance=true, isValid=true, uaHash=803669695
-2026-02-10 16:34:02.016 12608-12646 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Cookie header set | keys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
-2026-02-10 16:34:02.016 12608-12646 ProviderHttp            com.lagradost.cloudstream3           D  [executePostRequest] Executing POST request | url=https://asd.pics/get__watch__server/, domain=asd.pics, hasCookie=true
-2026-02-10 16:34:02.268 12608-12646 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Processing source: https://savefiles.com/e/fepgxkbktt8t
-2026-02-10 16:34:02.268 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] STEP 1: Trying standard extractors...
-2026-02-10 16:34:10.270 12608-12646 ArabseedV2              com.lagradost.cloudstream3           W  [loadLinks] STEP 2: Standard extractors failed, trying sniffer...
-2026-02-10 16:34:10.270 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [awaitSnifferResult] Starting VISIBLE SnifferExtractor for: https://savefiles.com/e/fepgxkbktt8t
-2026-02-10 16:34:10.270 12608-12646 ArabseedV2              com.lagradost.cloudstream3           D  [awaitSnifferResult] Sniffer URL: sniff://https%3A%2F%2Fsavefiles.com%2Fe%2Ffepgxkbktt8t?referer=https%3A%2F%2Fasd.pics%2F
-2026-02-10 16:34:10.271 12608-12646 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Processing sniffer URL | url=sniff://https%3A%2F%2Fsavefiles.com%2Fe%2Ffepgxkbktt8t?referer=https%3A%2F%2Fasd
-2026-02-10 16:34:10.271 12608-12646 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Parsed embed URL | embedUrl=https://savefiles.com/e/fepgxkbktt8t, embedReferer=https://asd.pics/
-2026-02-10 16:34:10.271 12608-12646 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Using SessionProvider UA | uaHash=803669695, hasSession=true
-2026-02-10 16:34:10.271 12608-12646 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Starting WebViewEngine sniffing (Visible)
-2026-02-10 16:34:10.271 12608-12608 ActivityProvider        com.lagradost.cloudstream3           D  currentActivity requested: MainActivity
-2026-02-10 16:34:10.289 12608-12608 Dialog                  com.lagradost.cloudstream3           I  mIsDeviceDefault = false, mIsSamsungBasicInteraction = false, isMetaDataInActivity = false
-2026-02-10 16:34:10.293 12608-12633 NativeCust...ncyManager com.lagradost.cloudstream3           D  [NativeCFMS] BpCustomFrequencyManager::BpCustomFrequencyManager()
-2026-02-10 16:34:10.330 12608-12633 HWUI                    com.lagradost.cloudstream3           D  HWUI - treat SMPTE_170M as sRGB
-2026-02-10 16:34:10.344 12608-12608 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:10.344 12608-12608 BufferQueueProducer     com.lagradost.cloudstream3           I  [](id:314000000009,api:0,p:0,c:12608) setDequeueTimeout:2077252342
-2026-02-10 16:34:10.344 12608-12608 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:10.363 12608-12633 SurfaceComposerClient   com.lagradost.cloudstream3           I  apply transaction with the first frame. layerId: 238564, bufferData(ID: 54150947668017, frameNumber: 1)
-2026-02-10 16:34:10.364 12608-12633 HWUI                    com.lagradost.cloudstream3           D  CFMS:: SetUp Pid : 12608    Tid : 12633
-2026-02-10 16:34:10.374 12608-12608 ImeFocusController      com.lagradost.cloudstream3           I  onPreWindowFocus: skipped hasWindowFocus=false mHasImeFocus=true
-2026-02-10 16:34:10.374 12608-12608 ImeFocusController      com.lagradost.cloudstream3           I  onPostWindowFocus: skipped hasWindowFocus=false mHasImeFocus=true
-2026-02-10 16:34:10.401 12608-12608 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:eafbde12: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
-2026-02-10 16:34:20.294 12608-12956 cr_media                com.lagradost.cloudstream3           W  Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO. No audio device will be available for recording
-2026-02-10 16:34:20.298 12608-12956 AudioSystem             com.lagradost.cloudstream3           D  onNewServiceWithAdapter: media.audio_flinger service obtained 0xb400007ab4827480
-2026-02-10 16:34:20.298 12608-12956 AudioSystem             com.lagradost.cloudstream3           D  getService: checking for service media.audio_flinger: 0xb400007ab4826ec0
-2026-02-10 16:34:20.299 12608-12956 AudioSystem             com.lagradost.cloudstream3           D  onNewService: media.audio_policy service obtained 0xb400007a7fab00c0
-2026-02-10 16:34:20.300 12608-12956 AudioSystem             com.lagradost.cloudstream3           D  getService: checking for service media.audio_policy: 0xb400007a7fab00c0
-2026-02-10 16:34:20.311 12608-12956 AAudio                  com.lagradost.cloudstream3           I  AAudioStreamBuilder_openStream() called ----------------------------------------
-2026-02-10 16:34:20.311 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           I  rate   =  48000, channels  = 2, channelMask = 0x3, format   = 5, sharing = SH, dir = OUTPUT
-2026-02-10 16:34:20.311 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           I  devices = AUDIO_PORT_HANDLE_NONE, sessionId = -1, perfMode = 12, callback: ON with frames = 192
-2026-02-10 16:34:20.311 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           I  usage  =      1, contentType = 0, inputPreset = 0, allowedCapturePolicy = 0
-2026-02-10 16:34:20.311 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           I  privacy sensitive = false, opPackageName = (null), attributionTag = (null)
-2026-02-10 16:34:20.311 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           D  build, global mmap policy is 0
-2026-02-10 16:34:20.312 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           D  build, system mmap policy is 2
-2026-02-10 16:34:20.312 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           D  build, final mmap policy is 2
-2026-02-10 16:34:20.312 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           D  build, system mmap exclusive policy is 2
-2026-02-10 16:34:20.313 12608-12956 AudioStreamBuilder      com.lagradost.cloudstream3           D  build, final mmap exclusive policy is 2
-2026-02-10 16:34:20.313 12608-12956 st.cloudstream3         com.lagradost.cloudstream3           D  PlayerBase::PlayerBase()
-2026-02-10 16:34:20.390 12608-12956 AudioStrea...nal_Client com.lagradost.cloudstream3           D  configureDataInformation() original HW burst = 96, minMicros = 2000 => SW burst = 96
-2026-02-10 16:34:20.390 12608-12956 IsochronousClockModel   com.lagradost.cloudstream3           D  setFramesPerBurst() - mFramesPerBurst = 96 - mBurstPeriodNanos = 2000000
-2026-02-10 16:34:20.390 12608-12956 AAudioStream            com.lagradost.cloudstream3           D  setState(s#1) from 0 to 2
-2026-02-10 16:34:20.390 12608-12956 AAudioFlowGraph         com.lagradost.cloudstream3           D  configure() source format = 0x00000005, channels = 2, sample rate = 48000, sink format = 0x00000005, channels = 2, sample rate = 48000, useMonoBlend = 0, audioBalance = 0.000000, useVolumeRamps 0
-2026-02-10 16:34:20.392 12608-12956 AAudio                  com.lagradost.cloudstream3           I  AAudioStreamBuilder_openStream() returns 0 = AAUDIO_OK for s#1 ----------------
-2026-02-10 16:34:20.393 12608-12956 AAudio                  com.lagradost.cloudstream3           D  AAudioStream_requestStart(s#1) called --------------
-2026-02-10 16:34:20.393 12608-12956 AAudioStream            com.lagradost.cloudstream3           D  setState(s#1) from 2 to 3
-2026-02-10 16:34:20.495  2223-8318  AppOps                  system_server                        E  attributionTag  not declared in manifest of com.lagradost.cloudstream3
-2026-02-10 16:34:20.495  2223-8318  AppOps                  system_server                        E  attributionTag  not declared in manifest of com.lagradost.cloudstream3
-2026-02-10 16:34:20.529 12608-12956 AAudio                  com.lagradost.cloudstream3           D  AAudioStream_requestStart(s#1) returned 0 ---------
-2026-02-10 16:34:20.532 12608-13319 AudioStrea...lay_Client com.lagradost.cloudstream3           D  callbackLoop() entering >>>>>>>>>>>>>>>
-2026-02-10 16:34:20.533 12608-13319 AudioStrea...nal_Client com.lagradost.cloudstream3           D  onEventFromServer - got AAUDIO_SERVICE_EVENT_STARTED
-2026-02-10 16:34:20.533 12608-13319 AAudioStream            com.lagradost.cloudstream3           D  setState(s#1) from 3 to 4
-2026-02-10 16:34:20.534 12608-12608 MediaRouter             com.lagradost.cloudstream3           D  onRestoreRoute() : route=RouteInfo{ name=Phone, description=null, status=null, category=RouteCategory{ name=System types=ROUTE_TYPE_LIVE_AUDIO ROUTE_TYPE_LIVE_VIDEO  groupable=false }, supportedTypes=ROUTE_TYPE_LIVE_AUDIO ROUTE_TYPE_LIVE_VIDEO , presentationDisplay=null }
-2026-02-10 16:34:20.534 12608-12608 MediaRouter             com.lagradost.cloudstream3           V  Selecting route: RouteInfo{ name=Phone, description=null, status=null, category=RouteCategory{ name=System types=ROUTE_TYPE_LIVE_AUDIO ROUTE_TYPE_LIVE_VIDEO  groupable=false }, supportedTypes=ROUTE_TYPE_LIVE_AUDIO ROUTE_TYPE_LIVE_VIDEO , presentationDisplay=null }
-2026-02-10 16:34:20.597 12608-12949 SensorManager           com.lagradost.cloudstream3           D  registerListener :: 11, lsm6dso LSM6DSO Accelerometer Non-wakeup, 16666, 0,
-2026-02-10 16:34:20.607 12608-12948 SensorManager           com.lagradost.cloudstream3           D  registerListener :: 151, Game Rotation Vector  Non-wakeup, 16666, 0,
-2026-02-10 16:34:20.614 12608-12949 SensorManager           com.lagradost.cloudstream3           D  registerListener :: 101, linear_acceleration, 16666, 0,
-2026-02-10 16:34:20.633 12608-12950 SensorManager           com.lagradost.cloudstream3           D  registerListener :: 41, lsm6dso LSM6DSO Gyroscope Non-wakeup, 16666, 0,
-2026-02-10 16:34:20.816 12608-12608 Kumiho-Kumiho           com.lagradost.cloudstream3           I  getPackageName: com.lagradost.cloudstream3
-2026-02-10 16:34:20.817 12608-12608 Kumiho-Kumiho           com.lagradost.cloudstream3           I  getPackageName: com.lagradost.cloudstream3
-2026-02-10 16:34:22.225 12608-12975 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:22.226 12608-12948 cr_MediaCodecBridge     com.lagradost.cloudstream3           I  create MediaCodec video decoder, mime video/avc, decoder name c2.qti.avc.decoder, block_model=false
-2026-02-10 16:34:22.229 12608-13398 CCodec                  com.lagradost.cloudstream3           I  state->set(ALLOCATING)
-2026-02-10 16:34:22.230 12608-13399 RuntimeProperty         com.lagradost.cloudstream3           D  ro.soc.model: SM8550
-2026-02-10 16:34:22.230 12608-13399 RuntimeProperty         com.lagradost.cloudstream3           D  ro.board.platform: kalama
-2026-02-10 16:34:22.230 12608-13399 CCodec                  com.lagradost.cloudstream3           I  allocate(c2.qti.avc.decoder)
-2026-02-10 16:34:22.230 12608-13399 CCodec                  com.lagradost.cloudstream3           D  allocate(c2.qti.avc.decoder)
-2026-02-10 16:34:22.237 12608-13399 ApexCodecsLazy          com.lagradost.cloudstream3           I  Failed to load libcom.android.media.swcodec.apexcodecs.so: dlopen failed: library "libcom.android.media.swcodec.apexcodecs.so" not found
-2026-02-10 16:34:22.237 12608-13399 Codec2Client            com.lagradost.cloudstream3           I  Available Codec2 services: "default" "default0" "software"
-2026-02-10 16:34:22.240 12608-13399 CCodec                  com.lagradost.cloudstream3           I  setting up 'default' as default (vendor) store
-2026-02-10 16:34:22.271 12608-13399 CCodec                  com.lagradost.cloudstream3           I  Created component [c2.qti.avc.decoder] for [c2.qti.avc.decoder]
-2026-02-10 16:34:22.271 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] state->set(ALLOCATED)
-2026-02-10 16:34:22.271 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  read media type: video/avc
-2026-02-10 16:34:22.273 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  extent() != 1 for single value type: vendor.qti-ext-transcode-info-stats.stats_info
-2026-02-10 16:34:22.273 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  extent() != 1 for single value type: output.buffers.pool-ids.values
-2026-02-10 16:34:22.274 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  extent() != 1 for single value type: output.subscribed-indices.values
-2026-02-10 16:34:22.276 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  ignored struct field vendor.output.configs.portConfigs
-2026-02-10 16:34:22.277 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  ignored struct field vendor.input.configs.portConfigs
-2026-02-10 16:34:22.279 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  ignored struct field vendor.input.configs.portConfigs
-2026-02-10 16:34:22.279 12608-13399 ReflectedParamUpdater   com.lagradost.cloudstream3           D  ignored struct field vendor.output.configs.portConfigs
-2026-02-10 16:34:22.281 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  ignoring local param raw.size (0xd2001800) as it is already supported
-2026-02-10 16:34:22.281 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  ignoring local param default.color (0x5200180b) as it is already supported
-2026-02-10 16:34:22.281 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  ignoring local param raw.hdr-static-info (0xd200180a) as it is already supported
-2026-02-10 16:34:22.282 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] config->initialize() : 0
-2026-02-10 16:34:22.282 12608-13399 CCodecConfig            com.lagradost.cloudstream3           I  query failed after returning 17 values (BAD_INDEX)
-2026-02-10 16:34:22.282 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  c2 config diff is Dict {
-                                                                                                      c2::i32 algo.priority.value = -1
-                                                                                                      c2::float algo.rate.value = 30
-                                                                                                      c2::u32 algo.secure-mode.value = 0
-                                                                                                      c2::float coded.frame-rate.value = 30
-                                                                                                      c2::u32 coded.pl.level = 0
-                                                                                                      c2::u32 coded.pl.profile = 20484
-                                                                                                      c2::u32 coded.vui.color.matrix = 255
-                                                                                                      c2::u32 coded.vui.color.primaries = 0
-                                                                                                      c2::u32 coded.vui.color.range = 0
-                                                                                                      c2::u32 coded.vui.color.transfer = 255
-                                                                                                      c2::u32 default.color.matrix = 0
-                                                                                                      c2::u32 default.color.primaries = 0
-                                                                                                      c2::u32 default.color.range = 0
-                                                                                                      c2::u32 default.color.transfer = 0
-                                                                                                      c2::u32 input.buffers.max-size.value = 8388608
-                                                                                                      c2::u32 input.delay.value = 0
-                                                                                                      string input.media-type.value = "video/avc"
-                                                                                                      c2::u32 output.delay.value = 11
-                                                                                                      string output.media-type.value = "video/raw"
-                                                                                                      c2::u32 raw.color.matrix = 0
-                                                                                                      c2::u32 raw.color.primaries = 0
-                                                                                                      c2::u32 raw.color.range = 0
-                                                                                                      c2::u32 raw.color.transfer = 0
-                                                                                                      c2::float raw.hdr-static-info.mastering.blue.x = 0
-                                                                                                      c2::float raw.hdr-static-info.mastering.blue.y = 0
-                                                                                                      c2::float raw.hdr-static-info.mastering.green
-2026-02-10 16:34:22.282 12608-13399 ColorUtils              com.lagradost.cloudstream3           W  expected specified color aspects (0:0:0:0)
-2026-02-10 16:34:22.282 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] config->queryConfiguration()
-2026-02-10 16:34:22.282 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] mCallback->onComponentAllocated() IN
-2026-02-10 16:34:22.282 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] mCallback->onComponentAllocated() OUT
-2026-02-10 16:34:22.285 12608-13398 MediaCodec              com.lagradost.cloudstream3           I  MediaCodec will operate in async mode
-2026-02-10 16:34:22.286 12608-12948 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:22.286 12608-12948 MediaCodec              com.lagradost.cloudstream3           E  Media Quality Service not found.
-2026-02-10 16:34:22.286 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  connecting to surface 0xb40000785b493810, reason connectToSurface
-2026-02-10 16:34:22.286 12608-13398 MediaCodec              com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] setting surface generation to 12910593
-2026-02-10 16:34:22.286 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  disconnecting from surface 0xb40000785b493810, reason connectToSurface(reconnect)
-2026-02-10 16:34:22.286 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  connecting to surface 0xb40000785b493800, reason connectToSurface(reconnect-with-listener)
-2026-02-10 16:34:22.287 12608-13399 CCodec                  com.lagradost.cloudstream3           D  [c2.qti.avc.decoder] buffers are bound to CCodec for this session
-2026-02-10 16:34:22.287 12608-13399 CCodec                  com.lagradost.cloudstream3           I  appPid(12608) width(1280) height(720)
-2026-02-10 16:34:22.287 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  no c2 equivalents for native-window
-2026-02-10 16:34:22.287 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  no c2 equivalents for native-window-generation
-2026-02-10 16:34:22.287 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  no c2 equivalents for flags
-2026-02-10 16:34:22.288 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  c2 config diff is   c2::u32 raw.max-size.height = 720
-                                                                                                      c2::u32 raw.max-size.width = 1280
-                                                                                                      c2::u32 raw.size.height = 720
-                                                                                                      c2::u32 raw.size.width = 1280
-2026-02-10 16:34:22.289 12608-13399 Codec2Client            com.lagradost.cloudstream3           W  query -- param skipped: index = 1107298332.
-2026-02-10 16:34:22.289 12608-13399 CCodec                  com.lagradost.cloudstream3           D  client requested max input size 691200, which is smaller than what component recommended (8388608); overriding with component recommendation.
-2026-02-10 16:34:22.289 12608-13399 CCodec                  com.lagradost.cloudstream3           W  This behavior is subject to change. It is recommended that app developers double check whether the requested max input size is in reasonable range.
-2026-02-10 16:34:22.289 12608-13399 CCodec                  com.lagradost.cloudstream3           D  encoding statistics level = 0
-2026-02-10 16:34:22.289 12608-13399 CCodec                  com.lagradost.cloudstream3           D  setup formats input: AMessage(what = 0x00000000) = {
-                                                                                                      int32_t feature-secure-playback = 0
-                                                                                                      int32_t frame-rate = 30
-                                                                                                      int32_t height = 720
-                                                                                                      int32_t max-input-size = 8388608
-                                                                                                      string mime = "video/avc"
-                                                                                                      int32_t priority = 1
-                                                                                                      int32_t profile = 8
-                                                                                                      int32_t width = 1280
-                                                                                                      Rect crop(0, 0, 1279, 719)
-                                                                                                    }
-2026-02-10 16:34:22.289 12608-13399 CCodec                  com.lagradost.cloudstream3           D  setup formats output: AMessage(what = 0x00000000) = {
-                                                                                                      int32_t android._color-format = 0
-                                                                                                      int32_t android._video-scaling = 1
-                                                                                                      int32_t android._dataspace = 260
-                                                                                                      int32_t color-standard = 1
-                                                                                                      int32_t color-range = 2
-                                                                                                      int32_t color-transfer = 3
-                                                                                                      int32_t sar-height = 1
-                                                                                                      int32_t rotation-degrees = 0
-                                                                                                      Buffer hdr-static-info = {
-                                                                                                        00000000:  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  ................
-                                                                                                        00000010:  00 00 00 00 00 00 00 00  00                       .........
-                                                                                                      }
-                                                                                                      int32_t sar-width = 1
-                                                                                                      Rect crop(0, 0, 1279, 719)
-                                                                                                      int32_t width = 1280
-                                                                                                      int32_t feature-secure-playback = 0
-                                                                                                      int32_t frame-rate = 30
-                                                                                                      int32_t height = 720
-                                                                                                      int32_t max-height = 720
-                                                                                                      int32_t max-width = 1280
-                                                                                                      string mime = "video/raw"
-                                                                                                      int32_t priority = 1
-                                                                                                      int32_t color-format = 2130708361
-                                                                                                      int32_t p-extraBC = 6
-                                                                                                    }
-2026-02-10 16:34:22.289 12608-13399 CCodecConfig            com.lagradost.cloudstream3           I  query failed after returning 17 values (BAD_INDEX)
-2026-02-10 16:34:22.289 12608-13399 st.cloudstream3         com.lagradost.cloudstream3           E  Failed to query component interface for required system resources: 6
-2026-02-10 16:34:22.291 12608-12948 MediaCodec              com.lagradost.cloudstream3           D  keep callback message for reclaim
-2026-02-10 16:34:22.291 12608-13398 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] state->set(STARTING)
-2026-02-10 16:34:22.309 12608-13399 Codec2Client            com.lagradost.cloudstream3           W  query -- param skipped: index = 1342179345.
-2026-02-10 16:34:22.309 12608-13399 Codec2Client            com.lagradost.cloudstream3           W  query -- param skipped: index = 2415921170.
-2026-02-10 16:34:22.309 12608-13399 Codec2Client            com.lagradost.cloudstream3           W  query -- param skipped: index = 1610614798.
-2026-02-10 16:34:22.310 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Query input allocators returned 0 params => BAD_INDEX (6)
-2026-02-10 16:34:22.310 12608-13399 C2Store                 com.lagradost.cloudstream3           D  debug.c2.use_dmabufheaps set, forcing DMABUF Heaps
-2026-02-10 16:34:22.310 12608-13399 C2Store                 com.lagradost.cloudstream3           D  Using DMABUF Heaps
-2026-02-10 16:34:22.310 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Created input block pool with allocatorID 16 => poolID 17 - OK (0)
-2026-02-10 16:34:22.310 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           I  [c2.qti.avc.decoder#77] start: max output delay 18
-2026-02-10 16:34:22.310 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Query output allocators returned 0 params => BAD_INDEX (6)
-2026-02-10 16:34:22.311 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Query output surface allocator returned 0 params => BAD_INDEX (6)
-2026-02-10 16:34:22.311 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           I  [c2.qti.avc.decoder#77] Created output block pool with allocatorID 18 => poolID 21112 - OK
-2026-02-10 16:34:22.311 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Configured output block pool ids 21112 => OK
-2026-02-10 16:34:22.311 12608-13399 Codec2-Out...ufferQueue com.lagradost.cloudstream3           D  remote graphic buffer migration 0/0
-2026-02-10 16:34:22.312 12608-13399 Codec2Client            com.lagradost.cloudstream3           D  setOutputSurface -- failed to set consumer usage (6/BAD_INDEX)
-2026-02-10 16:34:22.312 12608-13399 Codec2Client            com.lagradost.cloudstream3           D  setOutputSurface -- generation=12910593 consumer usage=0x900
-2026-02-10 16:34:22.315 12608-13399 Codec2Client            com.lagradost.cloudstream3           D  Surface configure completed
-2026-02-10 16:34:22.315 12608-13399 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] state->set(RUNNING)
-2026-02-10 16:34:22.315 12608-13399 DMABUFHEAPS             com.lagradost.cloudstream3           I  Using DMA-BUF heap named: system
-2026-02-10 16:34:22.317 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           I  [c2.qti.avc.decoder#77] 4 initial input buffers available
-2026-02-10 16:34:22.318 12608-13398 MediaCodec              com.lagradost.cloudstream3           I  setCodecState state(0), called in 6, domain 1, 1
-2026-02-10 16:34:22.329 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  c2 config diff is   c2::u32 output.delay.value = 10
-2026-02-10 16:34:22.329 12608-13399 CCodecBufferChannel     com.lagradost.cloudstream3           I  [c2.qti.avc.decoder#77] updating max output delay 18
-2026-02-10 16:34:22.329 12608-13399 Codec2-Out...ufferQueue com.lagradost.cloudstream3           D  set max dequeue count 18 from update
-2026-02-10 16:34:22.332 12608-13403 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] Ignoring stale input buffer done callback: last flush index = 0, frameIndex = 0
-2026-02-10 16:34:22.335 12608-13399 CCodecConfig            com.lagradost.cloudstream3           D  c2 config diff is   c2::u32 raw.color.matrix = 1
-                                                                                                      c2::u32 raw.color.primaries = 1
-                                                                                                      c2::u32 raw.color.range = 2
-                                                                                                      c2::u32 raw.color.transfer = 3
-                                                                                                      c2::u32 raw.crop.height = 720
-                                                                                                      c2::u32 raw.crop.left = 0
-                                                                                                      c2::u32 raw.crop.top = 0
-                                                                                                      c2::u32 raw.crop.width = 1280
-2026-02-10 16:34:22.337 12608-13398 MediaCodec              com.lagradost.cloudstream3           I  setCodecState state(1), called in 6, domain 1, 1
-2026-02-10 16:34:27.366 12608-13403 PipelineWatcher         com.lagradost.cloudstream3           D  onInputBufferReleased: frameIndex not found (136); ignored
-2026-02-10 16:34:27.839 12608-13398 BufferPoolAccessor2.0   com.lagradost.cloudstream3           D  bufferpool2 0xb40000785a92d028 : 5(41943040 size) total buffers - 4(33554432 size) used buffers - 145/150 (recycle/alloc) - 5/148 (fetch/transfer)
-2026-02-10 16:34:29.309 12608-12608 ImeFocusController      com.lagradost.cloudstream3           I  onPreWindowFocus: skipped hasWindowFocus=false mHasImeFocus=true
-2026-02-10 16:34:29.310 12608-12608 ImeFocusController      com.lagradost.cloudstream3           I  onPostWindowFocus: skipped hasWindowFocus=false mHasImeFocus=true
-2026-02-10 16:34:29.794 12608-12608 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## c276f3f SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238553 cornerRadius=0.000000
-2026-02-10 16:34:29.797 12608-12633 HWUI                    com.lagradost.cloudstream3           D  CacheManager::trimMemory(20)
-2026-02-10 16:34:29.834 12608-12948 cr_MediaCodecBridge     com.lagradost.cloudstream3           W  Releasing: c2.qti.avc.decoder
-2026-02-10 16:34:29.834 12608-13398 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
-2026-02-10 16:34:29.834 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  connecting to surface 0xb40000786c263d10, reason connectToSurface
-2026-02-10 16:34:29.834 12608-13398 MediaCodec              com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] setting surface generation to 12910594
-2026-02-10 16:34:29.834 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  disconnecting from surface 0xb40000786c263d10, reason connectToSurface(reconnect)
-2026-02-10 16:34:29.834 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  connecting to surface 0xb40000786c263d00, reason connectToSurface(reconnect-with-listener)
-2026-02-10 16:34:29.835 12608-13398 Codec2-Out...ufferQueue com.lagradost.cloudstream3           D  remote graphic buffer migration 0/0
-2026-02-10 16:34:29.836 12608-13398 Codec2Client            com.lagradost.cloudstream3           D  setOutputSurface -- failed to set consumer usage (6/BAD_INDEX)
-2026-02-10 16:34:29.836 12608-13398 Codec2Client            com.lagradost.cloudstream3           D  setOutputSurface -- generation=12910594 consumer usage=0x900
-2026-02-10 16:34:29.841 12608-13398 Codec2Client            com.lagradost.cloudstream3           D  Surface configure completed
-2026-02-10 16:34:29.841 12608-13398 SurfaceUtils            com.lagradost.cloudstream3           D  disconnecting from surface 0xb40000785b493810, reason disconnectFromSurface
-2026-02-10 16:34:29.842 12608-13398 CCodec                  com.lagradost.cloudstream3           I  [c2.qti.avc.decoder] state->set(RELEASING)
-2026-02-10 16:34:29.842 12608-13398 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] MediaCodec discarded an unknown buffer
-2026-02-10 16:34:29.842 12608-13398 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] MediaCodec discarded an unknown buffer
-2026-02-10 16:34:29.842 12608-13398 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] MediaCodec discarded an unknown buffer
-2026-02-10 16:34:29.843 12608-13398 CCodecBufferChannel     com.lagradost.cloudstream3           D  [c2.qti.avc.decoder#77] MediaCodec discarded an unknown buffer
-2026-02-10 16:34:29.843 12608-12949 SensorManager           com.lagradost.cloudstream3           D  unregisterListener
+2026-02-10 16:52:25.674 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] START data='https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%...'
+2026-02-10 16:52:25.674 17234-17277 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=asd.pics, url=https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%
+2026-02-10 16:52:25.674 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-02-10 16:52:25.674 17234-17277 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Building request headers | domain=asd.pics, cookieCount=3, hasClearance=true, isValid=true, uaHash=803669695
+2026-02-10 16:52:25.674 17234-17277 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Cookie header set | keys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
+2026-02-10 16:52:25.674 17234-17277 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://asd.pics/%d9%81%d9%8a%d9%84%d9%85-%d8%b3%d9%86%d9%88-%d9%88%d8%a7%d9%8a%, domain=asd.pics, hasCookie=true, cookieKeys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
+2026-02-10 16:52:25.729 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-02-10 16:52:25.729 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-10 16:52:25.729 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-10 16:52:25.735 17234-17234 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+2026-02-10 16:52:25.735 17234-17234 BufferQueueProducer     com.lagradost.cloudstream3           I  [](id:435200000008,api:0,p:0,c:17234) setDequeueTimeout:2077252342
+2026-02-10 16:52:25.735 17234-17234 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## d777c2b SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238871 cornerRadius=0.000000
+2026-02-10 16:52:25.735 17234-17234 libc                    com.lagradost.cloudstream3           W  Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+2026-02-10 16:52:25.739 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-02-10 16:52:25.739 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-02-10 16:52:25.739 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-10 16:52:25.739 17234-17234 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-10 16:52:25.746 17234-17234 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:463cf5d5: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false
+2026-02-10 16:52:25.747 17234-17234 ImeTracker              com.lagradost.cloudstream3           I  com.lagradost.cloudstream3:463cf5d5: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+2026-02-10 16:52:25.753 17234-17234 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## d777c2b SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238871 cornerRadius=0.000000
+2026-02-10 16:52:25.754 17234-17234 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9e82c09 SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238864 cornerRadius=0.000000
+2026-02-10 16:52:25.873 17234-17234 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9e82c09 SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238864 cornerRadius=0.000000
+2026-02-10 16:52:25.873 17234-17234 SurfaceComposerClient   com.lagradost.cloudstream3           D  setCornerRadius ## 9e82c09 SurfaceView[com.lagradost.cloudstream3/com.lagradost.cloudstream3.MainActivity]@0#238864 cornerRadius=0.000000
+2026-02-10 16:52:26.158 17234-17277 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=asd.pics
+2026-02-10 16:52:26.163 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] Watch page resolved. Parsing sources...
+2026-02-10 16:52:26.173 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] Qualities: [1080, 720, 480], Default: 480
+2026-02-10 16:52:26.173 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] GlobalPostID: N/A, CSRF: FOUND
+2026-02-10 16:52:26.173 17234-17277 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Collected 16 sources. Starting sequential processing...
+2026-02-10 16:52:26.173 17234-17277 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Resolving Lazy URL: https://arabseed-lazy.com/?post_id=832389&quality=1080&server=1&csrf_token=29664af2be&base=https://asd.pics
+2026-02-10 16:52:26.173 17234-17277 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Building request headers | domain=asd.pics, cookieCount=3, hasClearance=true, isValid=true, uaHash=803669695
+2026-02-10 16:52:26.173 17234-17277 ProviderSession         com.lagradost.cloudstream3           D  [buildHeaders] Cookie header set | keys=[cf_clearance, _ga_D8NNSFR7SN, _ga]
+2026-02-10 16:52:26.173 17234-17277 ProviderHttp            com.lagradost.cloudstream3           D  [executePostRequest] Executing POST request | url=https://asd.pics/get__watch__server/, domain=asd.pics, hasCookie=true
+2026-02-10 16:52:26.550 17234-17277 ArabseedV2              com.lagradost.cloudstream3           I  [loadLinks] Processing source: https://savefiles.com/e/fepgxkbktt8t
+2026-02-10 16:52:26.550 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [loadLinks] STEP 1: Trying standard extractors...
+2026-02-10 16:52:34.551 17234-17277 ArabseedV2              com.lagradost.cloudstream3           W  [loadLinks] STEP 2: Standard extractors failed, trying sniffer...
+2026-02-10 16:52:34.551 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [awaitSnifferResult] Starting VISIBLE SnifferExtractor for: https://savefiles.com/e/fepgxkbktt8t
+2026-02-10 16:52:34.552 17234-17277 ArabseedV2              com.lagradost.cloudstream3           D  [awaitSnifferResult] Sniffer URL: sniff://https%3A%2F%2Fsavefiles.com%2Fe%2Ffepgxkbktt8t?referer=https%3A%2F%2Fasd.pics%2F
+2026-02-10 16:52:34.552 17234-17277 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Processing sniffer URL | url=sniff://https%3A%2F%2Fsavefiles.com%2Fe%2Ffepgxkbktt8t?referer=https%3A%2F%2Fasd
+2026-02-10 16:52:34.552 17234-17277 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Parsed embed URL | embedUrl=https://savefiles.com/e/fepgxkbktt8t, embedReferer=https://asd.pics/
+2026-02-10 16:52:34.552 17234-17277 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Using SessionProvider UA | uaHash=803669695, hasSession=true
+2026-02-10 16:52:34.552 17234-17277 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Starting WebViewEngine sniffing (Visible)
+2026-02-10 16:52:34.552 17234-17234 ActivityProvider        com.lagradost.cloudstream3           D  currentActivity requested: MainActivity
