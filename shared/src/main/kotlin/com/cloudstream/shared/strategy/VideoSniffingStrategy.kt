@@ -368,7 +368,42 @@ class VideoSniffingStrategy(
             
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                view?.evaluateJavascript(JS_SCRIPT) { }
+                ProviderLogger.d(TAG_VIDEO_SNIFFER, "onPageFinished", "Page loaded", "url" to (url?.take(80) ?: "unknown"))
+                
+                view?.let { webView ->
+                    // First inject into main page
+                    webView.evaluateJavascript(JS_SCRIPT) { }
+                    
+                    // Then check for iframes after a delay
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        injectIntoIframes(webView)
+                    }, 1000)
+                }
+            }
+            
+            fun injectIntoIframes(webView: WebView) {
+                try {
+                    // Just log iframe info for now - cross-origin iframe injection is blocked by browser security
+                    webView.evaluateJavascript("""
+                        (function() {
+                            var iframes = document.querySelectorAll('iframe');
+                            var result = [];
+                            for (var i = 0; i < iframes.length; i++) {
+                                var iframe = iframes[i];
+                                result.push({
+                                    index: i, 
+                                    src: iframe.src || 'no-src',
+                                    hasContent: !!iframe.contentDocument
+                                });
+                            }
+                            return JSON.stringify(result);
+                        })()
+                    """.trimIndent()) { result ->
+                        ProviderLogger.d(TAG_VIDEO_SNIFFER, "iframe", "Found iframes", "data" to result)
+                    }
+                } catch (e: Exception) {
+                    ProviderLogger.w(TAG_VIDEO_SNIFFER, "injectIntoIframes", "Error", "error" to e.message)
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-version = 31 // Add WebChromeClient to capture JS console logs for debugging (v31)
+version = 32 // Add iframe detection logging to debug savefiles.com player loading (v32)
 
 // Include shared source directory
 android {
