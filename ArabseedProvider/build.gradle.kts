@@ -1,4 +1,4 @@
-version = 26 // Sequential Source Flow (v26)
+version = 27 // Sequential Source Flow with LoadExtractor fallback (v27)
 
 // Include shared source directory
 android {

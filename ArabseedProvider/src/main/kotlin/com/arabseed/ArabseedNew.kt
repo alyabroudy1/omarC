@@ -87,23 +87,6 @@ class ArabseedV2 : MainAPI() {
         service
     }
 
-    // Helper to suspend and wait for extractor result
-    private suspend fun awaitExtractor(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
-        return try {
-            withTimeoutOrNull(timeoutMs) {
-                val deferred = CompletableDeferred<ResolvedLink?>()
-                loadExtractor(targetUrl, referer, {}, { link ->
-                    deferred.complete(ResolvedLink(link.url, link.headers))
-                })
-                deferred.await()
-            }
-        } catch (e: Exception) {
-            Log.w("ArabseedV2", "[awaitExtractor] Timeout or error: ${e.message}")
-            if (e is CancellationException) throw e // Propagate cancellation!
-            null
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         httpService.ensureInitialized()
         
@@ -271,94 +254,62 @@ class ArabseedV2 : MainAPI() {
         
         // 2. ITERATE & RESOLVE
         var anyFound = false
-        var hasShownVisibleSniffer = false
-        val foundLock = kotlinx.coroutines.sync.Mutex()
         
-        // Helper to report success
-        val reportSuccess: suspend (ExtractorLink) -> Unit = { link ->
-             foundLock.withLock { anyFound = true }
-             callback(link)
-        }
-
         for (source in sources) {
             if (anyFound) break
             
             try {
-                when (source) {
+                val sourceUrl = when (source) {
                     is ArabseedSource.LazySource -> {
+                        // Resolve lazy source to get actual embed URL
                         val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
-                        
-                        val allowVisible = !hasShownVisibleSniffer
-                        Log.i("ArabseedV2", "[loadLinks] Processing Lazy: $lazyUrl (AllowVisible=$allowVisible)")
-                        
-                        val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
-                        
-                        // IF resolved, create link and report success
-                        // Note: resolveLazyLink already waited for extraction.
-                        if (resolved != null) {
-                            if (allowVisible) hasShownVisibleSniffer = true
-                            
-                            // Cache headers
-                            try {
-                                val resolvedHost = java.net.URI(resolved.url).host
-                                if (resolved.headers.isNotEmpty()) {
-                                    domainHeaderCache[resolvedHost] = resolved.headers
-                                }
-                            } catch (e: Exception) {}
-                            
-                            reportSuccess(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "Server ${source.serverId} (${source.quality}p)",
-                                    url = resolved.url,
-                                    type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "${source.baseUrl}/"
-                                    this.quality = source.quality.toIntOrNull() ?: Qualities.Unknown.value
-                                    this.headers = resolved.headers
-                                }
-                            )
-                        }
+                        Log.i("ArabseedV2", "[loadLinks] Resolving Lazy URL: $lazyUrl")
+                        resolveLazyUrl(lazyUrl) // Get the actual embed URL from AJAX
                     }
-                    is ArabseedSource.VisibleSource -> {
-                         Log.i("ArabseedV2", "[loadLinks] Processing Visible: ${source.url}")
-                         // Wait 60s for visible sources as they might be slow or need sniffer
-                         val resolved = awaitExtractor(source.url, "$currentBaseUrl/", 60_000L)
-                         if (resolved != null) {
-                             reportSuccess(
-                                 newExtractorLink(
-                                     source = name,
-                                     name = source.name,
-                                     url = resolved.url,
-                                     type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                 ) {
-                                     this.referer = "$currentBaseUrl/"
-                                     this.quality = Qualities.Unknown.value
-                                     this.headers = resolved.headers
-                                 }
-                             )
-                         }
-                    }
-                    is ArabseedSource.DirectEmbed -> {
-                         Log.i("ArabseedV2", "[loadLinks] Processing Direct: ${source.url}")
-                         // Wait 60s
-                         val resolved = awaitExtractor(source.url, "$currentBaseUrl/", 60_000L)
-                         if (resolved != null) {
-                             reportSuccess(
-                                 newExtractorLink(
-                                     source = name,
-                                     name = "Direct Source",
-                                     url = resolved.url,
-                                     type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                 ) {
-                                     this.referer = "$currentBaseUrl/"
-                                     this.quality = Qualities.Unknown.value
-                                     this.headers = resolved.headers
-                                 }
-                             )
-                         }
-                    }
+                    is ArabseedSource.VisibleSource -> source.url
+                    is ArabseedSource.DirectEmbed -> source.url
                 }
+                
+                if (sourceUrl.isNullOrBlank()) {
+                    Log.w("ArabseedV2", "[loadLinks] Empty URL for source, skipping...")
+                    continue
+                }
+                
+                Log.i("ArabseedV2", "[loadLinks] Processing source: $sourceUrl")
+                
+                // STEP 1: Try loadExtractor (standard extractors)
+                Log.d("ArabseedV2", "[loadLinks] STEP 1: Trying standard extractors...")
+                val standardResult = awaitExtractorWithResult(sourceUrl, "$currentBaseUrl/", 8_000L)
+                
+                if (standardResult != null) {
+                    // Video found via standard extractor - break immediately
+                    Log.i("ArabseedV2", "[loadLinks] SUCCESS via standard extractor: ${standardResult.url.take(80)}")
+                    cacheHeaders(standardResult)
+                    callback(createExtractorLink(source, standardResult, currentBaseUrl))
+                    anyFound = true
+                    break
+                }
+                
+                // STEP 2: Standard extractors failed, try sniffer
+                Log.w("ArabseedV2", "[loadLinks] STEP 2: Standard extractors failed, trying sniffer...")
+                val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(sourceUrl, "$currentBaseUrl/")
+                Log.d("ArabseedV2", "[loadLinks] Sniffer URL: $sniffUrl")
+                
+                // Wait for sniffer to complete
+                val snifferResult = awaitExtractorWithResult(sniffUrl, "$currentBaseUrl/", 60_000L)
+                
+                if (snifferResult != null) {
+                    // Video found via sniffer - break immediately
+                    Log.i("ArabseedV2", "[loadLinks] SUCCESS via sniffer: ${snifferResult.url.take(80)}")
+                    cacheHeaders(snifferResult)
+                    callback(createExtractorLink(source, snifferResult, currentBaseUrl))
+                    anyFound = true
+                    break
+                }
+                
+                // Both failed - move to next source
+                Log.w("ArabseedV2", "[loadLinks] Both standard extractors and sniffer failed for this source")
+                
             } catch (e: Exception) {
                 Log.e("ArabseedV2", "[loadLinks] Error processing source: ${e.message}")
             }
@@ -366,6 +317,136 @@ class ArabseedV2 : MainAPI() {
         
         Log.d("ArabseedV2", "[loadLinks] END found=$anyFound")
         return anyFound
+    }
+    
+    /**
+     * Resolves a lazy URL to the actual embed URL via AJAX call.
+     */
+    private suspend fun resolveLazyUrl(url: String): String? {
+        val uri = try { java.net.URI(url) } catch (e: Exception) { 
+            Log.e("ArabseedV2", "[resolveLazyUrl] Invalid URI: $url")
+            return null 
+        }
+        
+        val query = uri.query ?: ""
+        val queryParams = query.split("&").associate { 
+            val parts = it.split("=", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else it to ""
+        }
+        
+        val postId = queryParams["post_id"] ?: return null
+        val quality = queryParams["quality"] ?: return null
+        val server = queryParams["server"] ?: return null
+        val csrfToken = queryParams["csrf_token"] ?: return null
+        val baseUrlForAjax = queryParams["base"] ?: "https://asd.pics"
+        
+        val result = httpService.postDebug(
+            "$baseUrlForAjax/get__watch__server/",
+            data = mapOf(
+                "post_id" to postId,
+                "quality" to quality,
+                "server" to server,
+                "csrf_token" to csrfToken
+            ),
+            headers = mapOf(
+                "X-Requested-With" to "XMLHttpRequest",
+                "Origin" to baseUrlForAjax,
+                "Referer" to "$baseUrlForAjax/"
+            )
+        )
+        
+        if (!result.success || result.html == null) {
+            Log.e("ArabseedV2", "[resolveLazyUrl] AJAX failed: ${result.responseCode}")
+            return null
+        }
+        
+        val serverResponse = result.html
+        var embedUrl = ""
+        
+        // Parse JSON/HTML response
+        if (serverResponse.trim().startsWith("{")) {
+            val serverMatch = Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
+            if (serverMatch != null) {
+                embedUrl = serverMatch.groupValues[1].replace("\\/", "/")
+            } else if (serverResponse.contains("\"html\"")) {
+                val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
+                val escapedHtml = htmlMatch?.groupValues?.get(1)
+                if (escapedHtml != null) {
+                    val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
+                    embedUrl = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
+                }
+            }
+        } else {
+            val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrlForAjax/")
+            embedUrl = serverDoc.select("iframe").attr("src")
+        }
+        
+        return if (embedUrl.isNotBlank()) embedUrl else null
+    }
+    
+    /**
+     * Awaits extractor result and returns the ResolvedLink or null.
+     */
+    private suspend fun awaitExtractorWithResult(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
+        return try {
+            withTimeoutOrNull(timeoutMs) {
+                val deferred = CompletableDeferred<ResolvedLink?>()
+                var found = false
+                loadExtractor(targetUrl, referer, {}, { link ->
+                    if (!found) {
+                        found = true
+                        deferred.complete(ResolvedLink(link.url, link.headers))
+                    }
+                })
+                deferred.await()
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
+    }
+    
+    /**
+     * Caches headers for domain.
+     */
+    private fun cacheHeaders(resolved: ResolvedLink) {
+        try {
+            val resolvedHost = java.net.URI(resolved.url).host
+            if (resolved.headers.isNotEmpty()) {
+                domainHeaderCache[resolvedHost] = resolved.headers
+            }
+            // Also store CDN cookies
+            val rawCookie = resolved.headers.entries.find { it.key.equals("Cookie", ignoreCase = true) }?.value
+            if (!rawCookie.isNullOrBlank()) {
+                val cookieMap = rawCookie.split(";").associate {
+                    val parts = it.split("=", limit = 2)
+                    parts[0].trim() to (if (parts.size == 2) parts[1].trim() else "")
+                }
+                httpService.storeCdnCookies(resolved.url, cookieMap)
+            }
+        } catch (e: Exception) {}
+    }
+    
+    /**
+     * Creates an ExtractorLink from source and resolved link.
+     */
+    private suspend fun createExtractorLink(source: ArabseedSource, resolved: ResolvedLink, currentBaseUrl: String): ExtractorLink {
+        val (linkName, quality) = when (source) {
+            is ArabseedSource.LazySource -> "Server ${source.serverId} (${source.quality}p)" to (source.quality.toIntOrNull() ?: Qualities.Unknown.value)
+            is ArabseedSource.VisibleSource -> source.name to Qualities.Unknown.value
+            is ArabseedSource.DirectEmbed -> "Direct Source" to Qualities.Unknown.value
+        }
+        
+        return newExtractorLink(
+            source = name,
+            name = linkName,
+            url = resolved.url,
+            type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        ) {
+            this.referer = "$currentBaseUrl/"
+            this.quality = quality
+            this.headers = resolved.headers
+        }
     }
 
     /**
@@ -413,124 +494,6 @@ class ArabseedV2 : MainAPI() {
         }
     }
 
-    private suspend fun resolveLazyLink(url: String, allowVisibleSniffer: Boolean = true): ResolvedLink? {
-        Log.d("ArabseedV2", "[resolveLazyLink] START Processing: $url allowVisible=$allowVisibleSniffer")
-        val uri = try { java.net.URI(url) } catch (e: Exception) { 
-            Log.e("ArabseedV2", "[resolveLazyLink] Invalid URI: $url ${e.message}")
-            return null 
-        }
-        
-        val query = uri.query ?: ""
-        val queryParams = query.split("&").associate { 
-            val parts = it.split("=", limit = 2)
-            if (parts.size == 2) parts[0] to parts[1] else it to ""
-        }
-        
-        val postId = queryParams["post_id"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing post_id"); return null }
-        val quality = queryParams["quality"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing quality"); return null }
-        val server = queryParams["server"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing server"); return null }
-        val csrfToken = queryParams["csrf_token"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing csrf_token"); return null }
-        val baseUrlForAjax = queryParams["base"] ?: "https://asd.pics"
-        
-        Log.d("ArabseedV2", "[resolveLazyLink] Calling AJAX: $baseUrlForAjax/get__watch__server/ with postId=$postId, server=$server, quality=$quality")
-
-        val result = httpService.postDebug(
-            "$baseUrlForAjax/get__watch__server/",
-            data = mapOf(
-                "post_id" to postId,
-                "quality" to quality,
-                "server" to server,
-                "csrf_token" to csrfToken
-            ),
-            headers = mapOf(
-                "X-Requested-With" to "XMLHttpRequest",
-                "Origin" to baseUrlForAjax,
-                "Referer" to "$baseUrlForAjax/"
-            )
-        )
-        
-        Log.d("ArabseedV2", "[resolveLazyLink] AJAX Code: ${result.responseCode}, Success: ${result.success}")
-        val serverResponse = result.html
-        if (serverResponse == null) {
-            Log.e("ArabseedV2", "[resolveLazyLink] Response body is NULL")
-            return null
-        }
-        
-        var embedUrl = ""
-        
-        // 1. Detect JSON/HTML and parse embed URL
-        if (serverResponse.trim().startsWith("{")) {
-            Log.d("ArabseedV2", "[resolveLazyLink] Detected JSON response, parsing...")
-            
-            // Try "server" field first (direct URL)
-            val serverMatch = Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
-            if (serverMatch != null) {
-                embedUrl = serverMatch.groupValues[1].replace("\\/", "/")
-                Log.d("ArabseedV2", "[resolveLazyLink] Found 'server' URL: $embedUrl")
-            } 
-            
-            // Fallback to "html" field if "server" not found or empty
-            if (embedUrl.isBlank() && serverResponse.contains("\"html\"")) {
-                val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
-                val escapedHtml = htmlMatch?.groupValues?.get(1)
-                if (escapedHtml != null) {
-                    val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
-                    embedUrl = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
-                    Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in 'html' field: $embedUrl")
-                }
-            }
-        } else {
-             val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrlForAjax/")
-             embedUrl = serverDoc.select("iframe").attr("src")
-             Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in HTML: $embedUrl")
-        }
-
-        if (embedUrl.isBlank()) {
-            Log.e("ArabseedV2", "[resolveLazyLink] FAILED: No embed URL found in response")
-            return null
-        }
-
-        // 2. RECURSIVE RESOLUTION TO FINAL VIDEO STREAM
-        Log.i("ArabseedV2", "[resolveLazyLink] Starting recursive resolution for: $embedUrl")
-        
-        var finalResult: ResolvedLink? = null
-        
-        // Step A: Try standard extractors (Short timeout, e.g., 4s)
-        Log.d("ArabseedV2", "[resolveLazyLink] Step A: Trying standard extractors...")
-        finalResult = awaitExtractor(embedUrl, "$baseUrlForAjax/", 4000L)
-        
-        // Step B: If still null, try Sniffer fallback (Long timeout, e.g., 60s)
-        if (finalResult == null && allowVisibleSniffer) {
-             Log.w("ArabseedV2", "[resolveLazyLink] Step B: Standard extractors failed. Triggering Sniffer fallback...")
-             val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(embedUrl, "$baseUrlForAjax/")
-             Log.d("ArabseedV2", "[resolveLazyLink] Sniffer URL: $sniffUrl")
-             finalResult = awaitExtractor(sniffUrl, "$baseUrlForAjax/", 60_000L)
-        } else if (finalResult == null) {
-             Log.w("ArabseedV2", "[resolveLazyLink] Step B: Skipping Sniffer fallback (allowVisibleSniffer=false)")
-        }
-        
-        if (finalResult != null) {
-             Log.i("ArabseedV2", "[resolveLazyLink] Final result: ${finalResult?.url?.take(80)}")
-             
-             // PERSIST COOKIES GLOBALLY FOR SEGMENTS (Source error fix)
-             val streamUrl = finalResult?.url ?: ""
-             val rawCookie = finalResult?.headers?.entries?.find { it.key.equals("Cookie", ignoreCase = true) }?.value
-             if (!rawCookie.isNullOrBlank()) {
-                 val cookieMap = rawCookie.split(";").associate {
-                     val parts = it.split("=", limit = 2)
-                     parts[0].trim() to (if (parts.size == 2) parts[1].trim() else "")
-                 }
-                 httpService.storeCdnCookies(streamUrl, cookieMap)
-             }
-        } else {
-             Log.e("ArabseedV2", "[resolveLazyLink] FAILED: Could not resolve to a direct stream link")
-        }
-        
-        return finalResult
-    }
-
-
-    
     private suspend fun loadLinksFromService(
         data: String,
         subtitleCallback: (SubtitleFile) -> Unit,
