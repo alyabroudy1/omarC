@@ -1,4 +1,4 @@
-version = 11 // Fixed URL doubling bug in ProviderHttpService (v11)
+version = 12 // Handling 'server' field in JSON response (v12)
 
 // Include shared source directory
 android {

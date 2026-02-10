@@ -303,17 +303,26 @@ class ArabseedV2 : MainAPI() {
         var iframeSrc = serverDoc.select("iframe").attr("src")
         
         // Fallback for JSON response
-        if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
-             Log.d("ArabseedV2", "[resolveLazyLink] Detected JSON response, extracting HTML field")
-             val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
-             val escapedHtml = htmlMatch?.groupValues?.get(1)
-             if (escapedHtml != null) {
-                 val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
-                 iframeSrc = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
-                 Log.d("ArabseedV2", "[resolveLazyLink] Extracted iframe from JSON: $iframeSrc")
-             } else {
-                 Log.e("ArabseedV2", "[resolveLazyLink] Failed to find 'html' field in JSON")
-             }
+        if (iframeSrc.isBlank() && serverResponse.trim().startsWith("{")) {
+            Log.d("ArabseedV2", "[resolveLazyLink] Detected JSON response, parsing...")
+            
+            // Try "server" field first (direct URL)
+            val serverMatch = Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
+            if (serverMatch != null) {
+                iframeSrc = serverMatch.groupValues[1].replace("\\/", "/")
+                Log.d("ArabseedV2", "[resolveLazyLink] Found 'server' URL: $iframeSrc")
+            } 
+            
+            // Fallback to "html" field if "server" not found or empty
+            if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
+                val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
+                val escapedHtml = htmlMatch?.groupValues?.get(1)
+                if (escapedHtml != null) {
+                    val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
+                    iframeSrc = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
+                    Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in 'html' field: $iframeSrc")
+                }
+            }
         }
 
         if (iframeSrc.isNotBlank()) {
