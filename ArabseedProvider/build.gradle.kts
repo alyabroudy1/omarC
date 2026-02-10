@@ -1,4 +1,4 @@
-version = 14 // Sniffer URL blacklist for tracking links (v14)
+version = 15 // Header-aware redirection for Source error (v15)
 
 // Include shared source directory
 android {

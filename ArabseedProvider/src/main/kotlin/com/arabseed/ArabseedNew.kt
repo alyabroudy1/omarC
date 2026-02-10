@@ -25,6 +25,8 @@ import org.jsoup.nodes.Document
  * 
  * Uses independent service stack for better isolation and maintainability.
  */
+data class ResolvedLink(val url: String, val headers: Map<String, String>)
+
 class ArabseedV2 : MainAPI() {
     
     override var mainUrl = "https://arabseed.show"
@@ -233,26 +235,36 @@ class ArabseedV2 : MainAPI() {
 
             if (url.contains("arabseed-lazy.com")) {
                 Log.d("ArabseedV2", "[getVideoInterceptor] Intercepting lazy link: $url")
-                val realUrl = runBlocking {
+                val resolved = runBlocking {
                      resolveLazyLink(url)
                 } ?: run {
                     Log.e("ArabseedV2", "[getVideoInterceptor] FAILED to resolve lazy link for: $url")
                     throw java.io.IOException("Failed to resolve lazy link")
                 }
                 
-                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to final video stream: $realUrl")
-                // Redirect to the real direct video URL
-                val newRequest = request.newBuilder()
-                    .url(realUrl)
-                    .build()
+                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting with ${resolved.headers.size} headers to: ${resolved.url.take(60)}")
+                
+                // Redirect to the real direct video URL with captured headers
+                val newRequestBuilder = request.newBuilder()
+                    .url(resolved.url)
+                
+                // CRITICAL: Apply captured headers (Cookie, UA, Referer)
+                resolved.headers.forEach { (key, value) ->
+                    newRequestBuilder.header(key, value)
+                }
+                
+                // Ensure Referer is set if not already in headers
+                if (!resolved.headers.containsKey("Referer")) {
+                    newRequestBuilder.header("Referer", "https://asd.pics/")
+                }
                     
-                return@Interceptor chain.proceed(newRequest)
+                return@Interceptor chain.proceed(newRequestBuilder.build())
             }
             return@Interceptor chain.proceed(request)
         }
     }
 
-    private suspend fun resolveLazyLink(url: String): String? {
+    private suspend fun resolveLazyLink(url: String): ResolvedLink? {
         Log.d("ArabseedV2", "[resolveLazyLink] START Processing: $url")
         val uri = try { java.net.URI(url) } catch (e: Exception) { 
             Log.e("ArabseedV2", "[resolveLazyLink] Invalid URI: $url ${e.message}")
@@ -332,14 +344,14 @@ class ArabseedV2 : MainAPI() {
         // 2. RECURSIVE RESOLUTION TO FINAL VIDEO STREAM
         Log.i("ArabseedV2", "[resolveLazyLink] Starting recursive resolution for: $embedUrl")
         
-        var finalStreamUrl: String? = null
+        var finalResult: ResolvedLink? = null
         val mutex = kotlinx.coroutines.sync.Mutex()
         
         val callback: (ExtractorLink) -> Unit = { link ->
              runBlocking {
                  mutex.withLock {
-                     if (finalStreamUrl == null) {
-                         finalStreamUrl = link.url
+                     if (finalResult == null) {
+                         finalResult = ResolvedLink(link.url, link.headers)
                          Log.i("ArabseedV2", "[resolveLazyLink] SUCCESS! Captured stream URL from ${link.name}: ${link.url.take(60)}")
                      }
                  }
@@ -351,20 +363,20 @@ class ArabseedV2 : MainAPI() {
         loadExtractor(embedUrl, "$baseUrlForAjax/", {}, callback)
         
         // Step B: If still null, try Sniffer fallback
-        if (finalStreamUrl == null) {
+        if (finalResult == null) {
              Log.w("ArabseedV2", "[resolveLazyLink] Step B: Standard extractors failed. Triggering Sniffer fallback...")
              val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(embedUrl, "$baseUrlForAjax/")
              Log.d("ArabseedV2", "[resolveLazyLink] Sniffer URL: $sniffUrl")
              loadExtractor(sniffUrl, "$baseUrlForAjax/", {}, callback)
         }
         
-        if (finalStreamUrl != null) {
-             Log.i("ArabseedV2", "[resolveLazyLink] Final direct video link: $finalStreamUrl")
+        if (finalResult != null) {
+             Log.i("ArabseedV2", "[resolveLazyLink] Final direct video link: ${finalResult?.url}")
         } else {
              Log.e("ArabseedV2", "[resolveLazyLink] FAILED: Could not resolve to a direct stream link")
         }
         
-        return finalStreamUrl
+        return finalResult
     }
 
     private suspend fun processQualities(
