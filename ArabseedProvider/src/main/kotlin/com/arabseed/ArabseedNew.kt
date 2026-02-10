@@ -47,6 +47,9 @@ class ArabseedV2 : MainAPI() {
 
     private val parser = ArabseedParser()
 
+    // Cache to propagate headers (UA, Referer) to HLS segments from different domains
+    private val domainHeaderCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, String>>()
+
     private val httpService by lazy {
         // Ensure context is available
         val context = PluginContext.context ?: (com.lagradost.cloudstream3.app as android.content.Context)
@@ -232,9 +235,11 @@ class ArabseedV2 : MainAPI() {
         return okhttp3.Interceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
+            val host = request.url.host
 
+            // 1. Handle Lazy Link Resolution
             if (url.contains("arabseed-lazy.com")) {
-                Log.d("ArabseedV2", "[getVideoInterceptor] Intercepting: $url")
+                Log.d("ArabseedV2", "[getVideoInterceptor] Resolving lazy link: $url")
                 val resolved = runBlocking {
                      resolveLazyLink(url)
                 } ?: run {
@@ -242,25 +247,49 @@ class ArabseedV2 : MainAPI() {
                     throw java.io.IOException("Failed to resolve lazy link")
                 }
                 
-                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to: ${resolved.url.take(60)}")
-                
+                try {
+                    val resolvedHost = java.net.URL(resolved.url).host
+                    // Cache headers for this domain to support follow-up segment requests
+                    val headersToCache = resolved.headers.filterKeys { 
+                        it.equals("User-Agent", ignoreCase = true) || it.equals("Referer", ignoreCase = true) 
+                    }
+                    if (headersToCache.isNotEmpty()) {
+                        domainHeaderCache[resolvedHost] = headersToCache
+                        Log.d("ArabseedV2", "[getVideoInterceptor] Cached headers for domain: $resolvedHost")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ArabseedV2", "[getVideoInterceptor] Failed to parse resolved URL host: ${e.message}")
+                }
+
+                Log.d("ArabseedV2", "[getVideoInterceptor] Redirecting to: ${resolved.url.take(60)}...")
                 val newRequestBuilder = request.newBuilder().url(resolved.url)
                 
-                // CRITICAL: Apply captured headers selectively
-                val headerWhitelist = setOf("Cookie", "User-Agent", "Referer", "Origin")
+                // Apply captured headers to the initial master manifest request
+                val whitelist = setOf("Cookie", "User-Agent", "Referer", "Origin")
                 resolved.headers.forEach { (key, value) ->
-                    if (headerWhitelist.any { it.equals(key, ignoreCase = true) }) {
+                    if (whitelist.any { it.equals(key, ignoreCase = true) }) {
                         newRequestBuilder.header(key, value)
                     }
                 }
                 
-                // Fallback Referer
                 if (resolved.headers.keys.none { it.equals("Referer", ignoreCase = true) }) {
                     newRequestBuilder.header("Referer", "https://asd.pics/")
                 }
                     
                 return@Interceptor chain.proceed(newRequestBuilder.build())
             }
+            
+            // 2. Automated Header Propagation (Fix for Segment 403s / Source Error)
+            val cachedHeaders = domainHeaderCache[host]
+            if (cachedHeaders != null) {
+                Log.d("ArabseedV2", "[getVideoInterceptor] Applying cached headers for segment/direct link: $host")
+                val builder = request.newBuilder()
+                cachedHeaders.forEach { (key, value) ->
+                    builder.header(key, value)
+                }
+                return@Interceptor chain.proceed(builder.build())
+            }
+
             return@Interceptor chain.proceed(request)
         }
     }

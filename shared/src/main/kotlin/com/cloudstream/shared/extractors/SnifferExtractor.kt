@@ -111,6 +111,9 @@ class SnifferExtractor : ExtractorApi() {
         var callbackCount = 0
         var totalFound = 0
         
+        // Fast exit flag to avoid race conditions when multiple links are found
+        var isFinished = false
+        
         when (result) {
             is WebViewResult.Success -> {
                 totalFound = result.foundLinks.size
@@ -128,7 +131,8 @@ class SnifferExtractor : ExtractorApi() {
                 kotlinx.coroutines.delay(100)
                 
                 result.foundLinks.forEach { source ->
-                    // URL VALIDATION: Detect and skip truncated URLs
+                    if (isFinished) return@forEach
+                    
                     val url = source.url
                     if (isUrlTruncated(url)) {
                         ProviderLogger.w(TAG, "getUrl", "URL appears truncated, skipping",
@@ -136,15 +140,15 @@ class SnifferExtractor : ExtractorApi() {
                             "reason" to getTruncationReason(url))
                         return@forEach
                     }
-                    
-                    // STOP after first valid link to satisfy "play first video directly" and avoid logs
-                    if (callbackCount > 0) return@forEach
 
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
+                    
+                    // STOP after first valid link
+                    isFinished = true 
                     
                     // Determine quality value
                     val qualityValue = when {
@@ -286,6 +290,9 @@ class SnifferExtractor : ExtractorApi() {
                lowerUrl.contains("/analytics") || 
                lowerUrl.contains("/google-analytics") || 
                lowerUrl.contains("doubleclick.net") ||
+               lowerUrl.contains("facebook.net") ||
+               lowerUrl.contains("adnxs.com") ||
+               lowerUrl.contains("criteo.com") ||
                lowerUrl.contains("/ads/") ||
                lowerUrl.contains("favicon.ico")
     }
