@@ -68,15 +68,18 @@ class SnifferExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        android.util.Log.d("SnifferExtractor", "getUrl called with url: $url")
         ProviderLogger.d(TAG, "getUrl", "Processing sniffer URL", "url" to url.take(80))
         
         val parsed = parseSnifferUrl(url)
         if (parsed == null) {
+            android.util.Log.e("SnifferExtractor", "Failed to parse sniffer URL: $url")
             ProviderLogger.e(TAG, "getUrl", "Failed to parse sniffer URL")
             return
         }
         
         val (embedUrl, embedReferer) = parsed
+        android.util.Log.d("SnifferExtractor", "Parsed embed URL: $embedUrl, referer: $embedReferer")
         ProviderLogger.d(TAG, "getUrl", "Parsed embed URL", 
             "embedUrl" to embedUrl.take(60),
             "embedReferer" to embedReferer.take(40))
@@ -85,6 +88,7 @@ class SnifferExtractor : ExtractorApi() {
         val engine = webViewEngine ?: run {
             val activity = ActivityProvider.currentActivity
             if (activity == null) {
+                android.util.Log.e("SnifferExtractor", "No Activity available for WebViewEngine")
                 ProviderLogger.e(TAG, "getUrl", "No Activity available for WebViewEngine")
                 return
             }
@@ -94,10 +98,12 @@ class SnifferExtractor : ExtractorApi() {
         // CRITICAL: Use SessionProvider to get the SAME UA used for CF challenge
         // This ensures cookies are valid for this UA
         val snifferUserAgent = SessionProvider.getUserAgent()
+        android.util.Log.d("SnifferExtractor", "Using SessionProvider UA: ${snifferUserAgent.take(50)}...")
         ProviderLogger.d(TAG, "getUrl", "Using SessionProvider UA",
             "uaHash" to snifferUserAgent.hashCode(),
             "hasSession" to SessionProvider.hasValidSession())
         
+        android.util.Log.d("SnifferExtractor", "Starting WebViewEngine sniffing (Visible)")
         ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
         
         val result = engine.runSession(
@@ -129,8 +135,10 @@ class SnifferExtractor : ExtractorApi() {
                 // BUGFIX: Flush cookies from WebView to ensure they're available
                 try {
                     android.webkit.CookieManager.getInstance().flush()
+                    android.util.Log.d("SnifferExtractor", "CookieManager flushed")
                     ProviderLogger.d(TAG, "getUrl", "CookieManager flushed")
                 } catch (e: Exception) {
+                    android.util.Log.w("SnifferExtractor", "Failed to flush cookies: ${e.message}")
                     ProviderLogger.w(TAG, "getUrl", "Failed to flush cookies", "error" to e.message)
                 }
                 
@@ -138,10 +146,14 @@ class SnifferExtractor : ExtractorApi() {
                 kotlinx.coroutines.delay(100)
                 
                 result.foundLinks.forEach { source ->
-                    if (isFinished) return@forEach
+                    if (isFinished) {
+                        android.util.Log.d("SnifferExtractor", "Link skipped (already finished)")
+                        return@forEach
+                    }
                     
                     val url = source.url
                     if (isUrlTruncated(url)) {
+                        android.util.Log.w("SnifferExtractor", "URL truncated: $url reason: ${getTruncationReason(url)}")
                         ProviderLogger.w(TAG, "getUrl", "URL appears truncated, skipping",
                             "url" to url,
                             "reason" to getTruncationReason(url))
@@ -208,6 +220,8 @@ class SnifferExtractor : ExtractorApi() {
                         mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
                     } else null
                     
+                    android.util.Log.d("SnifferExtractor", "Cookies merged. WVCookies: ${webViewCookies?.length ?: 0}, SessionCookies: ${SessionProvider.getCookies().size}, Merged: ${mergedCookies.size}")
+                    
                     ProviderLogger.d(TAG, "getUrl", "Cookies merged",
                         "webViewCookies" to (webViewCookies?.length ?: 0),
                         "sessionCookies" to SessionProvider.getCookies().size,
@@ -228,6 +242,7 @@ class SnifferExtractor : ExtractorApi() {
                     // Add merged cookies - CRITICAL for 403 prevention
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
+                        android.util.Log.d("SnifferExtractor", "Added Cookie header len=${cookieHeader.length}")
                         ProviderLogger.d(TAG, "getUrl", "Added merged cookies", 
                             "cookiesLen" to cookieHeader.length,
                             "hasCfClearance" to mergedCookies.containsKey("cf_clearance"))
