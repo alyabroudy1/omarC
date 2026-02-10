@@ -301,6 +301,12 @@ class ProviderHttpService private constructor(
             val headers = sessionState.buildHeaders().toMutableMap()
             if (referer != null) headers["Referer"] = referer
             customHeaders.forEach { (k, v) -> headers[k] = v }
+            
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "executePostRequest", "Executing POST request",
+                "url" to targetUrl.take(80),
+                "domain" to sessionState.domain,
+                "hasCookie" to (headers["Cookie"] != null)
+            )
 
             val formBody = okhttp3.FormBody.Builder().apply {
                 data.forEach { (k, v) -> add(k, v) }
@@ -381,8 +387,9 @@ class ProviderHttpService private constructor(
         }
     }
     
-    private fun buildUrl(path: String): String {
-        val normalizedPath = if (path.startsWith("/")) path else "/$path"
+    private fun buildUrl(pathOrUrl: String): String {
+        if (pathOrUrl.startsWith("http")) return pathOrUrl
+        val normalizedPath = if (pathOrUrl.startsWith("/")) pathOrUrl else "/$pathOrUrl"
         return "https://${sessionState.domain}$normalizedPath"
     }
     

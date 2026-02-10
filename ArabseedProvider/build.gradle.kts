@@ -1,4 +1,4 @@
-version = 10 // Comprehensive logging for lazy link resolution (v10)
+version = 11 // Fixed URL doubling bug in ProviderHttpService (v11)
 
 // Include shared source directory
 android {
