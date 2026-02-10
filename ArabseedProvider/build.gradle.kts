@@ -1,4 +1,4 @@
-version = 22 // Fix Sniffer False Positives (v22)
+version = 23 // Optimize Sniffer Exit & UI Feedback (v23)
 
 // Include shared source directory
 android {

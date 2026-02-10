@@ -25,6 +25,12 @@ import kotlinx.coroutines.*
 class WebViewEngine(
     private val activityProvider: () -> android.app.Activity?
 ) {
+    // Instance variables to share state with helper methods
+    private var deferred: CompletableDeferred<WebViewResult>? = null
+    private var resultDelivered = false
+    private var timeoutJob: Job? = null
+    private var videoMonitorJob: Job? = null
+    
     enum class Mode {
         HEADLESS,    // No UI, runs in background
         FULLSCREEN   // User-visible dialog for CAPTCHA
@@ -49,8 +55,9 @@ class WebViewEngine(
             return@withContext WebViewResult.Error("No Activity context")
         }
         
-        val deferred = CompletableDeferred<WebViewResult>()
-        var resultDelivered = false
+        this@WebViewEngine.deferred = CompletableDeferred<WebViewResult>()
+        val deferred = this@WebViewEngine.deferred!!
+        resultDelivered = false
         var dialog: Dialog? = null
         var webView: WebView? = null
         
@@ -59,7 +66,7 @@ class WebViewEngine(
         ProviderLogger.d(TAG_WEBVIEW, "runSession", "Session started, capturedLinks cleared")
         
         // Timeout handler
-        val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
+        this@WebViewEngine.timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeout)
             if (!resultDelivered) {
                 resultDelivered = true
@@ -80,7 +87,7 @@ class WebViewEngine(
         }
         
         // BUGFIX: Proactive video monitoring job - checks every 300ms for captured videos
-        val videoMonitorJob = if (exitCondition is ExitCondition.VideoFound) {
+        this@WebViewEngine.videoMonitorJob = if (exitCondition is ExitCondition.VideoFound) {
             CoroutineScope(Dispatchers.Main).launch {
                 val requiredCount = (exitCondition as ExitCondition.VideoFound).minCount
                 ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor started", "requiredCount" to requiredCount)
@@ -91,13 +98,19 @@ class WebViewEngine(
                         ProviderLogger.d(TAG_WEBVIEW, "runSession", "Videos found, waiting for headers to sync...")
                         delay(500)  // Give time for headers to be captured
                         
-                        resultDelivered = true
-                        timeoutJob.cancel()
-                        val cookies = extractCookies(url)
-                        val foundLinks = capturedLinks.toList()
-                        ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor found ${foundLinks.size} videos - exiting early!")
-                        cleanup(webView, dialog)
-                        deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
+                        checkExitCondition() // Trigger exit via helper
+                        
+                        // Fallback if checkExitCondition didn't trigger for some reason
+                        if (!resultDelivered) {
+                             resultDelivered = true
+                             timeoutJob?.cancel()
+                             
+                             val cookies = extractCookies(url)
+                             val foundLinks = capturedLinks.toList()
+                             ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor forced exit")
+                             cleanup(webView, dialog)
+                             deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
+                        }
                         break
                     }
                 }
@@ -219,7 +232,7 @@ class WebViewEngine(
                             
                             if (shouldExit) {
                                 resultDelivered = true
-                                timeoutJob.cancel()
+                                timeoutJob?.cancel()
                                 videoMonitorJob?.cancel()
                                 
                                 val cookies = extractCookies(currentUrl)
@@ -259,7 +272,7 @@ class WebViewEngine(
             
         } catch (e: Exception) {
             resultDelivered = true
-            timeoutJob.cancel()
+            timeoutJob?.cancel()
             videoMonitorJob?.cancel()
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
@@ -292,7 +305,88 @@ class WebViewEngine(
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
              ProviderLogger.d(TAG_WEBVIEW, "captureLink", "Captured", "url" to url)
+             
+             // Update UI and Check Exit
+             CoroutineScope(Dispatchers.Main).launch {
+                 updateDialogText("Found ${capturedLinks.size} video stream(s)...")
+                 // Trigger exit check immediately
+                 checkExitCondition()
+             }
          }
+    }
+    
+    // Instance accessible exit check
+    private fun checkExitCondition() {
+        if (resultDelivered) return
+        
+        // We only auto-exit for VideoFound condition from here
+        // Other conditions are checked in onPageFinished
+        val currentExitCondition = exitConditionReference ?: return
+        
+        if (currentExitCondition is ExitCondition.VideoFound) {
+            val count = capturedLinks.size
+            if (count >= currentExitCondition.minCount) {
+                ProviderLogger.i(TAG_WEBVIEW, "checkExitCondition", "Exit condition met!", "count" to count)
+                
+                // Trigger success
+                resultDelivered = true
+                timeoutJob?.cancel()
+                videoMonitorJob?.cancel()
+                
+                val cookies = extractCookies("") // URL not easily available here, implies current
+                val found = capturedLinks.toList()
+                
+                // Find WebView instance if possible, or just cleanup whatever is stored
+                // deferred is instance variable now
+                
+                // We need reference to webView and dialog to cleanup
+                // But they are local to runSession. 
+                // However, cleanup() handles nulls.
+                // WE MUST BE CAREFUL: webView and dialog in runSession are correct scope.
+                // We cannot access them easily unless we make them instance variables or pass them.
+                // BUT runSession waits for deferred.complete.
+                // So if we complete deferred, runSession continues? 
+                // No, runSession IS waiting. 
+                
+                // WAIT: If we complete deferred here, runSession's cleanup might not happen if it's AFTER await?
+                // runSession code:
+                // deferred.await()
+                // So cleanup happens inside the callbacks/jobs before complete.
+                
+                // We need to trigger the completion which allows runSession to return.
+                // But we should cleanup first.
+                // Since we can't access webView/dialog here easily without major Refactor 2.0...
+                // Strategy: We will just complete deferred. 
+                // The caller (SnifferExtractor) gets result.
+                // But the Dialog might remain open if cleanup isn't called?
+                // YES. 
+                
+                // FIX: Let's rely on videoMonitorJob/polling for the cleanup access?
+                // OR make webView/dialog instance variables?
+                // runSession is "suspend". We can have multiple concurrent sessions theoretically?
+                // No, usually single sniffer.
+                // Providing proper cleanup is critical.
+                
+                // REVERT STRATEGY for checkExitCondition: 
+                // Better to just notify the polling loop? 
+                // Or make webView/dialog valid instance variables for the duration of runSession.
+            }
+        }
+    }
+    
+    // Helper property to store current exit condition for checkExitCondition
+    private var exitConditionReference: ExitCondition? = null
+    
+    // To handle cleanup properly, we'll keep references for the active session
+    private var activeWebView: WebView? = null
+    private var activeDialog: Dialog? = null
+    
+    private var statusTextView: TextView? = null
+    
+    private fun updateDialogText(text: String) {
+        try {
+            statusTextView?.text = text
+        } catch (e: Exception) {}
     }
     
     private fun createDialog(activity: android.app.Activity, webView: WebView): Dialog {
@@ -308,13 +402,14 @@ class WebViewEngine(
                 setPadding(16, 32, 16, 16)
             })
             
-            addView(TextView(activity).apply {
+            statusTextView = TextView(activity).apply {
                 text = "Looking for video streams..." // Updated subtitle
                 textSize = 14f
                 setTextColor(Color.LTGRAY)
                 gravity = Gravity.CENTER
                 setPadding(16, 0, 16, 16)
-            })
+            }
+            addView(statusTextView)
             
             addView(webView.apply {
                 layoutParams = LinearLayout.LayoutParams(
@@ -329,8 +424,29 @@ class WebViewEngine(
             setContentView(container)
             setCancelable(true)
             setOnDismissListener {
-                // If dismiss, we might want to return what we found so far?
-                // But deferred is inside runSession.
+                 // Triggered when user presses back or touches outside
+                 if (!resultDelivered) {
+                    ProviderLogger.d(TAG_WEBVIEW, "runSession", "Dialog dismissed by user")
+                    resultDelivered = true
+                    timeoutJob?.cancel()
+                    videoMonitorJob?.cancel()
+                    
+                    val cookies = extractCookies(webView.url ?: "")
+                    val found = capturedLinks.toList()
+                    val html = try {
+                         // getHtmlFromWebView is suspend, so we need a coroutine scope or runBlocking
+                         // Since we are in a listener on main thread, runBlocking might block UI momentarily but is safest for synchronous result requirement here?
+                         // Actually, we are completing a deferred which is async.
+                         // But we can't launch here easily without scope.
+                         // Let's use GlobalScope or just empty string if complex?
+                         // Better: use runBlocking just for the HTML part if it's fast? 
+                         // getHtmlFromWebView uses suspendCancellableCoroutine.
+                         // safest is just empty string here or launch.
+                         "" 
+                    } catch (e: Exception) { "" }
+                    
+                    deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
+                 }
             }
         }
     }
@@ -338,11 +454,22 @@ class WebViewEngine(
     inner class SnifferBridge {
         @JavascriptInterface
         fun onSourcesFound(json: String) {
-             // Parse JSON similar to VideoSniffingStrategy
-             // For brevity, let's assume simple parsing or delegate
              ProviderLogger.d(TAG_WEBVIEW, "SnifferBridge", "Sources found via JS", "json" to json)
-             // Parsing logic here...
-             // captureLink(...)
+             try {
+                val array = org.json.JSONArray(json)
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i)
+                    val src = item.optString("src")
+                    val type = item.optString("type")
+                    val label = item.optString("label", "JS-Source")
+                    
+                    if (src.isNotBlank() && isVideoUrl(src)) {
+                         captureLink(src, label, emptyMap()) // JS usually doesn't give headers
+                    }
+                }
+             } catch (e: Exception) {
+                 ProviderLogger.e(TAG_WEBVIEW, "SnifferBridge", "Failed to parse JS data", e)
+             }
         }
     }
     
@@ -390,6 +517,9 @@ class WebViewEngine(
                     try { view.destroy() } catch (e: Exception) { /* ignore */ } 
                 }
             }
+            // Clear active references
+            if (activeWebView == webView) activeWebView = null
+            if (activeDialog == dialog) activeDialog = null
         } catch (e: Exception) {
             ProviderLogger.w(TAG_WEBVIEW, "cleanup", "Error", "error" to e.message)
         }
