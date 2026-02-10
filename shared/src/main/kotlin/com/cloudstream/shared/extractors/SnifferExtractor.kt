@@ -309,8 +309,12 @@ class SnifferExtractor : ExtractorApi() {
             url.length < 40 -> true
             // URL ends with just a dash AND doesn't contain hls or urlset patterns
             url.endsWith("-") && !url.contains("hls") && !url.contains("urlset") -> true
-            // URLset URL without proper suffix AND no index path
-            url.contains(".urlset") && !url.contains("/master") && !url.contains("/index-") && url.length < 80 -> true
+            // NEW: HLS/manifest URLs must have an extension or manifest pattern
+            (url.contains("/hls/") || url.contains("/urlset/")) && 
+            !url.contains(".m3u8") && 
+            !url.contains("/master") && 
+            !url.contains("/index-") &&
+            !url.contains("token=") -> true
             else -> false
         }
     }

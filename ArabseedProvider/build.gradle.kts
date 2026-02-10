@@ -1,4 +1,4 @@
-version = 17 // Segment header propagation and fast sniffer exit (v17)
+version = 18 // Strict HLS validation and fast exit (v18)
 
 // Include shared source directory
 android {
