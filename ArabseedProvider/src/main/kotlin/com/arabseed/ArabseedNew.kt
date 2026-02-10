@@ -28,7 +28,7 @@ import org.jsoup.nodes.Document
 data class ResolvedLink(val url: String, val headers: Map<String, String>)
 
 sealed class ArabseedSource {
-    data class VisibleSource(val url: String) : ArabseedSource()
+    data class VisibleSource(val url: String, val name: String) : ArabseedSource()
     data class LazySource(
         val postId: String, 
         val quality: String, 
@@ -85,6 +85,23 @@ class ArabseedV2 : MainAPI() {
         ProviderHttpServiceHolder.initialize(service)
         
         service
+    }
+
+    // Helper to suspend and wait for extractor result
+    private suspend fun awaitExtractor(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
+        return try {
+            withTimeoutOrNull(timeoutMs) {
+                val deferred = CompletableDeferred<ResolvedLink?>()
+                loadExtractor(targetUrl, referer, {}, { link ->
+                    deferred.complete(ResolvedLink(link.url, link.headers))
+                })
+                deferred.await()
+            }
+        } catch (e: Exception) {
+            Log.w("ArabseedV2", "[awaitExtractor] Timeout or error: ${e.message}")
+            if (e is CancellationException) throw e // Propagate cancellation!
+            null
+        }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -229,7 +246,7 @@ class ArabseedV2 : MainAPI() {
                  // Default quality: Process visible servers
                  visibleServers.forEach { server ->
                      if (server.dataLink.isNotBlank()) {
-                         sources.add(ArabseedSource.VisibleSource(server.dataLink))
+                         sources.add(ArabseedSource.VisibleSource(server.dataLink, "Server ${server.serverId} ($defaultQuality)"))
                      } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                          sources.add(ArabseedSource.LazySource(
                              postId = server.postId,
@@ -257,11 +274,10 @@ class ArabseedV2 : MainAPI() {
         var hasShownVisibleSniffer = false
         val foundLock = kotlinx.coroutines.sync.Mutex()
         
-        // Callback wrapper to detect success
-        val safeCallback: (ExtractorLink) -> Unit = { link ->
-            // Mark found immediately
-            runBlocking { foundLock.withLock { anyFound = true } }
-            callback(link)
+        // Helper to report success
+        val reportSuccess: suspend (ExtractorLink) -> Unit = { link ->
+             foundLock.withLock { anyFound = true }
+             callback(link)
         }
 
         for (source in sources) {
@@ -277,9 +293,12 @@ class ArabseedV2 : MainAPI() {
                         
                         val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
                         
+                        // IF resolved, create link and report success
+                        // Note: resolveLazyLink already waited for extraction.
                         if (resolved != null) {
                             if (allowVisible) hasShownVisibleSniffer = true
                             
+                            // Cache headers
                             try {
                                 val resolvedHost = java.net.URI(resolved.url).host
                                 if (resolved.headers.isNotEmpty()) {
@@ -287,7 +306,7 @@ class ArabseedV2 : MainAPI() {
                                 }
                             } catch (e: Exception) {}
                             
-                            safeCallback(
+                            reportSuccess(
                                 newExtractorLink(
                                     source = name,
                                     name = "Server ${source.serverId} (${source.quality}p)",
@@ -303,11 +322,41 @@ class ArabseedV2 : MainAPI() {
                     }
                     is ArabseedSource.VisibleSource -> {
                          Log.i("ArabseedV2", "[loadLinks] Processing Visible: ${source.url}")
-                         loadExtractor(source.url, "$currentBaseUrl/", subtitleCallback, safeCallback)
+                         // Wait 60s for visible sources as they might be slow or need sniffer
+                         val resolved = awaitExtractor(source.url, "$currentBaseUrl/", 60_000L)
+                         if (resolved != null) {
+                             reportSuccess(
+                                 newExtractorLink(
+                                     source = name,
+                                     name = source.name,
+                                     url = resolved.url,
+                                     type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                 ) {
+                                     this.referer = "$currentBaseUrl/"
+                                     this.quality = Qualities.Unknown.value
+                                     this.headers = resolved.headers
+                                 }
+                             )
+                         }
                     }
                     is ArabseedSource.DirectEmbed -> {
                          Log.i("ArabseedV2", "[loadLinks] Processing Direct: ${source.url}")
-                         loadExtractor(source.url, "$currentBaseUrl/", subtitleCallback, safeCallback)
+                         // Wait 60s
+                         val resolved = awaitExtractor(source.url, "$currentBaseUrl/", 60_000L)
+                         if (resolved != null) {
+                             reportSuccess(
+                                 newExtractorLink(
+                                     source = name,
+                                     name = "Direct Source",
+                                     url = resolved.url,
+                                     type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                 ) {
+                                     this.referer = "$currentBaseUrl/"
+                                     this.quality = Qualities.Unknown.value
+                                     this.headers = resolved.headers
+                                 }
+                             )
+                         }
                     }
                 }
             } catch (e: Exception) {
@@ -445,29 +494,17 @@ class ArabseedV2 : MainAPI() {
         Log.i("ArabseedV2", "[resolveLazyLink] Starting recursive resolution for: $embedUrl")
         
         var finalResult: ResolvedLink? = null
-        val mutex = kotlinx.coroutines.sync.Mutex()
         
-        val callback: (ExtractorLink) -> Unit = { link ->
-             runBlocking {
-                 mutex.withLock {
-                     if (finalResult == null) {
-                         finalResult = ResolvedLink(link.url, link.headers)
-                         Log.i("ArabseedV2", "[resolveLazyLink] SUCCESS! Captured stream URL from ${link.name}: ${link.url.take(60)}")
-                     }
-                 }
-             }
-        }
-        
-        // Step A: Try standard extractors
+        // Step A: Try standard extractors (Short timeout, e.g., 4s)
         Log.d("ArabseedV2", "[resolveLazyLink] Step A: Trying standard extractors...")
-        loadExtractor(embedUrl, "$baseUrlForAjax/", {}, callback)
+        finalResult = awaitExtractor(embedUrl, "$baseUrlForAjax/", 4000L)
         
-        // Step B: If still null, try Sniffer fallback
+        // Step B: If still null, try Sniffer fallback (Long timeout, e.g., 60s)
         if (finalResult == null && allowVisibleSniffer) {
              Log.w("ArabseedV2", "[resolveLazyLink] Step B: Standard extractors failed. Triggering Sniffer fallback...")
              val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(embedUrl, "$baseUrlForAjax/")
              Log.d("ArabseedV2", "[resolveLazyLink] Sniffer URL: $sniffUrl")
-             loadExtractor(sniffUrl, "$baseUrlForAjax/", {}, callback)
+             finalResult = awaitExtractor(sniffUrl, "$baseUrlForAjax/", 60_000L)
         } else if (finalResult == null) {
              Log.w("ArabseedV2", "[resolveLazyLink] Step B: Skipping Sniffer fallback (allowVisibleSniffer=false)")
         }
