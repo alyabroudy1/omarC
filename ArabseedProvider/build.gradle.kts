@@ -1,4 +1,4 @@
-version = 23 // Optimize Sniffer Exit & UI Feedback (v23)
+version = 24 // Fix Missing Exit Condition (v24)
 
 // Include shared source directory
 android {

@@ -57,6 +57,7 @@ class WebViewEngine(
         
         this@WebViewEngine.deferred = CompletableDeferred<WebViewResult>()
         val deferred = this@WebViewEngine.deferred!!
+        this@WebViewEngine.exitConditionReference = exitCondition
         resultDelivered = false
         var dialog: Dialog? = null
         var webView: WebView? = null
