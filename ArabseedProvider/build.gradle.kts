@@ -1,4 +1,4 @@
-version = 30 // Fix: Reduce sniff timeout to 30s + HTML dump on timeout for debugging (v30)
+version = 31 // Add WebChromeClient to capture JS console logs for debugging (v31)
 
 // Include shared source directory
 android {

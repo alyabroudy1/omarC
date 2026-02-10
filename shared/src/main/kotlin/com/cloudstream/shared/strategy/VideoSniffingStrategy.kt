@@ -50,6 +50,7 @@ class VideoSniffingStrategy(
         val JS_SCRIPT = """
         (function() {
             var sourcesSent = false;
+            var clickAttempted = false;
             
             function skipAds() {
                 try {
@@ -61,15 +62,72 @@ class VideoSniffingStrategy(
                         }
                     });
                     
-                    ['.jw-skip', '.skip-button', '.skip-ad', '[class*="skip"]'].forEach(function(sel) {
+                    ['.jw-skip', '.skip-button', '.skip-ad', '[class*="skip"]', '[class*="SkipAd"]', '#skip-ad', '.vast-skip', '.ytp-ad-skip-button'].forEach(function(sel) {
                         var btn = document.querySelector(sel);
-                        if (btn && btn.offsetParent) btn.click();
+                        if (btn && btn.offsetParent) {
+                            btn.click();
+                            console.log('Skip ad clicked: ' + sel);
+                        }
                     });
                 } catch(e) {}
             }
             
+            function clickPlayButton() {
+                if (clickAttempted) return;
+                try {
+                    // Aggressive play button selectors
+                    var selectors = [
+                        'button[aria-label*="play" i]',
+                        'button[title*="play" i]',
+                        '.play-button',
+                        '.vjs-big-play-button',
+                        '.vjs-play-control',
+                        '.jw-icon-playback',
+                        '.plyr__control--overlaid',
+                        '[class*="play" i]',
+                        '#play',
+                        '.play',
+                        'video',
+                        'button svg[class*="play"]',
+                        'button:has(svg)',
+                        '.player-overlay',
+                        '.video-overlay',
+                        '.start-button',
+                        '.load-player',
+                        '.btn-play'
+                    ];
+                    
+                    for (var i = 0; i < selectors.length; i++) {
+                        var elements = document.querySelectorAll(selectors[i]);
+                        for (var j = 0; j < elements.length; j++) {
+                            var el = elements[j];
+                            if (el.offsetParent !== null && el.offsetWidth > 10 && el.offsetHeight > 10) {
+                                // Simulate click
+                                var clickEvent = new MouseEvent('click', {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    view: window
+                                });
+                                el.dispatchEvent(clickEvent);
+                                
+                                // Also try direct click
+                                if (el.click) el.click();
+                                
+                                console.log('Clicked: ' + selectors[i] + ' #' + j);
+                                clickAttempted = true;
+                                return true;
+                            }
+                        }
+                    }
+                } catch(e) {}
+                return false;
+            }
+            
             function autoPlay() {
                 try {
+                    // Try clicking play button first
+                    clickPlayButton();
+                    
                     if (typeof jwplayer !== 'undefined') {
                         var player = jwplayer();
                         if (player) {
@@ -79,7 +137,13 @@ class VideoSniffingStrategy(
                     }
                     
                     document.querySelectorAll('video').forEach(function(v) {
-                        if (v.paused) { v.muted = true; v.play(); }
+                        v.muted = true;
+                        if (v.paused) { 
+                            v.play().catch(function(e) {
+                                // If autoplay blocked, try clicking on video element
+                                v.click();
+                            }); 
+                        }
                     });
                 } catch(e) {}
             }
@@ -109,6 +173,12 @@ class VideoSniffingStrategy(
                 } catch(e) {}
             }
             
+            // Initial attempts
+            setTimeout(function() { clickPlayButton(); }, 500);
+            setTimeout(function() { clickPlayButton(); }, 1000);
+            setTimeout(function() { clickPlayButton(); }, 2000);
+            
+            // Continuous monitoring
             autoPlay();
             skipAds();
             setInterval(function() { autoPlay(); skipAds(); extractSources(); }, 1000);
@@ -243,6 +313,8 @@ class VideoSniffingStrategy(
             settings.domStorageEnabled = true
             settings.userAgentString = userAgent
             settings.mediaPlaybackRequiresUserGesture = false
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
             
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             
@@ -255,6 +327,31 @@ class VideoSniffingStrategy(
             
             addJavascriptInterface(SnifferBridge(), "SnifferBridge")
             webViewClient = createSnifferWebViewClient()
+            
+            // Add WebChromeClient to capture console logs from JavaScript
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                    consoleMessage?.let {
+                        val msg = "${it.message()} [${it.sourceId()}:${it.lineNumber()}]"
+                        when (it.messageLevel()) {
+                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> 
+                                android.util.Log.e("VideoSnifferJS", msg)
+                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> 
+                                android.util.Log.w("VideoSnifferJS", msg)
+                            else -> 
+                                android.util.Log.d("VideoSnifferJS", msg)
+                        }
+                    }
+                    return true
+                }
+                
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    super.onProgressChanged(view, newProgress)
+                    if (newProgress % 20 == 0) {
+                        ProviderLogger.d(TAG_VIDEO_SNIFFER, "WebView", "Loading progress", "percent" to newProgress)
+                    }
+                }
+            }
         }
     }
     
