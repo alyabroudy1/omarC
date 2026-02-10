@@ -1,4 +1,4 @@
-version = 27 // Sequential Source Flow with LoadExtractor fallback (v27)
+version = 28 // Fix: Use HEADLESS sniffer mode to prevent WebView playback (v28)
 
 // Include shared source directory
 android {
