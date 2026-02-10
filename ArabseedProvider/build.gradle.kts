@@ -1,4 +1,4 @@
-version = 6  // Fixed video sniffing: cookie sync, header handling, interceptor improvements
+version = 7  // Added asd.pics decoding and fixed MalformedURLException
 
 // Include shared source directory
 android {
