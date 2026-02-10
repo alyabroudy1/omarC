@@ -1,4 +1,4 @@
-version = 20 // Manual Proxy Execution for Interceptor (v20)
+version = 21 // Async Resolution in loadLinks (v21)
 
 // Include shared source directory
 android {

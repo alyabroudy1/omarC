@@ -234,70 +234,19 @@ class ArabseedV2 : MainAPI() {
     override fun getVideoInterceptor(linker: ExtractorLink): okhttp3.Interceptor {
         return okhttp3.Interceptor { chain ->
             val request = chain.request()
-            val url = request.url.toString()
             val host = request.url.host
-
-            // 1. Handle Lazy Link Resolution
-            if (url.contains("arabseed-lazy.com")) {
-                Log.d("ArabseedV2", "[getVideoInterceptor] Resolving lazy link: $url")
-                val resolved = runBlocking {
-                     resolveLazyLink(url)
-                } ?: run {
-                    Log.e("ArabseedV2", "[getVideoInterceptor] FAILED resolution: $url")
-                    throw java.io.IOException("Failed to resolve lazy link")
-                }
-                
-                try {
-                    val resolvedHost = java.net.URL(resolved.url).host
-                    // Cache headers for this domain to support follow-up segment requests
-                    val headersToCache = resolved.headers.filterKeys { 
-                        it.equals("User-Agent", ignoreCase = true) || it.equals("Referer", ignoreCase = true) 
-                    }
-                    if (headersToCache.isNotEmpty()) {
-                        domainHeaderCache[resolvedHost] = headersToCache
-                        Log.d("ArabseedV2", "[getVideoInterceptor] Cached headers for domain: $resolvedHost")
-                    }
-                } catch (e: Exception) {
-                    Log.w("ArabseedV2", "[getVideoInterceptor] Failed to parse resolved URL host: ${e.message}")
-                }
-
-                Log.d("ArabseedV2", "[getVideoInterceptor] Redirecting to: ${resolved.url.take(60)}...")
-                val newRequestBuilder = request.newBuilder().url(resolved.url)
-                
-                // Apply captured headers to the initial master manifest request
-                val whitelist = setOf("Cookie", "User-Agent", "Referer", "Origin")
-                resolved.headers.forEach { (key, value) ->
-                    if (whitelist.any { it.equals(key, ignoreCase = true) }) {
-                        newRequestBuilder.header(key, value)
-                    }
-                }
-                
-                if (resolved.headers.keys.none { it.equals("Referer", ignoreCase = true) }) {
-                    newRequestBuilder.header("Referer", "https://asd.pics/")
-                }
-                    
-                // MANUAL PROXY EXECUTION (v20)
-                // Instead of chain.proceed (which reuses the connection and breaks on host change),
-                // we execute a FRESH request with a new connection and return the response.
-                val client = okhttp3.OkHttpClient.Builder()
-                    .followRedirects(true)
-                    .followSslRedirects(true)
-                    .build()
-                
-                Log.d("ArabseedV2", "[getVideoInterceptor] Executing manual proxy request to: ${newRequestBuilder.build().url}")
-                val response = client.newCall(newRequestBuilder.build()).execute()
-                
-                Log.d("ArabseedV2", "[getVideoInterceptor] Proxy response: Code=${response.code}, Message=${response.message}")
-                return@Interceptor response
-            }
             
-            // 2. Automated Header Propagation (Fix for Segment 403s / Source Error)
+            // Automated Header Propagation (Fix for Segment 403s / Source Error)
             val cachedHeaders = domainHeaderCache[host]
             if (cachedHeaders != null) {
-                Log.d("ArabseedV2", "[getVideoInterceptor] Applying cached headers for segment/direct link: $host")
+                // Only apply if not already present to avoid duplication
                 val builder = request.newBuilder()
+                val currentHeaders = request.headers
+                
                 cachedHeaders.forEach { (key, value) ->
-                    builder.header(key, value)
+                    if (currentHeaders[key] == null) {
+                        builder.header(key, value)
+                    }
                 }
                 return@Interceptor chain.proceed(builder.build())
             }
@@ -460,19 +409,35 @@ class ArabseedV2 : MainAPI() {
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     for (serverId in 1..5) {
                         val lazyUrl = "https://arabseed-lazy.com/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&base=$currentBaseUrl"
-                        Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy URL)")
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = "Server $serverId (${quality}p)",
-                                url = lazyUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$currentBaseUrl/"
-                                this.quality = quality
-                            }
-                        )
-                        found = true
+                        Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC: $lazyUrl")
+                        
+                        // ASYNC RESOLUTION (v21)
+                        val resolved = resolveLazyLink(lazyUrl)
+                        if (resolved != null) {
+                            Log.i("ArabseedV2", "[loadLinks] Resolved server $serverId to: ${resolved.url}")
+                            
+                            // Cache headers for segments
+                            try {
+                                val resolvedHost = java.net.URI(resolved.url).host
+                                if (resolved.headers.isNotEmpty()) {
+                                    domainHeaderCache[resolvedHost] = resolved.headers
+                                }
+                            } catch (e: Exception) {}
+                            
+                            callback(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "Server $serverId (${quality}p)",
+                                    url = resolved.url,
+                                    type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = "$currentBaseUrl/"
+                                    this.quality = quality
+                                    this.headers = resolved.headers
+                                }
+                            )
+                            found = true
+                        }
                     }
                 }
             } else {
@@ -504,19 +469,35 @@ class ArabseedV2 : MainAPI() {
                  found = true
             } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                 val lazyUrl = "https://arabseed-lazy.com/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&base=$currentBaseUrl"
-                Log.d("ArabseedV2", "[loadLinks] Processing ${quality}p server ${server.serverId} (lazy) via Interceptor")
-                callback(
-                    newExtractorLink(
-                        source = name,
-                        name = "Server ${server.serverId} (${quality}p)",
-                        url = lazyUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "$currentBaseUrl/"
-                        this.quality = quality
-                    }
-                )
-                found = true
+                Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC (Visible Server): $lazyUrl")
+                
+                // ASYNC RESOLUTION (v21)
+                val resolved = resolveLazyLink(lazyUrl)
+                if (resolved != null) {
+                    Log.i("ArabseedV2", "[loadLinks] Resolved visible server ${server.serverId} to: ${resolved.url}")
+                    
+                     // Cache headers for segments
+                    try {
+                        val resolvedHost = java.net.URI(resolved.url).host
+                        if (resolved.headers.isNotEmpty()) {
+                            domainHeaderCache[resolvedHost] = resolved.headers
+                        }
+                    } catch (e: Exception) {}
+                    
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = "Server ${server.serverId} (${quality}p)",
+                            url = resolved.url,
+                            type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$currentBaseUrl/"
+                            this.quality = quality
+                            this.headers = resolved.headers
+                        }
+                    )
+                    found = true
+                }
             }
         }
         return found
@@ -592,4 +573,3 @@ class ArabseedV2 : MainAPI() {
         }
     }
 }
-

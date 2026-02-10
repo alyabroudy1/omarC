@@ -114,25 +114,6 @@ class SnifferExtractor : ExtractorApi() {
         // Fast exit flag to avoid race conditions when multiple links are found
         var isFinished = false
 
-        // =====================================================================
-        // DIAGNOSTIC DUMMY INJECTION (v20 - Manual Proxy Test)
-        // =====================================================================
-        ProviderLogger.i(TAG, "getUrl", "DIAGNOSTIC - Injecting dummy Big Buck Bunny HLS link")
-        callback(
-            newExtractorLink(
-                source = name,
-                name = "$name DIAGNOSTIC (Big Buck Bunny)",
-                url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.quality = Qualities.P1080.value
-                this.headers = mapOf("User-Agent" to snifferUserAgent)
-            }
-        )
-        isFinished = true
-        callbackCount++
-        // =====================================================================
-
         when (result) {
             is WebViewResult.Success -> {
                 totalFound = result.foundLinks.size
