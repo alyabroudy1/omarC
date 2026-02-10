@@ -246,11 +246,15 @@ class ArabseedV2 : MainAPI() {
     }
 
     private suspend fun resolveLazyLink(url: String): String? {
+        Log.d("ArabseedV2", "[resolveLazyLink] Processing URL: $url")
         val uri = java.net.URI(url)
-        val queryParams = uri.query.split("&").associate { 
-            val (key, value) = it.split("=")
-            key to value 
+        val query = uri.query ?: ""
+        val queryParams = query.split("&").associate { 
+            val parts = it.split("=", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else it to ""
         }
+        
+        Log.d("ArabseedV2", "[resolveLazyLink] Params: $queryParams")
         
         val postId = queryParams["post_id"] ?: return null
         val quality = queryParams["quality"] ?: return null
@@ -258,7 +262,7 @@ class ArabseedV2 : MainAPI() {
         val csrfToken = queryParams["csrf_token"] ?: return null
         val baseUrl = queryParams["base"] ?: "https://arabseed.show" // Extract base URL from param
 
-        val serverDoc = httpService.post(
+        val serverResponse = httpService.postText(
             "$baseUrl/get__watch__server/",
             data = mapOf(
                 "post_id" to postId,
@@ -271,15 +275,27 @@ class ArabseedV2 : MainAPI() {
                 "Origin" to baseUrl,
                 "Referer" to "$baseUrl/"
             )
-        ) ?: return null
+        )
         
+        Log.d("ArabseedV2", "[resolveLazyLink] Raw Response: ${serverResponse?.take(200)}")
+        if (serverResponse == null) return null
+        
+        val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrl/")
         val iframeSrc = serverDoc.select("iframe").attr("src")
         
-        return if (iframeSrc.isNotBlank()) {
-            iframeSrc
-        } else {
-             null
-        }
+        // Fallback for JSON response
+        val finalUrl = if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
+             Log.d("ArabseedV2", "[resolveLazyLink] Attempting JSON/HTML extraction")
+             val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
+             val escapedHtml = htmlMatch?.groupValues?.get(1)
+             if (escapedHtml != null) {
+                 val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
+                 org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
+             } else null
+        } else iframeSrc
+
+        Log.d("ArabseedV2", "[resolveLazyLink] Final URL: $finalUrl")
+        return if (!finalUrl.isNullOrBlank()) finalUrl else null
     }
 
     private suspend fun processQualities(

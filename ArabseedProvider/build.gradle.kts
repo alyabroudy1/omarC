@@ -1,4 +1,4 @@
-version = 8  // Fixed lazy link resolution endpoint (/get__watch__server/)
+version = 9  // Added debug logs for lazy link resolution and improved param parsing
 
 // Include shared source directory
 android {
