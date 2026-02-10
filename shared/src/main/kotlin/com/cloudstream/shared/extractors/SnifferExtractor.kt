@@ -274,7 +274,21 @@ class SnifferExtractor : ExtractorApi() {
      * 
      * FIX: Relaxed validation to allow valid HLS URLs that have unconventional naming
      */
+    /**
+     * Check if a URL is blacklisted (trackers, analytics, etc.)
+     */
+    private fun isBlacklisted(url: String): Boolean {
+        val lowerUrl = url.lowercase()
+        return lowerUrl.contains("/ping.gif") || 
+               lowerUrl.contains("/analytics") || 
+               lowerUrl.contains("/google-analytics") || 
+               lowerUrl.contains("doubleclick.net") ||
+               lowerUrl.contains("/ads/") ||
+               lowerUrl.contains("favicon.ico")
+    }
+
     private fun isUrlTruncated(url: String): Boolean {
+        if (isBlacklisted(url)) return true // Treat blacklisted as "truncated" for skipping
         // Check for obvious truncation patterns
         return when {
             // URL ends with incomplete file extension (just a dot)

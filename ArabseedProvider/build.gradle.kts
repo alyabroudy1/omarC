@@ -1,4 +1,4 @@
-version = 13 // Sniffer-integrated Interceptor resolution (v13)
+version = 14 // Sniffer URL blacklist for tracking links (v14)
 
 // Include shared source directory
 android {
