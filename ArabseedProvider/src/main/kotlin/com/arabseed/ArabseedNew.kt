@@ -230,10 +230,15 @@ class ArabseedV2 : MainAPI() {
             val url = request.url.toString()
 
             if (url.contains("arabseed-lazy.com")) {
+                Log.d("ArabseedV2", "[getVideoInterceptor] Intercepting lazy link: $url")
                 val realUrl = runBlocking {
                      resolveLazyLink(url)
-                } ?: throw java.io.IOException("Failed to resolve lazy link")
+                } ?: run {
+                    Log.e("ArabseedV2", "[getVideoInterceptor] FAILED to resolve lazy link for: $url")
+                    throw java.io.IOException("Failed to resolve lazy link")
+                }
                 
+                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to: $realUrl")
                 // Redirect to the real URL
                 val newRequest = request.newBuilder()
                     .url(realUrl)
@@ -246,23 +251,27 @@ class ArabseedV2 : MainAPI() {
     }
 
     private suspend fun resolveLazyLink(url: String): String? {
-        Log.d("ArabseedV2", "[resolveLazyLink] Processing URL: $url")
-        val uri = java.net.URI(url)
+        Log.d("ArabseedV2", "[resolveLazyLink] START Processing: $url")
+        val uri = try { java.net.URI(url) } catch (e: Exception) { 
+            Log.e("ArabseedV2", "[resolveLazyLink] Invalid URI: $url ${e.message}")
+            return null 
+        }
+        
         val query = uri.query ?: ""
         val queryParams = query.split("&").associate { 
             val parts = it.split("=", limit = 2)
             if (parts.size == 2) parts[0] to parts[1] else it to ""
         }
         
-        Log.d("ArabseedV2", "[resolveLazyLink] Params: $queryParams")
+        val postId = queryParams["post_id"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing post_id"); return null }
+        val quality = queryParams["quality"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing quality"); return null }
+        val server = queryParams["server"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing server"); return null }
+        val csrfToken = queryParams["csrf_token"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing csrf_token"); return null }
+        val baseUrl = queryParams["base"] ?: "https://arabseed.show"
         
-        val postId = queryParams["post_id"] ?: return null
-        val quality = queryParams["quality"] ?: return null
-        val server = queryParams["server"] ?: return null
-        val csrfToken = queryParams["csrf_token"] ?: return null
-        val baseUrl = queryParams["base"] ?: "https://arabseed.show" // Extract base URL from param
+        Log.d("ArabseedV2", "[resolveLazyLink] Calling AJAX: $baseUrl/get__watch__server/ with postId=$postId, server=$server, quality=$quality")
 
-        val serverResponse = httpService.postText(
+        val result = httpService.postDebug(
             "$baseUrl/get__watch__server/",
             data = mapOf(
                 "post_id" to postId,
@@ -277,25 +286,43 @@ class ArabseedV2 : MainAPI() {
             )
         )
         
-        Log.d("ArabseedV2", "[resolveLazyLink] Raw Response: ${serverResponse?.take(200)}")
-        if (serverResponse == null) return null
+        Log.d("ArabseedV2", "[resolveLazyLink] Response Code: ${result.responseCode}, Success: ${result.success}")
+        if (!result.success) {
+            Log.e("ArabseedV2", "[resolveLazyLink] HTTP Request FAILED: ${result.error?.message}")
+            return null
+        }
+
+        val serverResponse = result.html
+        Log.d("ArabseedV2", "[resolveLazyLink] Raw Response (first 100): ${serverResponse?.take(100)}")
+        if (serverResponse == null) {
+            Log.e("ArabseedV2", "[resolveLazyLink] Response body is NULL")
+            return null
+        }
         
         val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrl/")
-        val iframeSrc = serverDoc.select("iframe").attr("src")
+        var iframeSrc = serverDoc.select("iframe").attr("src")
         
         // Fallback for JSON response
-        val finalUrl = if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
-             Log.d("ArabseedV2", "[resolveLazyLink] Attempting JSON/HTML extraction")
+        if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
+             Log.d("ArabseedV2", "[resolveLazyLink] Detected JSON response, extracting HTML field")
              val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
              val escapedHtml = htmlMatch?.groupValues?.get(1)
              if (escapedHtml != null) {
                  val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
-                 org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
-             } else null
-        } else iframeSrc
+                 iframeSrc = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
+                 Log.d("ArabseedV2", "[resolveLazyLink] Extracted iframe from JSON: $iframeSrc")
+             } else {
+                 Log.e("ArabseedV2", "[resolveLazyLink] Failed to find 'html' field in JSON")
+             }
+        }
 
-        Log.d("ArabseedV2", "[resolveLazyLink] Final URL: $finalUrl")
-        return if (!finalUrl.isNullOrBlank()) finalUrl else null
+        if (iframeSrc.isNotBlank()) {
+            Log.d("ArabseedV2", "[resolveLazyLink] SUCCESS: $iframeSrc")
+            return iframeSrc
+        } else {
+            Log.e("ArabseedV2", "[resolveLazyLink] FAILED: No iframe found in response")
+            return null
+        }
     }
 
     private suspend fun processQualities(

@@ -1,4 +1,4 @@
-version = 9  // Added debug logs for lazy link resolution and improved param parsing
+version = 10 // Comprehensive logging for lazy link resolution (v10)
 
 // Include shared source directory
 android {
