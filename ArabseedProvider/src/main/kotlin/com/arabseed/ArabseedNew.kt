@@ -27,6 +27,18 @@ import org.jsoup.nodes.Document
  */
 data class ResolvedLink(val url: String, val headers: Map<String, String>)
 
+sealed class ArabseedSource {
+    data class VisibleSource(val url: String) : ArabseedSource()
+    data class LazySource(
+        val postId: String, 
+        val quality: String, 
+        val serverId: String, 
+        val csrfToken: String, 
+        val baseUrl: String
+    ) : ArabseedSource()
+    data class DirectEmbed(val url: String) : ArabseedSource()
+}
+
 class ArabseedV2 : MainAPI() {
     
     override var mainUrl = "https://arabseed.show"
@@ -175,11 +187,13 @@ class ArabseedV2 : MainAPI() {
             return false
         }
         
-        Log.d("ArabseedV2", "[loadLinks] Watch page resolved. Parsing qualities...")
+        Log.d("ArabseedV2", "[loadLinks] Watch page resolved. Parsing sources...")
         val availableQualities = parser.extractQualities(watchDoc)
         val defaultQuality = parser.extractDefaultQuality(watchDoc, availableQualities)
         val globalPostId = parser.extractPostId(watchDoc) ?: ""
         val csrfToken = parser.extractCsrfToken(doc) ?: ""
+        val visibleServers = parser.extractVisibleServers(watchDoc)
+        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
         
         Log.d("ArabseedV2", "[loadLinks] Qualities: ${availableQualities.map { it.quality }}, Default: $defaultQuality")
         Log.d("ArabseedV2", "[loadLinks] GlobalPostID: ${globalPostId.ifBlank { "N/A" }}, CSRF: ${if(csrfToken.isNotBlank()) "FOUND" else "MISSING"}")
@@ -191,23 +205,118 @@ class ArabseedV2 : MainAPI() {
             "https://${httpService.currentDomain}"
         }
 
-        var found = processQualities(
-            watchDoc, 
-            availableQualities, 
-            defaultQuality, 
-            globalPostId, 
-            csrfToken, 
-            currentBaseUrl, 
-            subtitleCallback, 
-            callback
-        )
+        // 1. COLLECT SOURCES
+        val sources = java.util.LinkedList<ArabseedSource>()
         
-        if (!found) {
-             found = processDirectEmbeds(watchDoc, currentBaseUrl, subtitleCallback, callback)
+        // A. Qualities (Lazy)
+        val sortedQualities = availableQualities.sortedByDescending { it.quality }
+        sortedQualities.forEach { qData ->
+            if (qData.quality != defaultQuality) {
+                // Non-default qualities use server 1-5
+                val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
+                if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
+                    for (serverId in 1..5) {
+                        sources.add(ArabseedSource.LazySource(
+                            postId = anyPostId,
+                            quality = qData.quality.toString(),
+                            serverId = serverId.toString(),
+                            csrfToken = csrfToken,
+                            baseUrl = currentBaseUrl
+                        ))
+                    }
+                }
+            } else {
+                 // Default quality: Process visible servers
+                 visibleServers.forEach { server ->
+                     if (server.dataLink.isNotBlank()) {
+                         sources.add(ArabseedSource.VisibleSource(server.dataLink))
+                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
+                         sources.add(ArabseedSource.LazySource(
+                             postId = server.postId,
+                             quality = defaultQuality.toString(),
+                             serverId = server.serverId,
+                             csrfToken = csrfToken,
+                             baseUrl = currentBaseUrl
+                         ))
+                     }
+                 }
+            }
         }
         
-        Log.d("ArabseedV2", "[loadLinks] END found=$found")
-        return found
+        // B. Direct Embeds (Fallback)
+        if (sources.isEmpty() && directEmbeds.isNotEmpty()) {
+            directEmbeds.forEach { url ->
+                sources.add(ArabseedSource.DirectEmbed(url))
+            }
+        }
+        
+        Log.i("ArabseedV2", "[loadLinks] Collected ${sources.size} sources. Starting sequential processing...")
+        
+        // 2. ITERATE & RESOLVE
+        var anyFound = false
+        var hasShownVisibleSniffer = false
+        val foundLock = kotlinx.coroutines.sync.Mutex()
+        
+        // Callback wrapper to detect success
+        val safeCallback: (ExtractorLink) -> Unit = { link ->
+            // Mark found immediately
+            runBlocking { foundLock.withLock { anyFound = true } }
+            callback(link)
+        }
+
+        for (source in sources) {
+            if (anyFound) break
+            
+            try {
+                when (source) {
+                    is ArabseedSource.LazySource -> {
+                        val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
+                        
+                        val allowVisible = !hasShownVisibleSniffer
+                        Log.i("ArabseedV2", "[loadLinks] Processing Lazy: $lazyUrl (AllowVisible=$allowVisible)")
+                        
+                        val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
+                        
+                        if (resolved != null) {
+                            if (allowVisible) hasShownVisibleSniffer = true
+                            
+                            try {
+                                val resolvedHost = java.net.URI(resolved.url).host
+                                if (resolved.headers.isNotEmpty()) {
+                                    domainHeaderCache[resolvedHost] = resolved.headers
+                                }
+                            } catch (e: Exception) {}
+                            
+                            safeCallback(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "Server ${source.serverId} (${source.quality}p)",
+                                    url = resolved.url,
+                                    type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = "${source.baseUrl}/"
+                                    this.quality = source.quality.toIntOrNull() ?: Qualities.Unknown.value
+                                    this.headers = resolved.headers
+                                }
+                            )
+                        }
+                    }
+                    is ArabseedSource.VisibleSource -> {
+                         Log.i("ArabseedV2", "[loadLinks] Processing Visible: ${source.url}")
+                         loadExtractor(source.url, "$currentBaseUrl/", subtitleCallback, safeCallback)
+                    }
+                    is ArabseedSource.DirectEmbed -> {
+                         Log.i("ArabseedV2", "[loadLinks] Processing Direct: ${source.url}")
+                         loadExtractor(source.url, "$currentBaseUrl/", subtitleCallback, safeCallback)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ArabseedV2", "[loadLinks] Error processing source: ${e.message}")
+            }
+        }
+        
+        Log.d("ArabseedV2", "[loadLinks] END found=$anyFound")
+        return anyFound
     }
 
     /**
@@ -383,161 +492,7 @@ class ArabseedV2 : MainAPI() {
         return finalResult
     }
 
-    private suspend fun processQualities(
-        watchDoc: Document,
-        availableQualities: List<com.arabseed.ArabseedParser.QualityData>,
-        defaultQuality: Int,
-        globalPostId: String,
-        csrfToken: String,
-        currentBaseUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var anyFound = false
-        val visibleServers = parser.extractVisibleServers(watchDoc)
-        val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
-        
-        Log.d("ArabseedV2", "[loadLinks] Visible servers (${defaultQuality}p): ${visibleServers.size}")
 
-        // Sort qualities from highest to lowest
-        val sortedQualities = availableQualities.sortedByDescending { it.quality }
-        Log.i("ArabseedV2", "[loadLinks] Processing ${sortedQualities.size} qualities")
-
-        sortedQualities.forEach { qData ->
-            val quality = qData.quality
-            
-            if (quality != defaultQuality) {
-                // NON-DEFAULT QUALITY: Emit lazy URLs
-                if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                    for (serverId in 1..5) {
-                        // Skip if we already found a link and this one likely needs a visible sniffer?
-                        // Actually, we try silently first.
-                        val allowVisible = !anyFound
-                        
-                        val lazyUrl = "https://arabseed-lazy.com/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&base=$currentBaseUrl"
-                        Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC: $lazyUrl (AllowVisible=$allowVisible)")
-                        
-                        // ASYNC RESOLUTION (v21/v25)
-                        val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
-                        if (resolved != null) {
-                            anyFound = true // Mark found so future calls are silent
-                            Log.i("ArabseedV2", "[loadLinks] Resolved server $serverId to: ${resolved.url}")
-                            
-                            // Cache headers for segments
-                            try {
-                                val resolvedHost = java.net.URI(resolved.url).host
-                                if (resolved.headers.isNotEmpty()) {
-                                    domainHeaderCache[resolvedHost] = resolved.headers
-                                }
-                            } catch (e: Exception) {}
-                            
-                            callback(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "Server $serverId (${quality}p)",
-                                    url = resolved.url,
-                                    type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "$currentBaseUrl/"
-                                    this.quality = quality
-                                    this.headers = resolved.headers
-                                }
-                            )
-                            anyFound = true
-                        }
-                    }
-                }
-            } else {
-                // DEFAULT QUALITY: Use visible servers
-                 // We pass anyFound status to visible servers
-                 // But wait, visible servers function signature needs update or we handle logic there?
-                 // Let's modify processVisibleServers signature too.
-                 if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback, allowVisibleSniffer = !anyFound)) {
-                     anyFound = true
-                }
-            }
-        }
-        return anyFound
-    }
-
-    private suspend fun processVisibleServers(
-        visibleServers: List<com.arabseed.ArabseedParser.ServerData>,
-        quality: Int,
-        csrfToken: String,
-        currentBaseUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-        allowVisibleSniffer: Boolean = true
-    ): Boolean {
-        var found = false
-        visibleServers.forEachIndexed { idx, server ->
-             if (found && idx > 0) {
-                 // Optimization: If we found one, we might want to skip others if they are expensive?
-                 // But let's keep trying silently.
-             }
-
-             if (server.dataLink.isNotBlank()) {
-                 loadExtractor(server.dataLink, "$currentBaseUrl/", subtitleCallback, callback)
-                 found = true
-            } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                val lazyUrl = "https://arabseed-lazy.com/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&base=$currentBaseUrl"
-                
-                // Only allow visible sniffer if we haven't found any yet AND parameter allows it
-                val allowVisible = allowVisibleSniffer && !found
-                Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC (Visible Server): $lazyUrl (AllowVisible=$allowVisible)")
-                
-                // ASYNC RESOLUTION (v21)
-                val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
-                if (resolved != null) {
-                    Log.i("ArabseedV2", "[loadLinks] Resolved visible server ${server.serverId} to: ${resolved.url}")
-                    
-                     // Cache headers for segments
-                    try {
-                        val resolvedHost = java.net.URI(resolved.url).host
-                        if (resolved.headers.isNotEmpty()) {
-                            domainHeaderCache[resolvedHost] = resolved.headers
-                        }
-                    } catch (e: Exception) {}
-                    
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = "Server ${server.serverId} (${quality}p)",
-                            url = resolved.url,
-                            type = if (resolved.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$currentBaseUrl/"
-                            this.quality = quality
-                            this.headers = resolved.headers
-                        }
-                    )
-                    found = true
-                }
-            }
-        }
-        return found
-    }
-
-    private suspend fun processDirectEmbeds(
-        watchDoc: Document,
-        currentBaseUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var found = false
-        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
-        Log.i("ArabseedV2", "[loadLinks] No servers found, using ${directEmbeds.size} direct embeds as fallback")
-
-        directEmbeds.forEachIndexed { i, embedUrl ->
-            Log.i("ArabseedV2", "[loadLinks] Fallback Direct Embed #${i+1}: $embedUrl")
-            loadExtractor(embedUrl, "$currentBaseUrl/", subtitleCallback) { link ->
-                Log.d("ArabseedV2", "[loadLinks] Direct embed resolved: ${link.url.take(60)} (type=${link.type})")
-                callback(link)
-                found = true
-            }
-        }
-        return found
-    }
     
     private suspend fun loadLinksFromService(
         data: String,

@@ -1,4 +1,4 @@
-version = 25 // Optimize Multi-Quality Sniffing (v25)
+version = 26 // Sequential Source Flow (v26)
 
 // Include shared source directory
 android {
