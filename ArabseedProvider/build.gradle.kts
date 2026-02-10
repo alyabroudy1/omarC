@@ -1,4 +1,4 @@
-version = 33 // Switch back to visible SnifferExtractor for better player rendering (v33)
+version = 34 // Add touch simulation and direct video src extraction for auto-play (v34)
 
 // Include shared source directory
 android {

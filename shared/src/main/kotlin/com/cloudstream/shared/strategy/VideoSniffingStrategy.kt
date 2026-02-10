@@ -51,6 +51,7 @@ class VideoSniffingStrategy(
         (function() {
             var sourcesSent = false;
             var clickAttempted = false;
+            var touchAttempted = false;
             
             function skipAds() {
                 try {
@@ -70,6 +71,61 @@ class VideoSniffingStrategy(
                         }
                     });
                 } catch(e) {}
+            }
+            
+            function simulateTouch(element) {
+                try {
+                    var rect = element.getBoundingClientRect();
+                    var centerX = rect.left + rect.width / 2;
+                    var centerY = rect.top + rect.height / 2;
+                    
+                    // Create touch events
+                    var touch = new Touch({
+                        identifier: Date.now(),
+                        target: element,
+                        clientX: centerX,
+                        clientY: centerY,
+                        screenX: centerX,
+                        screenY: centerY,
+                        pageX: centerX,
+                        pageY: centerY
+                    });
+                    
+                    var touchStart = new TouchEvent('touchstart', {
+                        bubbles: true,
+                        cancelable: true,
+                        touches: [touch],
+                        targetTouches: [touch],
+                        changedTouches: [touch]
+                    });
+                    
+                    var touchEnd = new TouchEvent('touchend', {
+                        bubbles: true,
+                        cancelable: true,
+                        touches: [],
+                        targetTouches: [],
+                        changedTouches: [touch]
+                    });
+                    
+                    element.dispatchEvent(touchStart);
+                    element.dispatchEvent(touchEnd);
+                    
+                    // Also simulate click
+                    var clickEvent = new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: centerX,
+                        clientY: centerY
+                    });
+                    element.dispatchEvent(clickEvent);
+                    
+                    console.log('Touch simulated at: ' + centerX + ',' + centerY);
+                    return true;
+                } catch(e) {
+                    console.log('Touch simulation failed: ' + e.message);
+                    return false;
+                }
             }
             
             function clickPlayButton() {
@@ -94,7 +150,11 @@ class VideoSniffingStrategy(
                         '.video-overlay',
                         '.start-button',
                         '.load-player',
-                        '.btn-play'
+                        '.btn-play',
+                        '.fp-play',
+                        '.mejs-playpause-button',
+                        '[data-testid="play-button"]',
+                        '.watch-video--player--overlay'
                     ];
                     
                     for (var i = 0; i < selectors.length; i++) {
@@ -102,31 +162,71 @@ class VideoSniffingStrategy(
                         for (var j = 0; j < elements.length; j++) {
                             var el = elements[j];
                             if (el.offsetParent !== null && el.offsetWidth > 10 && el.offsetHeight > 10) {
-                                // Simulate click
-                                var clickEvent = new MouseEvent('click', {
-                                    bubbles: true,
-                                    cancelable: true,
-                                    view: window
-                                });
-                                el.dispatchEvent(clickEvent);
+                                console.log('Found clickable: ' + selectors[i] + ' #' + j + ' size=' + el.offsetWidth + 'x' + el.offsetHeight);
                                 
-                                // Also try direct click
+                                // Try touch simulation first (more reliable)
+                                simulateTouch(el);
+                                
+                                // Also try standard click
                                 if (el.click) el.click();
                                 
-                                console.log('Clicked: ' + selectors[i] + ' #' + j);
+                                // Try dispatching mousedown/mouseup
+                                var mousedown = new MouseEvent('mousedown', {bubbles: true, cancelable: true});
+                                var mouseup = new MouseEvent('mouseup', {bubbles: true, cancelable: true});
+                                el.dispatchEvent(mousedown);
+                                el.dispatchEvent(mouseup);
+                                
                                 clickAttempted = true;
                                 return true;
                             }
                         }
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.log('Click error: ' + e.message);
+                }
+                return false;
+            }
+            
+            function touchVideoPlayer() {
+                if (touchAttempted) return;
+                try {
+                    // Find the largest video or player container and touch it
+                    var videos = document.querySelectorAll('video');
+                    var players = document.querySelectorAll('.video-js, .jwplayer, .plyr, .flowplayer, [class*="player"]');
+                    
+                    var targets = [];
+                    videos.forEach(function(v) { targets.push(v); });
+                    players.forEach(function(p) { targets.push(p); });
+                    
+                    var bestTarget = null;
+                    var bestSize = 0;
+                    
+                    targets.forEach(function(el) {
+                        var rect = el.getBoundingClientRect();
+                        var size = rect.width * rect.height;
+                        if (size > bestSize && size > 10000) { // At least 100x100
+                            bestSize = size;
+                            bestTarget = el;
+                        }
+                    });
+                    
+                    if (bestTarget) {
+                        console.log('Touching video player: ' + bestTarget.tagName + ' size=' + bestSize);
+                        simulateTouch(bestTarget);
+                        touchAttempted = true;
+                        return true;
+                    }
+                } catch(e) {
+                    console.log('Touch video error: ' + e.message);
+                }
                 return false;
             }
             
             function autoPlay() {
                 try {
-                    // Try clicking play button first
+                    // Try multiple approaches
                     clickPlayButton();
+                    touchVideoPlayer();
                     
                     if (typeof jwplayer !== 'undefined') {
                         var player = jwplayer();
@@ -142,6 +242,7 @@ class VideoSniffingStrategy(
                             v.play().catch(function(e) {
                                 // If autoplay blocked, try clicking on video element
                                 v.click();
+                                simulateTouch(v);
                             }); 
                         }
                     });
@@ -173,15 +274,61 @@ class VideoSniffingStrategy(
                 } catch(e) {}
             }
             
-            // Initial attempts
-            setTimeout(function() { clickPlayButton(); }, 500);
-            setTimeout(function() { clickPlayButton(); }, 1000);
-            setTimeout(function() { clickPlayButton(); }, 2000);
+            function extractVideoSources() {
+                if (sourcesSent) return;
+                try {
+                    // Direct extraction from video elements
+                    var videos = document.querySelectorAll('video');
+                    var sources = [];
+                    
+                    videos.forEach(function(v) {
+                        // Check src attribute
+                        if (v.src && v.src.length > 40) {
+                            sources.push({url: v.src, label: 'VideoSrc'});
+                        }
+                        // Check source children
+                        v.querySelectorAll('source').forEach(function(src) {
+                            if (src.src && src.src.length > 40) {
+                                sources.push({url: src.src, label: src.type || 'Source'});
+                            }
+                        });
+                    });
+                    
+                    // Also check for blob URLs in window objects
+                    try {
+                        if (window.hls && window.hls.url) {
+                            sources.push({url: window.hls.url, label: 'HLS'});
+                        }
+                        if (window.dash && window.dash.url) {
+                            sources.push({url: window.dash.url, label: 'DASH'});
+                        }
+                        if (window.player && window.player.src) {
+                            sources.push({url: window.player.src, label: 'Player'});
+                        }
+                    } catch(e) {}
+                    
+                    if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
+                        console.log('Found video sources directly: ' + sources.length);
+                        sourcesSent = true;
+                        SnifferBridge.onSourcesFound(JSON.stringify(sources));
+                    }
+                } catch(e) {
+                    console.log('extractVideoSources error: ' + e.message);
+                }
+            }
             
-            // Continuous monitoring
+            // Aggressive initial attempts
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 500);
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 1000);
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 1500);
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 2000);
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 3000);
+            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 5000);
+            
+            // Continuous monitoring - more frequent
             autoPlay();
             skipAds();
-            setInterval(function() { autoPlay(); skipAds(); extractSources(); }, 1000);
+            setInterval(function() { autoPlay(); skipAds(); extractSources(); extractVideoSources(); }, 800);
         })();
     """.trimIndent()
     }
