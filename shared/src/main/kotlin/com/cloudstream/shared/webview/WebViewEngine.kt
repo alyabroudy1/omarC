@@ -286,15 +286,13 @@ class WebViewEngine(
                                 videoMonitorJob?.cancel()
                                 
                                 val cookies = extractCookies(currentUrl)
-                                ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Exit successful",
-                                    "cookies" to cookies.size)
+                                val found = capturedLinks.toList()
+                                android.util.Log.i("WebViewEngine", "[onPageFinished] EXITING! Sending ${found.size} links to deferred.")
+                                found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
                                 
                                 cleanup(view, dialog)
-                                var resultLinks = emptyList<CapturedLinkData>()
-                                if (exitCondition is ExitCondition.VideoFound) {
-                                    resultLinks = capturedLinks.toList()
-                                }
-                                deferred.complete(WebViewResult.Success(cookies, html, currentUrl, resultLinks))
+                                deferred.complete(WebViewResult.Success(cookies, html, currentUrl, found))
+                                android.util.Log.i("WebViewEngine", "[onPageFinished] Deferred completed.")
                             }
                         } catch (e: Exception) {
                             ProviderLogger.e(TAG_WEBVIEW, "onPageFinished", "Error", e)
@@ -356,18 +354,25 @@ class WebViewEngine(
         val hasM3u8 = url.contains(".m3u8", ignoreCase = true)
         val hasMp4 = url.contains(".mp4", ignoreCase = true)
         val hasMkv = url.contains(".mkv", ignoreCase = true)
-        val hasUrls = url.contains(".urls", ignoreCase = true) || url.contains(".urlset", ignoreCase = true)
+        // val hasUrls = url.contains(".urls", ignoreCase = true) || url.contains(".urlset", ignoreCase = true) // Too broad?
         val hasMaster = url.contains("/master.m3u8", ignoreCase = true)
-        val hasSegment = url.contains("/seg-", ignoreCase = true) || url.contains("/segment", ignoreCase = true)
-        val hasTs = url.contains(".ts", ignoreCase = true)
         val hasWebm = url.contains(".webm", ignoreCase = true)
         
-        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasUrls || hasMaster || hasSegment || hasTs || hasWebm
+        // Explicitly reject segments if they don't look like master playlists
+        if (url.contains(".ts", ignoreCase = true) || 
+            url.contains(".key", ignoreCase = true) || 
+            url.contains(".png", ignoreCase = true) || 
+            url.contains(".jpg", ignoreCase = true) || 
+            url.contains("favicon")) {
+            return false
+        }
+        
+        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasMaster || hasWebm
         
         if (!isVideo && (url.contains("video") || url.contains("stream") || url.contains("media"))) {
             ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL looks like video but pattern not matched",
                 "url" to url.take(80),
-                "checks" to "m3u8=$hasM3u8, mp4=$hasMp4, mkv=$hasMkv, urls=$hasUrls, master=$hasMaster, segment=$hasSegment, ts=$hasTs"
+                "checks" to "m3u8=$hasM3u8, mp4=$hasMp4, mkv=$hasMkv"
             )
         }
         
@@ -387,16 +392,29 @@ class WebViewEngine(
     private fun captureLink(url: String, qualityLabel: String, headers: Map<String, String>) {
          // Logic to store captured link
          val data = CapturedLinkData(url, qualityLabel, headers)
+
+         // Filter out segment files and non-video assets
+         if (url.contains(".ts") || url.contains(".key") || url.contains(".png") || 
+             url.contains(".jpg") || url.contains(".gif") || url.contains(".css") || 
+             url.contains(".js") || url.contains("favicon")) {
+             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset link | url=${url.take(80)}")
+             return
+         }
+
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
              android.util.Log.i("WebViewEngine", "[captureLink] LINK CAPTURED #$capturedLinks.size | url=${url.take(80)}")
              ProviderLogger.i(TAG_WEBVIEW, "captureLink", "LINK CAPTURED SUCCESSFULLY!", 
-                 "url" to url.take(100),
-                 "quality" to qualityLabel,
-                 "totalLinks" to capturedLinks.size,
-                 "headers" to headers.keys.joinToString(",")
+                  "url" to url.take(100),
+                  "quality" to qualityLabel,
+                  "totalLinks" to capturedLinks.size
              )
              
+             // If we found a master m3u8 or blob, we might want to finish early or shortly
+             if (url.contains("master.m3u8") || url.startsWith("blob:")) {
+                  android.util.Log.i("WebViewEngine", "[captureLink] High confidence link found, suggesting exit.")
+             }
+
              // Update UI and Check Exit
              CoroutineScope(Dispatchers.Main).launch {
                  updateDialogText("Found ${capturedLinks.size} video stream(s)...")
@@ -405,7 +423,7 @@ class WebViewEngine(
                  checkExitCondition()
              }
          } else {
-             ProviderLogger.d(TAG_WEBVIEW, "captureLink", "Duplicate URL ignored", "url" to url.take(80))
+             android.util.Log.w("WebViewEngine", "[captureLink] Duplicate URL captured (This is expected if page reloads or loops) | url=${url.take(80)}")
          }
     }
     
@@ -430,8 +448,11 @@ class WebViewEngine(
                 val cookies = extractCookies("") // URL not easily available here, implies current
                 val found = capturedLinks.toList()
                 
-                // Find WebView instance if possible, or just cleanup whatever is stored
-                // deferred is instance variable now
+                android.util.Log.i("WebViewEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
+                found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
+                
+                deferred?.complete(WebViewResult.Success(cookies, "", "", found))
+                android.util.Log.i("WebViewEngine", "[checkExitCondition] Deferred completed.")
                 
                 // We need reference to webView and dialog to cleanup
                 // But they are local to runSession. 
