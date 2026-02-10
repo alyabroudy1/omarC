@@ -119,6 +119,8 @@ class WebViewEngine(
         } else null
         
         try {
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 1: Creating WebView ===", "url" to url.take(80))
+            
             // Create WebView
             webView = WebView(activity).apply {
                 settings.apply {
@@ -138,12 +140,14 @@ class WebViewEngine(
                 "ua" to webView.settings.userAgentString.take(60))
             
             // Setup cookies
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 2: Setting up cookies ===")
             CookieManager.getInstance().apply {
                 setAcceptCookie(true)
                 setAcceptThirdPartyCookies(webView, true)
             }
             
             // Setup based on mode
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 3: Setting up mode ===", "mode" to mode.name)
             when (mode) {
                 Mode.HEADLESS -> {
                     ProviderLogger.d(TAG_WEBVIEW, "runSession", "HEADLESS mode", "url" to url.take(80))
@@ -199,7 +203,7 @@ class WebViewEngine(
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                    ProviderLogger.d(TAG_WEBVIEW, "onPageStarted", "Started", "url" to url?.take(80))
+                    ProviderLogger.i(TAG_WEBVIEW, "onPageStarted", "=== PAGE STARTED ===", "url" to url?.take(80))
                     
                     // Inject Advanced Polyfill & Fingerprint Spoofing
                     view?.evaluateJavascript(
@@ -225,12 +229,22 @@ class WebViewEngine(
 
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                     val currentUrl = view?.url ?: loadedUrl ?: url
-                    ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Finished", "url" to currentUrl.take(80))
+                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
 
                     // Inject VideoSniffer JS
-                    view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) {}
+                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Injecting JavaScript ===")
+                    view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
+                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "JavaScript injection result", "result" to (result ?: "null"))
+                    }
 
-                    if (resultDelivered) return
+                    // Start DOM-based video extraction polling
+                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Starting DOM extraction ===")
+                    startDomVideoExtraction(view)
+
+                    if (resultDelivered) {
+                        ProviderLogger.w(TAG_WEBVIEW, "onPageFinished", "Result already delivered, skipping")
+                        return
+                    }
                     
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
@@ -292,10 +306,19 @@ class WebViewEngine(
             }
             
             // Load URL with headers to bypass detection
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 6: Loading URL ===", "url" to url.take(80))
+            
             val extraHeaders = mutableMapOf<String, String>()
             extraHeaders["X-Requested-With"] = ""
             
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "Loading URL with headers", 
+                "url" to url.take(80),
+                "headers" to extraHeaders.keys.joinToString(",")
+            )
+            
             webView.loadUrl(url, extraHeaders)
+            
+            ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 7: URL loaded, waiting for callbacks ===")
             
         } catch (e: Exception) {
             resultDelivered = true
@@ -314,6 +337,12 @@ class WebViewEngine(
             return false
         }
         
+        // Check for BLOB URLs (WebRTC/MediaSource streams)
+        if (url.startsWith("blob:")) {
+            ProviderLogger.i(TAG_WEBVIEW, "isVideoUrl", "BLOB URL detected", "url" to url.take(80))
+            return true
+        }
+        
         // Check for video patterns
         val hasM3u8 = url.contains(".m3u8", ignoreCase = true)
         val hasMp4 = url.contains(".mp4", ignoreCase = true)
@@ -322,8 +351,9 @@ class WebViewEngine(
         val hasMaster = url.contains("/master.m3u8", ignoreCase = true)
         val hasSegment = url.contains("/seg-", ignoreCase = true) || url.contains("/segment", ignoreCase = true)
         val hasTs = url.contains(".ts", ignoreCase = true)
+        val hasWebm = url.contains(".webm", ignoreCase = true)
         
-        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasUrls || hasMaster || hasSegment || hasTs
+        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasUrls || hasMaster || hasSegment || hasTs || hasWebm
         
         if (!isVideo && (url.contains("video") || url.contains("stream") || url.contains("media"))) {
             ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL looks like video but pattern not matched",
@@ -504,20 +534,170 @@ class WebViewEngine(
         }
     }
 
+    private fun startDomVideoExtraction(view: WebView?) {
+        if (view == null) {
+            ProviderLogger.e(TAG_WEBVIEW, "startDomVideoExtraction", "WebView is null, cannot extract")
+            return
+        }
+        
+        ProviderLogger.i(TAG_WEBVIEW, "startDomVideoExtraction", "=== Starting DOM video extraction polling ===")
+        
+        // Poll every 2 seconds to extract video sources from DOM
+        CoroutineScope(Dispatchers.Main).launch {
+            var attempts = 0
+            ProviderLogger.i(TAG_WEBVIEW, "startDomVideoExtraction", "Polling started", "maxAttempts" to 30)
+            
+            while (!resultDelivered && attempts < 30) { // Max 60 seconds
+                delay(2000)
+                attempts++
+                
+                ProviderLogger.d(TAG_WEBVIEW, "startDomVideoExtraction", "Polling attempt", "attempt" to attempts)
+                
+                view.evaluateJavascript("""
+                    (function() {
+                        console.log('[WebViewEngine] DOM extraction running...');
+                        var sources = [];
+                        var videoCount = 0;
+                        var sourceCount = 0;
+                        
+                        // 1. Check video elements
+                        var videos = document.querySelectorAll('video');
+                        videoCount = videos.length;
+                        videos.forEach(function(v) {
+                            console.log('[WebViewEngine] Video found:', v.src || 'no-src', 'currentSrc:', v.currentSrc || 'no-currentSrc');
+                            if (v.src && v.src.length > 20) {
+                                sources.push({src: v.src, type: 'video.src'});
+                            }
+                            if (v.currentSrc && v.currentSrc.length > 20) {
+                                sources.push({src: v.currentSrc, type: 'video.currentSrc'});
+                            }
+                        });
+                        
+                        // 2. Check source elements
+                        var sources = document.querySelectorAll('source');
+                        sourceCount = sources.length;
+                        sources.forEach(function(s) {
+                            console.log('[WebViewEngine] Source found:', s.src || 'no-src', 'type:', s.type || 'no-type');
+                            if (s.src && s.src.length > 20) {
+                                sources.push({src: s.src, type: 'source'});
+                            }
+                        });
+                        
+                        // 3. Check for MediaSource extensions
+                        if (window.MediaSource && window.MediaSource.isTypeSupported) {
+                            console.log('[WebViewEngine] MediaSource is available');
+                        }
+                        
+                        // 4. Check common player objects
+                        try {
+                            if (window.player && window.player.src) {
+                                console.log('[WebViewEngine] window.player.src:', window.player.src);
+                                sources.push({src: window.player.src, type: 'window.player'});
+                            }
+                            if (window.videoPlayer && window.videoPlayer.src) {
+                                console.log('[WebViewEngine] window.videoPlayer.src:', window.videoPlayer.src);
+                                sources.push({src: window.videoPlayer.src, type: 'window.videoPlayer'});
+                            }
+                            if (window.hls && window.hls.url) {
+                                console.log('[WebViewEngine] window.hls.url:', window.hls.url);
+                                sources.push({src: window.hls.url, type: 'window.hls'});
+                            }
+                        } catch(e) {
+                            console.log('[WebViewEngine] Error checking player objects:', e);
+                        }
+                        
+                        console.log('[WebViewEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length);
+                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources});
+                    })()
+                """) { result ->
+                    try {
+                        ProviderLogger.d(TAG_WEBVIEW, "DOM Extraction", "Raw result received", "result" to (result ?: "null"))
+                        
+                        if (!result.isNullOrBlank() && result != "null") {
+                            val jsonObj = org.json.JSONObject(result)
+                            val videoCount = jsonObj.optInt("videoCount", 0)
+                            val sourceCount = jsonObj.optInt("sourceCount", 0)
+                            val sourcesArray = jsonObj.optJSONArray("sources")
+                            
+                            ProviderLogger.i(TAG_WEBVIEW, "DOM Extraction", "Page analysis", 
+                                "videos" to videoCount, 
+                                "sources" to sourceCount,
+                                "foundUrls" to (sourcesArray?.length() ?: 0)
+                            )
+                            
+                            if (sourcesArray != null && sourcesArray.length() > 0) {
+                                ProviderLogger.i(TAG_WEBVIEW, "DOM Extraction", "Found video sources!", "count" to sourcesArray.length())
+                                
+                                for (i in 0 until sourcesArray.length()) {
+                                    val obj = sourcesArray.getJSONObject(i)
+                                    val src = obj.optString("src")
+                                    val type = obj.optString("type")
+                                    
+                                    if (src.isNotBlank() && src.length > 20) {
+                                        ProviderLogger.i(TAG_WEBVIEW, "DOM Extraction", "Capturing URL", "url" to src.take(100), "type" to type)
+                                        captureLink(src, type, emptyMap())
+                                    }
+                                }
+                            } else {
+                                ProviderLogger.d(TAG_WEBVIEW, "DOM Extraction", "No video sources found in this poll")
+                            }
+                        } else {
+                            ProviderLogger.w(TAG_WEBVIEW, "DOM Extraction", "Empty or null result from JS")
+                        }
+                    } catch (e: Exception) {
+                        ProviderLogger.e(TAG_WEBVIEW, "DOM Extraction", "Error parsing result", e)
+                    }
+                }
+            }
+            
+            if (resultDelivered) {
+                ProviderLogger.i(TAG_WEBVIEW, "startDomVideoExtraction", "=== Polling ended (result delivered) ===", "totalAttempts" to attempts)
+            } else if (attempts >= 30) {
+                ProviderLogger.w(TAG_WEBVIEW, "startDomVideoExtraction", "=== Polling ended (max attempts reached) ===", "totalAttempts" to attempts)
+            }
+        }
+    }
+
     inner class SnifferBridge {
         @JavascriptInterface
         fun onSourcesFound(json: String) {
-             ProviderLogger.d(TAG_WEBVIEW, "SnifferBridge", "Sources found via JS", "json" to json)
+             ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "=== JS Bridge: Sources found! ===", "jsonLength" to json.length)
              try {
                 val array = org.json.JSONArray(json)
+                ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "Parsing JS sources", "count" to array.length())
+                
                 for (i in 0 until array.length()) {
                     val item = array.getJSONObject(i)
                     val src = item.optString("src")
+                    val url = item.optString("url") // Alternative key
+                    val file = item.optString("file") // JWPlayer uses 'file'
                     val type = item.optString("type")
                     val label = item.optString("label", "JS-Source")
                     
-                    if (src.isNotBlank() && isVideoUrl(src)) {
-                         captureLink(src, label, emptyMap()) // JS usually doesn't give headers
+                    // Try all possible source keys
+                    val finalSrc = when {
+                        src.isNotBlank() -> src
+                        url.isNotBlank() -> url
+                        file.isNotBlank() -> file
+                        else -> ""
+                    }
+                    
+                    ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "Processing source #$i", 
+                        "src" to (finalSrc.take(80) ?: "empty"),
+                        "type" to type,
+                        "label" to label
+                    )
+                    
+                    if (finalSrc.isNotBlank() && finalSrc.length > 20) {
+                         ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "Capturing source from JS", 
+                             "url" to finalSrc.take(100),
+                             "label" to label
+                         )
+                         captureLink(finalSrc, label, emptyMap())
+                    } else {
+                        ProviderLogger.w(TAG_WEBVIEW, "SnifferBridge", "Source rejected - too short or empty", 
+                            "length" to finalSrc.length
+                        )
                     }
                 }
              } catch (e: Exception) {

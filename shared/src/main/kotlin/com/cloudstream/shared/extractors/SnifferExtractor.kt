@@ -105,7 +105,8 @@ class SnifferExtractor : ExtractorApi() {
             mode = WebViewEngine.Mode.FULLSCREEN,
             userAgent = snifferUserAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = 60_000L
+            timeout = 60_000L,
+            delayMs = 2000 // Wait 2s for page to fully load before starting detection
         )
         
         var callbackCount = 0

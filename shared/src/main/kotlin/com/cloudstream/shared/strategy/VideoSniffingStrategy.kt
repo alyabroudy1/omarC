@@ -49,12 +49,175 @@ class VideoSniffingStrategy(
         
         val JS_SCRIPT = """
         (function() {
+            console.log('[VideoSniffer] Script starting...');
             var sourcesSent = false;
-            var clickAttempted = false;
-            var touchAttempted = false;
+            var clickCount = 0;
+            var maxClicks = 20;
             
+            // ===== UTILITY FUNCTIONS =====
+            function log(msg) {
+                console.log('[VideoSniffer] ' + msg);
+                if (typeof SnifferBridge !== 'undefined') {
+                    try { SnifferBridge.log(msg); } catch(e) {}
+                }
+            }
+            
+            function isVisible(el) {
+                if (!el) return false;
+                var rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && 
+                       rect.top >= 0 && rect.top < window.innerHeight &&
+                       rect.left >= 0 && rect.left < window.innerWidth;
+            }
+            
+            // ===== COMPREHENSIVE CLICK SIMULATION =====
+            function simulateFullClick(element) {
+                if (!element || clickCount >= maxClicks) return false;
+                clickCount++;
+                
+                try {
+                    var rect = element.getBoundingClientRect();
+                    var centerX = rect.left + rect.width / 2;
+                    var centerY = rect.top + rect.height / 2;
+                    
+                    log('Clicking element: ' + element.tagName + ' at ' + centerX + ',' + centerY + ' (attempt #' + clickCount + ')');
+                    
+                    // Method 1: Touch events (mobile)
+                    try {
+                        var touch = new Touch({
+                            identifier: Date.now(),
+                            target: element,
+                            clientX: centerX, clientY: centerY,
+                            screenX: centerX, screenY: centerY,
+                            pageX: centerX, pageY: centerY,
+                            radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1
+                        });
+                        element.dispatchEvent(new TouchEvent('touchstart', {bubbles: true, touches: [touch], targetTouches: [touch], changedTouches: [touch]}));
+                        element.dispatchEvent(new TouchEvent('touchend', {bubbles: true, touches: [], targetTouches: [], changedTouches: [touch]}));
+                    } catch(e) {}
+                    
+                    // Method 2: Mouse events
+                    ['mousedown', 'mouseup', 'click'].forEach(function(eventType) {
+                        element.dispatchEvent(new MouseEvent(eventType, {
+                            bubbles: true, cancelable: true, view: window,
+                            clientX: centerX, clientY: centerY,
+                            screenX: centerX, screenY: centerY
+                        }));
+                    });
+                    
+                    // Method 3: Pointer events
+                    try {
+                        element.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: centerX, clientY: centerY}));
+                        element.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, clientX: centerX, clientY: centerY}));
+                    } catch(e) {}
+                    
+                    // Method 4: Direct click
+                    if (element.click) element.click();
+                    
+                    // Method 5: Focus and enter key
+                    element.focus();
+                    element.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, keyCode: 13, key: 'Enter'}));
+                    element.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, keyCode: 13, key: 'Enter'}));
+                    
+                    return true;
+                } catch(e) {
+                    log('Click error: ' + e.message);
+                    return false;
+                }
+            }
+            
+            // ===== PLAYER DETECTION & CLICKING =====
+            function findAndClickPlayButton() {
+                // Priority selectors for different players
+                var selectors = [
+                    // Video.js
+                    '.vjs-big-play-button', '.vjs-control-bar .vjs-play-control', '.video-js button[title="Play"]',
+                    // JW Player
+                    '.jw-icon-playback', '.jw-display-icon-container', '.jw-button-container .jw-icon-playback',
+                    // Plyr
+                    '.plyr__control--overlaid', '.plyr__controls button[data-plyr="play"]',
+                    // HTML5 video
+                    'video', 'video[controls]',
+                    // Generic
+                    '[class*="play-button"]', '[class*="playbutton"]', '#play-button', '.btn-play',
+                    'button[aria-label*="play" i]', 'button[title*="play" i]', '[class*="big-play"]',
+                    // Overlays
+                    '.player-overlay', '.video-overlay', '.play-overlay', '[class*="overlay"]',
+                    // Savefiles specific
+                    '.start-button', '.load-player', '.watch-video', '[class*="watch"]',
+                    // Generic clickable areas
+                    '.click-to-play', '#click-to-play', '.video-wrapper', '.player-wrapper'
+                ];
+                
+                for (var i = 0; i < selectors.length; i++) {
+                    var elements = document.querySelectorAll(selectors[i]);
+                    for (var j = 0; j < elements.length; j++) {
+                        var el = elements[j];
+                        if (isVisible(el)) {
+                            log('Found play target: ' + selectors[i] + ' #' + j + ' (' + el.offsetWidth + 'x' + el.offsetHeight + ')');
+                            if (simulateFullClick(el)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+            
+            function clickCenterOfScreen() {
+                // Create invisible overlay and click center
+                var overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:999999;background:transparent;cursor:pointer;';
+                document.body.appendChild(overlay);
+                
+                var centerX = window.innerWidth / 2;
+                var centerY = window.innerHeight / 2;
+                
+                simulateFullClick(overlay);
+                
+                setTimeout(function() {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 100);
+                
+                log('Clicked center of screen');
+                return true;
+            }
+            
+            // ===== AUTO-PLAY LOGIC =====
+            function attemptAutoPlay() {
+                log('Attempting auto-play...');
+                
+                // Try play buttons first
+                if (findAndClickPlayButton()) {
+                    log('Play button clicked successfully');
+                    return true;
+                }
+                
+                // Try direct video play
+                var videos = document.querySelectorAll('video');
+                var played = false;
+                videos.forEach(function(v) {
+                    if (v.paused) {
+                        v.muted = true;
+                        v.volume = 0;
+                        v.play().then(function() {
+                            log('Video started playing directly');
+                            played = true;
+                        }).catch(function(e) {
+                            log('Autoplay blocked: ' + e.message);
+                            // Try clicking the video
+                            simulateFullClick(v);
+                        });
+                    }
+                });
+                
+                return played;
+            }
+            
+            // ===== AD SKIP =====
             function skipAds() {
                 try {
+                    // Speed up short videos (ads)
                     document.querySelectorAll('video').forEach(function(v) {
                         if (v.duration > 0 && v.duration < 30) {
                             v.playbackRate = 16;
@@ -63,272 +226,112 @@ class VideoSniffingStrategy(
                         }
                     });
                     
-                    ['.jw-skip', '.skip-button', '.skip-ad', '[class*="skip"]', '[class*="SkipAd"]', '#skip-ad', '.vast-skip', '.ytp-ad-skip-button'].forEach(function(sel) {
+                    // Click skip buttons
+                    ['.skip-ad', '.skip-button', '.vast-skip', '.jw-skip', '[class*="skip"]', '[class*="close"]', '.ad-close'].forEach(function(sel) {
                         var btn = document.querySelector(sel);
-                        if (btn && btn.offsetParent) {
-                            btn.click();
-                            console.log('Skip ad clicked: ' + sel);
+                        if (btn && isVisible(btn)) {
+                            simulateFullClick(btn);
+                            log('Skipped ad: ' + sel);
                         }
                     });
                 } catch(e) {}
             }
             
-            function simulateTouch(element) {
-                try {
-                    var rect = element.getBoundingClientRect();
-                    var centerX = rect.left + rect.width / 2;
-                    var centerY = rect.top + rect.height / 2;
-                    
-                    // Create touch events
-                    var touch = new Touch({
-                        identifier: Date.now(),
-                        target: element,
-                        clientX: centerX,
-                        clientY: centerY,
-                        screenX: centerX,
-                        screenY: centerY,
-                        pageX: centerX,
-                        pageY: centerY
-                    });
-                    
-                    var touchStart = new TouchEvent('touchstart', {
-                        bubbles: true,
-                        cancelable: true,
-                        touches: [touch],
-                        targetTouches: [touch],
-                        changedTouches: [touch]
-                    });
-                    
-                    var touchEnd = new TouchEvent('touchend', {
-                        bubbles: true,
-                        cancelable: true,
-                        touches: [],
-                        targetTouches: [],
-                        changedTouches: [touch]
-                    });
-                    
-                    element.dispatchEvent(touchStart);
-                    element.dispatchEvent(touchEnd);
-                    
-                    // Also simulate click
-                    var clickEvent = new MouseEvent('click', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window,
-                        clientX: centerX,
-                        clientY: centerY
-                    });
-                    element.dispatchEvent(clickEvent);
-                    
-                    console.log('Touch simulated at: ' + centerX + ',' + centerY);
-                    return true;
-                } catch(e) {
-                    console.log('Touch simulation failed: ' + e.message);
-                    return false;
-                }
-            }
-            
-            function clickPlayButton() {
-                if (clickAttempted) return;
-                try {
-                    // Aggressive play button selectors
-                    var selectors = [
-                        'button[aria-label*="play" i]',
-                        'button[title*="play" i]',
-                        '.play-button',
-                        '.vjs-big-play-button',
-                        '.vjs-play-control',
-                        '.jw-icon-playback',
-                        '.plyr__control--overlaid',
-                        '[class*="play" i]',
-                        '#play',
-                        '.play',
-                        'video',
-                        'button svg[class*="play"]',
-                        'button:has(svg)',
-                        '.player-overlay',
-                        '.video-overlay',
-                        '.start-button',
-                        '.load-player',
-                        '.btn-play',
-                        '.fp-play',
-                        '.mejs-playpause-button',
-                        '[data-testid="play-button"]',
-                        '.watch-video--player--overlay'
-                    ];
-                    
-                    for (var i = 0; i < selectors.length; i++) {
-                        var elements = document.querySelectorAll(selectors[i]);
-                        for (var j = 0; j < elements.length; j++) {
-                            var el = elements[j];
-                            if (el.offsetParent !== null && el.offsetWidth > 10 && el.offsetHeight > 10) {
-                                console.log('Found clickable: ' + selectors[i] + ' #' + j + ' size=' + el.offsetWidth + 'x' + el.offsetHeight);
-                                
-                                // Try touch simulation first (more reliable)
-                                simulateTouch(el);
-                                
-                                // Also try standard click
-                                if (el.click) el.click();
-                                
-                                // Try dispatching mousedown/mouseup
-                                var mousedown = new MouseEvent('mousedown', {bubbles: true, cancelable: true});
-                                var mouseup = new MouseEvent('mouseup', {bubbles: true, cancelable: true});
-                                el.dispatchEvent(mousedown);
-                                el.dispatchEvent(mouseup);
-                                
-                                clickAttempted = true;
-                                return true;
-                            }
-                        }
-                    }
-                } catch(e) {
-                    console.log('Click error: ' + e.message);
-                }
-                return false;
-            }
-            
-            function touchVideoPlayer() {
-                if (touchAttempted) return;
-                try {
-                    // Find the largest video or player container and touch it
-                    var videos = document.querySelectorAll('video');
-                    var players = document.querySelectorAll('.video-js, .jwplayer, .plyr, .flowplayer, [class*="player"]');
-                    
-                    var targets = [];
-                    videos.forEach(function(v) { targets.push(v); });
-                    players.forEach(function(p) { targets.push(p); });
-                    
-                    var bestTarget = null;
-                    var bestSize = 0;
-                    
-                    targets.forEach(function(el) {
-                        var rect = el.getBoundingClientRect();
-                        var size = rect.width * rect.height;
-                        if (size > bestSize && size > 10000) { // At least 100x100
-                            bestSize = size;
-                            bestTarget = el;
-                        }
-                    });
-                    
-                    if (bestTarget) {
-                        console.log('Touching video player: ' + bestTarget.tagName + ' size=' + bestSize);
-                        simulateTouch(bestTarget);
-                        touchAttempted = true;
-                        return true;
-                    }
-                } catch(e) {
-                    console.log('Touch video error: ' + e.message);
-                }
-                return false;
-            }
-            
-            function autoPlay() {
-                try {
-                    // Try multiple approaches
-                    clickPlayButton();
-                    touchVideoPlayer();
-                    
-                    if (typeof jwplayer !== 'undefined') {
-                        var player = jwplayer();
-                        if (player) {
-                            if (player.setMute) player.setMute(true);
-                            if (player.play) player.play();
-                        }
-                    }
-                    
-                    document.querySelectorAll('video').forEach(function(v) {
-                        v.muted = true;
-                        if (v.paused) { 
-                            v.play().catch(function(e) {
-                                // If autoplay blocked, try clicking on video element
-                                v.click();
-                                simulateTouch(v);
-                            }); 
-                        }
-                    });
-                } catch(e) {}
-            }
-            
+            // ===== VIDEO SOURCE EXTRACTION =====
             function extractSources() {
                 if (sourcesSent) return;
+                
+                var sources = [];
+                
+                // Method 1: Network-intercepted sources (already captured by Kotlin)
+                
+                // Method 2: Video element sources
+                document.querySelectorAll('video').forEach(function(v) {
+                    if (v.src && v.src.length > 40) sources.push({url: v.src, label: 'Video'});
+                    v.querySelectorAll('source').forEach(function(s) {
+                        if (s.src && s.src.length > 40) sources.push({url: s.src, label: s.type || 'Source'});
+                    });
+                });
+                
+                // Method 3: JWPlayer
                 try {
                     if (typeof jwplayer !== 'undefined') {
                         var player = jwplayer();
                         if (player && player.getPlaylistItem) {
                             var item = player.getPlaylistItem();
-                            if (item && item.sources && item.sources.length > 0) {
-                                var sources = [];
+                            if (item && item.sources) {
                                 item.sources.forEach(function(src) {
                                     if (src.file && src.file.length > 40) {
-                                        sources.push({url: src.file, label: src.label || 'Auto'});
+                                        sources.push({url: src.file, label: src.label || 'JW'});
                                     }
                                 });
-                                
-                                if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
-                                    sourcesSent = true;
-                                    SnifferBridge.onSourcesFound(JSON.stringify(sources));
-                                }
                             }
                         }
                     }
                 } catch(e) {}
-            }
-            
-            function extractVideoSources() {
-                if (sourcesSent) return;
+                
+                // Method 4: Global player objects
                 try {
-                    // Direct extraction from video elements
-                    var videos = document.querySelectorAll('video');
-                    var sources = [];
-                    
-                    videos.forEach(function(v) {
-                        // Check src attribute
-                        if (v.src && v.src.length > 40) {
-                            sources.push({url: v.src, label: 'VideoSrc'});
-                        }
-                        // Check source children
-                        v.querySelectorAll('source').forEach(function(src) {
-                            if (src.src && src.src.length > 40) {
-                                sources.push({url: src.src, label: src.type || 'Source'});
-                            }
+                    if (window.player && window.player.src) sources.push({url: window.player.src, label: 'Global'});
+                    if (window.videojs && window.videojs.players) {
+                        Object.values(window.videojs.players).forEach(function(p) {
+                            if (p.src && p.src()) sources.push({url: p.src(), label: 'VideoJS'});
                         });
-                    });
-                    
-                    // Also check for blob URLs in window objects
-                    try {
-                        if (window.hls && window.hls.url) {
-                            sources.push({url: window.hls.url, label: 'HLS'});
-                        }
-                        if (window.dash && window.dash.url) {
-                            sources.push({url: window.dash.url, label: 'DASH'});
-                        }
-                        if (window.player && window.player.src) {
-                            sources.push({url: window.player.src, label: 'Player'});
-                        }
-                    } catch(e) {}
-                    
-                    if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
-                        console.log('Found video sources directly: ' + sources.length);
-                        sourcesSent = true;
-                        SnifferBridge.onSourcesFound(JSON.stringify(sources));
                     }
-                } catch(e) {
-                    console.log('extractVideoSources error: ' + e.message);
+                } catch(e) {}
+                
+                // Send sources if found
+                if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
+                    log('Found ' + sources.length + ' video sources');
+                    sourcesSent = true;
+                    SnifferBridge.onSourcesFound(JSON.stringify(sources));
                 }
             }
             
-            // Aggressive initial attempts
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 500);
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 1000);
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 1500);
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 2000);
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 3000);
-            setTimeout(function() { clickPlayButton(); touchVideoPlayer(); extractVideoSources(); }, 5000);
+            // ===== MUTATION OBSERVER - DETECT DYNAMIC PLAYER =====
+            var observer = new MutationObserver(function(mutations) {
+                findAndClickPlayButton();
+                extractSources();
+            });
             
-            // Continuous monitoring - more frequent
-            autoPlay();
-            skipAds();
-            setInterval(function() { autoPlay(); skipAds(); extractSources(); extractVideoSources(); }, 800);
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['src', 'data-src']
+            });
+            
+            // ===== EXECUTION =====
+            log('Initializing auto-click system...');
+            
+            // Immediate attempt
+            setTimeout(function() { attemptAutoPlay(); }, 500);
+            
+            // Retry with increasing delays
+            [1000, 2000, 3000, 4000, 5000, 7000, 10000, 15000].forEach(function(delay) {
+                setTimeout(function() {
+                    if (!sourcesSent) {
+                        log('Retry #' + (delay/1000) + 's');
+                        attemptAutoPlay();
+                        skipAds();
+                        extractSources();
+                    }
+                }, delay);
+            });
+            
+            // Continuous monitoring
+            setInterval(function() {
+                if (!sourcesSent) {
+                    skipAds();
+                    extractSources();
+                    // Periodic click attempt every 3 seconds
+                    if (clickCount < maxClicks) {
+                        findAndClickPlayButton();
+                    }
+                }
+            }, 3000);
+            
+            log('Auto-click system active - waiting for player...');
         })();
     """.trimIndent()
     }
