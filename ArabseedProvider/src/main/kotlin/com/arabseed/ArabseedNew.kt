@@ -255,8 +255,8 @@ class ArabseedV2 : MainAPI() {
         }
     }
 
-    private suspend fun resolveLazyLink(url: String): ResolvedLink? {
-        Log.d("ArabseedV2", "[resolveLazyLink] START Processing: $url")
+    private suspend fun resolveLazyLink(url: String, allowVisibleSniffer: Boolean = true): ResolvedLink? {
+        Log.d("ArabseedV2", "[resolveLazyLink] START Processing: $url allowVisible=$allowVisibleSniffer")
         val uri = try { java.net.URI(url) } catch (e: Exception) { 
             Log.e("ArabseedV2", "[resolveLazyLink] Invalid URI: $url ${e.message}")
             return null 
@@ -354,11 +354,13 @@ class ArabseedV2 : MainAPI() {
         loadExtractor(embedUrl, "$baseUrlForAjax/", {}, callback)
         
         // Step B: If still null, try Sniffer fallback
-        if (finalResult == null) {
+        if (finalResult == null && allowVisibleSniffer) {
              Log.w("ArabseedV2", "[resolveLazyLink] Step B: Standard extractors failed. Triggering Sniffer fallback...")
              val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(embedUrl, "$baseUrlForAjax/")
              Log.d("ArabseedV2", "[resolveLazyLink] Sniffer URL: $sniffUrl")
              loadExtractor(sniffUrl, "$baseUrlForAjax/", {}, callback)
+        } else if (finalResult == null) {
+             Log.w("ArabseedV2", "[resolveLazyLink] Step B: Skipping Sniffer fallback (allowVisibleSniffer=false)")
         }
         
         if (finalResult != null) {
@@ -391,7 +393,7 @@ class ArabseedV2 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var found = false
+        var anyFound = false
         val visibleServers = parser.extractVisibleServers(watchDoc)
         val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
         
@@ -408,12 +410,17 @@ class ArabseedV2 : MainAPI() {
                 // NON-DEFAULT QUALITY: Emit lazy URLs
                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
                     for (serverId in 1..5) {
-                        val lazyUrl = "https://arabseed-lazy.com/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&base=$currentBaseUrl"
-                        Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC: $lazyUrl")
+                        // Skip if we already found a link and this one likely needs a visible sniffer?
+                        // Actually, we try silently first.
+                        val allowVisible = !anyFound
                         
-                        // ASYNC RESOLUTION (v21)
-                        val resolved = resolveLazyLink(lazyUrl)
+                        val lazyUrl = "https://arabseed-lazy.com/?post_id=$anyPostId&quality=$quality&server=$serverId&csrf_token=$csrfToken&base=$currentBaseUrl"
+                        Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC: $lazyUrl (AllowVisible=$allowVisible)")
+                        
+                        // ASYNC RESOLUTION (v21/v25)
+                        val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
                         if (resolved != null) {
+                            anyFound = true // Mark found so future calls are silent
                             Log.i("ArabseedV2", "[loadLinks] Resolved server $serverId to: ${resolved.url}")
                             
                             // Cache headers for segments
@@ -436,18 +443,21 @@ class ArabseedV2 : MainAPI() {
                                     this.headers = resolved.headers
                                 }
                             )
-                            found = true
+                            anyFound = true
                         }
                     }
                 }
             } else {
                 // DEFAULT QUALITY: Use visible servers
-                 if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback)) {
-                     found = true
+                 // We pass anyFound status to visible servers
+                 // But wait, visible servers function signature needs update or we handle logic there?
+                 // Let's modify processVisibleServers signature too.
+                 if (processVisibleServers(visibleServers, quality, csrfToken, currentBaseUrl, subtitleCallback, callback, allowVisibleSniffer = !anyFound)) {
+                     anyFound = true
                 }
             }
         }
-        return found
+        return anyFound
     }
 
     private suspend fun processVisibleServers(
@@ -456,12 +466,14 @@ class ArabseedV2 : MainAPI() {
         csrfToken: String,
         currentBaseUrl: String,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
+        allowVisibleSniffer: Boolean = true
     ): Boolean {
         var found = false
         visibleServers.forEachIndexed { idx, server ->
              if (found && idx > 0) {
-                 // Optimization
+                 // Optimization: If we found one, we might want to skip others if they are expensive?
+                 // But let's keep trying silently.
              }
 
              if (server.dataLink.isNotBlank()) {
@@ -469,10 +481,13 @@ class ArabseedV2 : MainAPI() {
                  found = true
             } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                 val lazyUrl = "https://arabseed-lazy.com/?post_id=${server.postId}&quality=$quality&server=${server.serverId}&csrf_token=$csrfToken&base=$currentBaseUrl"
-                Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC (Visible Server): $lazyUrl")
+                
+                // Only allow visible sniffer if we haven't found any yet AND parameter allows it
+                val allowVisible = allowVisibleSniffer && !found
+                Log.i("ArabseedV2", "[loadLinks] Resolving ASYNC (Visible Server): $lazyUrl (AllowVisible=$allowVisible)")
                 
                 // ASYNC RESOLUTION (v21)
-                val resolved = resolveLazyLink(lazyUrl)
+                val resolved = resolveLazyLink(lazyUrl, allowVisibleSniffer = allowVisible)
                 if (resolved != null) {
                     Log.i("ArabseedV2", "[loadLinks] Resolved visible server ${server.serverId} to: ${resolved.url}")
                     

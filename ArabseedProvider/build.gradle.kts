@@ -1,4 +1,4 @@
-version = 24 // Fix Missing Exit Condition (v24)
+version = 25 // Optimize Multi-Quality Sniffing (v25)
 
 // Include shared source directory
 android {
