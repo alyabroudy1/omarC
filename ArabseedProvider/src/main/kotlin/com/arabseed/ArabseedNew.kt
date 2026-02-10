@@ -15,6 +15,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.arabseed.extractors.ArabseedLazyExtractor
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 import org.jsoup.nodes.Document
 
@@ -238,8 +240,8 @@ class ArabseedV2 : MainAPI() {
                     throw java.io.IOException("Failed to resolve lazy link")
                 }
                 
-                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to: $realUrl")
-                // Redirect to the real URL
+                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to final video stream: $realUrl")
+                // Redirect to the real direct video URL
                 val newRequest = request.newBuilder()
                     .url(realUrl)
                     .build()
@@ -267,12 +269,12 @@ class ArabseedV2 : MainAPI() {
         val quality = queryParams["quality"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing quality"); return null }
         val server = queryParams["server"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing server"); return null }
         val csrfToken = queryParams["csrf_token"] ?: run { Log.e("ArabseedV2", "[resolveLazyLink] Missing csrf_token"); return null }
-        val baseUrl = queryParams["base"] ?: "https://arabseed.show"
+        val baseUrlForAjax = queryParams["base"] ?: "https://asd.pics"
         
-        Log.d("ArabseedV2", "[resolveLazyLink] Calling AJAX: $baseUrl/get__watch__server/ with postId=$postId, server=$server, quality=$quality")
+        Log.d("ArabseedV2", "[resolveLazyLink] Calling AJAX: $baseUrlForAjax/get__watch__server/ with postId=$postId, server=$server, quality=$quality")
 
         val result = httpService.postDebug(
-            "$baseUrl/get__watch__server/",
+            "$baseUrlForAjax/get__watch__server/",
             data = mapOf(
                 "post_id" to postId,
                 "quality" to quality,
@@ -281,57 +283,88 @@ class ArabseedV2 : MainAPI() {
             ),
             headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest",
-                "Origin" to baseUrl,
-                "Referer" to "$baseUrl/"
+                "Origin" to baseUrlForAjax,
+                "Referer" to "$baseUrlForAjax/"
             )
         )
         
-        Log.d("ArabseedV2", "[resolveLazyLink] Response Code: ${result.responseCode}, Success: ${result.success}")
-        if (!result.success) {
-            Log.e("ArabseedV2", "[resolveLazyLink] HTTP Request FAILED: ${result.error?.message}")
-            return null
-        }
-
+        Log.d("ArabseedV2", "[resolveLazyLink] AJAX Code: ${result.responseCode}, Success: ${result.success}")
         val serverResponse = result.html
-        Log.d("ArabseedV2", "[resolveLazyLink] Raw Response (first 100): ${serverResponse?.take(100)}")
         if (serverResponse == null) {
             Log.e("ArabseedV2", "[resolveLazyLink] Response body is NULL")
             return null
         }
         
-        val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrl/")
-        var iframeSrc = serverDoc.select("iframe").attr("src")
+        var embedUrl = ""
         
-        // Fallback for JSON response
-        if (iframeSrc.isBlank() && serverResponse.trim().startsWith("{")) {
+        // 1. Detect JSON/HTML and parse embed URL
+        if (serverResponse.trim().startsWith("{")) {
             Log.d("ArabseedV2", "[resolveLazyLink] Detected JSON response, parsing...")
             
             // Try "server" field first (direct URL)
             val serverMatch = Regex("\"server\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
             if (serverMatch != null) {
-                iframeSrc = serverMatch.groupValues[1].replace("\\/", "/")
-                Log.d("ArabseedV2", "[resolveLazyLink] Found 'server' URL: $iframeSrc")
+                embedUrl = serverMatch.groupValues[1].replace("\\/", "/")
+                Log.d("ArabseedV2", "[resolveLazyLink] Found 'server' URL: $embedUrl")
             } 
             
             // Fallback to "html" field if "server" not found or empty
-            if (iframeSrc.isBlank() && serverResponse.contains("\"html\"")) {
+            if (embedUrl.isBlank() && serverResponse.contains("\"html\"")) {
                 val htmlMatch = Regex("\"html\"\\s*:\\s*\"([^\"]+)\"").find(serverResponse)
                 val escapedHtml = htmlMatch?.groupValues?.get(1)
                 if (escapedHtml != null) {
                     val unescaped = escapedHtml.replace("\\/", "/").replace("\\\"", "\"")
-                    iframeSrc = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
-                    Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in 'html' field: $iframeSrc")
+                    embedUrl = org.jsoup.Jsoup.parse(unescaped).select("iframe").attr("src")
+                    Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in 'html' field: $embedUrl")
                 }
             }
+        } else {
+             val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrlForAjax/")
+             embedUrl = serverDoc.select("iframe").attr("src")
+             Log.d("ArabseedV2", "[resolveLazyLink] Found iframe in HTML: $embedUrl")
         }
 
-        if (iframeSrc.isNotBlank()) {
-            Log.d("ArabseedV2", "[resolveLazyLink] SUCCESS: $iframeSrc")
-            return iframeSrc
-        } else {
-            Log.e("ArabseedV2", "[resolveLazyLink] FAILED: No iframe found in response")
+        if (embedUrl.isBlank()) {
+            Log.e("ArabseedV2", "[resolveLazyLink] FAILED: No embed URL found in response")
             return null
         }
+
+        // 2. RECURSIVE RESOLUTION TO FINAL VIDEO STREAM
+        Log.i("ArabseedV2", "[resolveLazyLink] Starting recursive resolution for: $embedUrl")
+        
+        var finalStreamUrl: String? = null
+        val mutex = kotlinx.coroutines.sync.Mutex()
+        
+        val callback: (ExtractorLink) -> Unit = { link ->
+             runBlocking {
+                 mutex.withLock {
+                     if (finalStreamUrl == null) {
+                         finalStreamUrl = link.url
+                         Log.i("ArabseedV2", "[resolveLazyLink] SUCCESS! Captured stream URL from ${link.name}: ${link.url.take(60)}")
+                     }
+                 }
+             }
+        }
+        
+        // Step A: Try standard extractors
+        Log.d("ArabseedV2", "[resolveLazyLink] Step A: Trying standard extractors...")
+        loadExtractor(embedUrl, "$baseUrlForAjax/", {}, callback)
+        
+        // Step B: If still null, try Sniffer fallback
+        if (finalStreamUrl == null) {
+             Log.w("ArabseedV2", "[resolveLazyLink] Step B: Standard extractors failed. Triggering Sniffer fallback...")
+             val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(embedUrl, "$baseUrlForAjax/")
+             Log.d("ArabseedV2", "[resolveLazyLink] Sniffer URL: $sniffUrl")
+             loadExtractor(sniffUrl, "$baseUrlForAjax/", {}, callback)
+        }
+        
+        if (finalStreamUrl != null) {
+             Log.i("ArabseedV2", "[resolveLazyLink] Final direct video link: $finalStreamUrl")
+        } else {
+             Log.e("ArabseedV2", "[resolveLazyLink] FAILED: Could not resolve to a direct stream link")
+        }
+        
+        return finalStreamUrl
     }
 
     private suspend fun processQualities(
@@ -365,7 +398,7 @@ class ArabseedV2 : MainAPI() {
                         Log.d("ArabseedV2", "[loadLinks] Emitting ${quality}p server $serverId (lazy URL)")
                         callback(
                             newExtractorLink(
-                                source = name, // Must match this.name
+                                source = name,
                                 name = "Server $serverId (${quality}p)",
                                 url = lazyUrl,
                                 type = ExtractorLinkType.VIDEO

@@ -1,4 +1,4 @@
-version = 12 // Handling 'server' field in JSON response (v12)
+version = 13 // Sniffer-integrated Interceptor resolution (v13)
 
 // Include shared source directory
 android {
