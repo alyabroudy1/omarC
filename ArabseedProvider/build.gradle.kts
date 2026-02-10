@@ -1,4 +1,4 @@
-version = 29 // Fix: Use VideoSniffingStrategy with auto-play, auto-mute, skip ads (v29)
+version = 30 // Fix: Reduce sniff timeout to 30s + HTML dump on timeout for debugging (v30)
 
 // Include shared source directory
 android {

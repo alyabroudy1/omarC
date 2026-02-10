@@ -29,7 +29,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 class VideoSniffingStrategy(
     private val context: Context,
-    private val timeout: Long = 35_000
+    private val timeout: Long = 35_000,
+    private val dumpHtmlOnTimeout: Boolean = false
 ) {
     val name: String = "VideoSniffer"
     
@@ -171,6 +172,51 @@ class VideoSniffingStrategy(
                 }
             } else {
                 ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "No sources found", "durationMs" to durationMs)
+                
+                // DUMP HTML for debugging why auto-click didn't work
+                if (dumpHtmlOnTimeout) {
+                    try {
+                        val htmlDump = getHtmlFromWebView(webView!!)
+                        ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "=== HTML DUMP START ===", "size" to htmlDump.length)
+                        // Log HTML in chunks to avoid truncation
+                        htmlDump.chunked(3000).forEachIndexed { idx, chunk ->
+                            ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "HTML chunk", "index" to idx, "content" to chunk.take(500))
+                        }
+                        ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "=== HTML DUMP END ===")
+                        
+                        // Also try to get info about video elements
+                        webView.evaluateJavascript("""
+                            (function() {
+                                var videos = document.querySelectorAll('video');
+                                var iframes = document.querySelectorAll('iframe');
+                                var result = {
+                                    videoCount: videos.length,
+                                    iframeCount: iframes.length,
+                                    videoSources: [],
+                                    iframeSrcs: []
+                                };
+                                videos.forEach(function(v, i) {
+                                    result.videoSources.push({
+                                        index: i,
+                                        src: v.src || v.currentSrc || 'no-src',
+                                        paused: v.paused,
+                                        muted: v.muted,
+                                        duration: v.duration,
+                                        readyState: v.readyState
+                                    });
+                                });
+                                iframes.forEach(function(f, i) {
+                                    result.iframeSrcs.push(f.src || 'no-src');
+                                });
+                                return JSON.stringify(result);
+                            })()
+                        """) { jsResult ->
+                            ProviderLogger.w(TAG_VIDEO_SNIFFER, "sniff", "Video/iframe info", "data" to jsResult)
+                        }
+                    } catch (e: Exception) {
+                        ProviderLogger.e(TAG_VIDEO_SNIFFER, "sniff", "Failed to dump HTML", e)
+                    }
+                }
             }
             
             allSources
@@ -335,5 +381,26 @@ class VideoSniffingStrategy(
             ProviderLogger.e(TAG_VIDEO_SNIFFER, "parseSourcesJson", "Error", e)
         }
         return sources
+    }
+    
+    /**
+     * Get HTML content from WebView for debugging.
+     */
+    private fun getHtmlFromWebView(webView: WebView): String {
+        return try {
+            val htmlDeferred = CompletableDeferred<String>()
+            webView.evaluateJavascript("""
+                (function() {
+                    return document.documentElement.outerHTML;
+                })()
+            """) { result ->
+                htmlDeferred.complete(result?.removePrefix("\"")?.removeSuffix("\"")?.replace("\\n", "\n")?.replace("\\\"", "\"") ?: "")
+            }
+            kotlinx.coroutines.runBlocking { 
+                kotlinx.coroutines.withTimeout(3000) { htmlDeferred.await() } 
+            }
+        } catch (e: Exception) {
+            "Error getting HTML: ${e.message}"
+        }
     }
 }

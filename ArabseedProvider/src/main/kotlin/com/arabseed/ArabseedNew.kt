@@ -419,9 +419,11 @@ class ArabseedV2 : MainAPI() {
             }
             
             // Use VideoSniffingStrategy which has auto-play, auto-mute, skip ads built-in
+            // Reduced timeout to 30s and enable HTML dump on timeout for debugging
             val sniffer = com.cloudstream.shared.strategy.VideoSniffingStrategy(
                 context = activity,
-                timeout = timeoutMs
+                timeout = 30_000,
+                dumpHtmlOnTimeout = true
             )
             
             // Get cookies from SessionProvider
