@@ -1,4 +1,4 @@
-version = 21 // Async Resolution in loadLinks (v21)
+version = 22 // Fix Sniffer False Positives (v22)
 
 // Include shared source directory
 android {

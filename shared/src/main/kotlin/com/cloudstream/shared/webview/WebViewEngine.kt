@@ -269,9 +269,19 @@ class WebViewEngine(
     }
     
     private fun isVideoUrl(url: String): Boolean {
+        if (isBlacklisted(url)) return false
+        
         // Simple check or robust regex
         return url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv") || 
                url.contains(".urls") || url.contains(".urlset") || url.contains("/master.m3u8")
+    }
+
+    private fun isBlacklisted(url: String): Boolean {
+        val lowerUrl = url.lowercase()
+        return lowerUrl.contains("/ping.gif") || 
+               lowerUrl.contains("/analytics") || 
+               lowerUrl.contains("/google-analytics") || 
+               lowerUrl.contains("favicon.ico")
     }
 
     private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()
