@@ -1,4 +1,4 @@
-version = 7  // Added asd.pics decoding and fixed MalformedURLException
+version = 8  // Fixed lazy link resolution endpoint (/get__watch__server/)
 
 // Include shared source directory
 android {

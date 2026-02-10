@@ -258,17 +258,14 @@ class ArabseedV2 : MainAPI() {
         val csrfToken = queryParams["csrf_token"] ?: return null
         val baseUrl = queryParams["base"] ?: "https://arabseed.show" // Extract base URL from param
 
-        val body = mapOf(
-            "action" to "get__watch__server",
-            "post_id" to postId,
-            "quality" to quality,
-            "server" to server,
-            "csrf_token" to csrfToken
-        )
-
         val serverDoc = httpService.post(
-            "$baseUrl/wp-admin/admin-ajax.php",
-            data = body,
+            "$baseUrl/get__watch__server/",
+            data = mapOf(
+                "post_id" to postId,
+                "quality" to quality,
+                "server" to server,
+                "csrf_token" to csrfToken
+            ),
             headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest",
                 "Origin" to baseUrl,
