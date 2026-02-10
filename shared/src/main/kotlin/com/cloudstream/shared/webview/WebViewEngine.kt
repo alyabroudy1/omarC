@@ -140,6 +140,7 @@ class WebViewEngine(
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 }
             }
+            this@WebViewEngine.activeWebView = webView
             
             // UA VERIFICATION: Log the exact UA WebView is using
             ProviderLogger.i(TAG_WEBVIEW, "runSession", "WebView UA",
@@ -160,6 +161,7 @@ class WebViewEngine(
                 }
                 Mode.FULLSCREEN -> {
                     dialog = createDialog(activity, webView)
+                    this@WebViewEngine.activeDialog = dialog
                     dialog.show()
                     ProviderLogger.d(TAG_WEBVIEW, "runSession", "FULLSCREEN mode", "url" to url.take(80))
                 }
@@ -451,13 +453,12 @@ class WebViewEngine(
                 android.util.Log.i("WebViewEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
                 found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
                 
+                // Cleanup BEFORE deferred completion to ensure UI is dismissed
+                ProviderLogger.i(TAG_WEBVIEW, "checkExitCondition", "Cleaning up UI before exit")
+                cleanup(activeWebView, activeDialog)
+                
                 deferred?.complete(WebViewResult.Success(cookies, "", "", found))
                 android.util.Log.i("WebViewEngine", "[checkExitCondition] Deferred completed.")
-                
-                // We need reference to webView and dialog to cleanup
-                // But they are local to runSession. 
-                // However, cleanup() handles nulls.
-                // WE MUST BE CAREFUL: webView and dialog in runSession are correct scope.
                 // We cannot access them easily unless we make them instance variables or pass them.
                 // BUT runSession waits for deferred.complete.
                 // So if we complete deferred, runSession continues? 
