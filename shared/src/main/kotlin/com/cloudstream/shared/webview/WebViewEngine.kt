@@ -157,11 +157,37 @@ class WebViewEngine(
             
             // Setup WebViewClient
             webView.webViewClient = object : WebViewClient() {
+                private var requestCounter = 0
+                
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
                     val url = request?.url?.toString()
-                    if (url != null && isVideoUrl(url)) {
-                         ProviderLogger.d(TAG_WEBVIEW, "intercept", "Video found", "url" to url.take(80))
-                         captureLink(url, "Network", request?.requestHeaders ?: emptyMap())
+                    requestCounter++
+                    
+                    if (url != null) {
+                        // Log ALL requests for debugging
+                        if (requestCounter % 10 == 0 || url.contains(".m3u8") || url.contains(".mp4") || url.contains("video") || url.contains("stream")) {
+                            ProviderLogger.d(TAG_WEBVIEW, "intercept", "Request #$requestCounter", 
+                                "url" to url.take(100),
+                                "method" to (request?.method ?: "?"),
+                                "isMainFrame" to (request?.isForMainFrame ?: false)
+                            )
+                        }
+                        
+                        // Check if it's a video URL with detailed logging
+                        if (isVideoUrl(url)) {
+                             ProviderLogger.i(TAG_WEBVIEW, "intercept", "VIDEO URL DETECTED!", 
+                                 "url" to url.take(100),
+                                 "requestNum" to requestCounter
+                             )
+                             captureLink(url, "Network", request?.requestHeaders ?: emptyMap())
+                        } else if (url.contains("m3u8") || url.contains("mp4") || url.contains("video") || url.contains("stream")) {
+                            // Log why it was rejected
+                            ProviderLogger.w(TAG_WEBVIEW, "intercept", "URL rejected", 
+                                "url" to url.take(100),
+                                "reason" to "Failed video pattern check",
+                                "isBlacklisted" to isBlacklisted(url)
+                            )
+                        }
                     }
                     return super.shouldInterceptRequest(view, request)
                 }
@@ -283,11 +309,30 @@ class WebViewEngine(
     }
     
     private fun isVideoUrl(url: String): Boolean {
-        if (isBlacklisted(url)) return false
+        if (isBlacklisted(url)) {
+            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL blacklisted", "url" to url.take(80))
+            return false
+        }
         
-        // Simple check or robust regex
-        return url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv") || 
-               url.contains(".urls") || url.contains(".urlset") || url.contains("/master.m3u8")
+        // Check for video patterns
+        val hasM3u8 = url.contains(".m3u8", ignoreCase = true)
+        val hasMp4 = url.contains(".mp4", ignoreCase = true)
+        val hasMkv = url.contains(".mkv", ignoreCase = true)
+        val hasUrls = url.contains(".urls", ignoreCase = true) || url.contains(".urlset", ignoreCase = true)
+        val hasMaster = url.contains("/master.m3u8", ignoreCase = true)
+        val hasSegment = url.contains("/seg-", ignoreCase = true) || url.contains("/segment", ignoreCase = true)
+        val hasTs = url.contains(".ts", ignoreCase = true)
+        
+        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasUrls || hasMaster || hasSegment || hasTs
+        
+        if (!isVideo && (url.contains("video") || url.contains("stream") || url.contains("media"))) {
+            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL looks like video but pattern not matched",
+                "url" to url.take(80),
+                "checks" to "m3u8=$hasM3u8, mp4=$hasMp4, mkv=$hasMkv, urls=$hasUrls, master=$hasMaster, segment=$hasSegment, ts=$hasTs"
+            )
+        }
+        
+        return isVideo
     }
 
     private fun isBlacklisted(url: String): Boolean {
@@ -305,7 +350,12 @@ class WebViewEngine(
          val data = CapturedLinkData(url, qualityLabel, headers)
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
-             ProviderLogger.d(TAG_WEBVIEW, "captureLink", "Captured", "url" to url)
+             ProviderLogger.i(TAG_WEBVIEW, "captureLink", "LINK CAPTURED SUCCESSFULLY!", 
+                 "url" to url.take(100),
+                 "quality" to qualityLabel,
+                 "totalLinks" to capturedLinks.size,
+                 "headers" to headers.keys.joinToString(",")
+             )
              
              // Update UI and Check Exit
              CoroutineScope(Dispatchers.Main).launch {
@@ -313,6 +363,8 @@ class WebViewEngine(
                  // Trigger exit check immediately
                  checkExitCondition()
              }
+         } else {
+             ProviderLogger.d(TAG_WEBVIEW, "captureLink", "Duplicate URL ignored", "url" to url.take(80))
          }
     }
     
