@@ -64,6 +64,7 @@ class WebViewEngine(
         
         // BUGFIX: Clear capturedLinks at the start of each session
         capturedLinks.clear()
+        android.util.Log.d("WebViewEngine", "runSession: Session started, capturedLinks cleared. URL: $url")
         ProviderLogger.d(TAG_WEBVIEW, "runSession", "Session started, capturedLinks cleared")
         
         // Timeout handler
@@ -91,6 +92,7 @@ class WebViewEngine(
         this@WebViewEngine.videoMonitorJob = if (exitCondition is ExitCondition.VideoFound) {
             CoroutineScope(Dispatchers.Main).launch {
                 val requiredCount = (exitCondition as ExitCondition.VideoFound).minCount
+                android.util.Log.d("WebViewEngine", "videoMonitorJob: Started. requiredCount=$requiredCount")
                 ProviderLogger.d(TAG_WEBVIEW, "runSession", "Video monitor started", "requiredCount" to requiredCount)
                 while (!resultDelivered) {
                     delay(300)
@@ -174,6 +176,7 @@ class WebViewEngine(
                     if (url != null) {
                         // Log ALL requests for debugging
                         if (requestCounter % 10 == 0 || url.contains(".m3u8") || url.contains(".mp4") || url.contains("video") || url.contains("stream")) {
+                            android.util.Log.d("WebViewEngine", "intercept: Request #$requestCounter url=${url.take(100)}")
                             ProviderLogger.d(TAG_WEBVIEW, "intercept", "Request #$requestCounter", 
                                 "url" to url.take(100),
                                 "method" to (request?.method ?: "?"),
@@ -207,6 +210,7 @@ class WebViewEngine(
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    android.util.Log.i("WebViewEngine", "onPageStarted: url=${url?.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageStarted", "=== PAGE STARTED ===", "url" to url?.take(80))
                     
                     // Inject Advanced Polyfill & Fingerprint Spoofing
@@ -233,6 +237,7 @@ class WebViewEngine(
 
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                     val currentUrl = view?.url ?: loadedUrl ?: url
+                    android.util.Log.i("WebViewEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
 
                     // Inject VideoSniffer JS
@@ -667,6 +672,7 @@ class WebViewEngine(
     inner class SnifferBridge {
         @JavascriptInterface
         fun onSourcesFound(json: String) {
+             android.util.Log.i("WebViewEngine", "SnifferBridge: Sources found! jsonLen=${json.length}")
              ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "=== JS Bridge: Sources found! ===", "jsonLength" to json.length)
              try {
                 val array = org.json.JSONArray(json)
