@@ -137,6 +137,9 @@ class SnifferExtractor : ExtractorApi() {
                         return@forEach
                     }
                     
+                    // STOP after first valid link to satisfy "play first video directly" and avoid logs
+                    if (callbackCount > 0) return@forEach
+
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH

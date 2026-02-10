@@ -93,6 +93,15 @@ class ProviderHttpService private constructor(
                 if (fromWebView) "webview" else "http")
         }
     }
+
+    /**
+     * Publicly expose cookie storage for CDN domains captured during extractions.
+     */
+    fun storeCdnCookies(url: String, cookies: Map<String, String>) {
+        if (cookies.isEmpty()) return
+        cookieManager.store(url, cookies, "sniffer")
+        ProviderLogger.d(TAG_PROVIDER_HTTP, "storeCdnCookies", "Stored cookies for CDN", "url" to url.take(60), "count" to cookies.size)
+    }
     
     @Synchronized
     fun updateDomain(newDomain: String) {

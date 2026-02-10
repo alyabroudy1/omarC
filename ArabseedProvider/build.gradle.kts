@@ -1,4 +1,4 @@
-version = 15 // Header-aware redirection for Source error (v15)
+version = 16 // Global CDN cookies and sniffer early handoff (v16)
 
 // Include shared source directory
 android {

@@ -234,27 +234,28 @@ class ArabseedV2 : MainAPI() {
             val url = request.url.toString()
 
             if (url.contains("arabseed-lazy.com")) {
-                Log.d("ArabseedV2", "[getVideoInterceptor] Intercepting lazy link: $url")
+                Log.d("ArabseedV2", "[getVideoInterceptor] Intercepting: $url")
                 val resolved = runBlocking {
                      resolveLazyLink(url)
                 } ?: run {
-                    Log.e("ArabseedV2", "[getVideoInterceptor] FAILED to resolve lazy link for: $url")
+                    Log.e("ArabseedV2", "[getVideoInterceptor] FAILED resolution: $url")
                     throw java.io.IOException("Failed to resolve lazy link")
                 }
                 
-                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting with ${resolved.headers.size} headers to: ${resolved.url.take(60)}")
+                Log.d("ArabseedV2", "[getVideoInterceptor] SUCCESS. Redirecting to: ${resolved.url.take(60)}")
                 
-                // Redirect to the real direct video URL with captured headers
-                val newRequestBuilder = request.newBuilder()
-                    .url(resolved.url)
+                val newRequestBuilder = request.newBuilder().url(resolved.url)
                 
-                // CRITICAL: Apply captured headers (Cookie, UA, Referer)
+                // CRITICAL: Apply captured headers selectively
+                val headerWhitelist = setOf("Cookie", "User-Agent", "Referer", "Origin")
                 resolved.headers.forEach { (key, value) ->
-                    newRequestBuilder.header(key, value)
+                    if (headerWhitelist.any { it.equals(key, ignoreCase = true) }) {
+                        newRequestBuilder.header(key, value)
+                    }
                 }
                 
-                // Ensure Referer is set if not already in headers
-                if (!resolved.headers.containsKey("Referer")) {
+                // Fallback Referer
+                if (resolved.headers.keys.none { it.equals("Referer", ignoreCase = true) }) {
                     newRequestBuilder.header("Referer", "https://asd.pics/")
                 }
                     
@@ -371,7 +372,18 @@ class ArabseedV2 : MainAPI() {
         }
         
         if (finalResult != null) {
-             Log.i("ArabseedV2", "[resolveLazyLink] Final direct video link: ${finalResult?.url}")
+             Log.i("ArabseedV2", "[resolveLazyLink] Final result: ${finalResult?.url?.take(80)}")
+             
+             // PERSIST COOKIES GLOBALLY FOR SEGMENTS (Source error fix)
+             val streamUrl = finalResult?.url ?: ""
+             val rawCookie = finalResult?.headers?.entries?.find { it.key.equals("Cookie", ignoreCase = true) }?.value
+             if (!rawCookie.isNullOrBlank()) {
+                 val cookieMap = rawCookie.split(";").associate {
+                     val parts = it.split("=", limit = 2)
+                     parts[0].trim() to (if (parts.size == 2) parts[1].trim() else "")
+                 }
+                 httpService.storeCdnCookies(streamUrl, cookieMap)
+             }
         } else {
              Log.e("ArabseedV2", "[resolveLazyLink] FAILED: Could not resolve to a direct stream link")
         }

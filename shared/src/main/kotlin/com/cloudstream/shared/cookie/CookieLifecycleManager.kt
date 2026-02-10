@@ -57,7 +57,7 @@ class CookieLifecycleManager(
     
     private fun isValid(entry: CookieEntry): Boolean {
         val ageMs = System.currentTimeMillis() - entry.storedAt
-        return ageMs < maxAgeMs && entry.cookies.containsKey("cf_clearance")
+        return ageMs < maxAgeMs
     }
     
     @Synchronized
