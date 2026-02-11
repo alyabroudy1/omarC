@@ -50,6 +50,13 @@ class SavefilesExtractor : ExtractorApi() {
                      val inputs = form.select("input[type=hidden]")
                      val postData = inputs.associate { it.attr("name") to it.attr("value") }.toMutableMap()
                      
+                     // Helper to extract code from URL
+                     // URL: https://savefiles.com/e/fepgxkbktt8t -> fepgxkbktt8t
+                     val fileCode = safeUrl.substringAfterLast("/").substringBefore("?")
+                     if (postData["file_code"].isNullOrBlank() && fileCode.isNotBlank()) {
+                         postData["file_code"] = fileCode
+                     }
+
                      // Ensure referer is set correctly for the form
                      if (postData["referer"].isNullOrBlank()) {
                          postData["referer"] = "https://savefiles.com/"

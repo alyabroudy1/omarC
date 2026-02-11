@@ -1,4 +1,4 @@
-version = 47 // Round 12: Savefiles Interstitial Fix (POST /dl)
+version = 48 // Round 13: Savefiles Fix (Manual file_code)
 
 // Include shared source directory
 android {
