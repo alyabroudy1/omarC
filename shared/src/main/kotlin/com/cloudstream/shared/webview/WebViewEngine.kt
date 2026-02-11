@@ -138,6 +138,9 @@ class WebViewEngine(
                     cacheMode = WebSettings.LOAD_DEFAULT
                     userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    mediaPlaybackRequiresUserGesture = false
+                    javaScriptCanOpenWindowsAutomatically = false
+                    setSupportMultipleWindows(false)
                 }
             }
             this@WebViewEngine.activeWebView = webView
@@ -167,6 +170,10 @@ class WebViewEngine(
                 }
             }
             
+            
+            // Add JS Interface here to support all modes
+            webView.addJavascriptInterface(SnifferBridge(), "SnifferBridge")
+
             // Setup WebViewClient
             webView.webViewClient = object : WebViewClient() {
                 private var requestCounter = 0
@@ -311,6 +318,33 @@ class WebViewEngine(
                         ProviderLogger.w(TAG_WEBVIEW, "onReceivedError", "WebView error",
                             "description" to error?.description?.toString(), "url" to request.url.toString().take(80))
                     }
+            
+            // Add WebChromeClient to capture console logs from JavaScript (Crucial for debugging auto-click)
+            webView.webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                    consoleMessage?.let {
+                        val msg = "${it.message()} [${it.sourceId()}:${it.lineNumber()}]"
+                        when (it.messageLevel()) {
+                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> 
+                                android.util.Log.e("VideoSnifferJS", msg)
+                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> 
+                                android.util.Log.w("VideoSnifferJS", msg)
+                            else -> 
+                                android.util.Log.d("VideoSnifferJS", msg)
+                        }
+                    }
+                    return true
+                }
+                
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    super.onProgressChanged(view, newProgress)
+                    if (newProgress % 20 == 0) {
+                        ProviderLogger.d(TAG_WEBVIEW, "WebView", "Loading progress", "percent" to newProgress)
+                    }
+                }
+            }
+            
+            // Load URL with headers to bypass detection
                 }
             }
             
@@ -532,7 +566,7 @@ class WebViewEngine(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0, 1f
                 )
-                addJavascriptInterface(SnifferBridge(), "SnifferBridge") // Add JS Bridge
+                // JS Interface moved to runSession
             })
         }
         
