@@ -294,10 +294,14 @@ class ArabseedParser : BaseParser() {
                  val selected = seasonList.selectFirst("li.selected")
                  if (selected != null) activeSeasonNum = parseSeasonNumber(selected.text())
             } else {
+            } else {
                  val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
                  val activeTab = seasonTabs.find { it.hasClass("active") }
                  if (activeTab != null) {
                      activeSeasonNum = Regex("""\d+""").find(activeTab.text())?.value?.toIntOrNull() ?: 1
+                 } else {
+                     val t = doc.select("div.seasonDiv.active .title").text()
+                     activeSeasonNum = Regex("""\d+""").find(t)?.value?.toIntOrNull() ?: 1
                  }
             }
         }
@@ -386,6 +390,14 @@ class ArabseedParser : BaseParser() {
             postId = Regex("""postid-(\d+)""").find(doc.body().className())?.groupValues?.get(1) ?: ""
         }
         
+        // 6. Try parsing from ajax calls in script
+        if (postId.isBlank()) {
+            postId = Regex("""post_id\s*:\s*(\d+)""").find(doc.html())?.groupValues?.get(1) ?: ""
+            if (postId.isBlank()) {
+                 postId = Regex("""post_id["']\s*:\s*["']?(\d+)""").find(doc.html())?.groupValues?.get(1) ?: ""
+            }
+        }
+
         return postId.ifBlank { null }
     }
 
@@ -526,10 +538,10 @@ class ArabseedParser : BaseParser() {
             if (season != null && postId.isNotBlank()) list.add(SeasonData(season, postId))
         }
         
-        // div#seasons__list ul li, div.list__sub__cats ul li, div.seasons--list ul li
+        // div#seasons__list ul li, div.list__sub__cats ul li
         if (list.isEmpty()) {
-            doc.select("div#seasons__list ul li, div.list__sub__cats ul li, div.seasons--list ul li, div.seasonDiv ul li").forEach { li ->
-                val termId = li.attr("data-term").ifBlank { li.attr("data-id") }
+            doc.select("div#seasons__list ul li, div.list__sub__cats ul li").forEach { li ->
+                val termId = li.attr("data-term")
                 if (termId.isNotBlank()) {
                     val sNum = parseSeasonNumber(li.text())
                     list.add(SeasonData(sNum, termId))
