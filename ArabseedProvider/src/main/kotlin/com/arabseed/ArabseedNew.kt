@@ -114,11 +114,35 @@ class ArabseedV2 : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
-        return httpService.search(query).map { item ->
-             newMovieSearchResponse(item.title, item.url, TvType.Movie) {
-                 this.posterUrl = item.posterUrl
-                 this.posterHeaders = httpService.getImageHeaders()
-             }
+        Log.d(name, "[search] Query: '$query'")
+
+        // Use current domain from service
+        val activeUrl = "https://${httpService.currentDomain}"
+        val types = listOf("movies", "series")
+        
+        return coroutineScope {
+            types.map { type ->
+                async {
+                    val searchUrl = "$activeUrl/find/?word=$query&type=$type"
+                    Log.d(name, "[search] GET $searchUrl")
+                    
+                    val doc = httpService.getDocument(searchUrl)
+                    
+                    if (doc != null) {
+                        val items = parser.parseSearch(doc)
+                        Log.d(name, "[search] Parsed ${items.size} items for type '$type'")
+                        items
+                    } else {
+                        Log.e(name, "[search] Failed to get document for type '$type'")
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten().map { item ->
+                newMovieSearchResponse(item.title, item.url, if(item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
         }
     }
 
