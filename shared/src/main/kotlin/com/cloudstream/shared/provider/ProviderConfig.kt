@@ -52,4 +52,4 @@ data class ProviderConfig(
  * It is a sanitized Chrome Mobile UA WITHOUT WebView markers.
  * Cloudflare binds cookies to the User-Agent.
  */
-const val UNIFIED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+const val UNIFIED_USER_AGENT = "Mozilla/5.0 (Linux; Android 7.1.1; SM-J510FN) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Mobile Safari/537.36"
