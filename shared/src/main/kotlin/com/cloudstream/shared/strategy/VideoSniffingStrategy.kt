@@ -71,7 +71,7 @@ class VideoSniffingStrategy(
             }
             
             // ===== COMPREHENSIVE CLICK SIMULATION =====
-            function simulateFullClick(element) {
+            function simulateFullClick(element, x, y) {
                 if (!element) return false;
                 
                 if (clickCount >= maxClicks) {
@@ -82,6 +82,7 @@ class VideoSniffingStrategy(
                 
                 try {
                     var rect = element.getBoundingClientRect();
+                    // Calculate absolute coordinates considering scroll
                     var clickX = x || (rect.left + rect.width / 2);
                     var clickY = y || (rect.top + rect.height / 2);
                     
@@ -93,7 +94,20 @@ class VideoSniffingStrategy(
                     
                     log('Clicking element: ' + elementInfo + ' at ' + clickX + ',' + clickY + ' HTML: ' + html);
                     
-                    // Method 1: Touch events (mobile)
+                    // PRIMARY METHOD: Native Touch Injection via Bridge
+                    if (typeof SnifferBridge !== 'undefined' && SnifferBridge.nativeClick) {
+                         // Adjust for device pixel ratio if necessary, but usually WebView handles CSS pixels
+                         // We pass CSS pixels, native side might need to convert if dispatchTouchEvent expects physical pixels
+                         // But usually WebView.dispatchTouchEvent takes coordinates relative to the view in pixels.
+                         // Standard WebView conversion:
+                         var density = window.devicePixelRatio || 1; 
+                         // Native dispatchTouchEvent usually expects physical pixels
+                         SnifferBridge.nativeClick(clickX * density, clickY * density);
+                         log('Requested native nativeClick at ' + (clickX*density) + ',' + (clickY*density));
+                         return true;
+                    }
+
+                    // Method 1: Touch events (mobile) fallback
                     try {
                         var touch = new Touch({
                             identifier: Date.now(),
@@ -111,24 +125,13 @@ class VideoSniffingStrategy(
                     ['mousedown', 'mouseup', 'click'].forEach(function(eventType) {
                         element.dispatchEvent(new MouseEvent(eventType, {
                             bubbles: true, cancelable: true, view: window,
-                            clientX: centerX, clientY: centerY,
-                            screenX: centerX, screenY: centerY
+                            clientX: clickX, clientY: clickY,
+                            screenX: clickX, screenY: clickY
                         }));
                     });
-                    
-                    // Method 3: Pointer events
-                    try {
-                        element.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: centerX, clientY: centerY}));
-                        element.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, clientX: centerX, clientY: centerY}));
-                    } catch(e) {}
-                    
+                     
                     // Method 4: Direct click
                     if (element.click) element.click();
-                    
-                    // Method 5: Focus and enter key
-                    element.focus();
-                    element.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, keyCode: 13, key: 'Enter'}));
-                    element.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, keyCode: 13, key: 'Enter'}));
                     
                     return true;
                 } catch(e) {
@@ -496,7 +499,7 @@ class VideoSniffingStrategy(
                 cookieManager.flush()
             }
             
-            addJavascriptInterface(SnifferBridge(), "SnifferBridge")
+            addJavascriptInterface(SnifferBridge(this), "SnifferBridge")
             webViewClient = createSnifferWebViewClient()
             
             // Add WebChromeClient to capture console logs from JavaScript
@@ -626,7 +629,7 @@ class VideoSniffingStrategy(
     
 
     
-    inner class SnifferBridge {
+    inner class SnifferBridge(private val webView: WebView) {
         @JavascriptInterface
         fun onSourcesFound(json: String) {
             ProviderLogger.i(TAG_VIDEO_SNIFFER, "SnifferBridge", "Sources received", "length" to json.length)
@@ -646,6 +649,45 @@ class VideoSniffingStrategy(
         @JavascriptInterface
         fun log(message: String) {
             ProviderLogger.d(TAG_VIDEO_SNIFFER, "JS", message)
+        }
+
+        @JavascriptInterface
+        fun nativeClick(x: Float, y: Float) {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    val downTime = System.currentTimeMillis()
+                    val eventTime = downTime + 100
+                    val metaState = 0
+                    
+                    val motionEventDown = android.view.MotionEvent.obtain(
+                        downTime,
+                        eventTime,
+                        android.view.MotionEvent.ACTION_DOWN,
+                        x,
+                        y,
+                        metaState
+                    )
+                    
+                    val motionEventUp = android.view.MotionEvent.obtain(
+                        downTime + 100, // slightly later
+                        eventTime + 200,
+                        android.view.MotionEvent.ACTION_UP,
+                        x,
+                        y,
+                        metaState
+                    )
+                    
+                    webView.dispatchTouchEvent(motionEventDown)
+                    webView.dispatchTouchEvent(motionEventUp)
+                    
+                    motionEventDown.recycle()
+                    motionEventUp.recycle()
+                    
+                    ProviderLogger.d(TAG_VIDEO_SNIFFER, "nativeClick", "Dispatched native touch at $x,$y")
+                } catch (e: Exception) {
+                    ProviderLogger.e(TAG_VIDEO_SNIFFER, "nativeClick", "Failed", e)
+                }
+            }
         }
     }
     

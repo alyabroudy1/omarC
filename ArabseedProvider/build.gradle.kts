@@ -1,4 +1,4 @@
-version = 37 // Debug auto-play: Fallback center click for iframes
+version = 38 // Debug auto-play: Native MotionEvent click simulation
 
 // Include shared source directory
 android {
