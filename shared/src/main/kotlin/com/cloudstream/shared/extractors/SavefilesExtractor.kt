@@ -35,12 +35,44 @@ class SavefilesExtractor : ExtractorApi() {
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
             )
 
-            val response = app.get(safeUrl, headers = headers)
-            val text = response.text
+            var response = app.get(safeUrl, headers = headers)
+            var text = response.text
             
             ProviderLogger.d(TAG, "getUrl", "Response received", "code" to response.code, "length" to text.length)
 
+            // CHECK FOR INTERSTITIAL FORM
+            if (text.contains("action=\"/dl\"") || text.contains("action='/dl'")) {
+                 ProviderLogger.d(TAG, "getUrl", "Interstitial detected, preparing POST request")
+                 val doc = org.jsoup.Jsoup.parse(text)
+                 val form = doc.selectFirst("form[action='/dl']") ?: doc.selectFirst("form[action=\"/dl\"]")
+                 
+                 if (form != null) {
+                     val inputs = form.select("input[type=hidden]")
+                     val postData = inputs.associate { it.attr("name") to it.attr("value") }.toMutableMap()
+                     
+                     // Ensure referer is set correctly for the form
+                     if (postData["referer"].isNullOrBlank()) {
+                         postData["referer"] = "https://savefiles.com/"
+                     }
+                     
+                     ProviderLogger.d(TAG, "getUrl", "Posting to /dl", "data" to postData.toString())
+                     
+                     val postHeaders = headers.toMutableMap()
+                     postHeaders["Referer"] = safeUrl
+                     postHeaders["Content-Type"] = "application/x-www-form-urlencoded"
+                     
+                     val postResponse = app.post("https://savefiles.com/dl", headers = postHeaders, data = postData)
+                     if (postResponse.code == 200) {
+                         text = postResponse.text
+                         ProviderLogger.d(TAG, "getUrl", "POST successful", "length" to text.length)
+                     } else {
+                         ProviderLogger.e(TAG, "getUrl", "POST failed", null, "code" to postResponse.code)
+                     }
+                 }
+            }
+
             // OPTION 1: Direct Regex
+            // ... (rest of logic)
             // Look for sources: [{file:"..."}]
             val sourcesRegex = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""")
             var match = sourcesRegex.find(text)

@@ -1,4 +1,4 @@
-version = 46 // Round 11: Enhanced SavefilesExtractor (Headers + PackedJS)
+version = 47 // Round 12: Savefiles Interstitial Fix (POST /dl)
 
 // Include shared source directory
 android {
