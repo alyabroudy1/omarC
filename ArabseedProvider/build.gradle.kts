@@ -1,4 +1,4 @@
-version = 42 // Round 9: Smart Sniffer with Soft Wait & Master Priority
+version = 43 // Round 9.5: Debugging M3U8 Quality Extraction
 
 // Include shared source directory
 android {

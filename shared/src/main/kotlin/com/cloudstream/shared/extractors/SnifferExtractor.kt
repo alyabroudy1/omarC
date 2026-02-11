@@ -382,18 +382,28 @@ class SnifferExtractor : ExtractorApi() {
         return try {
             // Remove referer param as it's already in headers
             val response = app.get(url, headers = headers).text
-            if (!response.contains("#EXTM3U")) return null // Not a valid M3U8
+            
+            // LOGGING: Print first 500 chars of M3U8 to debug structure
+            ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content (First 500 chars)", 
+                "content" to response.take(500))
+            
+            if (!response.contains("#EXTM3U")) {
+                 ProviderLogger.e(TAG, "extractM3u8Qualities", "Invalid M3U8: Missing #EXTM3U header")
+                 return null
+            }
 
             val links = mutableListOf<ExtractorLink>()
             // Split by lines and process
             val lines = response.lines()
             
-            lines.forEachIndexed { index, line ->
+            lines.forEachIndexed { index, rawLine ->
+                val line = rawLine.trim()
                 // Check for stream info 
                 if (line.startsWith("#EXT-X-STREAM-INF")) {
                     // Extract resolution
                     // RESOLUTION=1920x1080
                     val resMatch = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)
+                    val width = resMatch?.groupValues?.get(1)?.toIntOrNull()
                     val height = resMatch?.groupValues?.get(2)?.toIntOrNull()
                     
                     // Extract Bandwidth (as fallback for quality)
@@ -415,7 +425,7 @@ class SnifferExtractor : ExtractorApi() {
                             }
                             
                             val qualityNum = height ?: if (bandwidth != null) (bandwidth / 1000).toInt() else Qualities.Unknown.value
-                            val qualityName = if (height != null) "${height}p" else "Auto"
+                            val qualityName = if (height != null) "${height}p" else if (bandwidth != null) "${bandwidth / 1000}kbps" else "Auto"
                             
                             links.add(
                                 newExtractorLink(
@@ -434,9 +444,14 @@ class SnifferExtractor : ExtractorApi() {
                     }
                 }
             }
-            if (links.isEmpty()) null else links
+            if (links.isEmpty()) {
+                 ProviderLogger.w(TAG, "extractM3u8Qualities", "Parsed M3U8 but found 0 attributes", "lines" to lines.size)
+                 null 
+            } else {
+                 links
+            }
         } catch (e: Exception) {
-            ProviderLogger.e("SnifferExtractor", "extractM3u8Qualities", "Failed to extract M3U8", e)
+            ProviderLogger.e(TAG, "extractM3u8Qualities", "Failed to extract M3U8", e)
             null
         }
     }
