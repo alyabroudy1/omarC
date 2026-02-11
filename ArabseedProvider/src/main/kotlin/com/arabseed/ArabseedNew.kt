@@ -173,22 +173,78 @@ class ArabseedV2 : MainAPI() {
                 this.tags = data.tags
             }
         } else {
-            // For series: use pre-parsed episodes from ParsedLoadData
-            val episodes = data.episodes ?: parser.parseEpisodes(doc, null)
-            Log.d("ArabseedV2", "[load] Series episodes: ${episodes.size}")
+            // 1. Always parse episodes from the current DOM (Active Season)
+            val domEpisodes = data.episodes ?: parser.parseEpisodes(doc, null)
+            val episodes = mutableListOf<ParsedEpisode>()
+            episodes.addAll(domEpisodes)
+
+            // 2. Fetch other seasons (AJAX Style)
+            val seasonDataList = parser.parseSeasonsWithPostId(doc)
             
-            newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes.map {
-                newEpisode(it.url) {
-                    this.name = it.name
-                    this.season = it.season
-                    this.episode = it.episode
+            if (seasonDataList.isNotEmpty()) {
+                coroutineScope {
+                    val otherEpisodes = seasonDataList.map { (seasonNum, postId) ->
+                        async {
+                            try {
+                                if (seasonNum == domEpisodes.firstOrNull()?.season) return@async emptyList()
+
+                                val payload = mapOf(
+                                    "season_id" to postId,
+                                    "csrf_token" to (data.csrfToken ?: "")
+                                )
+                                Log.d("ArabseedV2", "[load] Fetching season $seasonNum (ID: $postId) via AJAX. Payload: $payload")
+                                
+                                val result = httpService.postDebug(
+                                    url = "/season__episodes/",
+                                    data = payload,
+                                    headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+                                    referer = url
+                                )
+                                
+                                if (result.success && result.html != null) {
+                                    val sEps = parser.parseEpisodesFromAjax(result.html, seasonNum)
+                                    Log.d("ArabseedV2", "[load] Season $seasonNum fetched: ${sEps.size} episodes.")
+                                    sEps
+                                } else {
+                                    Log.w("ArabseedV2", "[load] Failed to fetch season $seasonNum")
+                                    emptyList()
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ArabseedV2", "Failed to fetch season $seasonNum: ${e.message}")
+                                emptyList<ParsedEpisode>()
+                            }
+                        }
+                    }.awaitAll().flatten()
+                    episodes.addAll(otherEpisodes)
                 }
-            }) {
+            }
+
+            val convertedEpisodes = episodes.distinctBy { "${it.season}:${it.episode}" }
+                .sortedWith(compareBy({ it.season }, { it.episode }))
+                .map { ep ->
+                    newEpisode(ep.url) {
+                        this.name = ep.name
+                        this.season = ep.season
+                        this.episode = ep.episode
+                    }
+                }
+                
+            val seasonNames = convertedEpisodes.mapNotNull { it.season }.distinct().sorted()
+                .map { SeasonData(it, "الموسم $it") }
+
+                
+            val seasonNames = convertedEpisodes.mapNotNull { it.season }.distinct().sorted()
+                .map { SeasonData(it, "الموسم $it") }
+
+            newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, convertedEpisodes) {
                 this.posterUrl = data.posterUrl
                 this.posterHeaders = httpService.getImageHeaders()  // CRITICAL: Image headers
                 this.year = data.year
                 this.plot = data.plot
                 this.tags = data.tags
+                if (seasonNames.isNotEmpty()) {
+                    this.seasonNames = seasonNames
+                }
             }
         }
     }
