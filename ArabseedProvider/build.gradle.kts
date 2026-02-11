@@ -1,4 +1,4 @@
-version = 45 // Round 10.5: Proper Extractor Registration
+version = 46 // Round 11: Enhanced SavefilesExtractor (Headers + PackedJS)
 
 // Include shared source directory
 android {

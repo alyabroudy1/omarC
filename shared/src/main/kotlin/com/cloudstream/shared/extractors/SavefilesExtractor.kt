@@ -28,39 +28,57 @@ class SavefilesExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing", "url" to safeUrl.take(60), "referer" to (referer ?: "null"))
 
         try {
-            val response = app.get(
-                safeUrl,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer" to "https://savefiles.com/"
-                )
-            ).text
+            // Use User-Agent and Cookies from SessionProvider if available
+            val headers = mapOf(
+                "User-Agent" to (com.cloudstream.shared.session.SessionProvider.getUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+                "Referer" to "https://savefiles.com/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            )
 
+            val response = app.get(safeUrl, headers = headers)
+            val text = response.text
+            
+            ProviderLogger.d(TAG, "getUrl", "Response received", "code" to response.code, "length" to text.length)
+
+            // OPTION 1: Direct Regex
             // Look for sources: [{file:"..."}]
             val sourcesRegex = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""")
-            val match = sourcesRegex.find(response)
-            val videoUrl = match?.groupValues?.get(1)
+            var match = sourcesRegex.find(text)
+            var videoUrl = match?.groupValues?.get(1)
+
+            // OPTION 2: Packed JS
+            if (videoUrl == null) {
+                ProviderLogger.d(TAG, "getUrl", "Direct regex failed, checking for packed JS")
+                val packed = text.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
+                if (packed.isNotBlank()) {
+                    val fullPacked = "eval(function(p,a,c,k,e,d)$packed"
+                    val unpacked = com.lagradost.cloudstream3.utils.JsUnpacker(fullPacked).unpack()
+                    if (unpacked != null) {
+                        ProviderLogger.d(TAG, "getUrl", "JS Unpacked successfully")
+                        match = sourcesRegex.find(unpacked)
+                        videoUrl = match?.groupValues?.get(1)
+                    } else {
+                        ProviderLogger.w(TAG, "getUrl", "Failed to unpack JS")
+                    }
+                }
+            }
 
             if (videoUrl != null) {
-                ProviderLogger.i(TAG, "getUrl", "Found video URL", "url" to videoUrl.take(80))
+                ProviderLogger.i(TAG, "getUrl", "Found video URL", "url" to videoUrl!!.take(80))
                 
                 callback(
                     newExtractorLink(
                         source = name,
                         name = name,
-                        url = videoUrl,
-                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        url = videoUrl!!,
+                        type = if (videoUrl!!.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
                         this.referer = safeUrl
                         this.quality = Qualities.Unknown.value
                     }
                 )
             } else {
-                ProviderLogger.w(TAG, "getUrl", "No video URL found in sources block")
-                // Check if it requires a click/interaction or is hidden
-                // Note: Browser execution showed it IS in the source, but maybe obfuscated?
-                // The browser subagent saw: sources: [{file:"https://s3.savefiles.com/hls2/..."}]
-                // So the regex should work.
+                ProviderLogger.w(TAG, "getUrl", "No video URL found", "responsePreview" to text.take(500))
             }
 
         } catch (e: Exception) {
