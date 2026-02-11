@@ -446,6 +446,8 @@ class WebViewEngine(
     }
 
     private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()
+    private var firstLinkTime: Long = 0L
+    private val SMART_WAIT_TIME_MS = 2500L
 
     private fun captureLink(url: String, qualityLabel: String, headers: Map<String, String>) {
          // Logic to store captured link
@@ -461,6 +463,8 @@ class WebViewEngine(
 
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
+             if (firstLinkTime == 0L) firstLinkTime = System.currentTimeMillis()
+             
              android.util.Log.i("WebViewEngine", "[captureLink] LINK CAPTURED #$capturedLinks.size | url=${url.take(80)}")
              ProviderLogger.i(TAG_WEBVIEW, "captureLink", "LINK CAPTURED SUCCESSFULLY!", 
                   "url" to url.take(100),
@@ -497,6 +501,25 @@ class WebViewEngine(
             val count = capturedLinks.size
             if (count >= currentExitCondition.minCount) {
                 ProviderLogger.i(TAG_WEBVIEW, "checkExitCondition", "Exit condition met!", "count" to count)
+                
+                
+                // === SMART EXIT STRATEGY ===
+                // Check if we should wait for a Master M3U8
+                val hasMaster = capturedLinks.any { it.url.contains("master.m3u8", ignoreCase = true) }
+                val timeSinceFirst = System.currentTimeMillis() - firstLinkTime
+                
+                if (!hasMaster && timeSinceFirst < SMART_WAIT_TIME_MS) {
+                     ProviderLogger.d(TAG_WEBVIEW, "checkExitCondition", "Soft waiting for Master M3U8...", 
+                         "elapsed" to timeSinceFirst,
+                         "limit" to SMART_WAIT_TIME_MS)
+                         
+                     // Schedule a re-check after the remaining time
+                     CoroutineScope(Dispatchers.Main).launch {
+                         delay(SMART_WAIT_TIME_MS - timeSinceFirst + 100) // Small buffer
+                         checkExitCondition()
+                     }
+                     return
+                }
                 
                 // Trigger success
                 resultDelivered = true

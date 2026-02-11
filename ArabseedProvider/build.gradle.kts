@@ -1,4 +1,4 @@
-version = 41 // Round 8: Restrict sniffing & Extract M3U8 qualities
+version = 42 // Round 9: Smart Sniffer with Soft Wait & Master Priority
 
 // Include shared source directory
 android {

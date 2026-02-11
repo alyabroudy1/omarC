@@ -146,10 +146,29 @@ class SnifferExtractor : ExtractorApi() {
                 // Small delay to ensure cookies are synced
                 kotlinx.coroutines.delay(100)
                 
-                result.foundLinks.forEach { source ->
+                
+                // === LINK PRIORITIZATION ===
+                // 1. Filter out truncated/invalid links
+                val validLinks = result.foundLinks.filter { !isUrlTruncated(it.url) }
+                
+                // 2. Sort links: Master M3U8 > M3U8 > MP4 > Others
+                val sortedLinks = validLinks.sortedWith(compareByDescending { source ->
+                    val u = source.url.lowercase()
+                    when {
+                        u.contains("master.m3u8") -> 100
+                        u.contains(".m3u8") -> 50
+                        u.contains(".mp4") -> 10
+                        else -> 1
+                    }
+                })
+                
+                android.util.Log.i("SnifferExtractor", "[getUrl] Processing ${sortedLinks.size} valid links (sorted)")
+                sortedLinks.forEach { android.util.Log.d("SnifferExtractor", " > Candidate: ${it.url}") }
+
+                sortedLinks.firstOrNull()?.let { source ->
                     if (isFinished) {
                         android.util.Log.d("SnifferExtractor", "Link skipped (already finished)")
-                        return@forEach
+                        return@let
                     }
                     
                     val url = source.url
@@ -158,12 +177,11 @@ class SnifferExtractor : ExtractorApi() {
                         ProviderLogger.w(TAG, "getUrl", "URL appears truncated, skipping",
                             "url" to url,
                             "reason" to getTruncationReason(url))
-                        return@forEach
+                        return@let
                     }
 
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
-                        url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
@@ -195,7 +213,6 @@ class SnifferExtractor : ExtractorApi() {
                         android.webkit.CookieManager.getInstance().getCookie(source.url)
                     } catch (e: Exception) { null }
                     
-                    val sessionCookies = SessionProvider.buildCookieHeader()
                     val mergedCookies = mutableMapOf<String, String>()
                     webViewCookies?.split(";")?.forEach { cookie ->
                         val trimmed = cookie.trim()
@@ -419,7 +436,7 @@ class SnifferExtractor : ExtractorApi() {
             }
             if (links.isEmpty()) null else links
         } catch (e: Exception) {
-            ProviderLogger.e(TAG, "extractM3u8Qualities", "Failed to extract M3U8", e)
+            ProviderLogger.e("SnifferExtractor", "extractM3u8Qualities", "Failed to extract M3U8", e)
             null
         }
     }
