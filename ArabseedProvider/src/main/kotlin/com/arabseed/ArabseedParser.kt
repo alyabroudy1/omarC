@@ -356,7 +356,9 @@ class ArabseedParser : BaseParser() {
     fun extractCsrfToken(doc: Document): String? {
         val html = doc.html()
         // Regex for 'csrf__token': "..." which is common in their JS
-        return Regex("""'csrf__token'\s*:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+        // "csrf__token":"..." or 'csrf__token':'...'
+        return Regex("""["']?csrf__token["']?\s*:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+            ?: Regex("""var\s+csrf_token\s*=\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
     }
     
     fun extractPostId(doc: Document): String? {
@@ -524,10 +526,10 @@ class ArabseedParser : BaseParser() {
             if (season != null && postId.isNotBlank()) list.add(SeasonData(season, postId))
         }
         
-        // div#seasons__list ul li, div.list__sub__cats ul li
+        // div#seasons__list ul li, div.list__sub__cats ul li, div.seasons--list ul li
         if (list.isEmpty()) {
-            doc.select("div#seasons__list ul li, div.list__sub__cats ul li").forEach { li ->
-                val termId = li.attr("data-term")
+            doc.select("div#seasons__list ul li, div.list__sub__cats ul li, div.seasons--list ul li, div.seasonDiv ul li").forEach { li ->
+                val termId = li.attr("data-term").ifBlank { li.attr("data-id") }
                 if (termId.isNotBlank()) {
                     val sNum = parseSeasonNumber(li.text())
                     list.add(SeasonData(sNum, termId))
