@@ -1,4 +1,4 @@
-version = 44 // Round 10: Added SavefilesExtractor
+version = 45 // Round 10.5: Proper Extractor Registration
 
 // Include shared source directory
 android {

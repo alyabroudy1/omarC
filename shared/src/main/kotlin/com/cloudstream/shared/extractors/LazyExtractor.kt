@@ -153,14 +153,6 @@ abstract class LazyExtractor : ExtractorApi() {
                     foundVideo = true
                 }
             }
-            embedUrl.contains("savefiles.com") -> {
-                ProviderLogger.d(TAG, "processVirtualUrl", "Using SavefilesExtractor")
-                SavefilesExtractor().getUrl(embedUrl, pageReferer, subtitleCallback) { link ->
-                    ProviderLogger.d(TAG, "processVirtualUrl", "SavefilesExtractor returned link", "url" to link.url.take(60))
-                    callback(link)
-                    foundVideo = true
-                }
-            }
         }
         
         // ===== FALLBACK TO CLOUDSTREAM EXTRACTORS =====
@@ -295,16 +287,6 @@ abstract class LazyExtractor : ExtractorApi() {
             }
         }
         
-        // Special handling for Savefiles
-        if (!foundVideo && finalUrl.contains("savefiles.com")) {
-            ProviderLogger.d(TAG, "processDirectUrl", "Using SavefilesExtractor")
-            SavefilesExtractor().getUrl(finalUrl, referer, subtitleCallback) { link ->
-                ProviderLogger.d(TAG, "processDirectUrl", "SavefilesExtractor returned link", "url" to link.url.take(60))
-                callback(link)
-                foundVideo = true
-            }
-        }
-
         // ===== VIDEO SNIFFER FALLBACK (via SnifferExtractor) =====
         if (!foundVideo) {
             ProviderLogger.d(TAG, "processDirectUrl", "Trying SnifferExtractor fallback")

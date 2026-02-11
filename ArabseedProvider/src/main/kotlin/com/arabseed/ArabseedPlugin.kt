@@ -24,6 +24,7 @@ class ArabseedPlugin: Plugin() {
         registerExtractorAPI(ArabseedLazyExtractor())  // Handles virtual /get__watch__server/ URLs
         registerExtractorAPI(com.arabseed.extractors.ArabseedVirtualExtractor()) // Handles arabseed-virtual:// URLs
         registerExtractorAPI(ReviewRateExtractor())    // Handles reviewrate.net URLs
+        registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) // Handles savefiles.com URLs
         
         val sniffer = SnifferExtractor()
         sniffer.webViewEngine = com.cloudstream.shared.webview.WebViewEngine { ActivityProvider.currentActivity }
