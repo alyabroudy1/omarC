@@ -232,9 +232,7 @@ class ArabseedV2 : MainAPI() {
             val seasonNames = convertedEpisodes.mapNotNull { it.season }.distinct().sorted()
                 .map { SeasonData(it, "الموسم $it") }
 
-                
-            val seasonNames = convertedEpisodes.mapNotNull { it.season }.distinct().sorted()
-                .map { SeasonData(it, "الموسم $it") }
+
 
             newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, convertedEpisodes) {
                 this.posterUrl = data.posterUrl
