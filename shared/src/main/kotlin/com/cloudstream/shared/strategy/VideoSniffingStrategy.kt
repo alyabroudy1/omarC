@@ -82,19 +82,25 @@ class VideoSniffingStrategy(
                 
                 try {
                     var rect = element.getBoundingClientRect();
-                    var centerX = rect.left + rect.width / 2;
-                    var centerY = rect.top + rect.height / 2;
+                    var clickX = x || (rect.left + rect.width / 2);
+                    var clickY = y || (rect.top + rect.height / 2);
                     
-                    log('Clicking element: ' + element.tagName + ' at ' + centerX + ',' + centerY + ' (attempt #' + clickCount + ')');
+                    // Log element details for debugging
+                    var elementInfo = element.tagName;
+                    if (element.id) elementInfo += '#' + element.id;
+                    if (element.className) elementInfo += '.' + element.className.split(' ')[0]; // Just first class
+                    var html = element.outerHTML.substring(0, 100); // Capture first 100 chars
+                    
+                    log('Clicking element: ' + elementInfo + ' at ' + clickX + ',' + clickY + ' HTML: ' + html);
                     
                     // Method 1: Touch events (mobile)
                     try {
                         var touch = new Touch({
                             identifier: Date.now(),
                             target: element,
-                            clientX: centerX, clientY: centerY,
-                            screenX: centerX, screenY: centerY,
-                            pageX: centerX, pageY: centerY,
+                            clientX: clickX, clientY: clickY,
+                            screenX: clickX, screenY: clickY,
+                            pageX: clickX, pageY: clickY,
                             radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1
                         });
                         element.dispatchEvent(new TouchEvent('touchstart', {bubbles: true, touches: [touch], targetTouches: [touch], changedTouches: [touch]}));

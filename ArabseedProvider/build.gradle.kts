@@ -1,4 +1,4 @@
-version = 35 // Fix auto-play popup blocking and click limits
+version = 36 // Debug auto-play: Log element HTML & enable JS windows
 
 // Include shared source directory
 android {

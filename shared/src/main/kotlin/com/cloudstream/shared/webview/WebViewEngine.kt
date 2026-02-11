@@ -139,7 +139,7 @@ class WebViewEngine(
                     userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
-                    javaScriptCanOpenWindowsAutomatically = false
+                    javaScriptCanOpenWindowsAutomatically = true // Allow JS to open windows (needed for some popups)
                     setSupportMultipleWindows(true)
                 }
             }
