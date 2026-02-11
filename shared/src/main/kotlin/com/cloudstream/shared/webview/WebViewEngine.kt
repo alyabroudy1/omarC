@@ -147,7 +147,7 @@ class WebViewEngine(
             
             // UA VERIFICATION: Log the exact UA WebView is using
             ProviderLogger.i(TAG_WEBVIEW, "runSession", "WebView UA",
-                "ua" to webView.settings.userAgentString.take(60))
+                "ua" to webView.settings.userAgentString)
             
             // Setup cookies
             ProviderLogger.i(TAG_WEBVIEW, "runSession", "=== STEP 2: Setting up cookies ===")
@@ -680,8 +680,11 @@ class WebViewEngine(
                     try {
                         ProviderLogger.d(TAG_WEBVIEW, "DOM Extraction", "Raw result received", "result" to (result ?: "null"))
                         
+                        
                         if (!result.isNullOrBlank() && result != "null") {
-                            val jsonObj = org.json.JSONObject(result)
+                            // FIX: Unescape the JSON string first
+                            val jsonString = org.json.JSONTokener(result).nextValue().toString()
+                            val jsonObj = org.json.JSONObject(jsonString)
                             val videoCount = jsonObj.optInt("videoCount", 0)
                             val sourceCount = jsonObj.optInt("sourceCount", 0)
                             val sourcesArray = jsonObj.optJSONArray("sources")
@@ -771,6 +774,11 @@ class WebViewEngine(
              } catch (e: Exception) {
                  ProviderLogger.e(TAG_WEBVIEW, "SnifferBridge", "Failed to parse JS data", e)
              }
+        }
+
+        @JavascriptInterface
+        fun log(message: String) {
+            android.util.Log.d("VideoSnifferJS", "BRIDGE: " + message)
         }
     }
     
