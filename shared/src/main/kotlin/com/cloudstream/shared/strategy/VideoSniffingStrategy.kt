@@ -190,10 +190,19 @@ class VideoSniffingStrategy(
                     log('Clicking center element: ' + elInfo);
                     simulateFullClick(el, centerX, centerY);
                     return true;
+                } else {
+                    log('No element at center. Forcing native click.');
+                    if (typeof SnifferBridge !== 'undefined' && SnifferBridge.nativeClick) {
+                         var density = window.devicePixelRatio || 1;
+                         SnifferBridge.nativeClick(centerX * density, centerY * density);
+                         return true;
+                    }
                 }
                 return false;
             }
             
+            var nuclearAttempts = 0;
+
             // ===== AUTO-PLAY LOGIC =====
             function attemptAutoPlay() {
                 log('Attempting auto-play...');
@@ -201,6 +210,7 @@ class VideoSniffingStrategy(
                 // Try play buttons first
                 if (findAndClickPlayButton()) {
                     log('Play button clicked successfully');
+                    nuclearAttempts = 0; // Reset
                     return true;
                 }
                 
@@ -208,6 +218,7 @@ class VideoSniffingStrategy(
                 var videos = document.querySelectorAll('video');
                 var played = false;
                 if (videos.length > 0) {
+                    nuclearAttempts = 0; // Reset
                     videos.forEach(function(v) {
                         if (v.paused) {
                             v.muted = true;
@@ -232,6 +243,11 @@ class VideoSniffingStrategy(
                         }
                     } else {
                          log('No videos, play buttons, or iframes found.');
+                         nuclearAttempts++;
+                         if (nuclearAttempts > 2 && clickCount < 5) {
+                             log('NUCLEAR OPTION: Blindly clicking center (Attempt ' + nuclearAttempts + ')');
+                             clickCenterOfScreen();
+                         }
                     }
                 }
                 

@@ -1,4 +1,4 @@
-version = 38 // Debug auto-play: Native MotionEvent click simulation
+version = 39 // Debug auto-play: Nuclear Option (Blind Native Click)
 
 // Include shared source directory
 android {
