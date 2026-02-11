@@ -1,4 +1,4 @@
-version = 36 // Debug auto-play: Log element HTML & enable JS windows
+version = 37 // Debug auto-play: Fallback center click for iframes
 
 // Include shared source directory
 android {

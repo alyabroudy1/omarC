@@ -176,22 +176,19 @@ class VideoSniffingStrategy(
             }
             
             function clickCenterOfScreen() {
-                // Create invisible overlay and click center
-                var overlay = document.createElement('div');
-                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:999999;background:transparent;cursor:pointer;';
-                document.body.appendChild(overlay);
-                
                 var centerX = window.innerWidth / 2;
                 var centerY = window.innerHeight / 2;
+                var el = document.elementFromPoint(centerX, centerY);
                 
-                simulateFullClick(overlay);
-                
-                setTimeout(function() {
-                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-                }, 100);
-                
-                log('Clicked center of screen');
-                return true;
+                if (el) {
+                    var elInfo = el.tagName;
+                    if (el.id) elInfo += '#' + el.id;
+                    if (el.className) elInfo += '.' + el.className.split(' ')[0];
+                    log('Clicking center element: ' + elInfo);
+                    simulateFullClick(el, centerX, centerY);
+                    return true;
+                }
+                return false;
             }
             
             // ===== AUTO-PLAY LOGIC =====
@@ -207,20 +204,33 @@ class VideoSniffingStrategy(
                 // Try direct video play
                 var videos = document.querySelectorAll('video');
                 var played = false;
-                videos.forEach(function(v) {
-                    if (v.paused) {
-                        v.muted = true;
-                        v.volume = 0;
-                        v.play().then(function() {
-                            log('Video started playing directly');
-                            played = true;
-                        }).catch(function(e) {
-                            log('Autoplay blocked: ' + e.message);
-                            // Try clicking the video
-                            simulateFullClick(v);
-                        });
+                if (videos.length > 0) {
+                    videos.forEach(function(v) {
+                        if (v.paused) {
+                            v.muted = true;
+                            v.volume = 0;
+                            v.play().then(function() {
+                                log('Video started playing directly');
+                                played = true;
+                            }).catch(function(e) {
+                                log('Autoplay blocked: ' + e.message);
+                                // Try clicking the video
+                                simulateFullClick(v);
+                            });
+                        }
+                    });
+                } else {
+                    // Fallback: If no videos and no play buttons, check for iframes
+                    var iframes = document.querySelectorAll('iframe');
+                    if (iframes.length > 0) {
+                        log('No video/play-btn found, but ' + iframes.length + ' iframes exist. Trying center click fallback... (Attempt ' + clickCount + ')');
+                        if (clickCount < 5) { // Only try a few times to avoid endless clicking
+                             clickCenterOfScreen();
+                        }
+                    } else {
+                         log('No videos, play buttons, or iframes found.');
                     }
-                });
+                }
                 
                 return played;
             }
