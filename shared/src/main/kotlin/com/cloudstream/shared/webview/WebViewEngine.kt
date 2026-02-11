@@ -584,6 +584,8 @@ class WebViewEngine(
         } catch (e: Exception) {}
     }
     
+    private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
+
     private fun createDialog(activity: android.app.Activity, webView: WebView): Dialog {
         val container = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -606,18 +608,38 @@ class WebViewEngine(
             }
             addView(statusTextView)
             
-            addView(webView.apply {
+            // TV MOUSE INTEGRATION: Wrap WebView in FrameLayout to support Overlay
+            val webViewContainer = android.widget.FrameLayout(activity).apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0, 1f
                 )
-                // JS Interface moved to runSession
+            }
+            
+            // Add WebView to FrameLayout
+            webViewContainer.addView(webView.apply {
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
             })
+            
+            addView(webViewContainer)
+            
+            // Initialize Mouse Controller
+            tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
+            tvMouseController?.attach(webViewContainer)
         }
         
         return Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen).apply {
             setContentView(container)
             setCancelable(true)
+            
+            // Forward Key Events to Mouse Controller
+            setOnKeyListener { _, keyCode, event ->
+                tvMouseController?.onKeyEvent(event) ?: false
+            }
+
             setOnDismissListener {
                  // Triggered when user presses back or touches outside
                  if (!resultDelivered) {
@@ -629,19 +651,15 @@ class WebViewEngine(
                     val cookies = extractCookies(webView.url ?: "")
                     val found = capturedLinks.toList()
                     val html = try {
-                         // getHtmlFromWebView is suspend, so we need a coroutine scope or runBlocking
-                         // Since we are in a listener on main thread, runBlocking might block UI momentarily but is safest for synchronous result requirement here?
-                         // Actually, we are completing a deferred which is async.
-                         // But we can't launch here easily without scope.
-                         // Let's use GlobalScope or just empty string if complex?
-                         // Better: use runBlocking just for the HTML part if it's fast? 
-                         // getHtmlFromWebView uses suspendCancellableCoroutine.
-                         // safest is just empty string here or launch.
                          "" 
                     } catch (e: Exception) { "" }
                     
                     deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
                  }
+                 
+                 // Cleanup Mouse
+                 tvMouseController?.detach()
+                 tvMouseController = null
             }
         }
     }
