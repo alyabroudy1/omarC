@@ -1,4 +1,4 @@
-version = 43 // Round 9.5: Debugging M3U8 Quality Extraction
+version = 44 // Round 10: Added SavefilesExtractor
 
 // Include shared source directory
 android {
