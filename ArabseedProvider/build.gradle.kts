@@ -1,4 +1,4 @@
-version = 39 // Debug auto-play: Nuclear Option (Blind Native Click)
+version = 40 // Fix: Prevent background sniffer execution after exit
 
 // Include shared source directory
 android {

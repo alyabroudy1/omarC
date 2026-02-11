@@ -179,6 +179,7 @@ class WebViewEngine(
                 private var requestCounter = 0
                 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
+                    if (resultDelivered) return null
                     val url = request?.url?.toString()
                     requestCounter++
                     
@@ -219,6 +220,7 @@ class WebViewEngine(
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    if (resultDelivered) return
                     android.util.Log.i("WebViewEngine", "onPageStarted: url=${url?.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageStarted", "=== PAGE STARTED ===", "url" to url?.take(80))
                     
@@ -245,6 +247,7 @@ class WebViewEngine(
                 }
 
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
+                    if (resultDelivered) return
                     val currentUrl = view?.url ?: loadedUrl ?: url
                     android.util.Log.i("WebViewEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
@@ -618,6 +621,7 @@ class WebViewEngine(
     }
 
     private fun startDomVideoExtraction(view: WebView?) {
+        if (resultDelivered) return
         if (view == null) {
             ProviderLogger.e(TAG_WEBVIEW, "startDomVideoExtraction", "WebView is null, cannot extract")
             return
@@ -747,6 +751,7 @@ class WebViewEngine(
     inner class SnifferBridge {
         @JavascriptInterface
         fun onSourcesFound(json: String) {
+             if (resultDelivered) return
              android.util.Log.i("WebViewEngine", "SnifferBridge: Sources found! jsonLen=${json.length}")
              ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "=== JS Bridge: Sources found! ===", "jsonLength" to json.length)
              try {
