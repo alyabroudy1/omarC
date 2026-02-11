@@ -1,4 +1,4 @@
-version = 40 // Fix: Prevent background sniffer execution after exit
+version = 41 // Round 8: Restrict sniffing & Extract M3U8 qualities
 
 // Include shared source directory
 android {

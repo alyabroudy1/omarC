@@ -7,6 +7,7 @@ import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.WebViewEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -163,6 +164,7 @@ class SnifferExtractor : ExtractorApi() {
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
+                        url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
                     
@@ -178,7 +180,7 @@ class SnifferExtractor : ExtractorApi() {
                         else -> Qualities.Unknown.value
                     }
                     
-                    // Filter out forbidden headers that can cause protocol errors (like Host mismatch)
+                    // Filter out forbidden headers
                     val filteredHeaders = source.headers.filterKeys { key ->
                         !key.equals("Host", ignoreCase = true) &&
                         !key.equals("Connection", ignoreCase = true) &&
@@ -188,70 +190,35 @@ class SnifferExtractor : ExtractorApi() {
                         !key.equals("Transfer-Encoding", ignoreCase = true)
                     }.toMutableMap()
 
-                    // CAPTURE COOKIES: From BOTH WebView AND SessionProvider
-                    // This ensures we have cf_clearance from main domain + video domain cookies
+                    // PREPARE HEADERS (Common logic)
                     val webViewCookies = try {
                         android.webkit.CookieManager.getInstance().getCookie(source.url)
                     } catch (e: Exception) { null }
                     
-                    // Get cookies from SessionProvider (includes cf_clearance from CF solve)
                     val sessionCookies = SessionProvider.buildCookieHeader()
-                    
-                    // Merge cookies - SessionProvider cookies take precedence
                     val mergedCookies = mutableMapOf<String, String>()
-                    
-                    // Parse WebView cookies
                     webViewCookies?.split(";")?.forEach { cookie ->
                         val trimmed = cookie.trim()
                         if (trimmed.isNotBlank()) {
-                            val key = trimmed.substringBefore("=")
-                            val value = trimmed.substringAfter("=", "")
-                            mergedCookies[key] = value
+                             mergedCookies[trimmed.substringBefore("=")] = trimmed.substringAfter("=", "")
                         }
                     }
-                    
-                    // Override with SessionProvider cookies (ensures cf_clearance is correct)
                     SessionProvider.getCookies().forEach { (key, value) ->
                         mergedCookies[key] = value
                     }
                     
-                    // Build cookie header
                     val cookieHeader = if (mergedCookies.isNotEmpty()) {
                         mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
                     } else null
                     
-                    android.util.Log.d("SnifferExtractor", "Cookies merged. WVCookies: ${webViewCookies?.length ?: 0}, SessionCookies: ${SessionProvider.getCookies().size}, Merged: ${mergedCookies.size}")
-                    
-                    ProviderLogger.d(TAG, "getUrl", "Cookies merged",
-                        "webViewCookies" to (webViewCookies?.length ?: 0),
-                        "sessionCookies" to SessionProvider.getCookies().size,
-                        "mergedCookies" to mergedCookies.size)
-                    
-                    // Build headers map - CRITICAL: Must include all necessary headers
                     val finalHeaders = mutableMapOf<String, String>()
-                    
-                    // Add captured headers from WebView (these are crucial!)
                     finalHeaders.putAll(filteredHeaders)
-                    
-                    // Always add Referer - CRITICAL for 403 prevention
                     finalHeaders["Referer"] = embedUrl
-                    
-                    // Always add User-Agent - MUST match CF challenge UA
                     finalHeaders["User-Agent"] = snifferUserAgent
-                    
-                    // Add merged cookies - CRITICAL for 403 prevention
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
-                        android.util.Log.d("SnifferExtractor", "Added Cookie header len=${cookieHeader.length}")
-                        ProviderLogger.d(TAG, "getUrl", "Added merged cookies", 
-                            "cookiesLen" to cookieHeader.length,
-                            "hasCfClearance" to mergedCookies.containsKey("cf_clearance"))
                     }
-                    
-                    // Accept header for video
                     finalHeaders["Accept"] = "*/*"
-                    
-                    // 403 FIX: Add security headers that WebView sends
                     finalHeaders["Origin"] = extractOrigin(embedUrl)
                     finalHeaders["sec-ch-ua"] = """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120""""
                     finalHeaders["sec-ch-ua-mobile"] = "?1"
@@ -259,30 +226,41 @@ class SnifferExtractor : ExtractorApi() {
                     finalHeaders["Sec-Fetch-Dest"] = "empty"
                     finalHeaders["Sec-Fetch-Mode"] = "cors"
                     finalHeaders["Sec-Fetch-Site"] = "cross-site"
+
+                    // === ERROR HANDLING / M3U8 EXTRACTION ===
+                    // If it's an M3U8, try to extract qualities
+                    var qualityLinks: List<ExtractorLink>? = null
+                    if (linkType == ExtractorLinkType.M3U8) {
+                        ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
+                        qualityLinks = extractM3u8Qualities(source.url, finalHeaders, embedUrl, name)
+                    }
                     
-                    ProviderLogger.d(TAG, "getUrl", "Creating ExtractorLink",
-                        "url" to source.url.take(60),
-                        "quality" to source.qualityLabel,
-                        "headers" to finalHeaders.keys.joinToString())
+                    if (!qualityLinks.isNullOrEmpty()) {
+                         ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
+                         qualityLinks.forEach { qLink ->
+                             callback(qLink)
+                             callbackCount++
+                         }
+                    } else {
+                        // Fallback: Return original link
+                        android.util.Log.i("SnifferExtractor", "[getUrl] INVOKING CALLBACK with URL: ${source.url.take(100)}")
+                         callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name ${source.qualityLabel}",
+                                url = source.url,
+                                type = linkType
+                            ) {
+                                this.referer = embedUrl
+                                this.quality = qualityValue
+                                this.headers = finalHeaders
+                            }
+                        )
+                        callbackCount++
+                    }
                     
-                    android.util.Log.i("SnifferExtractor", "[getUrl] INVOKING CALLBACK with URL: ${source.url.take(100)}")
-                    
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name ${source.qualityLabel}",
-                            url = source.url,
-                            type = linkType
-                        ) {
-                            this.referer = embedUrl
-                            this.quality = qualityValue
-                            this.headers = finalHeaders
-                        }
-                    )
-                    
-                    callbackCount++
-                    android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK #$callbackCount INVOKED SUCCESSFULLY!")
-                    ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback #$callbackCount invoked successfully",
+                    android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK invoked")
+                    ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback invoked",
                         "url" to source.url.take(60),
                         "type" to linkType.name)
                 }
@@ -375,6 +353,74 @@ class SnifferExtractor : ExtractorApi() {
             // Fallback: simple string manipulation
             url.substringBefore("/", url)
                 .let { if (it.contains("://")) it else "https://$it" }
+        }
+    }
+
+    private suspend fun extractM3u8Qualities(
+        url: String, 
+        headers: Map<String, String>, 
+        referer: String,
+        sourceName: String
+    ): List<ExtractorLink>? {
+        return try {
+            // Remove referer param as it's already in headers
+            val response = app.get(url, headers = headers).text
+            if (!response.contains("#EXTM3U")) return null // Not a valid M3U8
+
+            val links = mutableListOf<ExtractorLink>()
+            // Split by lines and process
+            val lines = response.lines()
+            
+            lines.forEachIndexed { index, line ->
+                // Check for stream info 
+                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                    // Extract resolution
+                    // RESOLUTION=1920x1080
+                    val resMatch = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)
+                    val height = resMatch?.groupValues?.get(2)?.toIntOrNull()
+                    
+                    // Extract Bandwidth (as fallback for quality)
+                    // BANDWIDTH=2000000
+                    val bandwidth = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toLongOrNull()
+                    
+                    // The URL is usually the next non-empty, non-comment line
+                    for (i in index + 1 until lines.size) {
+                        val next = lines[i].trim()
+                        if (next.isNotEmpty() && !next.startsWith("#")) {
+                            // Found the URL
+                            val resolvedUrl = try {
+                                if (next.startsWith("http")) next 
+                                else java.net.URI(url).resolve(next).toString()
+                            } catch (e: Exception) {
+                                // Fallback resolution logic
+                                if (next.startsWith("http")) next 
+                                else "${url.substringBeforeLast("/")}/$next"
+                            }
+                            
+                            val qualityNum = height ?: if (bandwidth != null) (bandwidth / 1000).toInt() else Qualities.Unknown.value
+                            val qualityName = if (height != null) "${height}p" else "Auto"
+                            
+                            links.add(
+                                newExtractorLink(
+                                    source = sourceName,
+                                    name = "$sourceName $qualityName",
+                                    url = resolvedUrl,
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    this.referer = referer
+                                    this.quality = qualityNum
+                                    this.headers = headers
+                                }
+                            )
+                            break // Stop looking for URL for this stream-inf
+                        }
+                    }
+                }
+            }
+            if (links.isEmpty()) null else links
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG, "extractM3u8Qualities", "Failed to extract M3U8", e)
+            null
         }
     }
 }

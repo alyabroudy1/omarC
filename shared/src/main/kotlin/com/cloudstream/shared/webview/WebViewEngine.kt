@@ -252,15 +252,18 @@ class WebViewEngine(
                     android.util.Log.i("WebViewEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
 
-                    // Inject VideoSniffer JS
-                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Injecting JavaScript ===")
-                    view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
-                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "JavaScript injection result", "result" to (result ?: "null"))
-                    }
+                    // Inject VideoSniffer JS & Start DOM extraction ONLY if we are looking for video
+                    if (exitCondition is ExitCondition.VideoFound) {
+                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Injecting JavaScript ===")
+                        view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
+                            ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "JavaScript injection result", "result" to (result ?: "null"))
+                        }
 
-                    // Start DOM-based video extraction polling
-                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Starting DOM extraction ===")
-                    startDomVideoExtraction(view)
+                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Starting DOM extraction ===")
+                        startDomVideoExtraction(view)
+                    } else {
+                        ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Skipping sniffer injection (Not in VideoFound mode)")
+                    }
 
                     if (resultDelivered) {
                         ProviderLogger.w(TAG_WEBVIEW, "onPageFinished", "Result already delivered, skipping")
@@ -622,6 +625,9 @@ class WebViewEngine(
 
     private fun startDomVideoExtraction(view: WebView?) {
         if (resultDelivered) return
+        // Double check intent (should be covered by caller, but safe to check)
+        if (exitConditionReference !is ExitCondition.VideoFound) return
+        
         if (view == null) {
             ProviderLogger.e(TAG_WEBVIEW, "startDomVideoExtraction", "WebView is null, cannot extract")
             return
