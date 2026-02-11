@@ -137,7 +137,7 @@ class ArabseedV2 : MainAPI() {
                         emptyList()
                     }
                 }
-            }.awaitAll().flatten().map { item ->
+            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
                 newMovieSearchResponse(item.title, item.url, if(item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
