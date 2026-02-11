@@ -52,7 +52,7 @@ class VideoSniffingStrategy(
             console.log('[VideoSniffer] Script starting...');
             var sourcesSent = false;
             var clickCount = 0;
-            var maxClicks = 20;
+            var maxClicks = 50; // Increased limit
             
             // ===== UTILITY FUNCTIONS =====
             function log(msg) {
@@ -72,7 +72,12 @@ class VideoSniffingStrategy(
             
             // ===== COMPREHENSIVE CLICK SIMULATION =====
             function simulateFullClick(element) {
-                if (!element || clickCount >= maxClicks) return false;
+                if (!element) return false;
+                
+                if (clickCount >= maxClicks) {
+                    log('Max clicks reached (' + maxClicks + '), ignoring click on ' + (element.tagName || 'unknown'));
+                    return false;
+                }
                 clickCount++;
                 
                 try {

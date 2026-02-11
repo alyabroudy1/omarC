@@ -140,7 +140,7 @@ class WebViewEngine(
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
                     javaScriptCanOpenWindowsAutomatically = false
-                    setSupportMultipleWindows(false)
+                    setSupportMultipleWindows(true)
                 }
             }
             this@WebViewEngine.activeWebView = webView
@@ -318,8 +318,10 @@ class WebViewEngine(
                         ProviderLogger.w(TAG_WEBVIEW, "onReceivedError", "WebView error",
                             "description" to error?.description?.toString(), "url" to request.url.toString().take(80))
                     }
+                }
+            }
             
-            // Add WebChromeClient to capture console logs from JavaScript (Crucial for debugging auto-click)
+            // Add WebChromeClient to capture console logs and handle popups
             webView.webChromeClient = object : android.webkit.WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
                     consoleMessage?.let {
@@ -342,9 +344,23 @@ class WebViewEngine(
                         ProviderLogger.d(TAG_WEBVIEW, "WebView", "Loading progress", "percent" to newProgress)
                     }
                 }
-            }
-            
-            // Load URL with headers to bypass detection
+                
+                override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                    val newWebView = WebView(view?.context ?: return false)
+                    newWebView.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val url = request?.url?.toString()
+                            if (!url.isNullOrBlank()) {
+                                ProviderLogger.d(TAG_WEBVIEW, "onCreateWindow", "Redirecting popup to main WebView", "url" to url)
+                                webView.loadUrl(url)
+                            }
+                            return true
+                        }
+                    }
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport
+                    transport?.webView = newWebView
+                    resultMsg?.sendToTarget()
+                    return true
                 }
             }
             

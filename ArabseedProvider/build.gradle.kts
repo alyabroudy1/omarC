@@ -1,4 +1,4 @@
-version = 34 // Add touch simulation and direct video src extraction for auto-play (v34)
+version = 35 // Fix auto-play popup blocking and click limits
 
 // Include shared source directory
 android {
