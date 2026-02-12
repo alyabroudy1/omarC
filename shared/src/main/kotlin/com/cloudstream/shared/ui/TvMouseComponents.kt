@@ -39,7 +39,7 @@ class TvMouseController(
     private val EDGE_THRESHOLD = 50 // pixels from edge to trigger scroll
 
     // State
-    private var position = PointF(0f, 0f)
+    private var position = PointF(-1f, -1f)  // -1 indicates not initialized yet
     private var velocity = PointF(0f, 0f)
     private var lastFrameTime = 0L
     private var isAttached = false
@@ -59,13 +59,32 @@ class TvMouseController(
         if (isAttached) return
         this.container = parentContainer
 
-        // Initialize position to center
-        position.x = parentContainer.width / 2f
-        position.y = parentContainer.height / 2f
-        if (position.x == 0f) {
-             // Fallback if view not laid out yet
-             position.x = 500f
-             position.y = 500f
+        // Initialize position to center of the container
+        // Try to get actual dimensions, fallback to reasonable defaults if not laid out yet
+        val containerWidth = parentContainer.width.toFloat()
+        val containerHeight = parentContainer.height.toFloat()
+        
+        if (containerWidth > 0 && containerHeight > 0) {
+            // Container has dimensions, center the cursor
+            position.x = containerWidth / 2f
+            position.y = containerHeight / 2f
+        } else {
+            // Container not laid out yet, use post to wait for layout
+            parentContainer.post {
+                if (!isAttached) return@post
+                val w = parentContainer.width.toFloat()
+                val h = parentContainer.height.toFloat()
+                if (w > 0 && h > 0) {
+                    position.x = w / 2f
+                    position.y = h / 2f
+                    overlay?.setCursorPosition(position.x, position.y)
+                } else {
+                    // Final fallback: use screen center approximation
+                    position.x = 500f
+                    position.y = 500f
+                    overlay?.setCursorPosition(position.x, position.y)
+                }
+            }
         }
 
         // Create and add overlay
@@ -121,6 +140,19 @@ class TvMouseController(
 
     override fun doFrame(frameTimeNanos: Long) {
         if (!isAttached || overlay == null) return
+
+        // Safety check: if position hasn't been initialized yet, center it now
+        if (position.x < 0 || position.y < 0) {
+            val width = overlay!!.width.toFloat()
+            val height = overlay!!.height.toFloat()
+            if (width > 0 && height > 0) {
+                position.x = width / 2f
+                position.y = height / 2f
+            } else {
+                position.x = 500f
+                position.y = 500f
+            }
+        }
 
         // Calculate delta time in seconds (approx 0.016 for 60fps)
         // Capping to avoid huge jumps if frame interaction lags
