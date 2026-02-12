@@ -1,7 +1,7 @@
 package com.laroza
 
-import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.api.Log
 import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
@@ -18,19 +18,18 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
-import org.jsoup.nodes.Document
 import com.cloudstream.shared.provider.BaseProvider
 
 class Laroza : BaseProvider() {
 
-    override var baseDomain = "laroza.co"
-    override var providerName = "laroza"
-    override var githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
+    override val baseDomain get() = "laroza.lol"
+    override val providerName get() = "Laroza"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
 
     override val mainPage = mainPageOf(
-        "/category.php?cat=ramadan-2026/" to "Ramadan",
-        "/category.php" to "أفلام",
-        "/home.24/" to "مسلسلات"
+        "/category.php?cat=ramadan-2026" to "رمضان 2026",
+        "/category.php?cat=arabic-movies33" to "أفلام",
+        "/category.php?cat=arabic-series46" to "مسلسلات"
     )
 
     override fun getParser(): NewBaseParser {
