@@ -104,9 +104,13 @@ class SnifferExtractor : ExtractorApi() {
             "uaHash" to snifferUserAgent.hashCode(),
             "hasSession" to SessionProvider.hasValidSession())
         
-        android.util.Log.d("SnifferExtractor", "Starting WebViewEngine sniffing (Visible)")
+        android.util.Log.i("SnifferExtractor", "[getUrl] === STARTING WEBVIEW SNIFF ===")
+        android.util.Log.i("SnifferExtractor", "[getUrl] Target URL: ${embedUrl.take(80)}")
+        android.util.Log.i("SnifferExtractor", "[getUrl] Mode: FULLSCREEN")
+        android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 60s")
         ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
         
+        val startTime = System.currentTimeMillis()
         val result = engine.runSession(
             url = embedUrl,
             mode = WebViewEngine.Mode.FULLSCREEN,
@@ -122,6 +126,8 @@ class SnifferExtractor : ExtractorApi() {
         // Fast exit flag to avoid race conditions when multiple links are found
         var isFinished = false
 
+        val elapsed = System.currentTimeMillis() - startTime
+        android.util.Log.i("SnifferExtractor", "[getUrl] === WEBVIEW COMPLETE === elapsed=${elapsed}ms")
         android.util.Log.i("SnifferExtractor", "[getUrl] WebViewEngine returned: ${result.javaClass.simpleName}")
         
         when (result) {
@@ -166,28 +172,35 @@ class SnifferExtractor : ExtractorApi() {
                 sortedLinks.forEach { android.util.Log.d("SnifferExtractor", " > Candidate: ${it.url}") }
 
                 sortedLinks.firstOrNull()?.let { source ->
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Processing first sorted link: ${source.url.take(80)}")
+                    
                     if (isFinished) {
-                        android.util.Log.d("SnifferExtractor", "Link skipped (already finished)")
+                        android.util.Log.d("SnifferExtractor", "[getUrl] Link skipped (already finished)")
                         return@let
                     }
                     
                     val url = source.url
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Checking URL: ${url.take(100)}")
+                    
                     if (isUrlTruncated(url)) {
-                        android.util.Log.w("SnifferExtractor", "URL truncated: $url reason: ${getTruncationReason(url)}")
+                        android.util.Log.w("SnifferExtractor", "[getUrl] URL truncated: $url reason: ${getTruncationReason(url)}")
                         ProviderLogger.w(TAG, "getUrl", "URL appears truncated, skipping",
                             "url" to url,
                             "reason" to getTruncationReason(url))
                         return@let
                     }
+                    android.util.Log.i("SnifferExtractor", "[getUrl] URL passed truncation check")
 
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Link type: ${linkType.name}")
                     
                     // STOP after first valid link
-                    isFinished = true 
+                    isFinished = true
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Set isFinished=true") 
                     
                     // Determine quality value
                     val qualityValue = when {
@@ -248,19 +261,24 @@ class SnifferExtractor : ExtractorApi() {
                     // If it's an M3U8, try to extract qualities
                     var qualityLinks: List<ExtractorLink>? = null
                     if (linkType == ExtractorLinkType.M3U8) {
+                        android.util.Log.i("SnifferExtractor", "[getUrl] Attempting M3U8 quality extraction")
                         ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
                         qualityLinks = extractM3u8Qualities(source.url, finalHeaders, embedUrl, name)
                     }
                     
                     if (!qualityLinks.isNullOrEmpty()) {
+                         android.util.Log.i("SnifferExtractor", "[getUrl] Extracted ${qualityLinks.size} qualities from M3U8")
                          ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
                          qualityLinks.forEach { qLink ->
-                             callback(qLink)
-                             callbackCount++
+                              android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
+                              callback(qLink)
+                              callbackCount++
+                              android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
                          }
                     } else {
                         // Fallback: Return original link
-                        android.util.Log.i("SnifferExtractor", "[getUrl] INVOKING CALLBACK with URL: ${source.url.take(100)}")
+                        android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")
+                        android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
                          callback(
                             newExtractorLink(
                                 source = name,
@@ -273,13 +291,12 @@ class SnifferExtractor : ExtractorApi() {
                                 this.headers = finalHeaders
                             }
                         )
+                        
                         callbackCount++
+                        android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK INVOKED - count=$callbackCount")
                     }
                     
-                    android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK invoked")
-                    ProviderLogger.d(TAG, "getUrl", "ExtractorLink callback invoked",
-                        "url" to source.url.take(60),
-                        "type" to linkType.name)
+                    android.util.Log.i("SnifferExtractor", "[getUrl] === LINK PROCESSING COMPLETE === callbacks=$callbackCount")
                 }
             }
             is WebViewResult.Timeout -> {

@@ -288,7 +288,78 @@ class ArabseedV2 : MainAPI() {
         }
 
         // 1. COLLECT SOURCES
-        val sources = java.util.LinkedList<ArabseedSource>()
+        val sources = collectSources(
+            availableQualities = availableQualities,
+            defaultQuality = defaultQuality,
+            visibleServers = visibleServers,
+            directEmbeds = directEmbeds,
+            globalPostId = globalPostId,
+            csrfToken = csrfToken,
+            currentBaseUrl = currentBaseUrl
+        )
+        
+        if (sources.isEmpty()) {
+            Log.w("ArabseedV2", "[loadLinks] No sources collected, returning false")
+            return false
+        }
+        
+        Log.i("ArabseedV2", "[loadLinks] Collected ${sources.size} sources. Starting sequential processing...")
+        
+        // 2. ITERATE & RESOLVE
+        var anyFound = false
+        
+        for (source in sources) {
+            if (anyFound) break
+            
+            try {
+                val sourceUrl = resolveSourceUrl(source)
+                
+                if (sourceUrl.isNullOrBlank()) {
+                    Log.w("ArabseedV2", "[loadLinks] Empty URL for source, skipping...")
+                    continue
+                }
+                
+                Log.i("ArabseedV2", "[loadLinks] Processing source: $sourceUrl")
+                
+                // Try to extract video (standard extractors -> sniffer)
+                val videoResult = extractVideo(sourceUrl, currentBaseUrl)
+                
+                if (videoResult != null) {
+                    Log.i("ArabseedV2", "[loadLinks] SUCCESS: ${videoResult.url.take(80)}")
+                    cacheHeaders(videoResult)
+                    callback(createExtractorLink(source, videoResult, currentBaseUrl))
+                    anyFound = true
+                    break
+                }
+                
+                // Failed - move to next source
+                Log.w("ArabseedV2", "[loadLinks] Failed to extract video from this source")
+                
+            } catch (e: Exception) {
+                Log.e("ArabseedV2", "[loadLinks] Error processing source: ${e.message}")
+            }
+        }
+        
+        Log.d("ArabseedV2", "[loadLinks] END found=$anyFound")
+        return anyFound
+    }
+    
+    /**
+     * Collects all video sources from the watch page.
+     * Creates LazySource, VisibleSource, or DirectEmbed objects based on what's available.
+     */
+    private fun collectSources(
+        availableQualities: List<ArabseedParser.QualityData>,
+        defaultQuality: Int,
+        visibleServers: List<ArabseedParser.ServerData>,
+        directEmbeds: List<String>,
+        globalPostId: String,
+        csrfToken: String,
+        currentBaseUrl: String
+    ): List<ArabseedSource> {
+        Log.d("ArabseedV2", "[collectSources] Starting with ${availableQualities.size} qualities, ${visibleServers.size} visible servers")
+        
+        val sources = mutableListOf<ArabseedSource>()
         
         // A. Qualities (Lazy)
         val sortedQualities = availableQualities.sortedByDescending { it.quality }
@@ -332,71 +403,59 @@ class ArabseedV2 : MainAPI() {
             }
         }
         
-        Log.i("ArabseedV2", "[loadLinks] Collected ${sources.size} sources. Starting sequential processing...")
-        
-        // 2. ITERATE & RESOLVE
-        var anyFound = false
-        
-        for (source in sources) {
-            if (anyFound) break
-            
-            try {
-                val sourceUrl = when (source) {
-                    is ArabseedSource.LazySource -> {
-                        // Resolve lazy source to get actual embed URL
-                        val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
-                        Log.i("ArabseedV2", "[loadLinks] Resolving Lazy URL: $lazyUrl")
-                        resolveLazyUrl(lazyUrl) // Get the actual embed URL from AJAX
-                    }
-                    is ArabseedSource.VisibleSource -> source.url
-                    is ArabseedSource.DirectEmbed -> source.url
-                }
-                
-                if (sourceUrl.isNullOrBlank()) {
-                    Log.w("ArabseedV2", "[loadLinks] Empty URL for source, skipping...")
-                    continue
-                }
-                
-                Log.i("ArabseedV2", "[loadLinks] Processing source: $sourceUrl")
-                
-                // STEP 1: Try loadExtractor (standard extractors)
-                Log.d("ArabseedV2", "[loadLinks] STEP 1: Trying standard extractors...")
-                val standardResult = awaitExtractorWithResult(sourceUrl, "$currentBaseUrl/", 8_000L)
-                
-                if (standardResult != null) {
-                    // Video found via standard extractor - break immediately
-                    Log.i("ArabseedV2", "[loadLinks] SUCCESS via standard extractor: ${standardResult.url.take(80)}")
-                    cacheHeaders(standardResult)
-                    callback(createExtractorLink(source, standardResult, currentBaseUrl))
-                    anyFound = true
-                    break
-                }
-                
-                // STEP 2: Standard extractors failed, try sniffer
-                Log.w("ArabseedV2", "[loadLinks] STEP 2: Standard extractors failed, trying sniffer...")
-                
-                // Wait for sniffer to complete - call directly, not through loadExtractor
-                val snifferResult = awaitSnifferResult(sourceUrl, "$currentBaseUrl/", 60_000L)
-                
-                if (snifferResult != null) {
-                    // Video found via sniffer - break immediately
-                    Log.i("ArabseedV2", "[loadLinks] SUCCESS via sniffer: ${snifferResult.url.take(80)}")
-                    cacheHeaders(snifferResult)
-                    callback(createExtractorLink(source, snifferResult, currentBaseUrl))
-                    anyFound = true
-                    break
-                }
-                
-                // Both failed - move to next source
-                Log.w("ArabseedV2", "[loadLinks] Both standard extractors and sniffer failed for this source")
-                
-            } catch (e: Exception) {
-                Log.e("ArabseedV2", "[loadLinks] Error processing source: ${e.message}")
+        Log.i("ArabseedV2", "[collectSources] Collected ${sources.size} sources")
+        return sources
+    }
+    
+    /**
+     * Resolves a source to its actual URL.
+     * For LazySource: Makes AJAX call to get embed URL
+     * For others: Returns the URL directly
+     */
+    private suspend fun resolveSourceUrl(source: ArabseedSource): String? {
+        return when (source) {
+            is ArabseedSource.LazySource -> {
+                val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
+                Log.i("ArabseedV2", "[resolveSourceUrl] Resolving Lazy URL: $lazyUrl")
+                resolveLazyUrl(lazyUrl)
+            }
+            is ArabseedSource.VisibleSource -> {
+                Log.d("ArabseedV2", "[resolveSourceUrl] Using visible source: ${source.url.take(80)}")
+                source.url
+            }
+            is ArabseedSource.DirectEmbed -> {
+                Log.d("ArabseedV2", "[resolveSourceUrl] Using direct embed: ${source.url.take(80)}")
+                source.url
             }
         }
+    }
+    
+    /**
+     * Attempts to extract video from a URL.
+     * First tries standard extractors (8s timeout), then falls back to sniffer (60s timeout).
+     * Returns ResolvedLink on success, null on failure.
+     */
+    private suspend fun extractVideo(sourceUrl: String, referer: String): ResolvedLink? {
+        // STEP 1: Try standard extractors
+        Log.d("ArabseedV2", "[extractVideo] STEP 1: Trying standard extractors...")
+        val standardResult = awaitExtractorWithResult(sourceUrl, "$referer/", 8_000L)
         
-        Log.d("ArabseedV2", "[loadLinks] END found=$anyFound")
-        return anyFound
+        if (standardResult != null) {
+            Log.i("ArabseedV2", "[extractVideo] SUCCESS via standard extractor: ${standardResult.url.take(80)}")
+            return standardResult
+        }
+        
+        // STEP 2: Standard extractors failed, try sniffer
+        Log.w("ArabseedV2", "[extractVideo] STEP 2: Standard extractors failed, trying sniffer...")
+        val snifferResult = awaitSnifferResult(sourceUrl, "$referer/", 60_000L)
+        
+        if (snifferResult != null) {
+            Log.i("ArabseedV2", "[extractVideo] SUCCESS via sniffer: ${snifferResult.url.take(80)}")
+            return snifferResult
+        }
+        
+        Log.w("ArabseedV2", "[extractVideo] Both methods failed")
+        return null
     }
     
     /**
@@ -492,32 +551,52 @@ class ArabseedV2 : MainAPI() {
      * Returns immediately when first video is found.
      */
     private suspend fun awaitSnifferResult(targetUrl: String, referer: String, timeoutMs: Long): ResolvedLink? {
-        Log.d("ArabseedV2", "[awaitSnifferResult] Starting VISIBLE SnifferExtractor for: ${targetUrl.take(80)}")
+        Log.i("ArabseedV2", "[awaitSnifferResult] === START === target=${targetUrl.take(80)}")
         
         return try {
             withTimeoutOrNull(timeoutMs) {
+                Log.d("ArabseedV2", "[awaitSnifferResult] Created deferred, timeout=$timeoutMs")
                 val deferred = CompletableDeferred<ResolvedLink?>()
                 var found = false
+                var callbackReceived = false
                 
                 // Create sniffer URL
                 val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(targetUrl, referer)
-                Log.d("ArabseedV2", "[awaitSnifferResult] Sniffer URL: $sniffUrl")
+                Log.i("ArabseedV2", "[awaitSnifferResult] Sniffer URL: $sniffUrl")
                 
                 // Use loadExtractor which will trigger SnifferExtractor with FULLSCREEN mode
+                Log.d("ArabseedV2", "[awaitSnifferResult] Calling loadExtractor...")
                 loadExtractor(sniffUrl, referer, {}, { link ->
+                    Log.i("ArabseedV2", "[awaitSnifferResult] CALLBACK FIRED! URL=${link.url.take(80)}")
+                    callbackReceived = true
                     if (!found) {
                         found = true
-                        Log.i("ArabseedV2", "[awaitSnifferResult] Video found via visible sniffer: ${link.url.take(80)}")
+                        Log.i("ArabseedV2", "[awaitSnifferResult] Completing deferred with link")
                         deferred.complete(ResolvedLink(link.url, link.headers))
+                        Log.i("ArabseedV2", "[awaitSnifferResult] Deferred completed successfully")
+                    } else {
+                        Log.w("ArabseedV2", "[awaitSnifferResult] Already found, ignoring duplicate")
                     }
                 })
                 
-                deferred.await()
+                Log.d("ArabseedV2", "[awaitSnifferResult] loadExtractor returned, awaiting deferred...")
+                val result = deferred.await()
+                Log.i("ArabseedV2", "[awaitSnifferResult] Deferred awaited, result=${result != null}, callbackReceived=$callbackReceived")
+                result
             }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.e("ArabseedV2", "[awaitSnifferResult] Error: ${e.message}")
+        } catch (e: TimeoutCancellationException) {
+            Log.e("ArabseedV2", "[awaitSnifferResult] TIMEOUT! No video found within ${timeoutMs}ms")
             null
+        } catch (e: Exception) {
+            if (e is CancellationException) {
+                Log.w("ArabseedV2", "[awaitSnifferResult] Cancelled")
+                throw e
+            }
+            Log.e("ArabseedV2", "[awaitSnifferResult] EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+            e.printStackTrace()
+            null
+        } finally {
+            Log.i("ArabseedV2", "[awaitSnifferResult] === END ===")
         }
     }
     
