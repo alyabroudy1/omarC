@@ -320,6 +320,13 @@ class ArabseedV2 : MainAPI() {
         while (currentIndex < workingSources.size) {
             val source = workingSources[currentIndex]
             
+            // Skip already-extracted videos - they're already at the top
+            if (source is ArabseedSource.VideoResult) {
+                Log.d("ArabseedV2", "[loadLinks] Skipping already-extracted video at index $currentIndex")
+                currentIndex++
+                continue
+            }
+            
             try {
                 val sourceUrl = resolveSourceUrl(source)
                 
@@ -349,8 +356,9 @@ class ArabseedV2 : MainAPI() {
                     
                     Log.i("ArabseedV2", "[loadLinks] Video moved to top. List now: ${workingSources.size} items")
                     
-                    // Continue processing remaining sources (don't break)
-                    // Don't increment index since we removed current item
+                    // Move to next source (don't reprocess the video we just added at index 0)
+                    // Since we added at 0 and removed from currentIndex, we just continue with same index
+                    // which now points to the next item (everything shifted left after removal)
                     continue
                 } else {
                     // Both methods failed - remove this source from list
