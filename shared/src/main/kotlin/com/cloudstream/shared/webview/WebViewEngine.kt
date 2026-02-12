@@ -81,7 +81,9 @@ class WebViewEngine(
                 val foundLinks = capturedLinks.toList()
                 if (foundLinks.isNotEmpty()) {
                     ProviderLogger.d(TAG_WEBVIEW, "runSession", "Timeout with ${foundLinks.size} captured links")
-                    deferred.complete(WebViewResult.Success(extractCookies(url), "", url, foundLinks))
+                    // extractCookies is suspend, need webView
+                    val cookies = webView?.let { extractCookies(it, url) } ?: emptyMap()
+                    deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
                 } else {
                     deferred.complete(WebViewResult.Timeout(url, partialHtml))
                 }
@@ -108,7 +110,8 @@ class WebViewEngine(
                              resultDelivered = true
                              timeoutJob?.cancel()
                              
-                             val cookies = extractCookies(url)
+                             // extractCookies is now suspend and needs the webView instance
+                             val cookies = webView?.let { extractCookies(it, url) } ?: emptyMap()
                              val foundLinks = capturedLinks.toList()
                              android.util.Log.i("WebViewEngine", "[videoMonitorJob] FALLBACK EXIT with ${foundLinks.size} links")
                              android.util.Log.i("WebViewEngine", "[videoMonitorJob] First link: ${foundLinks.firstOrNull()?.url?.take(100)}")
@@ -286,7 +289,7 @@ class WebViewEngine(
                                     !isCf
                                 }
                                 is ExitCondition.CookiesPresent -> {
-                                    val cookies = extractCookies(currentUrl)
+                                    val cookies = extractCookies(view, currentUrl)
                                     exitCondition.keys.all { key -> cookies.containsKey(key) }
                                 }
                                 is ExitCondition.VideoFound -> {
@@ -300,7 +303,7 @@ class WebViewEngine(
                                 timeoutJob?.cancel()
                                 videoMonitorJob?.cancel()
                                 
-                                val cookies = extractCookies(currentUrl)
+                                val cookies = extractCookies(view, currentUrl)
                                 val found = capturedLinks.toList()
                                 android.util.Log.i("WebViewEngine", "[onPageFinished] EXITING! Sending ${found.size} links to deferred.")
                                 found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
@@ -526,18 +529,23 @@ class WebViewEngine(
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
                 
-                val cookies = extractCookies("") // URL not easily available here, implies current
-                val found = capturedLinks.toList()
-                
-                android.util.Log.i("WebViewEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
-                found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
-                
-                // Cleanup BEFORE deferred completion to ensure UI is dismissed
-                ProviderLogger.i(TAG_WEBVIEW, "checkExitCondition", "Cleaning up UI before exit")
-                cleanup(activeWebView, activeDialog)
-                
-                deferred?.complete(WebViewResult.Success(cookies, "", "", found))
-                android.util.Log.i("WebViewEngine", "[checkExitCondition] Deferred completed.")
+                // Launch coroutine to get cookies safely
+                CoroutineScope(Dispatchers.Main).launch {
+                    val cookies = activeWebView?.let { extractCookies(it, "") } ?: emptyMap()
+                    val found = capturedLinks.toList()
+                    
+                    android.util.Log.i("WebViewEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
+                    found.forEach { android.util.Log.d("WebViewEngine", " > Link: ${it.url}") }
+                    
+                    // Cleanup AFTER extraction but before completion (or let deferred complete first?)
+                    // Cleanup destroys WebView, so we must extract first.
+                    
+                    ProviderLogger.i(TAG_WEBVIEW, "checkExitCondition", "Cleaning up UI before exit")
+                    cleanup(activeWebView, activeDialog)
+                    
+                    deferred?.complete(WebViewResult.Success(cookies, "", "", found))
+                    android.util.Log.i("WebViewEngine", "[checkExitCondition] Deferred completed.")
+                }
                 // We cannot access them easily unless we make them instance variables or pass them.
                 // BUT runSession waits for deferred.complete.
                 // So if we complete deferred, runSession continues? 
@@ -648,13 +656,16 @@ class WebViewEngine(
                     timeoutJob?.cancel()
                     videoMonitorJob?.cancel()
                     
-                    val cookies = extractCookies(webView.url ?: "")
-                    val found = capturedLinks.toList()
-                    val html = try {
-                         "" 
-                    } catch (e: Exception) { "" }
-                    
-                    deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
+                    // extractCookies is suspend, so we need a coroutine
+                    CoroutineScope(Dispatchers.Main).launch {
+                         val cookies = extractCookies(webView, webView.url ?: "")
+                         val found = capturedLinks.toList()
+                         val html = try {
+                              "" 
+                         } catch (e: Exception) { "" }
+                         
+                         deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
+                    }
                  }
                  
                  // Cleanup Mouse
@@ -868,19 +879,58 @@ class WebViewEngine(
         }
     }
     
-    private fun extractCookies(url: String): Map<String, String> {
-        val cookies = mutableMapOf<String, String>()
+    /**
+     * Extracts cookies using JavaScript to get exactly what the page sees.
+     * This is critical for Cloudflare which binds cookies to the specific JS context.
+     */
+    private suspend fun extractCookies(webView: WebView, url: String): Map<String, String> = suspendCancellableCoroutine { cont ->
         try {
-            CookieManager.getInstance().getCookie(url)?.split(";")?.forEach { cookie ->
-                val parts = cookie.trim().split("=", limit = 2)
-                if (parts.size == 2) {
-                    cookies[parts[0].trim()] = parts[1].trim()
+            // 1. Try to get from CookieManager first (fast path)
+            val cmCookies = CookieManager.getInstance().getCookie(url)
+            val cmMap = if (!cmCookies.isNullOrBlank()) {
+                parseCookieString(cmCookies)
+            } else emptyMap()
+
+            // 2. Execute JS to get document.cookie (source of truth)
+            webView.evaluateJavascript("(function() { return document.cookie; })();") { result ->
+                try {
+                    val jsCookieString = if (result != null && result != "null") {
+                        result.removeSurrounding("\"")
+                    } else ""
+                    
+                    val jsMap = parseCookieString(jsCookieString)
+                    
+                    // Merge: JS wins on conflict, but keep CM cookies that JS might miss (HttpOnly)
+                    // Actually, for CF, JS cookies are what matter most.
+                    val merged = HashMap<String, String>()
+                    merged.putAll(cmMap)
+                    merged.putAll(jsMap) // JS overwrites
+                    
+                    ProviderLogger.d(TAG_WEBVIEW, "extractCookies", "Cookie extraction complete",
+                        "cmCount" to cmMap.size,
+                        "jsCount" to jsMap.size,
+                        "total" to merged.size,
+                        "hasClearance" to merged.containsKey("cf_clearance")
+                    )
+                    
+                    if (cont.isActive) cont.resume(merged) {}
+                    
+                } catch (e: Exception) {
+                    ProviderLogger.e(TAG_WEBVIEW, "extractCookies", "JS parse failed", e)
+                    if (cont.isActive) cont.resume(cmMap) {}
                 }
             }
         } catch (e: Exception) {
-            ProviderLogger.w(TAG_WEBVIEW, "extractCookies", "Failed", "error" to e.message)
+            ProviderLogger.e(TAG_WEBVIEW, "extractCookies", "Extraction failed", e)
+            if (cont.isActive) cont.resume(emptyMap()) {}
         }
-        return cookies
+    }
+
+    private fun parseCookieString(cookie: String): Map<String, String> {
+        return cookie.split(";").associate {
+            val parts = it.split("=", limit = 2)
+            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
+        }.filter { it.key.isNotBlank() }
     }
     
     private fun cleanup(webView: WebView?, dialog: Dialog?) {
