@@ -37,6 +37,11 @@ sealed class ArabseedSource {
         val baseUrl: String
     ) : ArabseedSource()
     data class DirectEmbed(val url: String) : ArabseedSource()
+    data class VideoResult(
+        val url: String, 
+        val name: String, 
+        val headers: Map<String, String> = emptyMap()
+    ) : ArabseedSource()
 }
 
 class ArabseedV2 : MainAPI() {
@@ -305,43 +310,139 @@ class ArabseedV2 : MainAPI() {
         
         Log.i("ArabseedV2", "[loadLinks] Collected ${sources.size} sources. Starting sequential processing...")
         
-        // 2. ITERATE & RESOLVE
-        var anyFound = false
+        // 2. ITERATE & RESOLVE WITH DYNAMIC LIST
+        // - Failed sources are removed from list
+        // - Successful source is replaced with found video at top of list
+        val workingSources = sources.toMutableList()
+        var currentIndex = 0
+        var successCount = 0
         
-        for (source in sources) {
-            if (anyFound) break
+        while (currentIndex < workingSources.size) {
+            val source = workingSources[currentIndex]
             
             try {
                 val sourceUrl = resolveSourceUrl(source)
                 
                 if (sourceUrl.isNullOrBlank()) {
-                    Log.w("ArabseedV2", "[loadLinks] Empty URL for source, skipping...")
+                    Log.w("ArabseedV2", "[loadLinks] Empty URL for source at index $currentIndex, removing...")
+                    workingSources.removeAt(currentIndex)
                     continue
                 }
                 
-                Log.i("ArabseedV2", "[loadLinks] Processing source: $sourceUrl")
+                Log.i("ArabseedV2", "[loadLinks] Processing source $currentIndex/${workingSources.size}: $sourceUrl")
                 
                 // Try to extract video (standard extractors -> sniffer)
                 val videoResult = extractVideo(sourceUrl, currentBaseUrl)
                 
                 if (videoResult != null) {
-                    Log.i("ArabseedV2", "[loadLinks] SUCCESS: ${videoResult.url.take(80)}")
+                    Log.i("ArabseedV2", "[loadLinks] SUCCESS for source $currentIndex: ${videoResult.url.take(80)}")
                     cacheHeaders(videoResult)
-                    callback(createExtractorLink(source, videoResult, currentBaseUrl))
-                    anyFound = true
-                    break
+                    
+                    // Create video link from result
+                    val videoLink = createExtractorLink(source, videoResult, currentBaseUrl)
+                    
+                    // Replace current source with video at the TOP (index 0)
+                    // Remove current source and insert video at beginning
+                    workingSources.removeAt(currentIndex)
+                    workingSources.add(0, ArabseedSource.VideoResult(videoLink.url, videoLink.name, videoResult.headers))
+                    successCount++
+                    
+                    Log.i("ArabseedV2", "[loadLinks] Video moved to top. List now: ${workingSources.size} items")
+                    
+                    // Continue processing remaining sources (don't break)
+                    // Don't increment index since we removed current item
+                    continue
+                } else {
+                    // Both methods failed - remove this source from list
+                    Log.w("ArabseedV2", "[loadLinks] Source $currentIndex failed both methods, removing from list")
+                    workingSources.removeAt(currentIndex)
+                    // Don't increment index since we removed current item
+                    continue
                 }
                 
-                // Failed - move to next source
-                Log.w("ArabseedV2", "[loadLinks] Failed to extract video from this source")
-                
             } catch (e: Exception) {
-                Log.e("ArabseedV2", "[loadLinks] Error processing source: ${e.message}")
+                Log.e("ArabseedV2", "[loadLinks] Error processing source $currentIndex: ${e.message}")
+                // On error, remove the source
+                workingSources.removeAt(currentIndex)
+                continue
             }
         }
         
-        Log.d("ArabseedV2", "[loadLinks] END found=$anyFound")
-        return anyFound
+        Log.i("ArabseedV2", "[loadLinks] Processing complete. ${workingSources.size} sources remain, $successCount successful")
+        
+        // Return all remaining sources as ExtractorLinks
+        // First item(s) are videos, rest are original sources
+        var anyFound = false
+        workingSources.forEach { source ->
+            when (source) {
+                is ArabseedSource.VideoResult -> {
+                    Log.i("ArabseedV2", "[loadLinks] Returning video: ${source.url.take(80)}")
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = source.name,
+                            url = source.url,
+                            type = if (source.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$currentBaseUrl/"
+                            this.quality = Qualities.Unknown.value
+                            this.headers = source.headers
+                        }
+                    )
+                    anyFound = true
+                }
+                is ArabseedSource.VisibleSource -> {
+                    Log.d("ArabseedV2", "[loadLinks] Returning visible source: ${source.url.take(80)}")
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = source.name,
+                            url = source.url,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$currentBaseUrl/"
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                }
+                is ArabseedSource.DirectEmbed -> {
+                    Log.d("ArabseedV2", "[loadLinks] Returning direct embed: ${source.url.take(80)}")
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = "Direct Source",
+                            url = source.url,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$currentBaseUrl/"
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                }
+                is ArabseedSource.LazySource -> {
+                    // For unprocessed lazy sources, return them as-is for retry
+                    Log.d("ArabseedV2", "[loadLinks] Returning lazy source: Server ${source.serverId} (${source.quality}p)")
+                    val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
+                    callback(
+                        newExtractorLink(
+                            source = name,
+                            name = "Server ${source.serverId} (${source.quality}p)",
+                            url = lazyUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$currentBaseUrl/"
+                            this.quality = source.quality.toIntOrNull() ?: Qualities.Unknown.value
+                        }
+                    )
+                }
+                else -> {
+                    Log.w("ArabseedV2", "[loadLinks] Unknown source type: ${source.javaClass.simpleName}")
+                }
+            }
+        }
+        
+        Log.d("ArabseedV2", "[loadLinks] END - Returned ${workingSources.size} sources, found=$anyFound")
+        return anyFound || workingSources.isNotEmpty()
     }
     
     /**
@@ -425,6 +526,10 @@ class ArabseedV2 : MainAPI() {
             }
             is ArabseedSource.DirectEmbed -> {
                 Log.d("ArabseedV2", "[resolveSourceUrl] Using direct embed: ${source.url.take(80)}")
+                source.url
+            }
+            is ArabseedSource.VideoResult -> {
+                Log.d("ArabseedV2", "[resolveSourceUrl] Video already resolved: ${source.url.take(80)}")
                 source.url
             }
         }
@@ -629,6 +734,7 @@ class ArabseedV2 : MainAPI() {
             is ArabseedSource.LazySource -> "Server ${source.serverId} (${source.quality}p)" to (source.quality.toIntOrNull() ?: Qualities.Unknown.value)
             is ArabseedSource.VisibleSource -> source.name to Qualities.Unknown.value
             is ArabseedSource.DirectEmbed -> "Direct Source" to Qualities.Unknown.value
+            is ArabseedSource.VideoResult -> source.name to Qualities.Unknown.value
         }
         
         return newExtractorLink(
