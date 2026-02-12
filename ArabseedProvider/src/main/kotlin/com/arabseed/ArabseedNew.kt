@@ -175,11 +175,13 @@ class ArabseedV2 : MainAPI() {
         } else {
             // 1. Always parse episodes from the current DOM (Active Season)
             val domEpisodes = data.episodes ?: parser.parseEpisodes(doc, null)
+            Log.d("ArabseedV2", "[load] DOM episodes found: ${domEpisodes.size}")
             val episodes = mutableListOf<ParsedEpisode>()
             episodes.addAll(domEpisodes)
 
             // 2. Fetch other seasons (AJAX Style)
             val seasonDataList = parser.parseSeasonsWithPostId(doc)
+            Log.d("ArabseedV2", "[load] Season Data found: ${seasonDataList.size} -> $seasonDataList")
             
             if (seasonDataList.isNotEmpty()) {
                 coroutineScope {
@@ -202,11 +204,12 @@ class ArabseedV2 : MainAPI() {
                                 )
                                 
                                 if (result.success && result.html != null) {
+                                    Log.d("ArabseedV2", "[load] AJAX JSON (S$seasonNum): ${result.html.take(1000)}")
                                     val sEps = parser.parseEpisodesFromAjax(result.html, seasonNum)
-                                    Log.d("ArabseedV2", "[load] Season $seasonNum fetched: ${sEps.size} episodes.")
+                                    Log.d("ArabseedV2", "[load] Season $seasonNum fetched: ${sEps.size} episodes. First 3: ${sEps.take(3)}")
                                     sEps
                                 } else {
-                                    Log.w("ArabseedV2", "[load] Failed to fetch season $seasonNum")
+                                    Log.w("ArabseedV2", "[load] Failed to fetch season $seasonNum (null response)")
                                     emptyList()
                                 }
                             } catch (e: Exception) {
@@ -232,7 +235,8 @@ class ArabseedV2 : MainAPI() {
             val seasonNames = convertedEpisodes.mapNotNull { it.season }.distinct().sorted()
                 .map { SeasonData(it, "الموسم $it") }
 
-
+            Log.d("ArabseedV2", "[load] Final episodes count: ${convertedEpisodes.size}")
+            Log.d("ArabseedV2", "[load] Final seasons: ${seasonNames.map { it.name }}")
 
             newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, convertedEpisodes) {
                 this.posterUrl = data.posterUrl

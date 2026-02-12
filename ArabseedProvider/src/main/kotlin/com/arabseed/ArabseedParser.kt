@@ -294,7 +294,6 @@ class ArabseedParser : BaseParser() {
                  val selected = seasonList.selectFirst("li.selected")
                  if (selected != null) activeSeasonNum = parseSeasonNumber(selected.text())
             } else {
-            } else {
                  val seasonTabs = doc.select("div.seasonDiv, div.seasons--list")
                  val activeTab = seasonTabs.find { it.hasClass("active") }
                  if (activeTab != null) {
