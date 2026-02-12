@@ -6,6 +6,7 @@ import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
+import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -18,14 +19,21 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 import org.jsoup.nodes.Document
+import com.cloudstream.shared.provider.BaseProvider
 
-class Laroza : MainAPI() {
+class Laroza : BaseProvider() {
 
-    override var mainUrl = "https://laroza.com"
-    override var name = "laroza"
-    override val hasMainPage = true
-    override var lang = "ar"
-    override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+    override var baseDomain = "laroza.co"
+    override var providerName = "laroza"
+    override var githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
 
+    override val mainPage = mainPageOf(
+        "/category.php?cat=ramadan-2026/" to "Ramadan",
+        "/category.php" to "أفلام",
+        "/home.24/" to "مسلسلات"
+    )
+
+    override fun getParser(): NewBaseParser {
+        return LarozaParser()
+    }
 }
