@@ -377,8 +377,9 @@ class ArabseedV2 : MainAPI() {
         
         Log.i("ArabseedV2", "[loadLinks] Processing complete. ${workingSources.size} sources remain, $successCount successful")
         
-        // Return all remaining sources as ExtractorLinks
-        // First item(s) are videos, rest are original sources
+        // Return ONLY successfully extracted videos
+        // Do NOT return unprocessed sources (LazySource, VisibleSource, DirectEmbed) 
+        // as they are not playable URLs
         var anyFound = false
         workingSources.forEach { source ->
             when (source) {
@@ -398,49 +399,9 @@ class ArabseedV2 : MainAPI() {
                     )
                     anyFound = true
                 }
-                is ArabseedSource.VisibleSource -> {
-                    Log.d("ArabseedV2", "[loadLinks] Returning visible source: ${source.url.take(80)}")
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = source.name,
-                            url = source.url,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$currentBaseUrl/"
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                }
-                is ArabseedSource.DirectEmbed -> {
-                    Log.d("ArabseedV2", "[loadLinks] Returning direct embed: ${source.url.take(80)}")
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = "Direct Source",
-                            url = source.url,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$currentBaseUrl/"
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                }
-                is ArabseedSource.LazySource -> {
-                    // For unprocessed lazy sources, return them as-is for retry
-                    Log.d("ArabseedV2", "[loadLinks] Returning lazy source: Server ${source.serverId} (${source.quality}p)")
-                    val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = "Server ${source.serverId} (${source.quality}p)",
-                            url = lazyUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$currentBaseUrl/"
-                            this.quality = source.quality.toIntOrNull() ?: Qualities.Unknown.value
-                        }
-                    )
+                is ArabseedSource.VisibleSource, is ArabseedSource.DirectEmbed, is ArabseedSource.LazySource -> {
+                    // Skip unprocessed sources - they are not playable
+                    Log.d("ArabseedV2", "[loadLinks] Skipping unprocessed source: ${source.javaClass.simpleName}")
                 }
                 else -> {
                     Log.w("ArabseedV2", "[loadLinks] Unknown source type: ${source.javaClass.simpleName}")
@@ -448,8 +409,8 @@ class ArabseedV2 : MainAPI() {
             }
         }
         
-        Log.d("ArabseedV2", "[loadLinks] END - Returned ${workingSources.size} sources, found=$anyFound")
-        return anyFound || workingSources.isNotEmpty()
+        Log.d("ArabseedV2", "[loadLinks] END - Returned videos only, found=$anyFound")
+        return anyFound
     }
     
     /**
