@@ -319,6 +319,7 @@ class LarozaParser : NewBaseParser() {
     
     // Helper for robust detection
     private fun isMovie(title: String, url: String, element: Element?): Boolean {
+        if (url.contains("view-serie")) return false // Explicit series page
         if (title.contains("مسلسل") || title.contains("حلقة") || title.contains("موسم")) return false
         if (url.contains("series") || url.contains("ramadan")) return false
         
