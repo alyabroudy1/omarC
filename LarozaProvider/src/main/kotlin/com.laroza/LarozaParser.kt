@@ -135,6 +135,14 @@ class LarozaParser : NewBaseParser() {
 
     override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
         Log.d("LarozaParser", "parseLoadPage START. URL: $url")
+        
+        // Check if it is a Series Page (view-serie.php) or has SeasonsBoxUL
+        val isSeriesPage = url.contains("view-serie") || doc.select(".SeasonsBoxUL").isNotEmpty()
+        
+        if (isSeriesPage) {
+            return parseSeriesPage(doc, url)
+        }
+
         val title = doc.selectFirst("h1")?.text()?.trim() ?: doc.title()
         
         // Plot
@@ -144,6 +152,13 @@ class LarozaParser : NewBaseParser() {
         
         // Poster
         val posterUrl = doc.select("meta[property='og:image']").attr("content")
+        
+        // Parent Series Link (from Episode Page)
+        val seriesLinkElement = doc.selectFirst("div.video-info-line a[href*='view-serie']")
+        val seriesUrl = seriesLinkElement?.attr("href")
+        val seriesTitle = seriesLinkElement?.text()?.trim()
+        
+        Log.d("LarozaParser", "Episode Page. Parent Series: '$seriesTitle' -> '$seriesUrl'")
         
         // Type Detection
         // 1. Check for Episodes list (Generic selector for div or ul)
@@ -186,6 +201,8 @@ class LarozaParser : NewBaseParser() {
 
         Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
 
+        // If it looks like an episode but we found a series link, we might want to return that info
+        // For now, standard behavior:
         return ParsedLoadData(
             title = title,
             plot = plot,
@@ -193,6 +210,77 @@ class LarozaParser : NewBaseParser() {
             url = url,
             type = if (isMovie) TvType.Movie else TvType.TvSeries,
             year = null, // Could extract from title or meta
+            episodes = episodes
+        )
+    }
+
+    private fun parseSeriesPage(doc: Document, url: String): ParsedLoadData {
+        Log.d("LarozaParser", "Parsing Series Page")
+        val title = doc.selectFirst("h1")?.text()?.trim() ?: doc.title()
+        val plot = doc.selectFirst("div.well")?.text()?.trim() // Common description area in series
+            ?: doc.select("meta[name='description']").attr("content")
+        val posterUrl = doc.select("meta[property='og:image']").attr("content")
+        
+        val episodes = mutableListOf<ParsedEpisode>()
+        
+        // 1. Find Season Tabs to map IDs to Season Numbers
+        val seasonTabs = doc.select("div.Tab button.tablinks")
+        val seasonMap = mutableMapOf<String, Int>() // ID -> SeasonNum
+        
+        seasonTabs.forEach { tab ->
+            val onclick = tab.attr("onclick")
+            // openCity(event, 'Season1')
+            val idMatch = Regex("'([^']+)'").find(onclick)
+            val id = idMatch?.groupValues?.get(1)
+            val seasonName = tab.text().trim()
+            val seasonNum = Regex("(\\d+)").find(seasonName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            
+            if (id != null) {
+                seasonMap[id] = seasonNum
+            }
+        }
+        
+        if (seasonMap.isEmpty()) {
+             // Fallback: try to find single season or direct map
+             seasonMap["Season1"] = 1
+        }
+
+        // 2. Parse Episodes from Tab Content
+        val tabContents = doc.select("div.tabcontent")
+        tabContents.forEach { content ->
+            val id = content.id()
+            val seasonNum = seasonMap[id] ?: 1 // Default to 1 if not mapped
+            
+            val epElements = content.select(".pm-ul-browse-videos a")
+            epElements.forEach { element ->
+                val epTitle = element.attr("title").trim()
+                val epUrl = element.attr("href")
+                 if (epUrl.isNotBlank()) {
+                     val emText = element.select("em").text().trim()
+                    val epNum = emText.toIntOrNull() 
+                        ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                        ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                        ?: 0
+                        
+                    episodes.add(ParsedEpisode(
+                        name = epTitle,
+                        url = epUrl,
+                        season = seasonNum,
+                        episode = epNum
+                    ))
+                 }
+            }
+        }
+        
+        Log.d("LarozaParser", "Parsed ${episodes.size} episodes from ${seasonTabs.size} seasons")
+
+        return ParsedLoadData(
+            title = title,
+            plot = plot,
+            posterUrl = posterUrl,
+            url = url,
+            type = TvType.TvSeries,
+            year = null,
             episodes = episodes
         )
     }
