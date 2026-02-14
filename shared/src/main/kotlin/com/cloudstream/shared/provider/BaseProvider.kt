@@ -288,27 +288,35 @@ abstract class BaseProvider : MainAPI() {
                 return false
             }
             
-            // Step 5: Process URLs with proper async waiting (like ArabseedProvider)
-            var anyFound = false
+            // Step 5: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
             val referer = "$mainUrl/"
             
             for (url in urls) {
                 Log.d(methodTag, "Processing player URL: $url")
                 
-                // Try to extract video with timeout (8 seconds)
-                val result = awaitExtractorResult(url, referer, subtitleCallback, callback, timeoutMs = 8000L)
+                // STEP 1: Try standard extractors (8s timeout)
+                Log.d(methodTag, "STEP 1: Trying standard extractors...")
+                val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 8000L)
                 
-                if (result) {
-                    Log.i(methodTag, "SUCCESS: Extracted video from $url")
-                    anyFound = true
-                    break // Stop at first successful extraction
-                } else {
-                    Log.w(methodTag, "FAILED: Could not extract from $url")
+                if (standardResult) {
+                    Log.i(methodTag, "SUCCESS via standard extractor: $url")
+                    return true
                 }
+                
+                // STEP 2: Standard failed, try sniffer (60s timeout)
+                Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer...")
+                val snifferResult = awaitSnifferResult(url, referer, subtitleCallback, callback, timeoutMs = 60000L)
+                
+                if (snifferResult) {
+                    Log.i(methodTag, "SUCCESS via sniffer: $url")
+                    return true
+                }
+                
+                Log.w(methodTag, "Both methods failed for: $url")
             }
             
-            Log.i(methodTag, "END - Found videos: $anyFound")
-            return anyFound
+            Log.w(methodTag, "END - No videos found from ${urls.size} URLs")
+            return false
         } catch (e: Exception) {
             Log.e(methodTag, "Error in loadLinks: ${e.message}")
             e.printStackTrace()
@@ -317,10 +325,10 @@ abstract class BaseProvider : MainAPI() {
     }
     
     /**
-     * Awaits extractor result and returns true if a link was found.
-     * Uses CompletableDeferred to properly wait for async extraction.
+     * Awaits standard extractor result with timeout.
+     * Returns true if a link was found and callback invoked.
      */
-    private suspend fun awaitExtractorResult(
+    private suspend fun awaitExtractorWithResult(
         targetUrl: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -343,7 +351,52 @@ abstract class BaseProvider : MainAPI() {
                 deferred.await()
             } ?: false
         } catch (e: Exception) {
-            Log.w("[$name] [awaitExtractorResult]", "Exception: ${e.message}")
+            Log.w("[$name] [awaitExtractorWithResult]", "Exception: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Uses SnifferExtractor (WebView) to sniff video when standard extractors fail.
+     * Returns true if a video was found.
+     */
+    private suspend fun awaitSnifferResult(
+        targetUrl: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        timeoutMs: Long
+    ): Boolean {
+        Log.d("[$name] [awaitSnifferResult]", "=== START === target=${targetUrl.take(80)}")
+        
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+                val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                var found = false
+                
+                // Create sniffer URL
+                val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(targetUrl, referer)
+                Log.d("[$name] [awaitSnifferResult]", "Sniffer URL: $sniffUrl")
+                
+                // Use loadExtractor which will trigger SnifferExtractor
+                loadExtractor(sniffUrl, referer, subtitleCallback) { link ->
+                    Log.i("[$name] [awaitSnifferResult]", "CALLBACK FIRED! URL=${link.url.take(80)}")
+                    if (!found) {
+                        found = true
+                        callback(link)
+                        deferred.complete(true)
+                    }
+                }
+                
+                val result = deferred.await()
+                Log.d("[$name] [awaitSnifferResult]", "=== END === result=$result")
+                result
+            } ?: false
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.e("[$name] [awaitSnifferResult]", "TIMEOUT! No video found within ${timeoutMs}ms")
+            false
+        } catch (e: Exception) {
+            Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
