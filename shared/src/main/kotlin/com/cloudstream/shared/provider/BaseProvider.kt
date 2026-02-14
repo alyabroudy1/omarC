@@ -161,6 +161,25 @@ abstract class BaseProvider : MainAPI() {
             }
             
             var data = getParser().parseLoadPageData(doc, url)
+
+            // Check for Meta-Refresh Redirect (Client-side redirect)
+            // Example: <meta http-equiv="Refresh" content="0;URL=https://laroza.cfd/video.php?vid=YJBBtHyVB">
+            if (data?.episodes?.isEmpty() == true && data.isMovie) {
+                 val refreshMeta = doc.selectFirst("meta[http-equiv=Refresh]")
+                 if (refreshMeta != null) {
+                     val content = refreshMeta.attr("content")
+                     val newUrlMatch = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(content)
+                     val newUrl = newUrlMatch?.groupValues?.get(1)
+                     
+                     if (!newUrl.isNullOrBlank()) {
+                         Log.d(methodTag, "Found Meta-Refresh to: $newUrl")
+                         val newDoc = httpService.getDocument(newUrl)
+                         if (newDoc != null) {
+                             data = getParser().parseLoadPageData(newDoc, newUrl)
+                         }
+                     }
+                 }
+            }
             
             if (data == null) {
                 Log.e(methodTag, "Failed to parse load data")

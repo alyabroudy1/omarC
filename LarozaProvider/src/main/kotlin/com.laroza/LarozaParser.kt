@@ -83,9 +83,9 @@ class LarozaParser : NewBaseParser() {
             if (title.isNullOrBlank() || link.isNullOrBlank()) return@mapNotNull null
             
             // Log the HTML of the image element as requested
-            Log.d("LarozaParser", "Search Element Image Area: ${element.select("div.pm-video-thumb").html()}")
+            Log.d("LarozaParser", "Search Element FULL HTML: ${element.outerHtml()}")
             
-            val posterUrl = extractImage(element)
+            val posterUrl = extractImage(element) ?: extractBackgroundImage(element)
             
             val extractedTags = config.tags.mapNotNull { extractValue(element, it) }
 
@@ -248,6 +248,21 @@ class LarozaParser : NewBaseParser() {
                 }
             }
         }
+    }
+
+    private fun extractBackgroundImage(element: Element): String? {
+        // Check for style="background-image: url(...)" on the element or children
+        val styleElements = element.select("[style*='background-image']")
+        for (el in styleElements) {
+            val style = el.attr("style")
+            val urlMatch = Regex("url\\(['\"]?([^'\")]+)['\"]?\\)", RegexOption.IGNORE_CASE).find(style)
+            val url = urlMatch?.groupValues?.get(1)
+            if (!url.isNullOrBlank()) {
+                Log.d("LarozaParser", "Found background-image: $url")
+                return url
+            }
+        }
+        return null
     }
 
     private fun cleanPlot(rawPlot: String?): String? {
