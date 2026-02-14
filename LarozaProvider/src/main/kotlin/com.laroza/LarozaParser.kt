@@ -414,14 +414,23 @@ class LarozaParser : NewBaseParser() {
     
     // Helper for robust detection
     private fun isMovie(title: String, url: String, element: Element?): Boolean {
-        if (url.contains("view-serie")) return false // Explicit series page
-        if (title.contains("مسلسل") || title.contains("حلقة") || title.contains("موسم")) return false
-        if (url.contains("series") || url.contains("ramadan")) return false
+        // User Rules:
+        // 1. Series if url contains 'serie'
+        if (url.contains("serie", ignoreCase = true)) return false
         
-        // Check category tag if available
+        // 2. Episode if title contains 'حلقة' and url contains 'video'
+        if (title.contains("حلقة") && url.contains("video", ignoreCase = true)) return false
+        
+        // 3. Movie if title contains 'فيلم' and url contains 'video'
+        if (title.contains("فيلم") && url.contains("video", ignoreCase = true)) return true
+
+        // Fallback for items that match none of the specific rules
+        // Check category tag if available as a safety net
         val categoryText = element?.select("span.label")?.text() ?: ""
         if (categoryText.contains("مسلسلات")) return false
-        
+        if (title.contains("مسلسل")) return false
+
+        // Default to Movie if likely a standalone video
         return true
     }
 }
