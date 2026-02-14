@@ -146,9 +146,13 @@ class LarozaParser : NewBaseParser() {
         val title = doc.selectFirst("h1")?.text()?.trim() ?: doc.title()
         
         // Plot
-        val plot = doc.selectFirst("div#video-description")?.text()?.trim()
+        val rawPlot = doc.selectFirst("div#video-description")?.text()?.trim()
             ?: doc.select("meta[name='description']").attr("content")
             ?: doc.select("meta[property='og:description']").attr("content")
+        val plot = cleanPlot(rawPlot)
+        
+        // Tags
+        val tags = doc.select("div.video-info-line.video-category-line a").map { it.text().trim() }
         
         // Poster
         val posterUrl = doc.select("meta[property='og:image']").attr("content")
@@ -160,10 +164,15 @@ class LarozaParser : NewBaseParser() {
         
         Log.d("LarozaParser", "Episode Page. Parent Series: '$seriesTitle' -> '$seriesUrl'")
         
-        // Type Detection
+        // Type Detection & Episode Parsing
         // 1. Check for Episodes list (Generic selector for div or ul)
-        val episodeElements = doc.select(".pm-ul-browse-videos a")
-        val hasEpisodes = episodeElements.isNotEmpty()
+        var episodeElements = doc.select(".pm-ul-browse-videos a")
+        
+        // 2. Fallback: Check for Select-based seasons/episodes (Mobile/Alternative view)
+        // If the main list is empty, try to parse the selects
+        val selectEpisodes = if (episodeElements.isEmpty()) parseSelectEpisodes(doc) else emptyList()
+        
+        val hasEpisodes = episodeElements.isNotEmpty() || selectEpisodes.isNotEmpty()
         
         Log.d("LarozaParser", "Type detection: hasEpisodes=$hasEpisodes")
 
@@ -176,33 +185,36 @@ class LarozaParser : NewBaseParser() {
         
         val isMovie = !hasEpisodes && !isSeriesKeyword && !isSeriesCategory
         
+        // Combine episodes
         val episodes = if (!isMovie) {
-             episodeElements.mapNotNull { element ->
-                val epTitle = element.attr("title").trim()
-                val epUrl = element.attr("href")
-                
-                if (epUrl.isNotBlank()) {
-                    // Extract number from title or inner text (e.g. <em>12</em>)
-                    val emText = element.select("em").text().trim()
-                    val epNum = emText.toIntOrNull() 
-                        ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
-                        ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
-                        ?: 0
-                        
-                    ParsedEpisode(
-                        name = epTitle,
-                        url = epUrl,
-                        season = 1, // Default to season 1 for now
-                        episode = epNum
-                    )
-                } else null
-            }
+             if (selectEpisodes.isNotEmpty()) {
+                 selectEpisodes
+             } else {
+                 episodeElements.mapNotNull { element ->
+                    val epTitle = element.attr("title").trim()
+                    val epUrl = element.attr("href")
+                    
+                    if (epUrl.isNotBlank()) {
+                        // Extract number from title or inner text (e.g. <em>12</em>)
+                        val emText = element.select("em").text().trim()
+                        val epNum = emText.toIntOrNull() 
+                            ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                            ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                            ?: 0
+                            
+                        ParsedEpisode(
+                            name = epTitle,
+                            url = epUrl,
+                            season = 1, // Default to season 1 for now
+                            episode = epNum
+                        )
+                    } else null
+                }
+             }
         } else emptyList()
 
         Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
 
-        // If it looks like an episode but we found a series link, we might want to return that info
-        // For now, standard behavior:
         return ParsedLoadData(
             title = title,
             plot = plot,
@@ -210,8 +222,69 @@ class LarozaParser : NewBaseParser() {
             url = url,
             type = if (isMovie) TvType.Movie else TvType.TvSeries,
             year = null, // Could extract from title or meta
-            episodes = episodes
+            episodes = episodes,
+            tags = tags,
+            parentSeriesUrl = seriesUrl
         )
+    }
+
+    private fun cleanPlot(rawPlot: String?): String? {
+        if (rawPlot.isNullOrBlank()) return null
+        // Split by ':'
+        val parts = rawPlot.split(":")
+        if (parts.size > 1) {
+            val firstPart = parts[0]
+            if (firstPart.contains("وتحميل") || firstPart.contains("مشاهدة")) {
+                // Return everything after the first color, joined back (in case of multiple colons)
+                return parts.drop(1).joinToString(":").trim()
+            }
+        }
+        return rawPlot
+    }
+
+    private fun parseSelectEpisodes(doc: Document): List<ParsedEpisode> {
+        val episodes = mutableListOf<ParsedEpisode>()
+        // seasons : div.TabS select#mobileselect option
+        // episodes: div.TabE select.episodeoption option
+        
+        // Map Season IDs to Numbers
+        val seasonSelect = doc.selectFirst("div.TabS select#mobileselect")
+        val seasonMap = mutableMapOf<String, Int>() // MSeason1 -> 1
+        
+        if (seasonSelect != null) {
+            seasonSelect.select("option").forEach { opt ->
+                val id = opt.attr("value") // MSeason1
+                val text = opt.text() // موسم 1
+                val num = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                seasonMap[id] = num
+            }
+        } else {
+            // Default if no season select found but maybe episode select exists
+             seasonMap["MSeason1"] = 1
+        }
+        
+        // Parse Episodes
+        val epSelects = doc.select("div.TabE select.episodeoption")
+        epSelects.forEach { select ->
+            val id = select.id() // MSeason1
+            val seasonNum = seasonMap[id] ?: 1
+            
+            select.select("option").forEach { opt ->
+                val epUrl = opt.attr("value")
+                val epText = opt.text() // الحلقة 1
+                
+                if (epUrl.contains("video.php")) {
+                     val epNum = Regex("(\\d+)").find(epText)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                     episodes.add(ParsedEpisode(
+                         name = epText,
+                         url = epUrl,
+                         season = seasonNum,
+                         episode = epNum
+                     ))
+                }
+            }
+        }
+        return episodes
     }
 
     private fun parseSeriesPage(doc: Document, url: String): ParsedLoadData {

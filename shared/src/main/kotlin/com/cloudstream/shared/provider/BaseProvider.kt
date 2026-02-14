@@ -160,12 +160,36 @@ abstract class BaseProvider : MainAPI() {
                 return null
             }
             
-            val data = getParser().parseLoadPageData(doc, url)
+            var data = getParser().parseLoadPageData(doc, url)
+            
             if (data == null) {
                 Log.e(methodTag, "Failed to parse load data")
                 return null
             }
             
+            var episodes = data.episodes ?: emptyList()
+            
+            // Fallback: If no episodes found but parent series link exists, fetch series page
+            if (episodes.isEmpty() && !data.isMovie && !data.parentSeriesUrl.isNullOrBlank()) {
+                try {
+                    val seriesUrl = data.parentSeriesUrl!! // Safe due to isNullOrBlank check
+                    val seriesDoc = httpService.getDocument(seriesUrl)
+                    // We can use parseLoadPageData again on the series page 
+                    if (seriesDoc != null) {
+                        val seriesData = getParser().parseLoadPageData(seriesDoc, seriesUrl)
+                         if (seriesData?.episodes?.isNotEmpty() == true) {
+                             episodes = seriesData.episodes!!
+                             Log.d(methodTag, "Fetched ${episodes.size} episodes from parent series: $seriesUrl")
+                         }
+                    } else {
+                         Log.e(methodTag, "Failed to fetch parent series document: $seriesUrl")
+                    }
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Failed to fetch parent series: ${data.parentSeriesUrl}")
+                    e.printStackTrace()
+                }
+            }
+
             Log.d(methodTag, "Parsed load data: title='${data.title}', type=${data.type}")
             
             return if (data.type == TvType.Movie) {
@@ -177,15 +201,15 @@ abstract class BaseProvider : MainAPI() {
                     this.year = data.year
                 }
             } else {
-                val episodes = data.episodes?.map { ep ->
+                val episodeList = episodes.map { ep ->
                     newEpisode(ep.url) {
                         this.name = ep.name
                         this.season = ep.season
                         this.episode = ep.episode
                     }
-                } ?: emptyList()
+                }
                 
-                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes) {
+                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodeList) {
                     this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                     this.plot = data.plot

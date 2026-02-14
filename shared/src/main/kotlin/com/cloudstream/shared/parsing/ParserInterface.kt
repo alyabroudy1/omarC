@@ -33,7 +33,9 @@ interface ParserInterface {
         /** Pre-parsed episodes for series */
         val episodes: List<ParsedEpisode>? = null,
         /** CSRF token for AJAX requests */
-        val csrfToken: String? = null
+        val csrfToken: String? = null,
+        /** URL of the parent series if this is an episode page */
+        val parentSeriesUrl: String? = null
     ) {
         val isMovie: Boolean get() = type == TvType.Movie
     }
