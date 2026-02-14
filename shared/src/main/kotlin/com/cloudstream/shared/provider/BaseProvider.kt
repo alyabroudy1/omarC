@@ -78,7 +78,7 @@ abstract class BaseProvider : MainAPI() {
                     val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
                     Log.d(methodTag, "Fetching URL: $fullUrl")
                     
-                    val doc = httpService.getDocument(fullUrl)
+                    val doc = httpService.getDocument(fullUrl, checkDomainChange = true)
                     
                     if (doc != null) {
                         Log.d(methodTag, "Document fetched successfully. Parsing...")
@@ -126,7 +126,7 @@ abstract class BaseProvider : MainAPI() {
             val url = "$mainUrl$searchPath$query"
             Log.d(methodTag, "Fetching search URL: $url")
             
-            val doc = httpService.getDocument(url)
+            val doc = httpService.getDocument(url, checkDomainChange = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch search document")
                 return emptyList()

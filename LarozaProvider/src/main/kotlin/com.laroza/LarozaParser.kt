@@ -4,7 +4,6 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.TvType
-import com.cloudstream.shared.extractors.LinkResolvers
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -44,10 +43,10 @@ class LarozaParser : NewBaseParser() {
 
     // --- Configuration ---
     private val mainPageConfig = ItemPageSelectors(
-        container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail, ul.pm-ul-browse-videos li",
+        container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail",
         title = ConfigSelector(query = ".caption h3 a, h3 a"),
         url = ConfigSelector(query = ".caption h3 a, h3 a", attr = "href"),
-        poster = ConfigSelector(query = ".thumbnail.a img, img", attr = "src"),
+        poster = ConfigSelector(query = ".thumbnail.a img, img", attr = "data-echo"),
         tags = listOf(
             ConfigSelector(query = ".pm-label-duration") // Duration tag
         )
@@ -96,7 +95,7 @@ class LarozaParser : NewBaseParser() {
                 isMovie = isMovie(title, link, element),
                 tags = extractedTags
             )
-        }.distinctBy { it.url }
+        }
     }
 
     // --- Implementation ---
@@ -269,14 +268,11 @@ class LarozaParser : NewBaseParser() {
 
     private fun cleanPlot(rawPlot: String?): String? {
         if (rawPlot.isNullOrBlank()) return null
-        // Split by ':'
-        val parts = rawPlot.split(":")
-        if (parts.size > 1) {
-            val firstPart = parts[0]
-            if (firstPart.contains("وتحميل") || firstPart.contains("مشاهدة")) {
-                // Return everything after the first color, joined back (in case of multiple colons)
-                return parts.drop(1).joinToString(":").trim()
-            }
+        
+        // User Rule: Split by ':' and remove first part if it contains 'تحميل'
+        val parts = rawPlot.split(":", limit = 2)
+        if (parts.size > 1 && parts[0].contains("تحميل")) {
+             return parts[1].trim()
         }
         return rawPlot
     }
@@ -291,7 +287,7 @@ class LarozaParser : NewBaseParser() {
         val seasonMap = mutableMapOf<String, Int>() // MSeason1 -> 1
         
         if (seasonSelect != null) {
-            seasonSelect.select("option").forEach { opt ->
+            for (opt in seasonSelect.select("option")) {
                 val id = opt.attr("value") // MSeason1
                 val text = opt.text() // موسم 1
                 val num = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 1
@@ -304,11 +300,11 @@ class LarozaParser : NewBaseParser() {
         
         // Parse Episodes
         val epSelects = doc.select("div.TabE select.episodeoption")
-        epSelects.forEach { select ->
+        for (select in epSelects) {
             val id = select.id() // MSeason1
             val seasonNum = seasonMap[id] ?: 1
             
-            select.select("option").forEach { opt ->
+            for (opt in select.select("option")) {
                 val epUrl = opt.attr("value")
                 val epText = opt.text() // الحلقة 1
                 
@@ -327,7 +323,7 @@ class LarozaParser : NewBaseParser() {
     }
 
     private fun parseSeriesPage(doc: Document, url: String): ParsedLoadData {
-        Log.d("LarozaParser", "Parsing Series Page")
+        Log.d("LarozaParser", "Parsing Series Page $url")
         val title = doc.selectFirst("h1")?.text()?.trim() ?: doc.title()
         val plot = doc.selectFirst("div.well")?.text()?.trim() // Common description area in series
             ?: doc.select("meta[name='description']").attr("content")
@@ -343,7 +339,7 @@ class LarozaParser : NewBaseParser() {
         val seasonTabsNew = doc.select(".SeasonsBoxUL > ul > li")
         if (seasonTabsNew.isNotEmpty()) {
              Log.d("LarozaParser", "Found New Series Structure (.SeasonsBoxUL)")
-             seasonTabsNew.forEach { tab ->
+             for (tab in seasonTabsNew) {
                  val seasonNumStr = tab.attr("data-serie")
                  val seasonNum = seasonNumStr.toIntOrNull() ?: 1
                  val seasonName = tab.text().trim() // e.g., "Season 1"
@@ -358,7 +354,7 @@ class LarozaParser : NewBaseParser() {
 
                  if (contentDiv != null) {
                      val epElements = contentDiv.select("a") // Generic 'a' inside the container
-                     epElements.forEach { element ->
+                     for (element in epElements) {
                          val epUrl = element.attr("href")
                          if (epUrl.isNotBlank()) {
                              val epTitle = element.attr("title").trim().ifBlank { element.text().trim() }
@@ -376,7 +372,7 @@ class LarozaParser : NewBaseParser() {
                      }
                  }
              }
-        } 
+        }
         
         // --- Strategy 2: Old/Alternative Structure (Tab buttons + onclick) ---
         if (episodes.isEmpty()) {
@@ -385,7 +381,7 @@ class LarozaParser : NewBaseParser() {
                 Log.d("LarozaParser", "Found Old Series Structure (Tab buttons)")
                 val seasonMap = mutableMapOf<String, Int>() // ID -> SeasonNum
             
-                seasonTabs.forEach { tab ->
+                for (tab in seasonTabs) {
                     val onclick = tab.attr("onclick")
                     val idMatch = Regex("'([^']+)'").find(onclick)
                     val id = idMatch?.groupValues?.get(1)
@@ -400,12 +396,12 @@ class LarozaParser : NewBaseParser() {
                 if (seasonMap.isEmpty()) seasonMap["Season1"] = 1
     
                 val tabContents = doc.select("div.tabcontent")
-                tabContents.forEach { content ->
+                for (content in tabContents) {
                     val id = content.id()
                     val seasonNum = seasonMap[id] ?: 1
                     
                     val epElements = content.select(".pm-ul-browse-videos a")
-                    epElements.forEach { element ->
+                    for (element in epElements) {
                         val epUrl = element.attr("href")
                          if (epUrl.isNotBlank()) {
                              val epTitle = element.attr("title").trim()

@@ -62,16 +62,15 @@ class ProviderHttpService private constructor(
         get() = webViewEngine
     
     suspend fun ensureInitialized() {
-        val persisted = sessionStore.load(config.fallbackDomain)
-        if (persisted != null) {
-            sessionState = persisted
-        } else {
-            sessionState = SessionState.initial(config.fallbackDomain)
+        // Only load and initialize SessionProvider if not already valid
+        // This prevents repetitive disk reads and "Session initialized" logging
+        if (!SessionProvider.hasValidSession()) {
+            val persisted = sessionStore.load(config.fallbackDomain)
+            sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
+            SessionProvider.initialize(sessionState)
         }
         
-        // CRITICAL: Sync to SessionProvider so ALL components use same UA/cookies
-        SessionProvider.initialize(sessionState)
-        
+        // Always run these (lightweight, handles domain changes)
         domainManager.ensureInitialized()
         val remoteDomain = domainManager.currentDomain
         if (remoteDomain != sessionState.domain) {
