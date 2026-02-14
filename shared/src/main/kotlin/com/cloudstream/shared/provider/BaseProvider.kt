@@ -266,14 +266,15 @@ abstract class BaseProvider : MainAPI() {
             val watchPageUrl = getParser().getPlayerPageUrl(detailDoc)
             
             // Step 3: If watch page found, fetch it; else use detail page
+            var actualWatchUrl: String? = null
             val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
-                val fullWatchUrl = if (watchPageUrl.startsWith("http")) {
+                actualWatchUrl = if (watchPageUrl.startsWith("http")) {
                     watchPageUrl
                 } else {
                     "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
                 }
-                Log.d(methodTag, "Following watch page: $fullWatchUrl")
-                httpService.getDocument(fullWatchUrl) ?: detailDoc
+                Log.d(methodTag, "Following watch page: $actualWatchUrl")
+                httpService.getDocument(actualWatchUrl) ?: detailDoc
             } else {
                 Log.d(methodTag, "No watch page found, using detail page")
                 detailDoc
@@ -289,7 +290,18 @@ abstract class BaseProvider : MainAPI() {
             }
             
             // Step 5: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
-            val referer = "$mainUrl/"
+            // CRITICAL: Use watch page URL as referer, not mainUrl
+            val referer = actualWatchUrl?.let { 
+                try {
+                    val uri = java.net.URI(it)
+                    "${uri.scheme}://${uri.host}/"
+                } catch (e: Exception) {
+                    Log.w(methodTag, "Failed to parse watch URL for referer: $it")
+                    "$mainUrl/"
+                }
+            } ?: "$mainUrl/"
+            
+            Log.d(methodTag, "Using referer: $referer")
             
             for (url in urls) {
                 Log.d(methodTag, "Processing player URL: $url")
