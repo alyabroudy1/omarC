@@ -21,7 +21,8 @@ class LarozaParser : NewBaseParser() {
     override fun parseMainPage(doc: Document): List<ParsedItem> {
         val items = mutableListOf<ParsedItem>()
         // Select items from the grid (div.pm-li-category)
-        doc.select("div.pm-li-category").forEach { element ->
+        val elements = doc.select("div.pm-li-category")
+        for (element in elements) {
             val titleElement = element.selectFirst(".caption h3 a")
             val title = titleElement?.text()?.trim() ?: ""
             val url = titleElement?.attr("href") ?: ""
@@ -45,7 +46,8 @@ class LarozaParser : NewBaseParser() {
         val items = mutableListOf<ParsedItem>()
         
         // Try browse list first
-        doc.select("ul.pm-ul-browse-videos li").forEach { element ->
+        val elements = doc.select("ul.pm-ul-browse-videos li")
+        for (element in elements) {
             val titleElement = element.selectFirst("h3 a")
             val title = titleElement?.text()?.trim() ?: ""
             val url = titleElement?.attr("href") ?: ""
@@ -135,7 +137,8 @@ class LarozaParser : NewBaseParser() {
         val urls = mutableListOf<String>()
         
         // 1. WatchList (Most reliable for multiple Servers)
-        doc.select("ul.WatchList li[data-embed-url]").forEach { li ->
+        val listItems = doc.select("ul.WatchList li[data-embed-url]")
+        for (li in listItems) {
             val embedUrl = li.attr("data-embed-url")
             if (embedUrl.isNotBlank()) {
                 urls.add(embedUrl)

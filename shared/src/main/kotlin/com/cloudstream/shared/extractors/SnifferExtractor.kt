@@ -233,7 +233,7 @@ class SnifferExtractor : ExtractorApi() {
                              mergedCookies[trimmed.substringBefore("=")] = trimmed.substringAfter("=", "")
                         }
                     }
-                    SessionProvider.getCookies().forEach { (key, value) ->
+                    for ((key, value) in SessionProvider.getCookies()) {
                         mergedCookies[key] = value
                     }
                     
@@ -269,12 +269,12 @@ class SnifferExtractor : ExtractorApi() {
                     if (!qualityLinks.isNullOrEmpty()) {
                          android.util.Log.i("SnifferExtractor", "[getUrl] Extracted ${qualityLinks.size} qualities from M3U8")
                          ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
-                         qualityLinks.forEach { qLink ->
-                              android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
-                              callback(qLink)
-                              callbackCount++
-                              android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
-                         }
+                          for (qLink in qualityLinks) {
+                               android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
+                               callback(qLink)
+                               callbackCount++
+                               android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
+                          }
                     } else {
                         // Fallback: Return original link
                         android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")

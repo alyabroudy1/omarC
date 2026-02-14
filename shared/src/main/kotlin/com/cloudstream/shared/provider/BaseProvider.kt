@@ -220,7 +220,7 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Extracted ${urls.size} player URLs")
             
             var found = false
-            urls.forEach { url ->
+            for (url in urls) {
                 Log.d(methodTag, "Processing player URL: $url")
                 // Basic implementation: attempt direct extractor load
                 // Ideally this would verify if it's a known server, etc.

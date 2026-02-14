@@ -275,7 +275,9 @@ class ProviderHttpService private constructor(
         return try {
             val targetUrl = rewriteUrlIfNeeded(url)
             val headers = sessionState.buildHeaders().toMutableMap()
-            customHeaders.forEach { (k, v) -> headers[k] = v }
+            for ((k, v) in customHeaders) {
+                headers[k] = v
+            }
             
             ProviderLogger.d(TAG_PROVIDER_HTTP, "executeDirectRequest", "Executing HTTP request",
                 "url" to targetUrl.take(80),
@@ -289,7 +291,9 @@ class ProviderHttpService private constructor(
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
-            headers.forEach { (k, v) -> headerBuilder.add(k, v) }
+            for ((k, v) in headers) {
+                headerBuilder.add(k, v)
+            }
 
             val okRequest = okhttp3.Request.Builder()
                 .url(targetUrl)
@@ -309,7 +313,9 @@ class ProviderHttpService private constructor(
             val targetUrl = rewriteUrlIfNeeded(url)
             val headers = sessionState.buildHeaders().toMutableMap()
             if (referer != null) headers["Referer"] = referer
-            customHeaders.forEach { (k, v) -> headers[k] = v }
+            for ((k, v) in customHeaders) {
+                headers[k] = v
+            }
             
             ProviderLogger.d(TAG_PROVIDER_HTTP, "executePostRequest", "Executing POST request",
                 "url" to targetUrl.take(80),
@@ -318,7 +324,9 @@ class ProviderHttpService private constructor(
             )
 
             val formBody = okhttp3.FormBody.Builder().apply {
-                data.forEach { (k, v) -> add(k, v) }
+                for ((k, v) in data) {
+                    add(k, v)
+                }
             }.build()
 
             val directClient = app.baseClient.newBuilder()
@@ -326,7 +334,9 @@ class ProviderHttpService private constructor(
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
-            headers.forEach { (k, v) -> headerBuilder.add(k, v) }
+            for ((k, v) in headers) {
+                headerBuilder.add(k, v)
+            }
 
             val okRequest = okhttp3.Request.Builder()
                 .url(targetUrl)
@@ -352,7 +362,8 @@ class ProviderHttpService private constructor(
                               
         if (isProviderDomain) {
             val newCookies = mutableMapOf<String, String>()
-            response.headers("Set-Cookie").forEach { setCookie ->
+            val cookieHeaders = response.headers("Set-Cookie")
+            for (setCookie in cookieHeaders) {
                 val parts = setCookie.split(";").firstOrNull()?.split("=", limit = 2)
                 if (parts != null && parts.size == 2) {
                     newCookies[parts[0].trim()] = parts[1].trim()

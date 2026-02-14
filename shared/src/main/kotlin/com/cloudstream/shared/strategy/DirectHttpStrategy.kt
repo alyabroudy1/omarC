@@ -27,7 +27,9 @@ class DirectHttpStrategy : RequestStrategy {
             
             val headersMap = request.buildHeaders()
             val headerBuilder = okhttp3.Headers.Builder()
-            headersMap.forEach { (k, v) -> headerBuilder.add(k, v) }
+            for ((k, v) in headersMap) {
+                headerBuilder.add(k, v)
+            }
             
             val okRequest = okhttp3.Request.Builder()
                 .url(request.url)
@@ -73,7 +75,8 @@ class DirectHttpStrategy : RequestStrategy {
     private fun extractCookiesFromResponse(response: okhttp3.Response): Map<String, String> {
         val cookies = mutableMapOf<String, String>()
         try {
-            response.headers("Set-Cookie").forEach { setCookie ->
+            val cookieHeaders = response.headers("Set-Cookie")
+            for (setCookie in cookieHeaders) {
                 val parts = setCookie.split(";").firstOrNull()?.split("=", limit = 2)
                 if (parts != null && parts.size == 2) {
                     val name = parts[0].trim()

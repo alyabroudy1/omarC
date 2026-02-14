@@ -324,8 +324,13 @@ class WebViewEngine(
                     error: WebResourceError?
                 ) {
                     if (request?.isForMainFrame == true) {
+                        val description = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            error?.description?.toString()
+                        } else {
+                            error?.toString()
+                        }
                         ProviderLogger.w(TAG_WEBVIEW, "onReceivedError", "WebView error",
-                            "description" to error?.description?.toString(), "url" to request.url.toString().take(80))
+                            "description" to description, "url" to request.url.toString().take(80))
                     }
                 }
             }

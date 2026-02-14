@@ -36,7 +36,9 @@ class SessionStore(
     fun save(state: SessionState) {
         try {
             val cookiesJson = JSONObject().apply {
-                state.cookies.forEach { (key, value) -> put(key, value) }
+                for ((key, value) in state.cookies) {
+                    put(key, value)
+                }
             }.toString()
             
             prefs.edit()

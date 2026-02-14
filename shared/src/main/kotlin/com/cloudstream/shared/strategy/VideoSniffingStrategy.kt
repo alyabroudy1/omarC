@@ -511,7 +511,9 @@ class VideoSniffingStrategy(
             if (cookies.isNotEmpty()) {
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
-                cookies.forEach { (key, value) -> cookieManager.setCookie(url, "$key=$value") }
+                for ((key, value) in cookies) {
+                    cookieManager.setCookie(url, "$key=$value")
+                }
                 cookieManager.flush()
             }
             
