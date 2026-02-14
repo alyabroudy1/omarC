@@ -136,7 +136,10 @@ class ProviderHttpService private constructor(
         val detailDoc = getDocument(url) ?: return emptyList()
         
         // Step 2: Check if there's a play page link (Laroza-specific)
-        val playLink = detailDoc.selectFirst("a.xtgo[href*='play.php']")?.attr("href")
+        // Look for any link to play.php with vid parameter - class name changes randomly
+        val playLink = detailDoc.selectFirst("a[href*='play.php?vid=']")?.attr("href")
+            ?: detailDoc.selectFirst("#BiBplayer a[href*='play.php']")?.attr("href")
+            ?: detailDoc.selectFirst("#video-wrapper a[href*='play.php']")?.attr("href")
         
         // Step 3: If play link exists, fetch the play page and extract from there
         val targetDoc = if (!playLink.isNullOrBlank()) {
