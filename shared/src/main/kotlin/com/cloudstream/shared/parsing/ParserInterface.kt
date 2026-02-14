@@ -13,7 +13,8 @@ interface ParserInterface {
         val title: String,
         val url: String,
         val posterUrl: String?,
-        val isMovie: Boolean
+        val isMovie: Boolean,
+        val tags: List<String> = emptyList()
     )
 
     /**

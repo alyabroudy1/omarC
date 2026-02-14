@@ -91,6 +91,7 @@ abstract class BaseProvider : MainAPI() {
                                 newMovieSearchResponse(item.title, item.url, type) {
                                     this.posterUrl = item.posterUrl
                                     this.posterHeaders = httpService.getImageHeaders()
+                                    
                                 }
                             }
                             Log.d(methodTag, "Mapped ${searchResponses.size} items to SearchResponse")

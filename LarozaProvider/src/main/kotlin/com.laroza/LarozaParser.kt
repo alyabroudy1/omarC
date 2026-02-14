@@ -15,63 +15,126 @@ import com.cloudstream.shared.parsing.ParserInterface.ParsedItem
 import com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 
+// --- Selector Data Structures ---
+data class ConfigSelector(
+    val query: String,
+    val attr: String? = null,
+    val regex: String? = null
+)
+
+data class ItemPageSelectors(
+    val container: String,
+    val title: ConfigSelector,
+    val url: ConfigSelector,
+    val poster: ConfigSelector,
+    val tags: List<ConfigSelector> = emptyList()
+)
+
 class LarozaParser : NewBaseParser() {
     
-    // Main Page Selectors
-    override fun parseMainPage(doc: Document): List<ParsedItem> {
-        val items = mutableListOf<ParsedItem>()
-        // Select items from the grid (div.pm-li-category)
-        val elements = doc.select("div.pm-li-category")
-        for (element in elements) {
-            val titleElement = element.selectFirst(".caption h3 a")
-            val title = titleElement?.text()?.trim() ?: ""
-            val url = titleElement?.attr("href") ?: ""
-            val posterUrl = element.selectFirst(".pm-video-thumb img")?.attr("src") 
-                ?: element.selectFirst(".pm-video-thumb img")?.attr("data-echo")
+    // removed PARSER_TAG to avoid shadowing
 
-            if (title.isNotBlank() && url.isNotBlank()) {
-                items.add(ParsedItem(
-                    title = title,
-                    url = url,
-                    posterUrl = posterUrl,
-                    isMovie = isMovie(title, url, element)
-                ))
-            }
+    // Selectors from analysis (Bootstrap grid + thumbnail)
+    private val itemSelectors = listOf(
+        "div.col-md-3 div.thumbnail",
+        "div.col-sm-4 div.thumbnail",
+        "div.thumbnail",
+        "div.pm-li-category" // Legacy fallback
+    )
+
+    // --- Configuration ---
+    private val mainPageConfig = ItemPageSelectors(
+        container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail, ul.pm-ul-browse-videos li",
+        title = ConfigSelector(query = ".caption h3 a, h3 a"),
+        url = ConfigSelector(query = ".caption h3 a, h3 a", attr = "href"),
+        poster = ConfigSelector(query = ".pm-video-thumb img, img", attr = "src"),
+        tags = listOf(
+            ConfigSelector(query = ".pm-label-duration") // Duration tag
+        )
+    )
+
+    // --- Generic Parsing ---
+    private fun extractValue(element: Element, selector: ConfigSelector): String? {
+        val target = if (selector.query.isBlank()) element else (element.selectFirst(selector.query) ?: return null)
+        
+        var value = if (selector.attr != null) {
+            target.attr(selector.attr).takeIf { it.isNotBlank() } ?: target.attr("data-echo") // Fallback for lazyload
+        } else {
+            target.text().trim()
         }
-        return items
+        
+        // Apply regex if present
+        if (!value.isNullOrBlank() && selector.regex != null) {
+            // value = Regex(selector.regex).find(value)?.value // Simple implementation
+        }
+        
+        return value
     }
 
-    override fun parseSearch(doc: Document): List<ParsedItem> {
-        // Search results usually use same structure or li inside ul.pm-ul-browse-videos
-        val items = mutableListOf<ParsedItem>()
+    private fun parseGenericItems(doc: Document, config: ItemPageSelectors): List<ParsedItem> {
+        Log.d("LarozaParser", "Parsing Generic Items with selector: ${config.container}")
+        val elements = doc.select(config.container)
+        Log.d("LarozaParser", "Found ${elements.size} items")
         
-        // Try browse list first
-        val elements = doc.select("ul.pm-ul-browse-videos li")
-        for (element in elements) {
-            val titleElement = element.selectFirst("h3 a")
-            val title = titleElement?.text()?.trim() ?: ""
-            val url = titleElement?.attr("href") ?: ""
-            val posterUrl = element.selectFirst(".pm-video-thumb img")?.attr("src")
-                 ?: element.selectFirst(".pm-video-thumb img")?.attr("data-echo")
+        return elements.mapNotNull { element ->
+            val title = extractValue(element, config.title)
+            val url = extractValue(element, config.url)
+            val poster = extractValue(element, config.poster)
+            
+            if (title.isNullOrBlank() || url.isNullOrBlank()) return@mapNotNull null
+            
+            val extractedTags = config.tags.mapNotNull { extractValue(element, it) }
 
-            if (title.isNotBlank() && url.isNotBlank()) {
-                items.add(ParsedItem(
-                    title = title,
-                    url = url,
-                    posterUrl = posterUrl,
-                    isMovie = isMovie(title, url, element)
-                ))
-            }
+            ParsedItem(
+                title = title,
+                url = url,
+                posterUrl = poster,
+                isMovie = isMovie(title, url, element),
+                tags = extractedTags
+            )
+        }
+    }
+
+    // --- Implementation ---
+
+    // Main Page Selectors
+    override fun parseMainPage(doc: Document): List<ParsedItem> {
+        val title = doc.title()
+        Log.d("LarozaParser", "parseMainPage START. Title: '$title'")
+        
+        val items = parseGenericItems(doc, mainPageConfig)
+        if (items.isEmpty()) {
+             Log.d("LarozaParser", "No items found in main page. Dumping 500 chars:")
+             Log.d("LarozaParser", doc.html().take(500))
+             
+             // Try fallback to search parser logic if valid list found
+             if (doc.select("ul.pm-ul-browse-videos li").isNotEmpty()) {
+                 return parseSearch(doc)
+             }
         }
         
+        Log.d("LarozaParser", "parseMainPage END. Returning ${items.size} items")
+        return items
+    }
+        
+
+
+    override fun parseSearch(doc: Document): List<ParsedItem> {
+        Log.d("LarozaParser", "parseSearch START")
+        // Use same config for search as structure appears identical or fallback is built-in
+        val items = parseGenericItems(doc, mainPageConfig)
+        
         if (items.isEmpty()) {
+            Log.d("LarozaParser", "Search empty. Trying main page parser fallback.")
             return parseMainPage(doc) // Fallback to main page parser if structure matches
         }
         
+        Log.d("LarozaParser", "parseSearch END. Returning ${items.size} items")
         return items
     }
 
     override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
+        Log.d("LarozaParser", "parseLoadPage START. URL: $url")
         val title = doc.selectFirst("h1")?.text()?.trim() ?: doc.title()
         
         // Plot
@@ -87,6 +150,8 @@ class LarozaParser : NewBaseParser() {
         val episodeElements = doc.select("ul.pm-ul-browse-videos li")
         val hasEpisodes = episodeElements.isNotEmpty()
         
+        Log.d("LarozaParser", "Type detection: hasEpisodes=$hasEpisodes")
+
         // 2. Keyword check
         val isSeriesKeyword = title.contains("مسلسل") || title.contains("حلقة") || url.contains("series")
         
@@ -117,6 +182,8 @@ class LarozaParser : NewBaseParser() {
             }
         } else emptyList()
 
+        Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
+
         return ParsedLoadData(
             title = title,
             plot = plot,
@@ -134,10 +201,12 @@ class LarozaParser : NewBaseParser() {
     }
 
     override fun extractPlayerUrls(doc: Document): List<String> {
+        Log.d("LarozaParser", "extractPlayerUrls START")
         val urls = mutableListOf<String>()
         
         // 1. WatchList (Most reliable for multiple Servers)
         val listItems = doc.select("ul.WatchList li[data-embed-url]")
+        Log.d("LarozaParser", "Found ${listItems.size} WatchList items")
         for (li in listItems) {
             val embedUrl = li.attr("data-embed-url")
             if (embedUrl.isNotBlank()) {
@@ -148,11 +217,13 @@ class LarozaParser : NewBaseParser() {
         // 2. Direct Iframe (Fallback)
         if (urls.isEmpty()) {
             val iframeSrc = doc.select(".brooks_player iframe").attr("src")
+            Log.d("LarozaParser", "Fallback iframe src: '$iframeSrc'")
             if (iframeSrc.isNotBlank()) {
                 urls.add(iframeSrc)
             }
         }
         
+        Log.d("LarozaParser", "extractPlayerUrls END. Found ${urls.size} urls")
         return urls.distinct()
     }
     
