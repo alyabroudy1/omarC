@@ -96,7 +96,7 @@ class LarozaParser : NewBaseParser() {
                 isMovie = isMovie(title, link, element),
                 tags = extractedTags
             )
-        }
+        }.distinctBy { it.url }
     }
 
     // --- Implementation ---
