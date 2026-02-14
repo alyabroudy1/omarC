@@ -83,6 +83,9 @@ class LarozaParser : NewBaseParser() {
             
             if (title.isNullOrBlank() || url.isNullOrBlank()) return@mapNotNull null
             
+            // Log the HTML of the image element as requested
+            Log.d("LarozaParser", "Search Image Element: ${element.select("div.pm-video-thumb").outerHtml()}")
+            
             val extractedTags = config.tags.mapNotNull { extractValue(element, it) }
 
             ParsedItem(
@@ -214,6 +217,11 @@ class LarozaParser : NewBaseParser() {
         } else emptyList()
 
         Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
+
+        if (episodes.isEmpty() && !isMovie) {
+             Log.d("LarozaParser", "NO EPISODES FOUND. DUMPING HTML:")
+             Log.d("LarozaParser", doc.html())
+        }
 
         return ParsedLoadData(
             title = title,
