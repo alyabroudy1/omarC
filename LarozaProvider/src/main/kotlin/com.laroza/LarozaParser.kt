@@ -146,8 +146,8 @@ class LarozaParser : NewBaseParser() {
         val posterUrl = doc.select("meta[property='og:image']").attr("content")
         
         // Type Detection
-        // 1. Check for Episodes list
-        val episodeElements = doc.select("ul.pm-ul-browse-videos li")
+        // 1. Check for Episodes list (Generic selector for div or ul)
+        val episodeElements = doc.select(".pm-ul-browse-videos a")
         val hasEpisodes = episodeElements.isNotEmpty()
         
         Log.d("LarozaParser", "Type detection: hasEpisodes=$hasEpisodes")
@@ -163,12 +163,14 @@ class LarozaParser : NewBaseParser() {
         
         val episodes = if (!isMovie) {
              episodeElements.mapNotNull { element ->
-                val epTitleElement = element.selectFirst("h3 a")
-                val epTitle = epTitleElement?.text()?.trim() ?: ""
-                val epUrl = epTitleElement?.attr("href") ?: ""
+                val epTitle = element.attr("title").trim()
+                val epUrl = element.attr("href")
                 
                 if (epUrl.isNotBlank()) {
-                    val epNum = Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                    // Extract number from title or inner text (e.g. <em>12</em>)
+                    val emText = element.select("em").text().trim()
+                    val epNum = emText.toIntOrNull() 
+                        ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
                         ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
                         ?: 0
                         
