@@ -47,7 +47,7 @@ class LarozaParser : NewBaseParser() {
         container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail, ul.pm-ul-browse-videos li",
         title = ConfigSelector(query = ".caption h3 a, h3 a"),
         url = ConfigSelector(query = ".caption h3 a, h3 a", attr = "href"),
-        poster = ConfigSelector(query = ".pm-video-thumb img, img", attr = "src"),
+        poster = ConfigSelector(query = ".thumbnail.a img, img", attr = "src"),
         tags = listOf(
             ConfigSelector(query = ".pm-label-duration") // Duration tag
         )
@@ -77,22 +77,23 @@ class LarozaParser : NewBaseParser() {
         Log.d("LarozaParser", "Found ${elements.size} items")
         
         return elements.mapNotNull { element ->
-            val title = extractValue(element, config.title)
-            val url = extractValue(element, config.url)
-            val poster = extractValue(element, config.poster)
+            val link = element.select("a").attr("href")
+            val title = element.select("a").attr("title").ifBlank { element.select("h3").text() }
             
-            if (title.isNullOrBlank() || url.isNullOrBlank()) return@mapNotNull null
+            if (title.isNullOrBlank() || link.isNullOrBlank()) return@mapNotNull null
             
             // Log the HTML of the image element as requested
-            Log.d("LarozaParser", "Search Image Element: ${element.select("div.pm-video-thumb").outerHtml()}")
+            Log.d("LarozaParser", "Search Element Image Area: ${element.select("div.pm-video-thumb").html()}")
+            
+            val posterUrl = extractImage(element)
             
             val extractedTags = config.tags.mapNotNull { extractValue(element, it) }
 
             ParsedItem(
                 title = title,
-                url = url,
-                posterUrl = poster,
-                isMovie = isMovie(title, url, element),
+                url = link,
+                posterUrl = posterUrl,
+                isMovie = isMovie(title, link, element),
                 tags = extractedTags
             )
         }
@@ -218,7 +219,8 @@ class LarozaParser : NewBaseParser() {
 
         Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
 
-        if (episodes.isEmpty() && !isMovie) {
+        // Force dump if no episodes found, regardless of type, to debug "19df723d6"
+        if (episodes.isEmpty()) {
              Log.d("LarozaParser", "NO EPISODES FOUND. DUMPING HTML:")
              Log.d("LarozaParser", doc.html())
         }
@@ -234,6 +236,18 @@ class LarozaParser : NewBaseParser() {
             tags = tags,
             parentSeriesUrl = seriesUrl
         )
+    }
+
+    private fun extractImage(element: Element): String? {
+        val img = element.selectFirst("img") ?: return null
+        Log.d("LarozaParser", "Image attributes: ${img.attributes()}")
+        return img.attr("data-src").ifBlank { 
+            img.attr("data-original").ifBlank { 
+                img.attr("data-image").ifBlank {
+                    img.attr("src") 
+                }
+            }
+        }
     }
 
     private fun cleanPlot(rawPlot: String?): String? {
