@@ -443,17 +443,21 @@ class LarozaParser : NewBaseParser() {
         Log.d("LarozaParser", "extractPlayerUrls START")
         val urls = mutableListOf<String>()
         
-        // 1. WatchList (Most reliable for multiple Servers)
+        // 1. WatchList on play page - extract server URLs with their titles
         val listItems = doc.select("ul.WatchList li[data-embed-url]")
         Log.d("LarozaParser", "Found ${listItems.size} WatchList items")
         for (li in listItems) {
             val embedUrl = li.attr("data-embed-url")
+            val serverTitle = li.selectFirst("strong")?.text()?.trim() ?: "سيرفر"
+            val serverId = li.attr("data-embed-id")
+            
             if (embedUrl.isNotBlank()) {
+                Log.d("LarozaParser", "Server $serverId: $serverTitle -> $embedUrl")
                 urls.add(embedUrl)
             }
         }
         
-        // 2. Direct Iframe (Fallback)
+        // 2. Direct Iframe (Fallback for detail page without play link)
         if (urls.isEmpty()) {
             val iframeSrc = doc.select(".brooks_player iframe").attr("src")
             Log.d("LarozaParser", "Fallback iframe src: '$iframeSrc'")
