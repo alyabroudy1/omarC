@@ -241,10 +241,12 @@ class LarozaParser : NewBaseParser() {
     private fun extractImage(element: Element): String? {
         val img = element.selectFirst("img") ?: return null
         Log.d("LarozaParser", "Image attributes: ${img.attributes()}")
-        return img.attr("data-src").ifBlank { 
-            img.attr("data-original").ifBlank { 
-                img.attr("data-image").ifBlank {
-                    img.attr("src") 
+        return img.attr("data-echo").ifBlank {
+            img.attr("data-src").ifBlank {
+                img.attr("data-original").ifBlank {
+                    img.attr("data-image").ifBlank {
+                        img.attr("src")
+                    }
                 }
             }
         }
