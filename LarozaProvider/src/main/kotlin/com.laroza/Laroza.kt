@@ -25,6 +25,7 @@ class Laroza : BaseProvider() {
     override val baseDomain get() = "laroza.lol"
     override val providerName get() = "Laroza"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
+    override val searchPath = "/?s="
 
     override val mainPage = mainPageOf(
         "/category.php?cat=ramadan-2026" to "رمضان 2026",

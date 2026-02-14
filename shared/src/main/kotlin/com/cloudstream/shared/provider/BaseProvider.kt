@@ -56,6 +56,8 @@ abstract class BaseProvider : MainAPI() {
         service
     }
 
+    abstract val searchPath: String
+
     open fun getSyncWorkerUrl(): String = "https://omarstreamcloud.alyabroudy1.workers.dev"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -66,10 +68,6 @@ abstract class BaseProvider : MainAPI() {
             httpService.ensureInitialized()
             
             val items = mutableListOf<HomePageList>()
-            
-            // If request.data holds a specific category URL (from LoadMore or specific section), use it.
-            // But typical CloudStream structure iterates mainPage entries for the first load (page <= 1).
-            // Here we mimic standard logic: if page 1, load all defined categories.
             
             if (page <= 1) {
                 Log.d(methodTag, "Loading all categories from mainPage definition (${mainPage.size} entries)")
@@ -105,18 +103,136 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
             } else {
-                // Handle pagination if needed, or specific category loading if request.data is used
-                // For now, focusing on the main landing page implementation
                 Log.d(methodTag, "Page > 1 not fully implemented in BaseProvider generic logic yet.")
             }
 
             Log.i(methodTag, "END. Returning ${items.size} sections.")
-            return HomePageResponse(items)
+            return newHomePageResponse(items)
 
         } catch (e: Exception) {
             Log.e(methodTag, "Error in getMainPage: ${e.message}")
             e.printStackTrace()
             return null
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val methodTag = "[$name] [search]"
+        Log.i(methodTag, "START query='$query'")
+        
+        try {
+            httpService.ensureInitialized()
+            val url = "$mainUrl$searchPath$query"
+            Log.d(methodTag, "Fetching search URL: $url")
+            
+            val doc = httpService.getDocument(url)
+            if (doc == null) {
+                Log.e(methodTag, "Failed to fetch search document")
+                return emptyList()
+            }
+            
+            val items = getParser().parseSearch(doc)
+            Log.d(methodTag, "Parsed ${items.size} search items")
+            
+            return items.map { item ->
+                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in search: ${e.message}")
+            e.printStackTrace()
+            return emptyList()
+        }
+    }
+
+    override suspend fun load(url: String): LoadResponse? {
+        val methodTag = "[$name] [load]"
+        Log.i(methodTag, "START url='$url'")
+        
+        try {
+            httpService.ensureInitialized()
+            val doc = httpService.getDocument(url)
+            if (doc == null) {
+                Log.e(methodTag, "Failed to fetch load document")
+                return null
+            }
+            
+            val data = getParser().parseLoadPageData(doc, url)
+            if (data == null) {
+                Log.e(methodTag, "Failed to parse load data")
+                return null
+            }
+            
+            Log.d(methodTag, "Parsed load data: title='${data.title}', type=${data.type}")
+            
+            return if (data.type == TvType.Movie) {
+                newMovieLoadResponse(data.title, url, TvType.Movie, data.url) {
+                    this.posterUrl = data.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
+                }
+            } else {
+                val episodes = data.episodes?.map { ep ->
+                    newEpisode(ep.url) {
+                        this.name = ep.name
+                        this.season = ep.season
+                        this.episode = ep.episode
+                    }
+                } ?: emptyList()
+                
+                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = data.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in load: ${e.message}")
+            e.printStackTrace()
+            return null
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[$name] [loadLinks]"
+        Log.i(methodTag, "START data='$data'")
+        
+        try {
+            httpService.ensureInitialized()
+            val doc = httpService.getDocument(data)
+            if (doc == null) {
+                Log.e(methodTag, "Failed to fetch loadLinks document")
+                return false
+            }
+            
+            val urls = getParser().extractPlayerUrls(doc)
+            Log.d(methodTag, "Extracted ${urls.size} player URLs")
+            
+            var found = false
+            urls.forEach { url ->
+                Log.d(methodTag, "Processing player URL: $url")
+                // Basic implementation: attempt direct extractor load
+                // Ideally this would verify if it's a known server, etc.
+                loadExtractor(url, subtitleCallback, callback)
+                found = true
+            }
+            
+            return found
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in loadLinks: ${e.message}")
+            e.printStackTrace()
+            return false
         }
     }
 }
