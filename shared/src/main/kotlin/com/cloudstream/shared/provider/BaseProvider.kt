@@ -283,20 +283,68 @@ abstract class BaseProvider : MainAPI() {
             val urls = getParser().extractPlayerUrls(targetDoc)
             Log.d(methodTag, "Extracted ${urls.size} player URLs")
             
-            var found = false
-            for (url in urls) {
-                Log.d(methodTag, "Processing player URL: $url")
-                // Basic implementation: attempt direct extractor load
-                // Ideally this would verify if it's a known server, etc.
-                loadExtractor(url, subtitleCallback, callback)
-                found = true
+            if (urls.isEmpty()) {
+                Log.w(methodTag, "No player URLs found")
+                return false
             }
             
-            return found
+            // Step 5: Process URLs with proper async waiting (like ArabseedProvider)
+            var anyFound = false
+            val referer = "$mainUrl/"
+            
+            for (url in urls) {
+                Log.d(methodTag, "Processing player URL: $url")
+                
+                // Try to extract video with timeout (8 seconds)
+                val result = awaitExtractorResult(url, referer, subtitleCallback, callback, timeoutMs = 8000L)
+                
+                if (result) {
+                    Log.i(methodTag, "SUCCESS: Extracted video from $url")
+                    anyFound = true
+                    break // Stop at first successful extraction
+                } else {
+                    Log.w(methodTag, "FAILED: Could not extract from $url")
+                }
+            }
+            
+            Log.i(methodTag, "END - Found videos: $anyFound")
+            return anyFound
         } catch (e: Exception) {
             Log.e(methodTag, "Error in loadLinks: ${e.message}")
             e.printStackTrace()
             return false
+        }
+    }
+    
+    /**
+     * Awaits extractor result and returns true if a link was found.
+     * Uses CompletableDeferred to properly wait for async extraction.
+     */
+    private suspend fun awaitExtractorResult(
+        targetUrl: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        timeoutMs: Long
+    ): Boolean {
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+                val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                var found = false
+                
+                loadExtractor(targetUrl, referer, subtitleCallback) { link ->
+                    if (!found) {
+                        found = true
+                        callback(link)
+                        deferred.complete(true)
+                    }
+                }
+                
+                deferred.await()
+            } ?: false
+        } catch (e: Exception) {
+            Log.w("[$name] [awaitExtractorResult]", "Exception: ${e.message}")
+            false
         }
     }
 }
