@@ -58,4 +58,65 @@ abstract class BaseProvider : MainAPI() {
 
     open fun getSyncWorkerUrl(): String = "https://omarstreamcloud.alyabroudy1.workers.dev"
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        val methodTag = "[$name] [getMainPage]"
+        Log.i(methodTag, "START page=$page, data=${request.data}, name=${request.name}")
+
+        try {
+            httpService.ensureInitialized()
+            
+            val items = mutableListOf<HomePageList>()
+            
+            // If request.data holds a specific category URL (from LoadMore or specific section), use it.
+            // But typical CloudStream structure iterates mainPage entries for the first load (page <= 1).
+            // Here we mimic standard logic: if page 1, load all defined categories.
+            
+            if (page <= 1) {
+                Log.d(methodTag, "Loading all categories from mainPage definition (${mainPage.size} entries)")
+                
+                mainPage.forEachIndexed { index, (urlPath, sectionName) ->
+                    Log.d(methodTag, "Processing category $index: '$sectionName' -> '$urlPath'")
+                    
+                    val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
+                    Log.d(methodTag, "Fetching URL: $fullUrl")
+                    
+                    val doc = httpService.getDocument(fullUrl)
+                    
+                    if (doc != null) {
+                        Log.d(methodTag, "Document fetched successfully. Parsing...")
+                        val parsedItems = getParser().parseMainPage(doc)
+                        Log.d(methodTag, "Parsed ${parsedItems.size} items for '$sectionName'")
+                        
+                        if (parsedItems.isNotEmpty()) {
+                             val searchResponses = parsedItems.map { item ->
+                                val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
+                                newMovieSearchResponse(item.title, item.url, type) {
+                                    this.posterUrl = item.posterUrl
+                                    this.posterHeaders = httpService.getImageHeaders()
+                                }
+                            }
+                            Log.d(methodTag, "Mapped ${searchResponses.size} items to SearchResponse")
+                            items.add(HomePageList(sectionName, searchResponses))
+                        } else {
+                            Log.w(methodTag, "No items found for category '$sectionName'")
+                        }
+                    } else {
+                        Log.e(methodTag, "Failed to fetch document for '$fullUrl'")
+                    }
+                }
+            } else {
+                // Handle pagination if needed, or specific category loading if request.data is used
+                // For now, focusing on the main landing page implementation
+                Log.d(methodTag, "Page > 1 not fully implemented in BaseProvider generic logic yet.")
+            }
+
+            Log.i(methodTag, "END. Returning ${items.size} sections.")
+            return HomePageResponse(items)
+
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in getMainPage: ${e.message}")
+            e.printStackTrace()
+            return null
+        }
+    }
 }
