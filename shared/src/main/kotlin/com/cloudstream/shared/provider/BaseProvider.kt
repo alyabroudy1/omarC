@@ -72,7 +72,7 @@ abstract class BaseProvider : MainAPI() {
             if (page <= 1) {
                 Log.d(methodTag, "Loading all categories from mainPage definition (${mainPage.size} entries)")
                 
-                mainPage.forEachIndexed { index, (urlPath, sectionName) ->
+                mainPage.forEachIndexed { index, (sectionName, urlPath) ->
                     Log.d(methodTag, "Processing category $index: '$sectionName' -> '$urlPath'")
                     
                     val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
