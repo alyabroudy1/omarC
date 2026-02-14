@@ -335,56 +335,97 @@ class LarozaParser : NewBaseParser() {
         
         val episodes = mutableListOf<ParsedEpisode>()
         
-        // 1. Find Season Tabs to map IDs to Season Numbers
-        val seasonTabs = doc.select("div.Tab button.tablinks")
-        val seasonMap = mutableMapOf<String, Int>() // ID -> SeasonNum
+        // --- Strategy 1: SeasonsBoxUL (New Structure from User Script) ---
+        // Script: $('.SeasonsBoxUL > ul > li').click... data-serie="..."
+        // Tabs: .SeasonsBoxUL > ul > li[data-serie]
+        // Content: .SeasonsEpisodes[data-serie] OR .SeasonsEpisodesMain > div[data-serie]
         
-        seasonTabs.forEach { tab ->
-            val onclick = tab.attr("onclick")
-            // openCity(event, 'Season1')
-            val idMatch = Regex("'([^']+)'").find(onclick)
-            val id = idMatch?.groupValues?.get(1)
-            val seasonName = tab.text().trim()
-            val seasonNum = Regex("(\\d+)").find(seasonName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            
-            if (id != null) {
-                seasonMap[id] = seasonNum
-            }
-        }
-        
-        if (seasonMap.isEmpty()) {
-             // Fallback: try to find single season or direct map
-             seasonMap["Season1"] = 1
-        }
-
-        // 2. Parse Episodes from Tab Content
-        val tabContents = doc.select("div.tabcontent")
-        tabContents.forEach { content ->
-            val id = content.id()
-            val seasonNum = seasonMap[id] ?: 1 // Default to 1 if not mapped
-            
-            val epElements = content.select(".pm-ul-browse-videos a")
-            epElements.forEach { element ->
-                val epTitle = element.attr("title").trim()
-                val epUrl = element.attr("href")
-                 if (epUrl.isNotBlank()) {
-                     val emText = element.select("em").text().trim()
-                    val epNum = emText.toIntOrNull() 
-                        ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
-                        ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
-                        ?: 0
-                        
-                    episodes.add(ParsedEpisode(
-                        name = epTitle,
-                        url = epUrl,
-                        season = seasonNum,
-                        episode = epNum
-                    ))
+        val seasonTabsNew = doc.select(".SeasonsBoxUL > ul > li")
+        if (seasonTabsNew.isNotEmpty()) {
+             Log.d("LarozaParser", "Found New Series Structure (.SeasonsBoxUL)")
+             seasonTabsNew.forEach { tab ->
+                 val seasonNumStr = tab.attr("data-serie")
+                 val seasonNum = seasonNumStr.toIntOrNull() ?: 1
+                 val seasonName = tab.text().trim() // e.g., "Season 1"
+                 
+                 // Find content container. The script implies two possible locations or classes:
+                 // 1. '.SeasonsEpisodes[data-serie="X"]'
+                 // 2. '.SeasonsEpisodesMain > div[data-serie="X"]'
+                 var contentDiv = doc.selectFirst(".SeasonsEpisodes[data-serie='$seasonNumStr']")
+                 if (contentDiv == null) {
+                     contentDiv = doc.selectFirst(".SeasonsEpisodesMain > div[data-serie='$seasonNumStr']")
                  }
+
+                 if (contentDiv != null) {
+                     val epElements = contentDiv.select("a") // Generic 'a' inside the container
+                     epElements.forEach { element ->
+                         val epUrl = element.attr("href")
+                         if (epUrl.isNotBlank()) {
+                             val epTitle = element.attr("title").trim().ifBlank { element.text().trim() }
+                             val epNum = Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
+                                 ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
+                                 ?: 0
+                             
+                             episodes.add(ParsedEpisode(
+                                 name = epTitle,
+                                 url = epUrl,
+                                 season = seasonNum,
+                                 episode = epNum
+                             ))
+                         }
+                     }
+                 }
+             }
+        } 
+        
+        // --- Strategy 2: Old/Alternative Structure (Tab buttons + onclick) ---
+        if (episodes.isEmpty()) {
+            val seasonTabs = doc.select("div.Tab button.tablinks")
+            if (seasonTabs.isNotEmpty()) {
+                Log.d("LarozaParser", "Found Old Series Structure (Tab buttons)")
+                val seasonMap = mutableMapOf<String, Int>() // ID -> SeasonNum
+            
+                seasonTabs.forEach { tab ->
+                    val onclick = tab.attr("onclick")
+                    val idMatch = Regex("'([^']+)'").find(onclick)
+                    val id = idMatch?.groupValues?.get(1)
+                    val seasonName = tab.text().trim()
+                    val seasonNum = Regex("(\\d+)").find(seasonName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    
+                    if (id != null) {
+                        seasonMap[id] = seasonNum
+                    }
+                }
+                
+                if (seasonMap.isEmpty()) seasonMap["Season1"] = 1
+    
+                val tabContents = doc.select("div.tabcontent")
+                tabContents.forEach { content ->
+                    val id = content.id()
+                    val seasonNum = seasonMap[id] ?: 1
+                    
+                    val epElements = content.select(".pm-ul-browse-videos a")
+                    epElements.forEach { element ->
+                        val epUrl = element.attr("href")
+                         if (epUrl.isNotBlank()) {
+                             val epTitle = element.attr("title").trim()
+                             val epNum = Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                                 ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                                 ?: 0
+                                 
+                            episodes.add(ParsedEpisode(
+                                name = epTitle,
+                                url = epUrl,
+                                season = seasonNum,
+                                episode = epNum
+                            ))
+                         }
+                    }
+                }
             }
         }
         
-        Log.d("LarozaParser", "Parsed ${episodes.size} episodes from ${seasonTabs.size} seasons")
+        Log.d("LarozaParser", "Parsed ${episodes.size} episodes")
 
         return ParsedLoadData(
             title = title,
