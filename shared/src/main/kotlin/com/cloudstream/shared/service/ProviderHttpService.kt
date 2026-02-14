@@ -132,25 +132,8 @@ class ProviderHttpService private constructor(
     }
     
     suspend fun getPlayerUrls(url: String): List<String> {
-        // Step 1: Get the detail page
-        val detailDoc = getDocument(url) ?: return emptyList()
-        
-        // Step 2: Check if there's a play page link (Laroza-specific)
-        // Look for any link to play.php with vid parameter - class name changes randomly
-        val playLink = detailDoc.selectFirst("a[href*='play.php?vid=']")?.attr("href")
-            ?: detailDoc.selectFirst("#BiBplayer a[href*='play.php']")?.attr("href")
-            ?: detailDoc.selectFirst("#video-wrapper a[href*='play.php']")?.attr("href")
-        
-        // Step 3: If play link exists, fetch the play page and extract from there
-        val targetDoc = if (!playLink.isNullOrBlank()) {
-            val fullPlayUrl = if (playLink.startsWith("http")) playLink else "https://${sessionState.domain}/$playLink"
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "getPlayerUrls", "Following play page link", "url" to fullPlayUrl)
-            getDocument(fullPlayUrl) ?: detailDoc // Fallback to detail page if play page fails
-        } else {
-            detailDoc
-        }
-        
-        return parser.extractPlayerUrls(targetDoc)
+        val doc = getDocument(url) ?: return emptyList()
+        return parser.extractPlayerUrls(doc)
     }
 
     suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): Document? {

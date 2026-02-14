@@ -254,13 +254,33 @@ abstract class BaseProvider : MainAPI() {
         
         try {
             httpService.ensureInitialized()
-            val doc = httpService.getDocument(data)
-            if (doc == null) {
+            
+            // Step 1: Fetch detail page
+            val detailDoc = httpService.getDocument(data)
+            if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch loadLinks document")
                 return false
             }
             
-            val urls = getParser().extractPlayerUrls(doc)
+            // Step 2: Ask parser for watch page URL
+            val watchPageUrl = getParser().getPlayerPageUrl(detailDoc)
+            
+            // Step 3: If watch page found, fetch it; else use detail page
+            val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
+                val fullWatchUrl = if (watchPageUrl.startsWith("http")) {
+                    watchPageUrl
+                } else {
+                    "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
+                }
+                Log.d(methodTag, "Following watch page: $fullWatchUrl")
+                httpService.getDocument(fullWatchUrl) ?: detailDoc
+            } else {
+                Log.d(methodTag, "No watch page found, using detail page")
+                detailDoc
+            }
+            
+            // Step 4: Extract player URLs from the target page
+            val urls = getParser().extractPlayerUrls(targetDoc)
             Log.d(methodTag, "Extracted ${urls.size} player URLs")
             
             var found = false

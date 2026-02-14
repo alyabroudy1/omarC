@@ -439,6 +439,16 @@ class LarozaParser : NewBaseParser() {
         return emptyList()
     }
 
+    override fun getPlayerPageUrl(doc: Document): String? {
+        // Look for play page link - class name changes randomly, use multiple selectors
+        val playLink = doc.selectFirst("a[href*='play.php?vid=']")?.attr("href")
+            ?: doc.selectFirst("#BiBplayer a[href*='play.php']")?.attr("href")
+            ?: doc.selectFirst("#video-wrapper a[href*='play.php']")?.attr("href")
+        
+        Log.d("LarozaParser", "getPlayerPageUrl: found='$playLink'")
+        return playLink
+    }
+
     override fun extractPlayerUrls(doc: Document): List<String> {
         Log.d("LarozaParser", "extractPlayerUrls START")
         val urls = mutableListOf<String>()

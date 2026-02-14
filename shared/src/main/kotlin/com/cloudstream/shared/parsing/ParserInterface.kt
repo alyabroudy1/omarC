@@ -61,6 +61,12 @@ interface ParserInterface {
     fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParsedEpisode>
     fun extractPlayerUrls(doc: Document): List<String>
     
+    /**
+     * Extract the player/watch page URL from the detail page.
+     * Returns null if no player page link exists.
+     */
+    fun getPlayerPageUrl(doc: Document): String? = null
+    
     // Helpers
     fun resolveServerLink(serverUrl: String): String? = null
 }
