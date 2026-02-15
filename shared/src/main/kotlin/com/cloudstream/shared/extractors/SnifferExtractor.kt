@@ -159,7 +159,8 @@ class SnifferExtractor : ExtractorApi() {
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 60_000L,
             delayMs = 2000, // Wait 2s for page to fully load before starting detection
-            preSniffJavaScript = preSniffJs
+            preSniffJavaScript = preSniffJs,
+            referer = embedReferer // Pass referer for embed servers (e.g., https://laroza.cfd/)
         )
         
         var callbackCount = 0

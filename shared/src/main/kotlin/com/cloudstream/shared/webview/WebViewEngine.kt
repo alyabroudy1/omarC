@@ -41,6 +41,7 @@ class WebViewEngine(
      * 
      * @param preSniffJavaScript Optional JavaScript to execute after page load but before video sniffing.
      *        Useful for clicking server buttons or other interactions needed before player loads.
+     * @param referer Optional referer URL to send with requests (e.g., https://laroza.cfd/)
      */
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun runSession(
@@ -50,7 +51,8 @@ class WebViewEngine(
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
         delayMs: Long = 0L,
-        preSniffJavaScript: String? = null
+        preSniffJavaScript: String? = null,
+        referer: String? = null
     ): WebViewResult = withContext(Dispatchers.Main) {
         
         val activity = activityProvider()
@@ -410,6 +412,12 @@ class WebViewEngine(
             
             val extraHeaders = mutableMapOf<String, String>()
             extraHeaders["X-Requested-With"] = ""
+            
+            // Add referer if provided (critical for embed servers like qq.okprime.site)
+            if (!referer.isNullOrBlank()) {
+                extraHeaders["Referer"] = referer
+                ProviderLogger.i(TAG_WEBVIEW, "runSession", "Added Referer header", "referer" to referer)
+            }
             
             ProviderLogger.i(TAG_WEBVIEW, "runSession", "Loading URL with headers", 
                 "url" to url.take(80),

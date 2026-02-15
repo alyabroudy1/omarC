@@ -155,8 +155,8 @@ class VideoSniffingStrategy(
                     // Generic
                     '[class*="play-button"]', '[class*="playbutton"]', '#play-button', '.btn-play',
                     'button[aria-label*="play" i]', 'button[title*="play" i]', '[class*="big-play"]',
-                    // Overlays
-                    '.player-overlay', '.video-overlay', '.play-overlay', '[class*="overlay"]',
+                    // Overlays - COMMENTED OUT to avoid clicking anti-bot overlays like site-overlay
+                    // '.player-overlay', '.video-overlay', '.play-overlay', '[class*="overlay"]',
                     // Savefiles specific
                     '.start-button', '.load-player', '.watch-video', '[class*="watch"]',
                     // Generic clickable areas
