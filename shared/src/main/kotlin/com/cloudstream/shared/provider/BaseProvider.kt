@@ -289,10 +289,11 @@ abstract class BaseProvider : MainAPI() {
                 return false
             }
             
-            // Step 5: Extract server selectors for WatchList-based servers (Laroza pattern)
-            // These selectors will be used by sniffer to click the correct server button
-            val serverSelectors = extractServerSelectors(targetDoc, urls)
-            Log.d(methodTag, "Extracted ${serverSelectors.size} server selectors")
+            // Step 5: Extract server selectors from parser (provider-specific)
+            // Providers like Laroza that need server button clicks implement buildServerSelectors()
+            val serverSelectors = getParser().buildServerSelectors(targetDoc, urls)
+            val selectorCount = serverSelectors.count { it != null }
+            Log.d(methodTag, "Extracted $selectorCount/${serverSelectors.size} server selectors from parser")
             
             // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
             // CRITICAL: Use watch page URL as referer, not mainUrl
@@ -437,71 +438,5 @@ abstract class BaseProvider : MainAPI() {
             Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
-    }
-    
-    /**
-     * Extract server selectors from WatchList for sniffer to click the correct server button.
-     * This is specifically for Laroza-style WatchList where servers need to be clicked before
-     * the video player loads.
-     * 
-     * @param doc The watch page document
-     * @param urls The extracted server URLs (for matching)
-     * @return List of selectors corresponding to each URL, null if no selector needed
-     */
-    private fun extractServerSelectors(
-        doc: org.jsoup.nodes.Document,
-        urls: List<String>
-    ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
-        val selectors = mutableListOf<com.cloudstream.shared.extractors.SnifferSelector?>()
-        
-        // Look for WatchList items (Laroza pattern)
-        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
-        
-        if (watchListItems.isEmpty()) {
-            Log.d("[$name] [extractServerSelectors]", "No WatchList found, returning empty selectors")
-            return urls.map { null }
-        }
-        
-        Log.d("[$name] [extractServerSelectors]", "Found ${watchListItems.size} WatchList items")
-        
-        for ((index, url) in urls.withIndex()) {
-            // Find the WatchList item matching this URL
-            val matchingItem = watchListItems.find { item ->
-                val itemUrl = item.attr("data-embed-url")
-                itemUrl == url || itemUrl.contains(url) || url.contains(itemUrl)
-            }
-            
-            if (matchingItem != null) {
-                // Build selector for this item
-                val embedId = matchingItem.attr("data-embed-id")
-                val embedUrl = matchingItem.attr("data-embed-url")
-                
-                // Create selector using data-embed-id if available, otherwise data-embed-url
-                val selector = if (embedId.isNotBlank()) {
-                    com.cloudstream.shared.extractors.SnifferSelector(
-                        query = "li[data-embed-id='$embedId']",
-                        attr = "data-embed-url",
-                        regex = embedUrl.substringBefore("?").replace(".", "\\."),
-                        waitAfterClick = 5000L // Wait 5s for player to load after click
-                    )
-                } else {
-                    // Fallback: use the URL itself as identifier
-                    val escapedUrl = embedUrl.replace("'", "\\'")
-                    com.cloudstream.shared.extractors.SnifferSelector(
-                        query = "li[data-embed-url='$escapedUrl']",
-                        attr = "data-embed-url",
-                        waitAfterClick = 5000L
-                    )
-                }
-                
-                Log.d("[$name] [extractServerSelectors]", "Created selector for URL #$index: ${selector.query}")
-                selectors.add(selector)
-            } else {
-                Log.w("[$name] [extractServerSelectors]", "No matching WatchList item found for URL #$index: ${url.take(60)}")
-                selectors.add(null)
-            }
-        }
-        
-        return selectors
     }
 }

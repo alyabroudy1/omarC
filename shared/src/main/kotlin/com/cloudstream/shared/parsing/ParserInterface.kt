@@ -67,6 +67,19 @@ interface ParserInterface {
      */
     fun getPlayerPageUrl(doc: Document): String? = null
     
+    /**
+     * Build server selectors for clicking buttons before video sniffing.
+     * This is used by providers that require clicking server buttons (like Laroza's WatchList)
+     * before the video player loads.
+     * 
+     * @param doc The watch page document
+     * @param urls The extracted server URLs to match against selectors
+     * @return List of selectors corresponding to each URL, null if no selector needed for that URL
+     */
+    fun buildServerSelectors(doc: Document, urls: List<String>): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        return urls.map { null } // Default: no selectors
+    }
+    
     // Helpers
     fun resolveServerLink(serverUrl: String): String? = null
 }

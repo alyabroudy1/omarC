@@ -480,6 +480,64 @@ class LarozaParser : NewBaseParser() {
         return urls.distinct()
     }
     
+    /**
+     * Build server selectors for Laroza's WatchList.
+     * This allows the sniffer to click the correct server button before video sniffing.
+     */
+    override fun buildServerSelectors(doc: Document, urls: List<String>): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        val selectors = mutableListOf<com.cloudstream.shared.extractors.SnifferSelector?>()
+        
+        // Look for WatchList items (Laroza pattern)
+        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
+        
+        if (watchListItems.isEmpty()) {
+            Log.d("LarozaParser", "buildServerSelectors: No WatchList found, returning empty selectors")
+            return urls.map { null }
+        }
+        
+        Log.d("LarozaParser", "buildServerSelectors: Found ${watchListItems.size} WatchList items for ${urls.size} URLs")
+        
+        for ((index, url) in urls.withIndex()) {
+            // Find the WatchList item matching this URL
+            val matchingItem = watchListItems.find { item ->
+                val itemUrl = item.attr("data-embed-url")
+                itemUrl == url || itemUrl.contains(url) || url.contains(itemUrl)
+            }
+            
+            if (matchingItem != null) {
+                // Build selector for this item
+                val embedId = matchingItem.attr("data-embed-id")
+                val embedUrl = matchingItem.attr("data-embed-url")
+                
+                // Create selector using data-embed-id if available, otherwise data-embed-url
+                val selector = if (embedId.isNotBlank()) {
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = "li[data-embed-id='$embedId']",
+                        attr = "data-embed-url",
+                        regex = embedUrl.substringBefore("?").replace(".", "\\."),
+                        waitAfterClick = 5000L // Wait 5s for player to load after click
+                    )
+                } else {
+                    // Fallback: use the URL itself as identifier
+                    val escapedUrl = embedUrl.replace("'", "\\'")
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = "li[data-embed-url='$escapedUrl']",
+                        attr = "data-embed-url",
+                        waitAfterClick = 5000L
+                    )
+                }
+                
+                Log.d("LarozaParser", "buildServerSelectors: Created selector for URL #$index: ${selector.query}")
+                selectors.add(selector)
+            } else {
+                Log.w("LarozaParser", "buildServerSelectors: No matching WatchList item for URL #$index: ${url.take(60)}")
+                selectors.add(null)
+            }
+        }
+        
+        return selectors
+    }
+    
     // Helper for robust detection
     private fun isMovie(title: String, url: String, element: Element?): Boolean {
         // User Rules:
