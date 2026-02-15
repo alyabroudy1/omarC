@@ -19,9 +19,14 @@ open class OkPrimeExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
+            ?: throw IllegalStateException("ProviderHttpService not initialized")
+
         val customHeaders = if (referer != null) mapOf("Referer" to referer) else emptyMap()
-        val response = app.get(url, headers = customHeaders)
-        val text = response.text
+        
+        // Use internal executeDirectRequest since we are in the same module
+        val result = service.executeDirectRequest(url, customHeaders)
+        val text = result.html ?: ""
         
         // Check for packed JS
         val packed = text.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
