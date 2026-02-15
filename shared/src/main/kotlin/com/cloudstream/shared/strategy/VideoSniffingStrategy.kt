@@ -278,6 +278,27 @@ class VideoSniffingStrategy(
             }
             
             // ===== VIDEO SOURCE EXTRACTION =====
+            function isSegmentUrl(url) {
+                // Ignore blob URLs (MediaSource segments)
+                if (url.startsWith('blob:')) return true;
+                
+                // Ignore segment/chunk/fragment patterns
+                var segmentPatterns = [
+                    /[\/_-]seg(ment)?[0-9]/i,
+                    /[\/_-]part[0-9]/i,
+                    /[\/_-]chunk[0-9]/i,
+                    /[\/_-]frag[0-9]/i,
+                    /[\/_-]init\./i,
+                    /\.m4s(\?|$)/i,
+                    /[\/&?](start|end|byte|range)=/i,
+                    /\/[0-9]+\/[^/]+\.(ts|m4s|aac)$/
+                ];
+                
+                return segmentPatterns.some(function(pattern) {
+                    return pattern.test(url);
+                });
+            }
+            
             function extractSources() {
                 if (sourcesSent) return;
                 
@@ -287,9 +308,13 @@ class VideoSniffingStrategy(
                 
                 // Method 2: Video element sources
                 document.querySelectorAll('video').forEach(function(v) {
-                    if (v.src && v.src.length > 40) sources.push({url: v.src, label: 'Video'});
+                    if (v.src && v.src.length > 40 && !isSegmentUrl(v.src)) {
+                        sources.push({url: v.src, label: 'Video'});
+                    }
                     v.querySelectorAll('source').forEach(function(s) {
-                        if (s.src && s.src.length > 40) sources.push({url: s.src, label: s.type || 'Source'});
+                        if (s.src && s.src.length > 40 && !isSegmentUrl(s.src)) {
+                            sources.push({url: s.src, label: s.type || 'Source'});
+                        }
                     });
                 });
                 
@@ -301,7 +326,7 @@ class VideoSniffingStrategy(
                             var item = player.getPlaylistItem();
                             if (item && item.sources) {
                                 item.sources.forEach(function(src) {
-                                    if (src.file && src.file.length > 40) {
+                                    if (src.file && src.file.length > 40 && !isSegmentUrl(src.file)) {
                                         sources.push({url: src.file, label: src.label || 'JW'});
                                     }
                                 });
@@ -312,10 +337,14 @@ class VideoSniffingStrategy(
                 
                 // Method 4: Global player objects
                 try {
-                    if (window.player && window.player.src) sources.push({url: window.player.src, label: 'Global'});
+                    if (window.player && window.player.src && !isSegmentUrl(window.player.src)) {
+                        sources.push({url: window.player.src, label: 'Global'});
+                    }
                     if (window.videojs && window.videojs.players) {
                         Object.values(window.videojs.players).forEach(function(p) {
-                            if (p.src && p.src()) sources.push({url: p.src(), label: 'VideoJS'});
+                            if (p.src && p.src() && !isSegmentUrl(p.src())) {
+                                sources.push({url: p.src(), label: 'VideoJS'});
+                            }
                         });
                     }
                 } catch(e) {}
@@ -600,8 +629,32 @@ class VideoSniffingStrategy(
         }
     }
     
+    /**
+     * Patterns that indicate a URL is a video segment/part, not a main video/manifest.
+     * These should be ignored to avoid detecting fragments instead of the full video.
+     */
+    private val segmentPatterns = listOf(
+        Regex("""blob:"""),                                    // Blob URLs (MediaSource segments)
+        Regex("""[/_-]seg(ment)?[0-9]""", RegexOption.IGNORE_CASE),  // segment1, seg-001, etc
+        Regex("""[/_-]part[0-9]""", RegexOption.IGNORE_CASE),        // part1, part-001, etc
+        Regex("""[/_-]chunk[0-9]""", RegexOption.IGNORE_CASE),       // chunk1, chunk-001, etc
+        Regex("""[/_-]frag[0-9]""", RegexOption.IGNORE_CASE),        // frag1, frag-001, etc
+        Regex("""[/_-]init\.""", RegexOption.IGNORE_CASE),           // init.mp4, init.webm
+        Regex("""\.m4s(\?|$)""", RegexOption.IGNORE_CASE),           // MPEG-DASH segments
+        Regex("""[/&?](start|end|byte|range)=""", RegexOption.IGNORE_CASE),  // Byte range requests
+        Regex("""/[0-9]+/[^/]+\.(ts|m4s|aac)""")                     // Numbered segment paths
+    )
+    
     private fun isVideoUrl(url: String): Boolean {
         if (url.length < MIN_VIDEO_URL_LENGTH) return false
+        
+        // First check if it's a segment/fragment that should be ignored
+        val isSegment = segmentPatterns.any { it.containsMatchIn(url) }
+        if (isSegment) {
+            ProviderLogger.d(TAG_VIDEO_SNIFFER, "isVideoUrl", "Ignoring segment URL: ${url.take(80)}")
+            return false
+        }
+        
         return videoPatterns.any { it.containsMatchIn(url) }
     }
     
