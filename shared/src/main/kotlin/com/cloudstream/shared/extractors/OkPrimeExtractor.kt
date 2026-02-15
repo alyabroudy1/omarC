@@ -19,7 +19,7 @@ open class OkPrimeExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val customHeaders = mapOf("Referer" to (referer ?: "https://laroza.cfd/"))
+        val customHeaders = if (referer != null) mapOf("Referer" to referer) else emptyMap()
         val response = app.get(url, headers = customHeaders)
         val text = response.text
         
