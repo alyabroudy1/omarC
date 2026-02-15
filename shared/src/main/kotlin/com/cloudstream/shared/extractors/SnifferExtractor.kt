@@ -41,23 +41,51 @@ class SnifferExtractor : ExtractorApi() {
     
     companion object {
         // Create a sniffer URL from embed URL and referer
-        fun createSnifferUrl(embedUrl: String, referer: String = ""): String {
+        fun createSnifferUrl(embedUrl: String, referer: String = "", selector: SnifferSelector? = null): String {
             val encodedUrl = URLEncoder.encode(embedUrl, "UTF-8")
             val encodedReferer = URLEncoder.encode(referer, "UTF-8")
-            return "sniff://$encodedUrl?referer=$encodedReferer"
+            var url = "sniff://$encodedUrl?referer=$encodedReferer"
+            
+            // Add selector if provided
+            if (selector != null) {
+                val encodedSelector = URLEncoder.encode(selector.toJson(), "UTF-8")
+                url += "&selector=$encodedSelector"
+            }
+            
+            return url
         }
         
-        // Parse sniffer URL to get embed URL and referer
-        fun parseSnifferUrl(snifferUrl: String): Pair<String, String>? {
+        // Parse sniffer URL to get embed URL, referer, and optional selector
+        fun parseSnifferUrl(snifferUrl: String): Triple<String, String, SnifferSelector?>? {
             if (!snifferUrl.startsWith("sniff://")) return null
             
             try {
                 val content = snifferUrl.removePrefix("sniff://")
-                val parts = content.split("?referer=", limit = 2)
+                val parts = content.split("?", limit = 2)
                 val embedUrl = URLDecoder.decode(parts[0], "UTF-8")
-                val referer = if (parts.size > 1) URLDecoder.decode(parts[1], "UTF-8") else ""
-                return Pair(embedUrl, referer)
+                
+                var referer = ""
+                var selector: SnifferSelector? = null
+                
+                if (parts.size > 1) {
+                    val queryString = parts[1]
+                    val queryParams = queryString.split("&").mapNotNull { param ->
+                        val keyValue = param.split("=", limit = 2)
+                        if (keyValue.size == 2) {
+                            keyValue[0] to URLDecoder.decode(keyValue[1], "UTF-8")
+                        } else null
+                    }.toMap()
+                    
+                    referer = queryParams["referer"] ?: ""
+                    
+                    queryParams["selector"]?.let { selectorJson ->
+                        selector = SnifferSelector.fromJson(selectorJson)
+                    }
+                }
+                
+                return Triple(embedUrl, referer, selector)
             } catch (e: Exception) {
+                android.util.Log.e("SnifferExtractor", "Failed to parse sniffer URL: ${e.message}")
                 return null
             }
         }
@@ -79,11 +107,12 @@ class SnifferExtractor : ExtractorApi() {
             return
         }
         
-        val (embedUrl, embedReferer) = parsed
-        android.util.Log.d("SnifferExtractor", "Parsed embed URL: $embedUrl, referer: $embedReferer")
+        val (embedUrl, embedReferer, selector) = parsed
+        android.util.Log.d("SnifferExtractor", "Parsed embed URL: $embedUrl, referer: $embedReferer, hasSelector: ${selector != null}")
         ProviderLogger.d(TAG, "getUrl", "Parsed embed URL", 
             "embedUrl" to embedUrl.take(60),
-            "embedReferer" to embedReferer.take(40))
+            "embedReferer" to embedReferer.take(40),
+            "hasSelector" to (selector != null))
         
         // Get or create WebViewEngine
         val engine = webViewEngine ?: run {
@@ -110,6 +139,18 @@ class SnifferExtractor : ExtractorApi() {
         android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 60s")
         ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
         
+        // Build pre-sniff JavaScript if selector is provided
+        val preSniffJs = selector?.let { buildClickJavaScript(it) }
+        
+        if (selector != null) {
+            android.util.Log.i("SnifferExtractor", "[getUrl] === SELECTOR MODE ===")
+            android.util.Log.i("SnifferExtractor", "[getUrl] Selector query: ${selector.query}")
+            ProviderLogger.i(TAG, "getUrl", "Selector mode enabled", 
+                "query" to selector.query,
+                "attr" to (selector.attr ?: "null"),
+                "regex" to (selector.regex ?: "null"))
+        }
+        
         val startTime = System.currentTimeMillis()
         val result = engine.runSession(
             url = embedUrl,
@@ -117,7 +158,8 @@ class SnifferExtractor : ExtractorApi() {
             userAgent = snifferUserAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 60_000L,
-            delayMs = 2000 // Wait 2s for page to fully load before starting detection
+            delayMs = 2000, // Wait 2s for page to fully load before starting detection
+            preSniffJavaScript = preSniffJs
         )
         
         var callbackCount = 0
@@ -388,6 +430,66 @@ class SnifferExtractor : ExtractorApi() {
             url.substringBefore("/", url)
                 .let { if (it.contains("://")) it else "https://$it" }
         }
+    }
+
+    /**
+     * Build JavaScript code to find and click element based on SnifferSelector.
+     * The script finds element by CSS selector, validates optional attribute/regex,
+     * and simulates a click event.
+     */
+    private fun buildClickJavaScript(selector: SnifferSelector): String {
+        val sb = StringBuilder()
+        sb.append("(function() {")
+        sb.append("  var element = document.querySelector('${escapeJsString(selector.query)}');")
+        sb.append("  if (!element) {")
+        sb.append("    return 'ERROR: Element not found for selector: ${escapeJsString(selector.query)}';")
+        sb.append("  }")
+        
+        // Validate attribute if specified
+        if (selector.attr != null) {
+            sb.append("  var attrValue = element.getAttribute('${escapeJsString(selector.attr)}');")
+            sb.append("  if (!attrValue) {")
+            sb.append("    return 'ERROR: Attribute ${escapeJsString(selector.attr)} not found';")
+            sb.append("  }")
+            
+            // Validate regex if specified
+            if (selector.regex != null) {
+                val escapedRegex = escapeJsString(selector.regex)
+                sb.append("  var regex = new RegExp('$escapedRegex');")
+                sb.append("  if (!regex.test(attrValue)) {")
+                sb.append("    return 'ERROR: Attribute value does not match regex. Value: ' + attrValue;")
+                sb.append("  }")
+            }
+            
+            sb.append("  console.log('[SnifferSelector] Found element with ${selector.attr}=' + attrValue);")
+        } else {
+            sb.append("  console.log('[SnifferSelector] Found element');")
+        }
+        
+        // Simulate click
+        sb.append("  var clickEvent = new MouseEvent('click', {")
+        sb.append("    bubbles: true,")
+        sb.append("    cancelable: true,")
+        sb.append("    view: window")
+        sb.append("  });")
+        sb.append("  element.dispatchEvent(clickEvent);")
+        sb.append("  console.log('[SnifferSelector] Click event dispatched');")
+        sb.append("  return 'SUCCESS: Clicked element';")
+        sb.append("})();")
+        
+        return sb.toString()
+    }
+    
+    /**
+     * Escape string for use in JavaScript code.
+     */
+    private fun escapeJsString(str: String): String {
+        return str
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
     }
 
     private suspend fun extractM3u8Qualities(

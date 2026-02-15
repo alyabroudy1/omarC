@@ -38,6 +38,9 @@ class WebViewEngine(
     
     /**
      * Run a WebView session and return the result.
+     * 
+     * @param preSniffJavaScript Optional JavaScript to execute after page load but before video sniffing.
+     *        Useful for clicking server buttons or other interactions needed before player loads.
      */
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun runSession(
@@ -46,7 +49,8 @@ class WebViewEngine(
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
-        delayMs: Long = 0L
+        delayMs: Long = 0L,
+        preSniffJavaScript: String? = null
     ): WebViewResult = withContext(Dispatchers.Main) {
         
         val activity = activityProvider()
@@ -257,13 +261,36 @@ class WebViewEngine(
 
                     // Inject VideoSniffer JS & Start DOM extraction ONLY if we are looking for video
                     if (exitCondition is ExitCondition.VideoFound) {
-                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Injecting JavaScript ===")
-                        view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
-                            ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "JavaScript injection result", "result" to (result ?: "null"))
+                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Pre-sniff JavaScript ===")
+                        
+                        // Execute pre-sniff JavaScript if provided (e.g., click server button)
+                        if (!preSniffJavaScript.isNullOrBlank()) {
+                            android.util.Log.i("WebViewEngine", "onPageFinished: Executing pre-sniff JavaScript")
+                            ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Executing pre-sniff JavaScript", "jsLength" to preSniffJavaScript.length)
+                            view?.evaluateJavascript(preSniffJavaScript) { result ->
+                                android.util.Log.i("WebViewEngine", "onPageFinished: Pre-sniff JS result: $result")
+                                ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Pre-sniff JavaScript result", "result" to (result ?: "null"))
+                            }
+                            
+                            // Wait for player to load after clicking, then inject video sniffer
+                            CoroutineScope(Dispatchers.Main).launch {
+                                delay(3000) // Give 3s for player to initialize after click
+                                ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Injecting Video Sniffer (after pre-sniff) ===")
+                                view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
+                                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Video sniffer injection result", "result" to (result ?: "null"))
+                                }
+                                ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 6: Starting DOM extraction ===")
+                                startDomVideoExtraction(view)
+                            }
+                        } else {
+                            // No pre-sniff JS, inject video sniffer immediately
+                            ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Injecting Video Sniffer ===")
+                            view?.evaluateJavascript(com.cloudstream.shared.strategy.VideoSniffingStrategy.JS_SCRIPT) { result ->
+                                ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Video sniffer injection result", "result" to (result ?: "null"))
+                            }
+                            ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 6: Starting DOM extraction ===")
+                            startDomVideoExtraction(view)
                         }
-
-                        ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 5: Starting DOM extraction ===")
-                        startDomVideoExtraction(view)
                     } else {
                         ProviderLogger.d(TAG_WEBVIEW, "onPageFinished", "Skipping sniffer injection (Not in VideoFound mode)")
                     }

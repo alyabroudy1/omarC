@@ -280,7 +280,7 @@ abstract class BaseProvider : MainAPI() {
                 detailDoc
             }
             
-            // Step 4: Extract player URLs from the target page
+            // Step 4: Extract player URLs and server selectors from the target page
             val urls = getParser().extractPlayerUrls(targetDoc)
             Log.d(methodTag, "Extracted ${urls.size} player URLs")
             
@@ -289,7 +289,12 @@ abstract class BaseProvider : MainAPI() {
                 return false
             }
             
-            // Step 5: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
+            // Step 5: Extract server selectors for WatchList-based servers (Laroza pattern)
+            // These selectors will be used by sniffer to click the correct server button
+            val serverSelectors = extractServerSelectors(targetDoc, urls)
+            Log.d(methodTag, "Extracted ${serverSelectors.size} server selectors")
+            
+            // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
             // CRITICAL: Use watch page URL as referer, not mainUrl
             val referer = actualWatchUrl?.let { 
                 try {
@@ -303,7 +308,7 @@ abstract class BaseProvider : MainAPI() {
             
             Log.d(methodTag, "Using referer: $referer")
             
-            for (url in urls) {
+            for ((index, url) in urls.withIndex()) {
                 Log.d(methodTag, "Processing player URL: $url")
                 
                 // STEP 1: Try standard extractors (8s timeout)
@@ -317,7 +322,21 @@ abstract class BaseProvider : MainAPI() {
                 
                 // STEP 2: Standard failed, try sniffer (60s timeout)
                 Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer...")
-                val snifferResult = awaitSnifferResult(url, referer, subtitleCallback, callback, timeoutMs = 60000L)
+                
+                // Get selector for this URL if available (for WatchList servers)
+                val selector = serverSelectors.getOrNull(index)
+                if (selector != null) {
+                    Log.d(methodTag, "Using selector for sniffer: ${selector.query}")
+                }
+                
+                val snifferResult = awaitSnifferResult(
+                    url, 
+                    referer, 
+                    subtitleCallback, 
+                    callback, 
+                    timeoutMs = 60000L,
+                    selector = selector
+                )
                 
                 if (snifferResult) {
                     Log.i(methodTag, "SUCCESS via sniffer: $url")
@@ -371,23 +390,30 @@ abstract class BaseProvider : MainAPI() {
     /**
      * Uses SnifferExtractor (WebView) to sniff video when standard extractors fail.
      * Returns true if a video was found.
+     * 
+     * @param selector Optional selector to click a server button before sniffing
      */
     private suspend fun awaitSnifferResult(
         targetUrl: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
-        timeoutMs: Long
+        timeoutMs: Long,
+        selector: com.cloudstream.shared.extractors.SnifferSelector? = null
     ): Boolean {
-        Log.d("[$name] [awaitSnifferResult]", "=== START === target=${targetUrl.take(80)}")
+        Log.d("[$name] [awaitSnifferResult]", "=== START === target=${targetUrl.take(80)}, hasSelector=${selector != null}")
         
         return try {
             kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
                 val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
                 var found = false
                 
-                // Create sniffer URL
-                val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(targetUrl, referer)
+                // Create sniffer URL with optional selector
+                val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(
+                    targetUrl, 
+                    referer,
+                    selector
+                )
                 Log.d("[$name] [awaitSnifferResult]", "Sniffer URL: $sniffUrl")
                 
                 // Use loadExtractor which will trigger SnifferExtractor
@@ -411,5 +437,71 @@ abstract class BaseProvider : MainAPI() {
             Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
+    }
+    
+    /**
+     * Extract server selectors from WatchList for sniffer to click the correct server button.
+     * This is specifically for Laroza-style WatchList where servers need to be clicked before
+     * the video player loads.
+     * 
+     * @param doc The watch page document
+     * @param urls The extracted server URLs (for matching)
+     * @return List of selectors corresponding to each URL, null if no selector needed
+     */
+    private fun extractServerSelectors(
+        doc: org.jsoup.nodes.Document,
+        urls: List<String>
+    ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        val selectors = mutableListOf<com.cloudstream.shared.extractors.SnifferSelector?>()
+        
+        // Look for WatchList items (Laroza pattern)
+        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
+        
+        if (watchListItems.isEmpty()) {
+            Log.d("[$name] [extractServerSelectors]", "No WatchList found, returning empty selectors")
+            return urls.map { null }
+        }
+        
+        Log.d("[$name] [extractServerSelectors]", "Found ${watchListItems.size} WatchList items")
+        
+        for ((index, url) in urls.withIndex()) {
+            // Find the WatchList item matching this URL
+            val matchingItem = watchListItems.find { item ->
+                val itemUrl = item.attr("data-embed-url")
+                itemUrl == url || itemUrl.contains(url) || url.contains(itemUrl)
+            }
+            
+            if (matchingItem != null) {
+                // Build selector for this item
+                val embedId = matchingItem.attr("data-embed-id")
+                val embedUrl = matchingItem.attr("data-embed-url")
+                
+                // Create selector using data-embed-id if available, otherwise data-embed-url
+                val selector = if (embedId.isNotBlank()) {
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = "li[data-embed-id='$embedId']",
+                        attr = "data-embed-url",
+                        regex = embedUrl.substringBefore("?").replace(".", "\\."),
+                        waitAfterClick = 5000L // Wait 5s for player to load after click
+                    )
+                } else {
+                    // Fallback: use the URL itself as identifier
+                    val escapedUrl = embedUrl.replace("'", "\\'")
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = "li[data-embed-url='$escapedUrl']",
+                        attr = "data-embed-url",
+                        waitAfterClick = 5000L
+                    )
+                }
+                
+                Log.d("[$name] [extractServerSelectors]", "Created selector for URL #$index: ${selector.query}")
+                selectors.add(selector)
+            } else {
+                Log.w("[$name] [extractServerSelectors]", "No matching WatchList item found for URL #$index: ${url.take(60)}")
+                selectors.add(null)
+            }
+        }
+        
+        return selectors
     }
 }
