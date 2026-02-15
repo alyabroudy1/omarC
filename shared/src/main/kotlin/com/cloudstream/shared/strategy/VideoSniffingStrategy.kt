@@ -17,6 +17,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -728,7 +729,7 @@ class VideoSniffingStrategy(
         // STRICT M3U8 detection: check extension and query params
         val isM3u8 = url.contains(".m3u8", ignoreCase = true)
         val type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-        
+
         // Capture cookies specifically for this video URL
         val videoCookies = try {
             val cookieManager = CookieManager.getInstance()
