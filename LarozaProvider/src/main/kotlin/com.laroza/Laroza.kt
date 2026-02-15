@@ -36,32 +36,4 @@ class Laroza : BaseProvider() {
     override fun getParser(): NewBaseParser {
         return LarozaParser()
     }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val parser = LarozaParser()
-        val doc = app.get(data).document
-        
-        val playLink = parser.getPlayerPageUrl(doc)
-        val targetDoc = if (!playLink.isNullOrBlank()) {
-             Log.d("Laroza", "Found play link: $playLink")
-             val url = fixUrl(playLink!!)
-             app.get(url, headers = mapOf("Referer" to "https://$baseDomain/")).document
-        } else {
-             doc
-        }
-
-        val urls = parser.extractPlayerUrls(targetDoc)
-        Log.d("Laroza", "Found ${urls.size} player URLs")
-        
-        urls.forEach { 
-            loadExtractor(it, "https://$baseDomain/", subtitleCallback, callback)
-        }
-        
-        return urls.isNotEmpty()
-    }
 }
