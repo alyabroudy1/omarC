@@ -254,16 +254,32 @@ class ProviderHttpService private constructor(
         return doc
     }
 
-    fun getImageHeaders(): Map<String, String> {
+    fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
+        val domain = targetDomain ?: sessionState.domain
+        
+        // Get cookies for the specific domain (handles aliases)
+        val cookies = if (targetDomain != null && targetDomain != sessionState.domain) {
+            com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(targetDomain)
+        } else {
+            sessionState.cookies
+        }
+        
         val headers = mutableMapOf<String, String>()
         headers["User-Agent"] = sessionState.userAgent
-        sessionState.buildCookieHeader()?.let { headers["Cookie"] = it }
-        headers["Referer"] = "https://${sessionState.domain}/"
+        
+        // Add cookies if available
+        if (cookies.isNotEmpty()) {
+            headers["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        }
+        
+        headers["Referer"] = "https://$domain/"
         
         ProviderLogger.d(TAG_PROVIDER_HTTP, "getImageHeaders", "Building image headers",
-            "domain" to sessionState.domain,
+            "targetDomain" to domain,
+            "sessionDomain" to sessionState.domain,
+            "isAlias" to (targetDomain != null && targetDomain != sessionState.domain),
             "hasCookies" to (headers["Cookie"] != null),
-            "cookieKeys" to sessionState.cookies.keys.toString()
+            "cookieCount" to cookies.size
         )
         return headers
     }
@@ -273,16 +289,54 @@ class ProviderHttpService private constructor(
     internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap()): RequestResult {
         return try {
             val targetUrl = rewriteUrlIfNeeded(url)
-            val headers = sessionState.buildHeaders().toMutableMap()
+            
+            // Check if URL domain is an alias and get appropriate cookies
+            val urlDomain = try {
+                java.net.URL(targetUrl).host
+            } catch (e: Exception) {
+                null
+            }
+            
+            // Use domain-aware cookie retrieval
+            val cookiesForDomain = if (urlDomain != null && urlDomain != sessionState.domain) {
+                com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(urlDomain)
+            } else {
+                sessionState.cookies
+            }
+            
+            // Build headers with correct cookies
+            val headers = buildMap {
+                put("User-Agent", sessionState.userAgent)
+                put("Referer", "https://${urlDomain ?: sessionState.domain}/")
+                put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                put("Accept-Language", "en-US,en;q=0.9")
+                put("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+                put("Sec-Ch-Ua-Mobile", "?1")
+                put("Sec-Ch-Ua-Platform", "\"Android\"")
+                put("Upgrade-Insecure-Requests", "1")
+                put("Sec-Fetch-Dest", "document")
+                put("Sec-Fetch-Mode", "navigate")
+                put("Sec-Fetch-Site", "none")
+                put("Sec-Fetch-User", "?1")
+                
+                // Add cookies if available
+                if (cookiesForDomain.isNotEmpty()) {
+                    put("Cookie", cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" })
+                }
+            }.toMutableMap()
+            
+            // Add custom headers
             for ((k, v) in customHeaders) {
                 headers[k] = v
             }
             
             ProviderLogger.d(TAG_PROVIDER_HTTP, "executeDirectRequest", "Executing HTTP request",
                 "url" to targetUrl.take(80),
-                "domain" to sessionState.domain,
+                "urlDomain" to (urlDomain ?: "same"),
+                "sessionDomain" to sessionState.domain,
+                "isAlias" to (urlDomain != null && urlDomain != sessionState.domain),
                 "hasCookie" to (headers["Cookie"] != null),
-                "cookieKeys" to sessionState.cookies.keys.toString()
+                "cookieCount" to cookiesForDomain.size
             )
             
             val directClient = app.baseClient.newBuilder()

@@ -154,6 +154,27 @@ abstract class BaseProvider : MainAPI() {
         
         try {
             httpService.ensureInitialized()
+            
+            // Check if URL domain differs from main domain (subdomain case)
+            // e.g., mainUrl=https://laroza.cfd/ but url=https://qq.laroza.cfd/vid-...
+            try {
+                val urlDomain = java.net.URL(url).host
+                val mainDomain = java.net.URL(mainUrl).host
+                
+                if (urlDomain != mainDomain) {
+                    Log.d(methodTag, "Detected different domain in load URL: urlDomain=$urlDomain, mainDomain=$mainDomain")
+                    
+                    // Check if related and add as alias
+                    if (com.cloudstream.shared.session.SessionProvider.areDomainsRelated(urlDomain, mainDomain)) {
+                        com.cloudstream.shared.session.SessionProvider.addDomainAlias(urlDomain)
+                        val baseDomain = com.cloudstream.shared.session.SessionProvider.extractBaseDomain(urlDomain)
+                        Log.i(methodTag, "Added domain alias for load URL domain: alias=$urlDomain, baseDomain=$baseDomain")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(methodTag, "Failed to parse URL domains for alias check: ${e.message}")
+            }
+            
             val doc = httpService.getDocument(url)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch load document")
@@ -314,7 +335,7 @@ abstract class BaseProvider : MainAPI() {
                 
                 // STEP 1: Try standard extractors (8s timeout)
                 Log.d(methodTag, "STEP 1: Trying standard extractors...")
-                val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 8000L)
+                val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 6000L)
                 
                 if (standardResult) {
                     Log.i(methodTag, "SUCCESS via standard extractor: $url")
