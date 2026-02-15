@@ -766,11 +766,12 @@ class WebViewEngine(
                         var videos = document.querySelectorAll('video');
                         videoCount = videos.length;
                         videos.forEach(function(v) {
-                            console.log('[WebViewEngine] Video found:', v.src || 'no-src', 'currentSrc:', v.currentSrc || 'no-currentSrc');
                             if (v.src && v.src.length > 20 && !isSegmentUrl(v.src)) {
+                                console.log('[WebViewEngine] Video source added:', v.src);
                                 sources.push({src: v.src, type: 'video.src'});
                             }
                             if (v.currentSrc && v.currentSrc.length > 20 && !isSegmentUrl(v.currentSrc)) {
+                                console.log('[WebViewEngine] Video currentSrc added:', v.currentSrc);
                                 sources.push({src: v.currentSrc, type: 'video.currentSrc'});
                             }
                         });
@@ -779,8 +780,8 @@ class WebViewEngine(
                         var sourceElems = document.querySelectorAll('source');
                         sourceCount = sourceElems.length;
                         sourceElems.forEach(function(s) {
-                            console.log('[WebViewEngine] Source found:', s.src || 'no-src', 'type:', s.type || 'no-type');
                             if (s.src && s.src.length > 20 && !isSegmentUrl(s.src)) {
+                                console.log('[WebViewEngine] Source element added:', s.src);
                                 sources.push({src: s.src, type: 'source'});
                             }
                         });
