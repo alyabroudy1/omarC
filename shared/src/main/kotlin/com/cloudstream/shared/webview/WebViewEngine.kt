@@ -745,25 +745,42 @@ class WebViewEngine(
                         var videoCount = 0;
                         var sourceCount = 0;
                         
+                        // Helper function to filter out blob URLs and segment URLs
+                        function isSegmentUrl(url) {
+                            if (!url) return true;
+                            // Check for blob URLs
+                            if (url.indexOf('blob:') === 0) return true;
+                            // Check for segment/chunk patterns
+                            if (/seg\d+|segment\d+|chunk\d+|part\d+|fragment\d+/i.test(url)) return true;
+                            // Check for init.mp4 and .m4s files
+                            if (url.indexOf('init.mp4') !== -1) return true;
+                            if (url.indexOf('.m4s') !== -1) return true;
+                            // Check for byte range requests
+                            if (url.indexOf('byte=') !== -1 || url.indexOf('range=') !== -1) return true;
+                            // Check for numbered segment paths (e.g., /001/, /segment/0/, etc.)
+                            if (/\d{3,}\/[^\/]+\.mp4$/.test(url)) return true;
+                            return false;
+                        }
+                        
                         // 1. Check video elements
                         var videos = document.querySelectorAll('video');
                         videoCount = videos.length;
                         videos.forEach(function(v) {
                             console.log('[WebViewEngine] Video found:', v.src || 'no-src', 'currentSrc:', v.currentSrc || 'no-currentSrc');
-                            if (v.src && v.src.length > 20) {
+                            if (v.src && v.src.length > 20 && !isSegmentUrl(v.src)) {
                                 sources.push({src: v.src, type: 'video.src'});
                             }
-                            if (v.currentSrc && v.currentSrc.length > 20) {
+                            if (v.currentSrc && v.currentSrc.length > 20 && !isSegmentUrl(v.currentSrc)) {
                                 sources.push({src: v.currentSrc, type: 'video.currentSrc'});
                             }
                         });
                         
                         // 2. Check source elements
-                        var sources = document.querySelectorAll('source');
-                        sourceCount = sources.length;
-                        sources.forEach(function(s) {
+                        var sourceElems = document.querySelectorAll('source');
+                        sourceCount = sourceElems.length;
+                        sourceElems.forEach(function(s) {
                             console.log('[WebViewEngine] Source found:', s.src || 'no-src', 'type:', s.type || 'no-type');
-                            if (s.src && s.src.length > 20) {
+                            if (s.src && s.src.length > 20 && !isSegmentUrl(s.src)) {
                                 sources.push({src: s.src, type: 'source'});
                             }
                         });
@@ -775,15 +792,15 @@ class WebViewEngine(
                         
                         // 4. Check common player objects
                         try {
-                            if (window.player && window.player.src) {
+                            if (window.player && window.player.src && !isSegmentUrl(window.player.src)) {
                                 console.log('[WebViewEngine] window.player.src:', window.player.src);
                                 sources.push({src: window.player.src, type: 'window.player'});
                             }
-                            if (window.videoPlayer && window.videoPlayer.src) {
+                            if (window.videoPlayer && window.videoPlayer.src && !isSegmentUrl(window.videoPlayer.src)) {
                                 console.log('[WebViewEngine] window.videoPlayer.src:', window.videoPlayer.src);
                                 sources.push({src: window.videoPlayer.src, type: 'window.videoPlayer'});
                             }
-                            if (window.hls && window.hls.url) {
+                            if (window.hls && window.hls.url && !isSegmentUrl(window.hls.url)) {
                                 console.log('[WebViewEngine] window.hls.url:', window.hls.url);
                                 sources.push({src: window.hls.url, type: 'window.hls'});
                             }
