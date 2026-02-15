@@ -19,7 +19,8 @@ open class OkPrimeExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val response = app.get(url, headers = mapOf("Referer" to "https://laroza.cfd/"))
+        val customHeaders = mapOf("Referer" to (referer ?: "https://laroza.cfd/"))
+        val response = app.get(url, headers = customHeaders)
         val text = response.text
         
         // Check for packed JS
