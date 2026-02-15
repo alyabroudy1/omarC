@@ -349,6 +349,71 @@ class VideoSniffingStrategy(
                     }
                 } catch(e) {}
                 
+                // Method 5: HLS.js - Extract manifest URL when using MediaSource
+                try {
+                    // Check for hls.js instances
+                    if (window.Hls && window.Hls.prototype) {
+                        // Try to find hls instance on video element
+                        document.querySelectorAll('video').forEach(function(v) {
+                            if (v.hls && v.hls.url) {
+                                var url = v.hls.url;
+                                log('Found HLS.js manifest on video element: ' + url);
+                                if (url.indexOf('.m3u8') !== -1 || url.indexOf('http') === 0) {
+                                    sources.push({url: url, label: 'HLS.js'});
+                                }
+                            }
+                        });
+                    }
+                    // Check global hls instance
+                    if (window.hls && window.hls.url) {
+                        log('Found global HLS.js instance: ' + window.hls.url);
+                        if (window.hls.url.indexOf('.m3u8') !== -1 || window.hls.url.indexOf('http') === 0) {
+                            sources.push({url: window.hls.url, label: 'HLS.js Global'});
+                        }
+                    }
+                    // Check for hls configs
+                    if (window.hls && window.hls.config && window.hls.config.url) {
+                        var url = window.hls.config.url;
+                        log('Found HLS.js config URL: ' + url);
+                        if (url.indexOf('.m3u8') !== -1 || url.indexOf('http') === 0) {
+                            sources.push({url: url, label: 'HLS.js Config'});
+                        }
+                    }
+                } catch(e) {
+                    log('HLS.js extraction error: ' + e.message);
+                }
+                
+                // Method 6: DASH.js - Extract manifest URL
+                try {
+                    if (window.dashjs && window.dashjs.MediaPlayer) {
+                        var players = window.dashjs.MediaPlayer.instances;
+                        if (players && players.length > 0) {
+                            players.forEach(function(player) {
+                                if (player.getSource && player.getSource()) {
+                                    var url = player.getSource();
+                                    log('Found DASH.js manifest: ' + url);
+                                    if (url.indexOf('.mpd') !== -1 || url.indexOf('http') === 0) {
+                                        sources.push({url: url, label: 'DASH.js'});
+                                    }
+                                }
+                            });
+                        }
+                    }
+                } catch(e) {
+                    log('DASH.js extraction error: ' + e.message);
+                }
+                
+                // Method 7: Look for source in data attributes
+                try {
+                    document.querySelectorAll('[data-src], [data-url], [data-manifest]').forEach(function(el) {
+                        var url = el.getAttribute('data-src') || el.getAttribute('data-url') || el.getAttribute('data-manifest');
+                        if (url && url.length > 40 && !isSegmentUrl(url)) {
+                            log('Found source in data attribute: ' + url.substring(0, 60));
+                            sources.push({url: url, label: 'Data Attr'});
+                        }
+                    });
+                } catch(e) {}
+                
                 // Send sources if found
                 if (sources.length > 0 && typeof SnifferBridge !== 'undefined') {
                     log('Found ' + sources.length + ' video sources');
