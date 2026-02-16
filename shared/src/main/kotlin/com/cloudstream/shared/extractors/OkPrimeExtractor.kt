@@ -31,15 +31,13 @@ open class OkPrimeExtractor : ExtractorApi() {
         
         com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Requesting URL", "url" to url, "referer" to customHeaders["Referer"])
 
-        // Use internal executeDirectRequest
-        val result = service.executeDirectRequest(url, customHeaders)
-        val text = result.html ?: ""
+        // Use getDocument to handle Cloudflare automatically
+        val doc = service.getDocument(url, customHeaders)
+        val text = doc?.outerHtml() ?: ""
         
         com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Response received", 
-            "code" to result.responseCode,
-            "success" to result.success,
-            "length" to text.length,
-            "error" to (result.error?.message ?: "none")
+            "success" to (doc != null),
+            "length" to text.length
         )
 
         // Check for packed JS
