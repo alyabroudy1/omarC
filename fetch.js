@@ -1,7 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 
-const url = 'https://qq.okprime.site/embed-9qwghmwkwspj.html';
+const url = 'https://qq.okprime.site/embed-rk3dfxfjyrb8.html';
 const options = {
     headers: {
         'Referer': 'https://laroza.cfd/',

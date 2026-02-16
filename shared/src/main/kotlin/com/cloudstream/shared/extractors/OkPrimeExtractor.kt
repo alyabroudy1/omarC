@@ -24,23 +24,35 @@ open class OkPrimeExtractor : ExtractorApi() {
 
         val customHeaders = if (referer != null) mapOf("Referer" to referer) else emptyMap()
         
+        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Requesting URL", "url" to url, "referer" to referer)
+
         // Use internal executeDirectRequest since we are in the same module
         val result = service.executeDirectRequest(url, customHeaders)
         val text = result.html ?: ""
         
+        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Response received", "length" to text.length)
+
         // Check for packed JS
         val packed = text.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
+        
         val unpacked = if (packed.isNotBlank()) {
-            JsUnpacker("eval(function(p,a,c,k,e,d)$packed").unpack()
-        } else text
+            com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Packed JS found", "length" to packed.length)
+            val un = JsUnpacker("eval(function(p,a,c,k,e,d)$packed").unpack()
+            com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Unpacked JS", "length" to (un?.length ?: 0))
+            un
+        } else {
+            com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "No packed JS found")
+            text
+        }
 
         // Extract sources
         // jwplayer("vplayer").setup({sources:[{file:"..."}]
-        val sourcesRegex = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""")
+        val sourcesRegex = Regex(""""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']"""")
         val match = sourcesRegex.find(unpacked ?: text)
         val videoUrl = match?.groupValues?.get(1)
 
         if (videoUrl != null) {
+            com.cloudstream.shared.logging.ProviderLogger.i("OkPrime", "getUrl", "Found video URL", "videoUrl" to videoUrl)
             callback(
                 newExtractorLink(
                     source = this.name,
@@ -52,6 +64,8 @@ open class OkPrimeExtractor : ExtractorApi() {
                     this.quality = com.lagradost.cloudstream3.utils.Qualities.Unknown.value
                 }
             )
+        } else {
+            com.cloudstream.shared.logging.ProviderLogger.e("OkPrime", "getUrl", "Video URL regex failed")
         }
     }
 }
