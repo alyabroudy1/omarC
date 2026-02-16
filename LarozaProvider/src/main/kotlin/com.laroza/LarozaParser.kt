@@ -176,25 +176,32 @@ class LarozaParser : NewBaseParser() {
         // 1. Check for Explicit Series Structure (Tabs/Seasons)
         val hasSeriesStructure = doc.select(".SeasonsBoxUL").isNotEmpty() || doc.select("div.TabS").isNotEmpty()
         
-        // 2. Check for Keywords in Title/Category
+        // 2. Keyword check
         val isSeriesKeyword = title.contains("مسلسل") || url.contains("series") || url.contains("view-serie")
+        val isMovieKeyword = title.contains("فيلم")
+        val isEpisodeKeyword = title.contains("حلقة")
+        
+        // 3. Category/Breadcrumb check
         val categories = doc.select(".breadcrumb li").text()
         val isSeriesCategory = categories.contains("مسلسلات")
         
-        // 3. Check for Episodes list ONLY if it's likely a series
-        // If it's a movie, .pm-ul-browse-videos might be "Related Movies"
+        // 4. Episodes list
         var episodeElements = doc.select(".pm-ul-browse-videos a")
         
-        val isLikelySeries = hasSeriesStructure || isSeriesKeyword || isSeriesCategory
+        // Revised Logic based on User Request:
+        // Movie if: Title contains "فيلم" OR Title does NOT contain "حلقة" (unless explicit series structure found)
         
-        val selectEpisodes = if (isLikelySeries && episodeElements.isEmpty()) parseSelectEpisodes(doc) else emptyList()
-        val hasEpisodes = (episodeElements.isNotEmpty() && isLikelySeries) || selectEpisodes.isNotEmpty()
+        val isExplicitSeries = hasSeriesStructure || isSeriesKeyword || isSeriesCategory
         
-        Log.d("LarozaParser", "Type detection: isLikelySeries=$isLikelySeries, hasEpisodes=$hasEpisodes")
+        val isMovie = isMovieKeyword || (!isEpisodeKeyword && !isExplicitSeries)
+        
+        Log.d("LarozaParser", "Type detection: isMovie=$isMovie (isMovieKw=$isMovieKeyword, !isEpKw=${!isEpisodeKeyword}, !isExplSer=${!isExplicitSeries})")
 
-        val isMovie = !isLikelySeries && !hasEpisodes
-        
-        // Combine episodes only if it is determined to be a series
+        // The selectEpisodes variable is used below, so it needs to be defined.
+        // Assuming parseSelectEpisodes is only called if it's likely a series and episodeElements are empty.
+        val selectEpisodes = if (isExplicitSeries && episodeElements.isEmpty()) parseSelectEpisodes(doc) else emptyList()
+
+        // Combine episodes
         val episodes = if (!isMovie) {
              if (selectEpisodes.isNotEmpty()) {
                  selectEpisodes
