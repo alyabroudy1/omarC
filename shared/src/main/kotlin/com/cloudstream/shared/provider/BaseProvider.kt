@@ -123,7 +123,8 @@ abstract class BaseProvider : MainAPI() {
         
         try {
             httpService.ensureInitialized()
-            val url = "$mainUrl$searchPath$query"
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "$mainUrl$searchPath$encoded"
             Log.d(methodTag, "Fetching search URL: $url")
             
             val doc = httpService.getDocument(url, checkDomainChange = true)
