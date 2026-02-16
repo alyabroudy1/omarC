@@ -172,27 +172,29 @@ class LarozaParser : NewBaseParser() {
         Log.d("LarozaParser", "Episode Page. Parent Series: '$seriesTitle' -> '$seriesUrl'")
         
         // Type Detection & Episode Parsing
-        // 1. Check for Episodes list (Generic selector for div or ul)
-        var episodeElements = doc.select(".pm-ul-browse-videos a")
         
-        // 2. Fallback: Check for Select-based seasons/episodes (Mobile/Alternative view)
-        // If the main list is empty, try to parse the selects
-        val selectEpisodes = if (episodeElements.isEmpty()) parseSelectEpisodes(doc) else emptyList()
+        // 1. Check for Explicit Series Structure (Tabs/Seasons)
+        val hasSeriesStructure = doc.select(".SeasonsBoxUL").isNotEmpty() || doc.select("div.TabS").isNotEmpty()
         
-        val hasEpisodes = episodeElements.isNotEmpty() || selectEpisodes.isNotEmpty()
-        
-        Log.d("LarozaParser", "Type detection: hasEpisodes=$hasEpisodes")
-
-        // 2. Keyword check
-        val isSeriesKeyword = title.contains("مسلسل") || title.contains("حلقة") || url.contains("series")
-        
-        // 3. Category/Breadcrumb check
+        // 2. Check for Keywords in Title/Category
+        val isSeriesKeyword = title.contains("مسلسل") || url.contains("series") || url.contains("view-serie")
         val categories = doc.select(".breadcrumb li").text()
         val isSeriesCategory = categories.contains("مسلسلات")
         
-        val isMovie = !hasEpisodes && !isSeriesKeyword && !isSeriesCategory
+        // 3. Check for Episodes list ONLY if it's likely a series
+        // If it's a movie, .pm-ul-browse-videos might be "Related Movies"
+        var episodeElements = doc.select(".pm-ul-browse-videos a")
         
-        // Combine episodes
+        val isLikelySeries = hasSeriesStructure || isSeriesKeyword || isSeriesCategory
+        
+        val selectEpisodes = if (isLikelySeries && episodeElements.isEmpty()) parseSelectEpisodes(doc) else emptyList()
+        val hasEpisodes = (episodeElements.isNotEmpty() && isLikelySeries) || selectEpisodes.isNotEmpty()
+        
+        Log.d("LarozaParser", "Type detection: isLikelySeries=$isLikelySeries, hasEpisodes=$hasEpisodes")
+
+        val isMovie = !isLikelySeries && !hasEpisodes
+        
+        // Combine episodes only if it is determined to be a series
         val episodes = if (!isMovie) {
              if (selectEpisodes.isNotEmpty()) {
                  selectEpisodes
@@ -202,7 +204,6 @@ class LarozaParser : NewBaseParser() {
                     val epUrl = element.attr("href")
                     
                     if (epUrl.isNotBlank()) {
-                        // Extract number from title or inner text (e.g. <em>12</em>)
                         val emText = element.select("em").text().trim()
                         val epNum = emText.toIntOrNull() 
                             ?: Regex("الحلقة\\s*(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
@@ -212,7 +213,7 @@ class LarozaParser : NewBaseParser() {
                         ParsedEpisode(
                             name = epTitle,
                             url = epUrl,
-                            season = 1, // Default to season 1 for now
+                            season = 1,
                             episode = epNum
                         )
                     } else null
@@ -220,12 +221,9 @@ class LarozaParser : NewBaseParser() {
              }
         } else emptyList()
 
-        Log.d("LarozaParser", "parseLoadPage END. isMovie=$isMovie, episodes=${episodes.size}")
-
-        // Force dump if no episodes found, regardless of type, to debug "19df723d6"
-        if (episodes.isEmpty()) {
-             Log.d("LarozaParser", "NO EPISODES FOUND. DUMPING HTML:")
-             Log.d("LarozaParser", doc.html())
+        if (episodes.isEmpty() && !isMovie) {
+             Log.d("LarozaParser", "Detected as Series but NO EPISODES found. Dumping HTML:")
+             // Log.d("LarozaParser", doc.html()) // Commented out to reduce noise, enable if needed
         }
 
         return ParsedLoadData(
