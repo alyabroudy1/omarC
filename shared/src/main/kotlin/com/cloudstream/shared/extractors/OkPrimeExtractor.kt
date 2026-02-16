@@ -22,15 +22,25 @@ open class OkPrimeExtractor : ExtractorApi() {
         val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
             ?: throw IllegalStateException("ProviderHttpService not initialized")
 
-        val customHeaders = if (referer != null) mapOf("Referer" to referer) else emptyMap()
+        val customHeaders = mutableMapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        if (referer != null) {
+            customHeaders["Referer"] = referer
+        }
         
-        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Requesting URL", "url" to url, "referer" to referer)
+        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Requesting URL", "url" to url, "referer" to customHeaders["Referer"])
 
-        // Use internal executeDirectRequest since we are in the same module
+        // Use internal executeDirectRequest
         val result = service.executeDirectRequest(url, customHeaders)
         val text = result.html ?: ""
         
-        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Response received", "length" to text.length)
+        com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Response received", 
+            "code" to result.responseCode,
+            "success" to result.success,
+            "length" to text.length,
+            "error" to (result.error?.message ?: "none")
+        )
 
         // Check for packed JS
         val packed = text.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
