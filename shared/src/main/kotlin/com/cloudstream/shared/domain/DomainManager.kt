@@ -53,6 +53,7 @@ class DomainManager(
                     withTimeout(5000L) {
                         val response = app.get(githubConfigUrl)
                         if (response.isSuccessful) {
+                            ProviderLogger.d(TAG_DOMAIN, "ensureInitialized", "Raw GitHub config received", "body" to response.text)
                             val config = JSONObject(response.text)
                             val remoteDomain = config.optString("domain", "")
                             
@@ -105,7 +106,10 @@ class DomainManager(
                 }
                 
                 val jsonBody = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                app.post(syncWorkerUrl, requestBody = jsonBody)
+                ProviderLogger.d(TAG_DOMAIN, "syncToRemote", "Sending update to worker", "url" to syncWorkerUrl, "payload" to payload.toString())
+                
+                val response = app.post(syncWorkerUrl, requestBody = jsonBody)
+                ProviderLogger.d(TAG_DOMAIN, "syncToRemote", "Worker response received", "code" to response.code, "body" to response.text)
                 
                 ProviderLogger.d(TAG_DOMAIN, "syncToRemote", "Synced", "domain" to currentDomain)
             } catch (e: Exception) { 
