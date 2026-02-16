@@ -36,4 +36,14 @@ class Laroza : BaseProvider() {
     override fun getParser(): NewBaseParser {
         return LarozaParser()
     }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val items = httpService.search(query)
+        return items.map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+            }
+        }
+    }
 }

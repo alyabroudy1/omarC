@@ -35,7 +35,7 @@ abstract class BaseProvider : MainAPI() {
     protected abstract fun getParser(): NewBaseParser
 
 
-    private val httpService by lazy {
+    protected val httpService by lazy {
         val context = PluginContext.context ?: (com.lagradost.cloudstream3.app as android.content.Context)
 
         val service = ProviderHttpService.create(
