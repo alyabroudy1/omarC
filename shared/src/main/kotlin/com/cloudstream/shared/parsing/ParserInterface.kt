@@ -50,14 +50,13 @@ interface ParserInterface {
     // Basic Parsing
     fun parseMainPage(doc: Document): List<ParsedItem>
     fun parseSearch(doc: Document): List<ParsedItem>
+    fun getSearchUrl(domain: String, query: String): String = "$domain/?s=$query"
     
     /** @deprecated Use parseLoadPageData instead */
     fun parseLoadPage(doc: Document, url: String): ParsedLoadData?
     
     /** Full load page parsing with watchUrl and episodes */
     fun parseLoadPageData(doc: Document, url: String): ParsedLoadData? = parseLoadPage(doc, url)
-    
-    // Videos
     fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParsedEpisode>
     fun extractPlayerUrls(doc: Document): List<String>
     

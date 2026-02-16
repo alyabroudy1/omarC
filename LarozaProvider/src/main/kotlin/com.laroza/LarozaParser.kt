@@ -41,6 +41,10 @@ class LarozaParser : NewBaseParser() {
         "div.pm-li-category" // Legacy fallback
     )
 
+    override fun getSearchUrl(domain: String, query: String): String {
+        return "$domain/search.php?keywords=$query"
+    }
+
     // --- Configuration ---
     private val mainPageConfig = ItemPageSelectors(
         container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail",
