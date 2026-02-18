@@ -51,7 +51,7 @@ class ProviderHttpService private constructor(
     
     val currentDomain: String
         get() = sessionState.domain
-
+    
     val userAgent: String
         get() = sessionState.userAgent
 
@@ -494,12 +494,23 @@ class ProviderHttpService private constructor(
         val finalHost = extractDomain(finalUrl)
         
         if (requestHost != finalHost && finalHost.isNotBlank()) {
+            if (!isValidProviderDomain(finalHost)) {
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "checkAndUpdateDomain",
+                    "Rejected redirect — not a provider domain",
+                    "from" to requestHost, "to" to finalHost)
+                return
+            }
             ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected",
                 "from" to requestHost, "to" to finalHost)
             updateDomain(finalHost)
             domainManager.updateDomain(finalHost)
             domainManager.syncToRemote()
         }
+    }
+    
+    private fun isValidProviderDomain(domain: String): Boolean {
+        val identity = config.fallbackDomain.substringBefore(".")
+        return domain.contains(identity, ignoreCase = true)
     }
     
     private fun clearSystemCookies(url: String) {

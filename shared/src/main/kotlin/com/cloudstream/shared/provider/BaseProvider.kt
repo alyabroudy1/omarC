@@ -66,42 +66,42 @@ abstract class BaseProvider : MainAPI() {
 
         try {
             httpService.ensureInitialized()
+            // Sync mainUrl after domain may have changed from GitHub config
+            mainUrl = "https://${httpService.currentDomain}"
             
             val items = mutableListOf<HomePageList>()
             
             if (page <= 1) {
-                Log.d(methodTag, "Loading all categories from mainPage definition (${mainPage.size} entries)")
+                val urlPath = request.data
+                val sectionName = request.name
+                Log.d(methodTag, "Fetching category: '$sectionName' -> '$urlPath'")
                 
-                mainPage.forEachIndexed { index, (sectionName, urlPath) ->
-                    Log.d(methodTag, "Processing category $index: '$sectionName' -> '$urlPath'")
+                val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
+                Log.d(methodTag, "Fetching URL: $fullUrl")
+                
+                val doc = httpService.getDocument(fullUrl, checkDomainChange = true)
+                
+                if (doc != null) {
+                    Log.d(methodTag, "Document fetched successfully. Parsing...")
+                    val parsedItems = getParser().parseMainPage(doc)
+                    Log.d(methodTag, "Parsed ${parsedItems.size} items for '$sectionName'")
                     
-                    val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
-                    Log.d(methodTag, "Fetching URL: $fullUrl")
-                    
-                    val doc = httpService.getDocument(fullUrl, checkDomainChange = true)
-                    
-                    if (doc != null) {
-                        Log.d(methodTag, "Document fetched successfully. Parsing...")
-                        val parsedItems = getParser().parseMainPage(doc)
-                        Log.d(methodTag, "Parsed ${parsedItems.size} items for '$sectionName'")
-                        
-                        if (parsedItems.isNotEmpty()) {
-                             val searchResponses = parsedItems.map { item ->
-                                val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
-                                newMovieSearchResponse(item.title, item.url, type) {
-                                    this.posterUrl = item.posterUrl
-                                    this.posterHeaders = httpService.getImageHeaders()
-                                    
-                                }
+                    if (parsedItems.isNotEmpty()) {
+                         val searchResponses = parsedItems.map { item ->
+                            val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
+                            newMovieSearchResponse(item.title, item.url, type) {
+                                this.posterUrl = item.posterUrl
+                                this.posterHeaders = httpService.getImageHeaders()
+                                
                             }
-                            Log.d(methodTag, "Mapped ${searchResponses.size} items to SearchResponse")
-                            items.add(HomePageList(sectionName, searchResponses))
-                        } else {
-                            Log.w(methodTag, "No items found for category '$sectionName'")
                         }
+                        Log.d(methodTag, "Mapped ${searchResponses.size} items to SearchResponse")
+                        items.add(HomePageList(sectionName, searchResponses))
                     } else {
-                        Log.e(methodTag, "Failed to fetch document for '$fullUrl'")
+                        Log.w(methodTag, "No items found for category '$sectionName'")
                     }
+                } else {
+                    Log.e(methodTag, "Failed to fetch document for '$fullUrl'")
                 }
             } else {
                 Log.d(methodTag, "Page > 1 not fully implemented in BaseProvider generic logic yet.")
@@ -123,6 +123,7 @@ abstract class BaseProvider : MainAPI() {
         
         try {
             httpService.ensureInitialized()
+            mainUrl = "https://${httpService.currentDomain}"
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching search URL: $url")

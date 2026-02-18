@@ -33,6 +33,7 @@ class DomainManager(
         private set
     
     private var isInitialized = false
+    private var lastSyncedDomain: String? = null
     private val mutex = Mutex()
     
     suspend fun ensureInitialized() {
@@ -94,6 +95,8 @@ class DomainManager(
 
     fun syncToRemote() {
         if (syncWorkerUrl == null) return
+        if (currentDomain == lastSyncedDomain) return
+        lastSyncedDomain = currentDomain
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
