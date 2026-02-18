@@ -136,6 +136,9 @@ data class PlayerSelectors(
     
     /** Server tabs selector */
     val serverTabs: String? = null,
+
+    /** Attribute to extract from watch button (default: href) */
+    val watchButtonAttr: String = "href",
     
     /** Server onclick URL pattern */
     val serverUrlPattern: String = """href\s*=\s*['"]([^'"]+)['"]""",
