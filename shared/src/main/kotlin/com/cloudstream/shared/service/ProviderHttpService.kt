@@ -246,6 +246,9 @@ class ProviderHttpService private constructor(
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403 - WebView fallback", "url" to url.take(80))
                 val cfResult = solveCloudflareThenRequest(url)
                 if (cfResult.success && cfResult.html != null) {
+                    if (checkDomainChange) {
+                        checkAndUpdateDomain(url, cfResult.finalUrl)
+                    }
                     return Jsoup.parse(cfResult.html, cfResult.finalUrl ?: url)
                 }
             }
@@ -438,7 +441,12 @@ class ProviderHttpService private constructor(
         if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
         
         val targetUrl = rewriteUrlIfNeeded(url)
+        
+        // Invalidate current session before WebView attempt
         invalidateSession("Preparing for CF solve")
+        
+        // Clear system cookies too
+        clearSystemCookies(targetUrl)
         
         val mode = if (config.skipHeadless) WebViewEngine.Mode.FULLSCREEN else WebViewEngine.Mode.HEADLESS
         
@@ -469,10 +477,12 @@ class ProviderHttpService private constructor(
     private fun rewriteUrlIfNeeded(url: String): String {
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
-        val isTrusted = config.trustedDomains.any { urlDomain.contains(it) }
         
-        return if (urlDomain != currentDomain && isTrusted && currentDomain.isNotBlank()) {
-            url.replace(urlDomain, currentDomain)
+        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
+            val rewritten = url.replace(urlDomain, currentDomain)
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+                "from" to urlDomain, "to" to currentDomain)
+            rewritten
         } else {
             url
         }
@@ -484,8 +494,29 @@ class ProviderHttpService private constructor(
         val finalHost = extractDomain(finalUrl)
         
         if (requestHost != finalHost && finalHost.isNotBlank()) {
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected",
+                "from" to requestHost, "to" to finalHost)
             updateDomain(finalHost)
+            domainManager.updateDomain(finalHost)
             domainManager.syncToRemote()
+        }
+    }
+    
+    private fun clearSystemCookies(url: String) {
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val cookies = cookieManager.getCookie(url)
+            if (cookies != null) {
+                cookies.split(";").forEach { cookie ->
+                    val name = cookie.split("=").firstOrNull()?.trim()
+                    if (!name.isNullOrBlank()) {
+                        cookieManager.setCookie(url, "$name=; Max-Age=0; Path=/")
+                    }
+                }
+                cookieManager.flush()
+            }
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "clearSystemCookies", "Failed to clear system cookies: ${e.message}")
         }
     }
     
