@@ -8,7 +8,6 @@ import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
 import com.cloudstream.shared.provider.ProviderConfig
-import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
 import com.cloudstream.shared.session.SessionState
@@ -133,7 +132,7 @@ class ProviderHttpService private constructor(
     
     suspend fun getPlayerUrls(url: String): List<String> {
         val doc = getDocument(url) ?: return emptyList()
-        return parser.extractPlayerUrls(doc)
+        return parser.extractWatchServersUrls(doc)
     }
 
     suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): Document? {

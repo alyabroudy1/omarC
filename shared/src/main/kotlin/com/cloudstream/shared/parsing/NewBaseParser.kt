@@ -1,7 +1,6 @@
 package com.cloudstream.shared.parsing
 
 import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -46,8 +45,10 @@ data class EpisodeConfig(
     val episode: CssSelector? = null
 )
 
-data class PlayerConfig(
-    val watchButton: CssSelector? = null,
+data class WatchServerSelector(
+    val url: CssSelector? = null,
+    val id: CssSelector? = null,
+    val title: CssSelector? = null,
     val iframe: CssSelector? = null,
     val script: CssSelector? = null // For regex extraction from scripts
 )
@@ -66,7 +67,7 @@ abstract class NewBaseParser : ParserInterface {
     open val searchConfig: MainPageConfig get() = mainPageConfig
     abstract val loadPageConfig: LoadPageConfig
     abstract val episodeConfig: EpisodeConfig
-    abstract val playerConfig: PlayerConfig
+    abstract val watchServersSelectors: WatchServerSelector
 
     // ================== PARSING IMPLEMENTATION ==================
 
@@ -159,11 +160,11 @@ abstract class NewBaseParser : ParserInterface {
         }
     }
 
-    override fun extractPlayerUrls(doc: Document): List<String> {
+    override fun extractWatchServersUrls(doc: Document): List<String> {
         val urls = mutableListOf<String>()
-        val config = playerConfig
+        val config = watchServersSelectors
         
-        config.watchButton?.let { selector ->
+        config.url?.let { selector ->
              doc.select(selector.query).forEach { element ->
                  element.extract(selector.copy(query = ""))?.let { if (it.isNotBlank()) urls.add(it) }
              }

@@ -1,5 +1,6 @@
 package com.laroza
 
+import com.lagradost.api.Log
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -43,8 +44,10 @@ class LarozaParser : NewBaseParser() {
         episode = CssSelector(query = "h3 a", attr = "text", regex = "(\\d+)")
     )
 
-    override val playerConfig = PlayerConfig(
-        watchButton = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-url"),
+    override val watchServersSelectors = WatchServerSelector(
+        url = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-url"),
+        id = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-id"),
+        title = CssSelector(query = "ul.WatchList li[data-embed-url].strong", attr = "text"),
         iframe = CssSelector(query = ".brooks_player iframe", attr = "src")
     )
 
@@ -72,5 +75,15 @@ class LarozaParser : NewBaseParser() {
         if (url.contains("series") || url.contains("ramadan")) return true
         
         return false
+    }
+
+    override fun getPlayerPageUrl(doc: Document): String? {
+        // Look for play page link - class name changes randomly, use multiple selectors
+        val playLink = doc.selectFirst("a[href*='play.php?vid=']")?.attr("href")
+            ?: doc.selectFirst("#BiBplayer a[href*='play.php']")?.attr("href")
+            ?: doc.selectFirst("#video-wrapper a[href*='play.php']")?.attr("href")
+
+        Log.d("LarozaParser", "getPlayerPageUrl: found='$playLink'")
+        return playLink
     }
 }

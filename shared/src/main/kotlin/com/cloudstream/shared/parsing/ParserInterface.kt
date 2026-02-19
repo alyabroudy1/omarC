@@ -58,7 +58,7 @@ interface ParserInterface {
     /** Full load page parsing with watchUrl and episodes */
     fun parseLoadPageData(doc: Document, url: String): ParsedLoadData? = parseLoadPage(doc, url)
     fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParsedEpisode>
-    fun extractPlayerUrls(doc: Document): List<String>
+    fun extractWatchServersUrls(doc: Document): List<String>
     
     /**
      * Extract the player/watch page URL from the detail page.

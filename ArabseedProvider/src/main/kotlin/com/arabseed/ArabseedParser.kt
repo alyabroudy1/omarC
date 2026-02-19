@@ -1,10 +1,8 @@
 package com.arabseed
 
 import com.lagradost.api.Log
-import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.TvType
 import com.cloudstream.shared.extractors.LinkResolvers
-import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -400,7 +398,7 @@ class ArabseedParser : BaseParser() {
         return postId.ifBlank { null }
     }
 
-    override fun extractPlayerUrls(doc: Document): List<String> {
+    override fun extractWatchServersUrls(doc: Document): List<String> {
         val urls = mutableListOf<String>()
         
         // Embeds
@@ -473,7 +471,7 @@ class ArabseedParser : BaseParser() {
         } catch (e: Exception) { htmlContent = json }
         
         if (htmlContent.isBlank()) return emptyList()
-        return extractPlayerUrls(Jsoup.parse(htmlContent))
+        return extractWatchServersUrls(Jsoup.parse(htmlContent))
     }
 
     fun parseServerListFromAjax(json: String): List<ServerData> {
