@@ -12,11 +12,11 @@ class LarozaParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.pm-li-category",
+        container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail",
         // Container IS the item in this loop structure
-        title = CssSelector(query = ".caption h3 a", attr = "text"),
-        url = CssSelector(query = ".caption h3 a", attr = "href"),
-        poster = CssSelector(query = ".pm-video-thumb img", attr = "src, data-echo")
+        title = CssSelector(query = ".caption h3 a, h3 a", attr = "text"),
+        url = CssSelector(query = ".caption h3 a, h3 a", attr = "href"),
+        poster = CssSelector(query = ".thumbnail.a img, .pm-video-thumb img, img", attr = "data-echo, src")
     )
 
     override val searchConfig = MainPageConfig(
