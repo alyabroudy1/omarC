@@ -18,9 +18,9 @@ import com.cloudstream.shared.provider.BaseProvider
 
 class ArabseedV4 : BaseProvider() {
 
-    override val baseDomain = "https://arabseed.show"
-    override val providerName = "ArabseedV4"
-    override val githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseed.json"
+    override val baseDomain get() = "arabseed.show"
+    override val providerName get() = "ArabseedV4"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseed.json"
 
     override val mainPage = mainPageOf(
         "/movies-1/" to "أفلام",
