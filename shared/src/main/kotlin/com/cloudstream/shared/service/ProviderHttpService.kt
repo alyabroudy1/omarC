@@ -276,13 +276,13 @@ class ProviderHttpService private constructor(
         
         headers["Referer"] = "https://$domain/"
         
-        ProviderLogger.d(TAG_PROVIDER_HTTP, "getImageHeaders", "Building image headers",
-            "targetDomain" to domain,
-            "sessionDomain" to sessionState.domain,
-            "isAlias" to (targetDomain != null && targetDomain != sessionState.domain),
-            "hasCookies" to (headers["Cookie"] != null),
-            "cookieCount" to cookies.size
-        )
+//        ProviderLogger.d(TAG_PROVIDER_HTTP, "getImageHeaders", "Building image headers",
+//            "targetDomain" to domain,
+//            "sessionDomain" to sessionState.domain,
+//            "isAlias" to (targetDomain != null && targetDomain != sessionState.domain),
+//            "hasCookies" to (headers["Cookie"] != null),
+//            "cookieCount" to cookies.size
+//        )
         return headers
     }
 
