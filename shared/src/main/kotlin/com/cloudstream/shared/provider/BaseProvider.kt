@@ -46,8 +46,6 @@ abstract class BaseProvider : MainAPI() {
         service
     }
 
-    abstract val searchPath: String
-
     open fun getSyncWorkerUrl(): String = "https://omarstreamcloud.alyabroudy1.workers.dev"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {

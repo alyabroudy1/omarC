@@ -25,7 +25,7 @@ class Laroza : BaseProvider() {
     override val baseDomain get() = "laroza.cfd"
     override val providerName get() = "Laroza"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
-    override val searchPath = "search.php?keywords="
+
 
 
     override val mainPage = mainPageOf(
