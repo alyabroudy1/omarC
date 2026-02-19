@@ -42,6 +42,7 @@ class ArabseedV4 : BaseProvider() {
              val watchUrl = (getParser() as ArabseedV4Parser).getWatchUrl(doc)
              return newMovieLoadResponse(data.title, url, TvType.Movie, watchUrl.ifBlank { url }) {
                  this.posterUrl = data.posterUrl
+                 this.posterHeaders = httpService.getImageHeaders()
                  this.year = data.year
                  this.plot = data.plot
                  this.tags = data.tags
@@ -100,11 +101,18 @@ class ArabseedV4 : BaseProvider() {
                 }
             }
 
+            val seasonNames = mappedEpisodes.mapNotNull { it.season }.distinct().sorted()
+                .map { SeasonData(it, "الموسم $it") }
+
             return newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, mappedEpisodes) {
                 this.posterUrl = data.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
                 this.year = data.year
                 this.plot = data.plot
                 this.tags = data.tags
+                if (seasonNames.isNotEmpty()) {
+                    this.seasonNames = seasonNames
+                }
             }
         }
     }

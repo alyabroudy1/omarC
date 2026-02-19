@@ -2,6 +2,7 @@ package com.arabseedv4
 
 import com.lagradost.api.Log
 import com.cloudstream.shared.parsing.*
+import com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -23,9 +24,9 @@ class ArabseedV4Parser : NewBaseParser() {
 
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector(query = "div.title h1, h1.postTitle, div.h1-title h1", attr = "text"),
-        poster = CssSelector(query = "div.posterDiv img, div.poster img, img.poster, div.single-poster img, .moviePoster img", attr = "data-src, src"),
+        poster = CssSelector(query = "div.posterDiv img, div.poster img, img.poster, div.single-poster img, div.postDiv a div img, div.postDiv img, .moviePoster img", attr = "data-src, src"),
         plot = CssSelector(
-            query = "div.singleInfo span:contains(القصة) p, div.singleDesc p, div.story p, div.postContent p, meta[property='og:description']", 
+            query = "div.singleInfo span:contains(القصة) p, div.singleDesc p, div.story p, div.post__story p, div.postContent p, meta[property='og:description']", 
             attr = "text, content"
         ),
         year = CssSelector(query = "div.singleInfo span:contains(السنة) a, div.info__area li:has(span:contains(سنة العرض)) ul.tags__list a", attr = "text", regex = "(\\d{4})"),
@@ -223,6 +224,25 @@ class ArabseedV4Parser : NewBaseParser() {
                 !src.contains("instagram") && 
                 !src.contains("google")
             ) src else null
+        }
+    }
+    override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
+        val data = super.parseLoadPage(doc, url) ?: return null
+        
+        // Custom Fallback for Poster (Exact match to V2 logic)
+        var finalPoster: String? = data.posterUrl
+        if (finalPoster.isNullOrBlank()) {
+            val contentImg = doc.select("img").firstOrNull { img ->
+                val src = img.attr("data-src").ifBlank { img.attr("src") }
+                src.contains("/wp-content/uploads/") && src.length > 10
+            }
+            finalPoster = contentImg?.let { it.attr("data-src").ifBlank { it.attr("src") } }
+        }
+        
+        return if (finalPoster != data.posterUrl) {
+            data.copy(posterUrl = fixUrl(finalPoster ?: ""))
+        } else {
+            data
         }
     }
 }
