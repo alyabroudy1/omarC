@@ -53,6 +53,9 @@ class LarozaParser : NewBaseParser() {
 
     // Unified Series Detection Logic
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
+        // 0. Explicit Movie Checks (Fail-fast)
+        if (title.contains("فيلم") || title.contains("film", true) || title.contains("movie", true)) return false
+
         // 1. Element Context Checks (Priority)
         if (element != null) {
             if (element is Document) {
