@@ -24,7 +24,7 @@ class LarozaParser : NewBaseParser() {
         container = "ul.pm-ul-browse-videos li",
         title = CssSelector(query = "h3 a", attr = "text"),
         url = CssSelector(query = "h3 a", attr = "href"),
-        poster = CssSelector(query = ".pm-video-thumb img", attr = "src, data-echo")
+        poster = CssSelector(query = ".pm-video-thumb img", attr = "data-echo, src")
     )
 
     override val loadPageConfig = LoadPageConfig(
