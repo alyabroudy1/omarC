@@ -186,13 +186,14 @@ class ProviderHttpService private constructor(
         return sources.distinctBy { it.url }
     }
 
-    suspend fun sniffVideosVisible(url: String): List<VideoSource> {
+    suspend fun sniffVideosVisible(url: String, headers: Map<String, String> = emptyMap()): List<VideoSource> {
         val result = webViewEngine.runSession(
             url = url,
             mode = WebViewEngine.Mode.FULLSCREEN,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = 60_000L
+            timeout = 60_000L,
+            referer = headers["Referer"]
         )
 
         return when (result) {

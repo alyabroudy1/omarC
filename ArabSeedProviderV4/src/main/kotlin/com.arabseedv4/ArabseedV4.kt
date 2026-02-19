@@ -204,7 +204,8 @@ class ArabseedV4 : BaseProvider() {
                          // Fallback to Sniffer if standard failed
                          // We can use the visible sniffer logic if it's a private server
                          if (sourceUrl.contains("arabseed") || sourceUrl.contains("asd")) {
-                              val sniffed = httpService.sniffVideosVisible(sourceUrl)
+                              val headers = mapOf("Referer" to "$currentBaseUrl/")
+                              val sniffed = httpService.sniffVideosVisible(sourceUrl, headers)
                               sniffed.forEach { vid ->
                                   callback(newExtractorLink(
                                       providerName,
@@ -213,6 +214,7 @@ class ArabseedV4 : BaseProvider() {
                                       ExtractorLinkType.VIDEO
                                   ) {
                                       this.headers = vid.headers
+                                      this.referer = "$currentBaseUrl/"
                                       this.quality = getQualityFromName(vid.quality)
                                   })
                                   anyFound = true
