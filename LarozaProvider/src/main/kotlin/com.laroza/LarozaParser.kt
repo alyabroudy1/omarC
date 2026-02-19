@@ -4,7 +4,12 @@ import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
+
 class LarozaParser : NewBaseParser() {
+    
+    override fun getSearchUrl(domain: String, query: String): String {
+        return "$domain/search.php?keywords=$query"
+    }
     
     override val mainPageConfig = MainPageConfig(
         container = "div.pm-li-category",
