@@ -704,6 +704,8 @@ class WebViewEngine(
                               "" 
                          } catch (e: Exception) { "" }
                          
+                         // FIX: Destroy WebView to prevent background leak
+                         cleanup(webView, null)
                          deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
                     }
                  }
