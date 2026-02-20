@@ -187,7 +187,7 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Parsed load data: title='${data.title}', type=$finalType")
             
             return if (finalType == TvType.Movie) {
-                newMovieLoadResponse(data.title, url, TvType.Movie, data.url) {
+                newMovieLoadResponse(data.title, data.url, TvType.Movie, data.url) {
                     this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                     this.plot = data.plot
@@ -203,7 +203,7 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
-                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodeList) {
+                newTvSeriesLoadResponse(data.title, data.url, TvType.TvSeries, episodeList) {
                     this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                     this.plot = data.plot
