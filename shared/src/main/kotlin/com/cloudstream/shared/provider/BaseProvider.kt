@@ -327,7 +327,7 @@ abstract class BaseProvider : MainAPI() {
                         source = this@BaseProvider.name,
                         name = serverName,
                         referer = referer,
-                        quality = com.lagradost.cloudstream3.utils.Qualities.Unknown.value,
+                        quality = com.lagradost.cloudstream3.utils.Qualities.P1080.value,
                         type = com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
                     ) {
                         override suspend fun getRealLink(): com.lagradost.cloudstream3.utils.ExtractorLink? {
@@ -340,29 +340,49 @@ abstract class BaseProvider : MainAPI() {
                             Log.d(methodTag, "STEP 1: Trying standard extractors for Lazy Link: $url")
                             val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, localCallback, timeoutMs = 8000L)
                             
-                            if (standardResult && resultLink != null) {
+                            val finalLink = if (standardResult && resultLink != null) {
                                 Log.i(methodTag, "SUCCESS via standard extractor: $url")
-                                return resultLink
+                                resultLink
+                            } else {
+                                // Standard failed, try sniffer
+                                Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer for Lazy Link...")
+                                val snifferResult = awaitSnifferResult(
+                                    url, 
+                                    referer, 
+                                    subtitleCallback, 
+                                    localCallback, 
+                                    timeoutMs = 60000L,
+                                    selector = selector
+                                )
+                                if (snifferResult && resultLink != null) {
+                                    Log.i(methodTag, "SUCCESS via sniffer: $url")
+                                    resultLink
+                                } else {
+                                    Log.w(methodTag, "Both methods failed for lazy link: $url")
+                                    null
+                                }
+                            }
+
+                            if (finalLink != null) {
+                                val isDrm = finalLink.name.contains("(DRM Protected)") || 
+                                            (finalLink.referer?.contains("shahid.net") == true && finalLink.url.contains(".mpd")) ||
+                                            finalLink.type == com.lagradost.cloudstream3.utils.ExtractorLinkType.DASH
+                                
+                                if (isDrm) {
+                                    Log.d(methodTag, "Intercepted DRM Shahid link inside lazy loader, launching DrmPlayerDialog")
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        com.cloudstream.shared.android.ActivityProvider.currentActivity?.let { newAct ->
+                                            newAct.onBackPressed()
+                                            val dialogUrl = finalLink.referer ?: finalLink.url
+                                            val dialog = com.cloudstream.shared.ui.DrmPlayerDialog(newAct, dialogUrl, finalLink.referer)
+                                            dialog.show()
+                                        }
+                                    }
+                                    kotlinx.coroutines.awaitCancellation()
+                                }
                             }
                             
-                            // Standard failed, try sniffer
-                            Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer for Lazy Link...")
-                            val snifferResult = awaitSnifferResult(
-                                url, 
-                                referer, 
-                                subtitleCallback, 
-                                localCallback, 
-                                timeoutMs = 60000L,
-                                selector = selector
-                            )
-                            
-                            if (snifferResult && resultLink != null) {
-                                Log.i(methodTag, "SUCCESS via sniffer: $url")
-                                return resultLink
-                            }
-                            
-                            Log.w(methodTag, "Both methods failed for lazy link: $url")
-                            return null
+                            return finalLink
                         }
                     }
                 )
@@ -440,10 +460,13 @@ abstract class BaseProvider : MainAPI() {
                 // Use loadExtractor which will trigger SnifferExtractor
                 loadExtractor(sniffUrl, referer, subtitleCallback) { link ->
                     Log.i("[$name] [awaitSnifferResult]", "CALLBACK FIRED! URL=${link.url.take(80)}")
-                    if (!found) {
+                    val isAudioChunk = link.url.contains("audio", ignoreCase = true) && link.url.contains(".mp4", ignoreCase = true)
+                    if (!found && !isAudioChunk) {
                         found = true
                         callback(link)
                         deferred.complete(true)
+                    } else if (isAudioChunk) {
+                        Log.w("[$name] [awaitSnifferResult]", "Rejected AUDIO fragment from sniffer: ${link.url.take(80)}")
                     }
                 }
                 
