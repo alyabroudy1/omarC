@@ -3,6 +3,8 @@ package com.cloudstream.shared.provider
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.ParserInterface
+import org.jsoup.nodes.Document
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.android.ActivityProvider
@@ -147,15 +149,22 @@ abstract class BaseProvider : MainAPI() {
             
             // Check if URL domain differs from main domain (subdomain case)
             // e.g., mainUrl=https://laroza.cfd/ but url=https://qq.laroza.cfd/vid-...
-            handleDomainDifference(url, methodTag)
             
             val doc = httpService.getDocument(url)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch load document")
                 return null
             }
+
+            var actualDoc = doc
+            var actualUrl = url
             
-            var data = getParser().parseLoadPageData(doc, url)
+            // Check for Meta-Refresh Redirect (Client-side redirect)
+            val metaResolved = resolveMetaRefresh(actualDoc, actualUrl, methodTag)
+            actualDoc = metaResolved.first
+            actualUrl = metaResolved.second
+            
+            var data = getParser().parseLoadPageData(actualDoc, actualUrl)
             
             if (data == null) {
                 Log.e(methodTag, "Failed to parse load data")
@@ -163,44 +172,27 @@ abstract class BaseProvider : MainAPI() {
             }
             
             // Refactored Fallback: Swap entire 'data' context if this is an episode pointing to a parent series
-            if (data != null && !data!!.isMovie && data!!.episodes.isNullOrEmpty() && !data!!.parentSeriesUrl.isNullOrBlank()) {
-                val parentUrl = data!!.parentSeriesUrl!!
-                try {
-                    val parentDoc = httpService.getDocument(parentUrl)
-                    if (parentDoc != null) {
-                        val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
-                        if (parentData != null) {
-                            data = parentData
-                            Log.d(methodTag, "Swapped entire load context to parent series: $parentUrl")
-                        }
-                    } else {
-                        Log.e(methodTag, "Failed to fetch parent series document: $parentUrl")
-                    }
-                } catch (e: Exception) {
-                    Log.e(methodTag, "Failed to fetch parent series: $parentUrl")
-                    e.printStackTrace()
-                }
-            }
+            data = resolveParentSeries(data, methodTag)
             
-            val actualEpisodes = data!!.episodes ?: emptyList()
+            val actualEpisodes = data.episodes ?: emptyList()
             
             // Ultimate Fallback: If it's a series but we have 0 episodes, treat as a Movie to show the Play button
-            val finalType = if (data!!.type == TvType.TvSeries && actualEpisodes.isEmpty()) {
+            val finalType = if (data.type == TvType.TvSeries && actualEpisodes.isEmpty()) {
                 Log.d(methodTag, "Fallback: Series has 0 episodes, treating as Movie to ensure playability.")
                 TvType.Movie
             } else {
-                data!!.type
+                data.type
             }
 
-            Log.d(methodTag, "Parsed load data: title='${data!!.title}', type=$finalType")
+            Log.d(methodTag, "Parsed load data: title='${data.title}', type=$finalType")
             
             return if (finalType == TvType.Movie) {
-                newMovieLoadResponse(data!!.title, url, TvType.Movie, data!!.url) {
-                    this.posterUrl = data!!.posterUrl
+                newMovieLoadResponse(data.title, url, TvType.Movie, data.url) {
+                    this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
-                    this.plot = data!!.plot
-                    this.tags = data!!.tags
-                    this.year = data!!.year
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
                 }
             } else {
                 val episodeList = actualEpisodes.map { ep ->
@@ -211,12 +203,12 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
-                newTvSeriesLoadResponse(data!!.title, url, TvType.TvSeries, episodeList) {
-                    this.posterUrl = data!!.posterUrl
+                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodeList) {
+                    this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
-                    this.plot = data!!.plot
-                    this.tags = data!!.tags
-                    this.year = data!!.year
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
                 }
             }
         } catch (e: Exception) {
@@ -452,5 +444,54 @@ abstract class BaseProvider : MainAPI() {
             Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Resolves meta-refresh redirects during load(), e.g., <meta http-equiv="Refresh" content="0;URL=...">
+     * Returns the pair of (Document, Url). If no redirect, returns the original pair.
+     */
+    protected open suspend fun resolveMetaRefresh(doc: Document, url: String, methodTag: String): Pair<Document, String> {
+        val refreshMeta = doc.selectFirst("meta[http-equiv=Refresh]")
+        if (refreshMeta != null) {
+            val content = refreshMeta.attr("content")
+            val newUrlMatch = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(content)
+            val newUrl = newUrlMatch?.groupValues?.get(1)
+
+            if (!newUrl.isNullOrBlank()) {
+                Log.d(methodTag, "Found Meta-Refresh to: $newUrl")
+                val newDoc = httpService.getDocument(newUrl)
+                if (newDoc != null) {
+                    Log.d(methodTag, "Swapped to Meta-Refresh document.")
+                    return Pair(newDoc, newUrl)
+                }
+            }
+        }
+        return Pair(doc, url)
+    }
+
+    /**
+     * Resolves parent series context during load() if the current document is just an episode
+     * but links to a parent URL for the full series graph.
+     */
+    protected open suspend fun resolveParentSeries(data: ParserInterface.ParsedLoadData, methodTag: String): ParserInterface.ParsedLoadData {
+        if (!data.isMovie && data.episodes.isNullOrEmpty() && !data.parentSeriesUrl.isNullOrBlank()) {
+            val parentUrl = data.parentSeriesUrl!!
+            try {
+                val parentDoc = httpService.getDocument(parentUrl)
+                if (parentDoc != null) {
+                    val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
+                    if (parentData != null) {
+                        Log.d(methodTag, "Swapped entire load context to parent series: $parentUrl")
+                        return parentData
+                    }
+                } else {
+                    Log.e(methodTag, "Failed to fetch parent series document: $parentUrl")
+                }
+            } catch (e: Exception) {
+                Log.e(methodTag, "Failed to fetch parent series: $parentUrl")
+                e.printStackTrace()
+            }
+        }
+        return data
     }
 }
