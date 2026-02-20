@@ -239,6 +239,12 @@ class SnifferExtractor : ExtractorApi() {
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
+                    
+                    var displaySourceName = name
+                    if (url.contains("shahid.net", ignoreCase = true) && linkType == ExtractorLinkType.DASH) {
+                        displaySourceName = "$name (DRM Protected)"
+                    }
+                    
                     android.util.Log.i("SnifferExtractor", "[getUrl] Link type: ${linkType.name}")
                     
                     // STOP after first valid link
@@ -324,8 +330,8 @@ class SnifferExtractor : ExtractorApi() {
                         android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
                          callback(
                             newExtractorLink(
-                                source = name,
-                                name = "$name ${source.qualityLabel}",
+                                source = displaySourceName,
+                                name = "$displaySourceName ${source.qualityLabel}",
                                 url = source.url,
                                 type = linkType
                             ) {
