@@ -316,45 +316,59 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Using referer: $referer")
             
             for ((index, url) in urls.withIndex()) {
-                Log.d(methodTag, "Processing player URL: $url")
+                Log.d(methodTag, "Yielding LazyExtractorLink for player URL: $url")
                 
-                // STEP 1: Try standard extractors (8s timeout)
-                Log.d(methodTag, "STEP 1: Trying standard extractors...")
-                val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 6000L)
-                
-                if (standardResult) {
-                    Log.i(methodTag, "SUCCESS via standard extractor: $url")
-                    return true
-                }
-                
-                // STEP 2: Standard failed, try sniffer (60s timeout)
-                Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer...")
-                
-                // Get selector for this URL if available (for WatchList servers)
                 val selector = serverSelectors.getOrNull(index)
-                if (selector != null) {
-                    Log.d(methodTag, "Using selector for sniffer: ${selector.query}")
-                }
+                val serverName = "Server ${index + 1}"
                 
-                val snifferResult = awaitSnifferResult(
-                    url, 
-                    referer, 
-                    subtitleCallback, 
-                    callback, 
-                    timeoutMs = 60000L,
-                    selector = selector
+                // Instantly yield a LazyExtractorLink so the player UI populates fast
+                callback(
+                    object : com.lagradost.cloudstream3.utils.LazyExtractorLink(
+                        source = this@BaseProvider.name,
+                        name = serverName,
+                        referer = referer,
+                        quality = com.lagradost.cloudstream3.utils.Qualities.Unknown.value,
+                        type = com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                    ) {
+                        override suspend fun getRealLink(): com.lagradost.cloudstream3.utils.ExtractorLink? {
+                            // Run the standard extractor
+                            var resultLink: com.lagradost.cloudstream3.utils.ExtractorLink? = null
+                            val localCallback = { link: com.lagradost.cloudstream3.utils.ExtractorLink -> 
+                                resultLink = link 
+                            }
+                            
+                            Log.d(methodTag, "STEP 1: Trying standard extractors for Lazy Link: $url")
+                            val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, localCallback, timeoutMs = 8000L)
+                            
+                            if (standardResult && resultLink != null) {
+                                Log.i(methodTag, "SUCCESS via standard extractor: $url")
+                                return resultLink
+                            }
+                            
+                            // Standard failed, try sniffer
+                            Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer for Lazy Link...")
+                            val snifferResult = awaitSnifferResult(
+                                url, 
+                                referer, 
+                                subtitleCallback, 
+                                localCallback, 
+                                timeoutMs = 60000L,
+                                selector = selector
+                            )
+                            
+                            if (snifferResult && resultLink != null) {
+                                Log.i(methodTag, "SUCCESS via sniffer: $url")
+                                return resultLink
+                            }
+                            
+                            Log.w(methodTag, "Both methods failed for lazy link: $url")
+                            return null
+                        }
+                    }
                 )
-                
-                if (snifferResult) {
-                    Log.i(methodTag, "SUCCESS via sniffer: $url")
-                    return true
-                }
-                
-                Log.w(methodTag, "Both methods failed for: $url")
             }
             
-            Log.w(methodTag, "END - No videos found from ${urls.size} URLs")
-            return false
+            return true
         } catch (e: Exception) {
             Log.e(methodTag, "Error in loadLinks: ${e.message}")
             e.printStackTrace()
