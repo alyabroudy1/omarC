@@ -49,7 +49,7 @@ class Laroza : BaseProvider() {
         var handledByDialog = false
         val interceptingCallback: (ExtractorLink) -> Unit = { link ->
             // If it's a Shahid stream (which uses DRM), launch DrmPlayerDialog
-            if (link.url.contains("shahid.net") && link.url.contains(".mpd")) {
+            if (link.name.contains("(DRM Protected)") || (link.referer?.contains("shahid.net") == true && link.url.contains(".mpd"))) {
                 Log.d("Laroza", "Intercepted DRM Shahid link, launching DrmPlayerDialog")
                 handledByDialog = true
                 ActivityProvider.currentActivity?.let { activity ->
