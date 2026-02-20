@@ -224,8 +224,108 @@ class WebViewEngine(
 
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val nextUrl = request?.url?.toString()
-                    ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Redirect", "url" to nextUrl?.take(80))
-                    return super.shouldOverrideUrlLoading(view, request)
+                    if (nextUrl.isNullOrBlank()) return super.shouldOverrideUrlLoading(view, request)
+                    
+                    // Check if this redirect goes to a DIFFERENT domain than the target URL
+                    try {
+                        val nextHost = java.net.URI(nextUrl).host?.lowercase() ?: ""
+                        val targetHost = java.net.URI(url).host?.lowercase() ?: ""
+                        
+                        fun baseDomain(host: String): String {
+                            val parts = host.split(".")
+                            return if (parts.size >= 2) parts.takeLast(2).joinToString(".") else host
+                        }
+                        
+                        val nextBase = baseDomain(nextHost)
+                        val targetBase = baseDomain(targetHost)
+                        
+                        if (nextBase == targetBase) {
+                            // Same domain redirect (e.g., www.X.com → X.com) — allow silently
+                            ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
+                            return false
+                        }
+                        
+                        // Cross-domain redirect — block and show user confirmation
+                        android.util.Log.w("WebViewEngine", "Cross-domain redirect detected: $targetBase → $nextBase ($nextUrl)")
+                        ProviderLogger.w(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Cross-domain redirect BLOCKED, asking user",
+                            "from" to targetBase, "to" to nextBase, "url" to nextUrl.take(100)
+                        )
+                        
+                        // Inject HTML confirmation banner into the current page
+                        val escapedUrl = nextUrl.replace("\\", "\\\\").replace("'", "\\'")
+                        val shortUrl = if (nextUrl.length > 60) nextUrl.take(57) + "..." else nextUrl
+                        val escapedShortUrl = shortUrl.replace("\\", "\\\\").replace("'", "\\'")
+                        
+                        view?.post {
+                            view.evaluateJavascript("""
+                                (function() {
+                                    // Remove any existing redirect bar
+                                    var old = document.getElementById('cs3-redirect-bar');
+                                    if (old) old.remove();
+                                    
+                                    var bar = document.createElement('div');
+                                    bar.id = 'cs3-redirect-bar';
+                                    bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:999999;' +
+                                        'background:rgba(0,0,0,0.92);padding:12px 16px;display:flex;align-items:center;' +
+                                        'gap:10px;font-family:sans-serif;border-top:2px solid #ff9800;';
+                                    
+                                    var text = document.createElement('span');
+                                    text.style.cssText = 'color:#fff;font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                                    text.textContent = 'Redirect to: $escapedShortUrl';
+                                    bar.appendChild(text);
+                                    
+                                    var timerSpan = document.createElement('span');
+                                    timerSpan.id = 'cs3-redirect-timer';
+                                    timerSpan.style.cssText = 'color:#ff9800;font-size:12px;min-width:30px;text-align:center;';
+                                    timerSpan.textContent = '8s';
+                                    bar.appendChild(timerSpan);
+                                    
+                                    var allowBtn = document.createElement('button');
+                                    allowBtn.textContent = 'Allow';
+                                    allowBtn.style.cssText = 'background:#4CAF50;color:#fff;border:none;padding:8px 18px;' +
+                                        'border-radius:4px;font-size:14px;cursor:pointer;font-weight:bold;';
+                                    allowBtn.onclick = function() {
+                                        bar.remove();
+                                        window.SnifferBridge.onRedirectChoice('$escapedUrl', true);
+                                    };
+                                    bar.appendChild(allowBtn);
+                                    
+                                    var blockBtn = document.createElement('button');
+                                    blockBtn.textContent = 'Block';
+                                    blockBtn.style.cssText = 'background:#f44336;color:#fff;border:none;padding:8px 18px;' +
+                                        'border-radius:4px;font-size:14px;cursor:pointer;font-weight:bold;';
+                                    blockBtn.onclick = function() {
+                                        bar.remove();
+                                        window.SnifferBridge.onRedirectChoice('$escapedUrl', false);
+                                    };
+                                    bar.appendChild(blockBtn);
+                                    
+                                    document.body.appendChild(bar);
+                                    
+                                    // Auto-reject after 8 seconds
+                                    var remaining = 8;
+                                    var timer = setInterval(function() {
+                                        remaining--;
+                                        var ts = document.getElementById('cs3-redirect-timer');
+                                        if (ts) ts.textContent = remaining + 's';
+                                        if (remaining <= 0) {
+                                            clearInterval(timer);
+                                            var b = document.getElementById('cs3-redirect-bar');
+                                            if (b) b.remove();
+                                            window.SnifferBridge.onRedirectChoice('$escapedUrl', false);
+                                        }
+                                    }, 1000);
+                                })();
+                            """.trimIndent(), null)
+                        }
+                        
+                        return true // Block the redirect until user decides
+                        
+                    } catch (e: Exception) {
+                        android.util.Log.w("WebViewEngine", "Error in redirect check: ${e.message}")
+                        ProviderLogger.d(TAG_WEBVIEW, "shouldOverrideUrlLoading", "Redirect (parse error, allowing)", "url" to nextUrl.take(80))
+                        return false
+                    }
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -931,6 +1031,20 @@ class WebViewEngine(
         @JavascriptInterface
         fun log(message: String) {
             android.util.Log.d("VideoSnifferJS", "BRIDGE: " + message)
+        }
+        
+        @JavascriptInterface
+        fun onRedirectChoice(redirectUrl: String, allowed: Boolean) {
+            android.util.Log.i("WebViewEngine", "Redirect choice: allowed=$allowed, url=${redirectUrl.take(80)}")
+            ProviderLogger.i(TAG_WEBVIEW, "SnifferBridge", "Redirect choice", "allowed" to allowed, "url" to redirectUrl.take(80))
+            if (allowed) {
+                // User chose to follow the redirect — load the URL in the WebView
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    activeWebView?.loadUrl(redirectUrl)
+                }
+            } else {
+                android.util.Log.i("WebViewEngine", "Redirect blocked by user: ${redirectUrl.take(80)}")
+            }
         }
     }
     
