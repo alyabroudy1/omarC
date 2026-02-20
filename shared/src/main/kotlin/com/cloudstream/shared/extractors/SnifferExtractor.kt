@@ -241,7 +241,7 @@ class SnifferExtractor : ExtractorApi() {
                     }
                     
                     var displaySourceName = name
-                    if (embedUrl.contains("shahid.net", ignoreCase = true) && linkType == ExtractorLinkType.DASH) {
+                    if (linkType == ExtractorLinkType.DASH) {
                         displaySourceName = "$name (DRM Protected)"
                     }
                     
