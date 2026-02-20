@@ -34,7 +34,8 @@ data class LoadPageConfig(
     val tags: CssSelector? = null,
     val year: CssSelector? = null,
     val movieIndicator: CssSelector? = null,
-    val seriesIndicator: CssSelector? = null
+    val seriesIndicator: CssSelector? = null,
+    val parentSeriesUrl: CssSelector? = null
 )
 
 data class EpisodeConfig(
@@ -43,6 +44,12 @@ data class EpisodeConfig(
     val url: CssSelector,
     val season: CssSelector? = null, // Logic often complex, but selector support helps
     val episode: CssSelector? = null
+)
+
+data class SeasonSelector(
+    val container: String,
+    val title: CssSelector? = null,
+    val url: CssSelector,
 )
 
 data class WatchServerSelector(
@@ -113,11 +120,13 @@ abstract class NewBaseParser : ParserInterface {
 
     override fun parseLoadPage(doc: Document, url: String): ParserInterface.ParsedLoadData? {
         val config = loadPageConfig
-        
+
+
         val title = doc.extract(config.title) ?: doc.title()
         val plot = doc.extract(config.plot)
         val posterUrl = doc.extract(config.poster)
         val year = doc.extract(config.year)?.toIntOrNull()
+        val parentSeriesUrl = doc.extract(config.parentSeriesUrl)
         
         // Type Detection logic
         val isMovie = isMovie(title, url, doc)
@@ -133,7 +142,8 @@ abstract class NewBaseParser : ParserInterface {
             url = url,
             type = if (isMovie) TvType.Movie else TvType.TvSeries,
             year = year, 
-            episodes = episodes
+            episodes = episodes,
+            parentSeriesUrl = parentSeriesUrl
         )
     }
 

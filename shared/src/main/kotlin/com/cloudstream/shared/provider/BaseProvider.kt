@@ -147,23 +147,7 @@ abstract class BaseProvider : MainAPI() {
             
             // Check if URL domain differs from main domain (subdomain case)
             // e.g., mainUrl=https://laroza.cfd/ but url=https://qq.laroza.cfd/vid-...
-            try {
-                val urlDomain = java.net.URL(url).host
-                val mainDomain = java.net.URL(mainUrl).host
-                
-                if (urlDomain != mainDomain) {
-                    Log.d(methodTag, "Detected different domain in load URL: urlDomain=$urlDomain, mainDomain=$mainDomain")
-                    
-                    // Check if related and add as alias
-                    if (com.cloudstream.shared.session.SessionProvider.areDomainsRelated(urlDomain, mainDomain)) {
-                        com.cloudstream.shared.session.SessionProvider.addDomainAlias(urlDomain)
-                        val baseDomain = com.cloudstream.shared.session.SessionProvider.extractBaseDomain(urlDomain)
-                        Log.i(methodTag, "Added domain alias for load URL domain: alias=$urlDomain, baseDomain=$baseDomain")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(methodTag, "Failed to parse URL domains for alias check: ${e.message}")
-            }
+            handleDomainDifference(url, methodTag)
             
             val doc = httpService.getDocument(url)
             if (doc == null) {
@@ -172,66 +156,54 @@ abstract class BaseProvider : MainAPI() {
             }
             
             var data = getParser().parseLoadPageData(doc, url)
-
-            // Check for Meta-Refresh Redirect (Client-side redirect)
-            // Example: <meta http-equiv="Refresh" content="0;URL=https://laroza.cfd/video.php?vid=YJBBtHyVB">
-            if (data?.episodes?.isEmpty() == true && data.isMovie) {
-                 val refreshMeta = doc.selectFirst("meta[http-equiv=Refresh]")
-                 if (refreshMeta != null) {
-                     val content = refreshMeta.attr("content")
-                     val newUrlMatch = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(content)
-                     val newUrl = newUrlMatch?.groupValues?.get(1)
-                     
-                     if (!newUrl.isNullOrBlank()) {
-                         Log.d(methodTag, "Found Meta-Refresh to: $newUrl")
-                         val newDoc = httpService.getDocument(newUrl)
-                         if (newDoc != null) {
-                             data = getParser().parseLoadPageData(newDoc, newUrl)
-                         }
-                     }
-                 }
-            }
             
             if (data == null) {
                 Log.e(methodTag, "Failed to parse load data")
                 return null
             }
             
-            var episodes = data.episodes ?: emptyList()
-            
-            // Fallback: If no episodes found but parent series link exists, fetch series page
-            if (episodes.isEmpty() && !data.isMovie && !data.parentSeriesUrl.isNullOrBlank()) {
+            // Refactored Fallback: Swap entire 'data' context if this is an episode pointing to a parent series
+            if (data != null && !data!!.isMovie && data!!.episodes.isNullOrEmpty() && !data!!.parentSeriesUrl.isNullOrBlank()) {
+                val parentUrl = data!!.parentSeriesUrl!!
                 try {
-                    val seriesUrl = data.parentSeriesUrl!! // Safe due to isNullOrBlank check
-                    val seriesDoc = httpService.getDocument(seriesUrl)
-                    // We can use parseLoadPageData again on the series page 
-                    if (seriesDoc != null) {
-                        val seriesData = getParser().parseLoadPageData(seriesDoc, seriesUrl)
-                         if (seriesData?.episodes?.isNotEmpty() == true) {
-                             episodes = seriesData.episodes!!
-                             Log.d(methodTag, "Fetched ${episodes.size} episodes from parent series: $seriesUrl")
-                         }
+                    val parentDoc = httpService.getDocument(parentUrl)
+                    if (parentDoc != null) {
+                        val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
+                        if (parentData != null) {
+                            data = parentData
+                            Log.d(methodTag, "Swapped entire load context to parent series: $parentUrl")
+                        }
                     } else {
-                         Log.e(methodTag, "Failed to fetch parent series document: $seriesUrl")
+                        Log.e(methodTag, "Failed to fetch parent series document: $parentUrl")
                     }
                 } catch (e: Exception) {
-                    Log.e(methodTag, "Failed to fetch parent series: ${data.parentSeriesUrl}")
+                    Log.e(methodTag, "Failed to fetch parent series: $parentUrl")
                     e.printStackTrace()
                 }
             }
-
-            Log.d(methodTag, "Parsed load data: title='${data.title}', type=${data.type}")
             
-            return if (data.type == TvType.Movie) {
-                newMovieLoadResponse(data.title, url, TvType.Movie, data.url) {
-                    this.posterUrl = data.posterUrl
+            val actualEpisodes = data!!.episodes ?: emptyList()
+            
+            // Ultimate Fallback: If it's a series but we have 0 episodes, treat as a Movie to show the Play button
+            val finalType = if (data!!.type == TvType.TvSeries && actualEpisodes.isEmpty()) {
+                Log.d(methodTag, "Fallback: Series has 0 episodes, treating as Movie to ensure playability.")
+                TvType.Movie
+            } else {
+                data!!.type
+            }
+
+            Log.d(methodTag, "Parsed load data: title='${data!!.title}', type=$finalType")
+            
+            return if (finalType == TvType.Movie) {
+                newMovieLoadResponse(data!!.title, url, TvType.Movie, data!!.url) {
+                    this.posterUrl = data!!.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
-                    this.plot = data.plot
-                    this.tags = data.tags
-                    this.year = data.year
+                    this.plot = data!!.plot
+                    this.tags = data!!.tags
+                    this.year = data!!.year
                 }
             } else {
-                val episodeList = episodes.map { ep ->
+                val episodeList = actualEpisodes.map { ep ->
                     newEpisode(ep.url) {
                         this.name = ep.name
                         this.season = ep.season
@@ -239,18 +211,49 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
-                newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, episodeList) {
-                    this.posterUrl = data.posterUrl
+                newTvSeriesLoadResponse(data!!.title, url, TvType.TvSeries, episodeList) {
+                    this.posterUrl = data!!.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
-                    this.plot = data.plot
-                    this.tags = data.tags
-                    this.year = data.year
+                    this.plot = data!!.plot
+                    this.tags = data!!.tags
+                    this.year = data!!.year
                 }
             }
         } catch (e: Exception) {
             Log.e(methodTag, "Error in load: ${e.message}")
             e.printStackTrace()
             return null
+        }
+    }
+
+    private fun handleDomainDifference(url: String, methodTag: String) {
+        try {
+            val urlDomain = java.net.URL(url).host
+            val mainDomain = java.net.URL(mainUrl).host
+
+            if (urlDomain != mainDomain) {
+                Log.d(
+                    methodTag,
+                    "Detected different domain in load URL: urlDomain=$urlDomain, mainDomain=$mainDomain"
+                )
+
+                // Check if related and add as alias
+                if (com.cloudstream.shared.session.SessionProvider.areDomainsRelated(
+                        urlDomain,
+                        mainDomain
+                    )
+                ) {
+                    com.cloudstream.shared.session.SessionProvider.addDomainAlias(urlDomain)
+                    val baseDomain =
+                        com.cloudstream.shared.session.SessionProvider.extractBaseDomain(urlDomain)
+                    Log.i(
+                        methodTag,
+                        "Added domain alias for load URL domain: alias=$urlDomain, baseDomain=$baseDomain"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(methodTag, "Failed to parse URL domains for alias check: ${e.message}")
         }
     }
 

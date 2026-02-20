@@ -34,15 +34,99 @@ class LarozaParser : NewBaseParser() {
             query = "div#video-description, meta[name='description'], meta[property='og:description']", 
             attr = "content, text" // Will try content attribute first (for meta), then text (for div)
         ),
-        seriesIndicator = CssSelector(query = ".breadcrumb li:contains(مسلسلات)", attr = "text")
+        seriesIndicator = CssSelector(query = ".breadcrumb li:contains(مسلسلات)", attr = "text"),
+        parentSeriesUrl = CssSelector(query = "div.video-info-line a[href*='view-serie.php']", attr = "href"),
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = "ul.pm-ul-browse-videos li",
+        container = "ul.pm-ul-browse-videos li", // Keep as extreme fallback just in case
         title = CssSelector(query = "h3 a", attr = "text"),
         url = CssSelector(query = "h3 a", attr = "href"),
         episode = CssSelector(query = "h3 a", attr = "text", regex = "(\\d+)")
     )
+
+    override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
+        val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
+
+        // 1. Check for Mobile Structure (Dropdown Selects)
+        val mobileEpisodeBlocks = doc.select("select.episodeoption, select[aria-label='Episodes']")
+
+        if (mobileEpisodeBlocks.isNotEmpty()) {
+            val seasonMap = mutableMapOf<String, Int>()
+            doc.select("select#mobileselect option, select[aria-label='Seasons'] option").forEach { option ->
+                val seasonId = option.attr("value")
+                val seasonText = option.text()
+                val extractedSeasonNum = Regex("(\\d+)").find(seasonText)?.groupValues?.get(1)?.toIntOrNull()
+                if (seasonId.isNotBlank() && extractedSeasonNum != null) {
+                    seasonMap[seasonId] = extractedSeasonNum
+                }
+            }
+
+            mobileEpisodeBlocks.forEach { block ->
+                val blockId = block.attr("id")
+                val actualSeasonNum = seasonMap[blockId] 
+                    ?: Regex("(\\d+)").find(blockId)?.groupValues?.get(1)?.toIntOrNull() 
+                    ?: seasonNum 
+                    ?: 1
+
+                block.select("option:not([value='select-ep'])").forEach { option ->
+                    val epTitle = option.text().trim()
+                    val epUrl = option.attr("value").trim()
+
+                    if (epUrl.isNotBlank()) {
+                        val epNum = Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+                        episodes.add(
+                            ParserInterface.ParsedEpisode(
+                                name = epTitle,
+                                url = epUrl,
+                                season = actualSeasonNum,
+                                episode = epNum
+                            )
+                        )
+                    }
+                }
+            }
+            return episodes
+        } 
+        
+        // 2. Check for Desktop Tabs Structure
+        val desktopSeasonTabs = doc.select(".SeasonsEpisodesMains .tabcontent")
+        
+        if (desktopSeasonTabs.isNotEmpty()) {
+            desktopSeasonTabs.forEach { tabBlock ->
+                val tabId = tabBlock.attr("id") // e.g., "Season1"
+                val actualSeasonNum = Regex("(\\d+)").find(tabId)?.groupValues?.get(1)?.toIntOrNull() 
+                    ?: seasonNum 
+                    ?: 1
+                    
+                tabBlock.select("ul.pm-ul-browse-videos li").forEach { li ->
+                    val epTitle = li.selectFirst("h3 a")?.text()?.trim() ?: ""
+                    val epUrl = li.selectFirst("h3 a")?.attr("href")?.trim() ?: ""
+                    
+                    if (epUrl.isNotBlank()) {
+                        val epNum = Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        
+                        episodes.add(
+                            ParserInterface.ParsedEpisode(
+                                name = epTitle,
+                                url = epUrl,
+                                season = actualSeasonNum,
+                                episode = epNum
+                            )
+                        )
+                    }
+                }
+            }
+            return episodes
+        }
+
+        // 3. Fallback to the old layout (ul/li structure) if neither new structure exists
+        episodes.addAll(super.parseEpisodes(doc, seasonNum))
+        return episodes
+    }
+
+
 
     override val watchServersSelectors = WatchServerSelector(
         url = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-url"),
