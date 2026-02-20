@@ -435,10 +435,23 @@ class WebViewEngine(
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
-        
-        deferred.await()
+        // CRITICAL: Wrap await in try/finally so that if the parent coroutine is cancelled
+        // (e.g., user presses back in GeneratorPlayer), we still clean up the WebView,
+        // dialog, and all child jobs. Without this, standalone CoroutineScope jobs
+        // (timeoutJob, videoMonitorJob) keep running indefinitely.
+        try {
+            deferred.await()
+        } finally {
+            if (!resultDelivered) {
+                resultDelivered = true
+                timeoutJob?.cancel()
+                videoMonitorJob?.cancel()
+                android.util.Log.i("WebViewEngine", "runSession: Parent coroutine cancelled, cleaning up WebView and dialog")
+                ProviderLogger.w(TAG_WEBVIEW, "runSession", "Parent coroutine cancelled, forcing cleanup")
+                cleanup(webView, dialog)
+            }
+        }
     }
-    
     private fun isVideoUrl(url: String): Boolean {
         if (isBlacklisted(url)) {
             ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL blacklisted", "url" to url.take(80))
