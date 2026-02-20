@@ -45,6 +45,21 @@ class LarozaParser : NewBaseParser() {
         episode = CssSelector(query = "h3 a", attr = "text", regex = "(\\d+)")
     )
 
+    override fun parseLoadPage(doc: Document, url: String): ParserInterface.ParsedLoadData? {
+        val data = super.parseLoadPage(doc, url) ?: return null
+
+        var plot = data.plot
+        if (!plot.isNullOrBlank()) {
+            val parts = plot.split(":")
+            if (parts.size > 1 && parts.first().contains("تحميل")) {
+                // Drop the first part containing 'تحميل' and rejoin the rest
+                plot = parts.drop(1).joinToString(":").trim()
+            }
+        }
+
+        return data.copy(plot = plot)
+    }
+
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
 
