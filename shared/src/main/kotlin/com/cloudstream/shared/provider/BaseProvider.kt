@@ -302,9 +302,9 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Extracted $selectorCount/${serverSelectors.size} server selectors from parser")
             
             // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
-            // CRITICAL: Use the FULL watch page URL as referer, not just the domain.
-            // Embed servers (e.g., qq.okprime.site) validate the full Referer to allow access.
-            val referer = actualWatchUrl ?: data
+            // Use the base domain as the referer for better compatibility with embed servers
+            // Many servers like Laroza's intermediaries check the domain exactly
+            val referer = "https://$baseDomain/"
             
             Log.d(methodTag, "Using referer: $referer")
             
@@ -320,7 +320,7 @@ abstract class BaseProvider : MainAPI() {
                         source = this@BaseProvider.name,
                         name = serverName,
                         referer = referer,
-                        quality = com.lagradost.cloudstream3.utils.Qualities.P1080.value,
+                        quality = com.lagradost.cloudstream3.utils.Qualities.Unknown.value,
                         type = com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
                     ) {
                         override suspend fun getRealLink(): com.lagradost.cloudstream3.utils.ExtractorLink? {
