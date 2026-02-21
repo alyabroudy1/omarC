@@ -516,7 +516,13 @@ class WebViewEngine(
             // Add referer if provided (critical for embed servers like qq.okprime.site)
             if (!referer.isNullOrBlank()) {
                 extraHeaders["Referer"] = referer
-                ProviderLogger.i(TAG_WEBVIEW, "runSession", "Added Referer header", "referer" to referer)
+                // Sec-Fetch headers are CRITICAL: servers like play.aboyounes.net
+                // return 301 redirect without these, even with a valid Referer.
+                // They validate that the request originates from an iframe context.
+                extraHeaders["sec-fetch-dest"] = "iframe"
+                extraHeaders["sec-fetch-mode"] = "navigate"
+                extraHeaders["sec-fetch-site"] = "cross-site"
+                ProviderLogger.i(TAG_WEBVIEW, "runSession", "Added Referer + Sec-Fetch headers", "referer" to referer)
             }
             
             ProviderLogger.i(TAG_WEBVIEW, "runSession", "Loading URL with headers", 
