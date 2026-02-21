@@ -809,18 +809,9 @@ class WebViewEngine(
                     timeoutJob?.cancel()
                     videoMonitorJob?.cancel()
                     
-                    // extractCookies is suspend, so we need a coroutine
-                    CoroutineScope(Dispatchers.Main).launch {
-                         val cookies = extractCookies(webView, webView.url ?: "")
-                         val found = capturedLinks.toList()
-                         val html = try {
-                              "" 
-                         } catch (e: Exception) { "" }
-                         
-                         // FIX: Destroy WebView to prevent background leak
-                         cleanup(webView, null)
-                         deferred?.complete(WebViewResult.Success(cookies, html, webView.url ?: "", found))
-                    }
+                    // User aborted, so we immediately complete with an error to stop execution
+                    cleanup(webView, null)
+                    deferred?.complete(WebViewResult.Error("User cancelled sniffing"))
                  }
                  
                  // Cleanup Mouse
@@ -1124,11 +1115,18 @@ class WebViewEngine(
         try {
             dialog?.dismiss()
             webView?.let { view ->
-                view.stopLoading()
-                (view.parent as? ViewGroup)?.removeView(view)
-                // Defer destroy to ensure pending callbacks complete
-                view.post { 
-                    try { view.destroy() } catch (e: Exception) { /* ignore */ } 
+                // Must run on main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        view.stopLoading()
+                        view.loadUrl("about:blank")
+                        view.clearHistory()
+                        view.removeAllViews()
+                        (view.parent as? ViewGroup)?.removeView(view)
+                        view.destroy()
+                    } catch (e: Exception) {
+                        ProviderLogger.w(TAG_WEBVIEW, "cleanup_inner", "Error", "error" to e.message)
+                    }
                 }
             }
             // Clear active references
