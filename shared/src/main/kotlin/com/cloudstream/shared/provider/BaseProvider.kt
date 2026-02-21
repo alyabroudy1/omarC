@@ -302,9 +302,16 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Extracted $selectorCount/${serverSelectors.size} server selectors from parser")
             
             // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
-            // Use the base domain as the referer for better compatibility with embed servers
-            // Many servers like Laroza's intermediaries check the domain exactly
-            val referer = "https://$baseDomain/"
+            // Extract the domain of the watch page and use it as the referer.
+            // Embed servers validate the origin domain matches the requested page's actual domain
+            val watchUrlForReferer = actualWatchUrl ?: data
+            val referer = try {
+                val uri = java.net.URI(watchUrlForReferer)
+                "${uri.scheme}://${uri.host}/"
+            } catch (e: Exception) {
+                // Fallback if parsing fails
+                "https://$baseDomain/"
+            }
             
             Log.d(methodTag, "Using referer: $referer")
             
