@@ -1,0 +1,148 @@
+﻿2026-02-22 17:24:45.616 27759-28597 [Laroza] [loadLinks]    com.lagradost.cloudstream3           W  STEP 2: Standard extractors failed, trying sniffer...
+2026-02-22 17:24:45.616 27759-28597 [Laroza] [...ferResult] com.lagradost.cloudstream3           D  === START === target=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7, hasSelector=false
+2026-02-22 17:24:45.617 27759-28597 [Laroza] [...ferResult] com.lagradost.cloudstream3           D  Sniffer URL: sniff://https%3A%2F%2Fsh.ramadan-series.site%2Fwatch.php%3Fid%3DRy2RHRyv7?referer=https%3A%2F%2Flaroza.ques
+2026-02-22 17:24:45.617 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  getUrl called with url: sniff://https%3A%2F%2Fsh.ramadan-series.site%2Fwatch.php%3Fid%3DRy2RHRyv7?referer=https%3A%2F%2F
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Processing sniffer URL | url=sniff://https%3A%2F%2Fsh.ramadan-series.site%2Fwatch.php%3Fid%3DRy2RHRyv7?refere
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  Parsed embed URL: https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7, referer: https://laroza.quest/, hasSelector: fa
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Parsed embed URL | embedUrl=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7, embedReferer=https://laroza.
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  Using SessionProvider UA: Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA...
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Using SessionProvider UA | uaHash=1541428330, hasSession=true
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === STARTING WEBVIEW SNIFF ===
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Target URL: https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Mode: FULLSCREEN
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Timeout: 3h (sniffer doubles as player)
+2026-02-22 17:24:45.618 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Starting WebViewEngine sniffing (Visible)
+2026-02-22 17:24:45.619 27759-27759 WebViewEngine           com.lagradost.cloudstream3           D  runSession: Session started, capturedLinks cleared. URL: https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.619 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [runSession] Session started, capturedLinks cleared
+2026-02-22 17:24:45.620 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] === STEP 1: Creating WebView === | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.628 27759-27759 ConnectivityManager     com.lagradost.cloudstream3           D  StackLog: [android.net.ConnectivityManager.sendRequestForNetwork(ConnectivityManager.java:4744)] [android.net.Connectivi
+2026-02-22 17:24:45.632 27759-27759 ConnectivityManager     com.lagradost.cloudstream3           D  StackLog: [android.net.ConnectivityManager.sendRequestForNetwork(ConnectivityManager.java:4744)] [android.net.Connectivi
+2026-02-22 17:24:45.640 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] WebView UA | ua=Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Geck
+2026-02-22 17:24:45.640 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] === STEP 2: Setting up cookies ===
+2026-02-22 17:24:45.640 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] === STEP 3: Setting up mode === | mode=FULLSCREEN
+2026-02-22 17:24:45.643 27759-27759 WindowManager           com.lagradost.cloudstream3           I  WindowManagerGlobal#addView, ty=2, view=com.android.internal.policy.DecorView{12fcde5 V.E...... R.....ID 0,0-0,0}[MainAc
+2026-02-22 17:24:45.657 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [runSession] FULLSCREEN mode | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.658 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] === STEP 6: Loading URL === | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.658 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] Added Referer + Sec-Fetch headers | referer=https://laroza.quest/
+2026-02-22 17:24:45.658 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] Loading URL with headers | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7, headers=X-Requested-W
+2026-02-22 17:24:45.662 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [runSession] === STEP 7: URL loaded, waiting for callbacks ===
+2026-02-22 17:24:45.663 27759-27759 WebViewEngine           com.lagradost.cloudstream3           D  videoMonitorJob: Started. requiredCount=1
+2026-02-22 17:24:45.663 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [runSession] Video monitor started | requiredCount=1
+2026-02-22 17:24:45.824 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  onPageStarted: url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.824 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageStarted] === PAGE STARTED === | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:45.943 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #10 url=https://ssl.p.jwpcdn.com/player/v/8.42.0/translations/ar.json
+2026-02-22 17:24:45.943 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #10 | url=https://ssl.p.jwpcdn.com/player/v/8.42.0/translations/ar.json, method=GET, isMainFrame=fal
+2026-02-22 17:24:46.434 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [isVideoUrl] URL looks like video but pattern not matched | url=https://shahid.mbc.net/mediaObject/65f2b20b-8ece-4fab-94
+2026-02-22 17:24:46.480 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #20 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:46.480 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #20 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:46.480 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [isVideoUrl] DASH .mpd rejected (DRM) | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305
+2026-02-22 17:24:46.480 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           W  [intercept] URL rejected | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a36
+2026-02-22 17:24:46.508 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [WebView] Loading progress | percent=100
+2026-02-22 17:24:46.530 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #21 url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-1019838044&e=pa&n=2543705862228859&aid=gz_FBs
+2026-02-22 17:24:46.530 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #21 | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-1019838044&e=pa&n=2543705862228859&aid=gz_
+2026-02-22 17:24:46.530 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [isVideoUrl] URL blacklisted | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-1019838044&e=pa&n=25437058622288
+2026-02-22 17:24:46.530 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           W  [intercept] URL rejected | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-1019838044&e=pa&n=2543705862228859&aid=gz
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [WebView] Loading progress | percent=100
+2026-02-22 17:24:46.532 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  onPageFinished: url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] === PAGE FINISHED === | url=https://sh.ramadan-series.site/watch.php?id=Ry2RHRyv7
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] Injected fullscreen iframe CSS
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] === STEP 4: Pre-sniff JavaScript ===
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] === STEP 5: Injecting Video Sniffer ===
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] === STEP 6: Starting DOM extraction ===
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [startDomVideoExtraction] === Starting DOM video extraction polling ===
+2026-02-22 17:24:46.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [startDomVideoExtraction] Polling started | maxAttempts=30
+2026-02-22 17:24:46.536 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [onPageFinished] Video sniffer injection result | result=null
+2026-02-22 17:24:46.537 27759-28066 WebViewStrategy         com.lagradost.cloudstream3           D  [isVideoUrl] URL looks like video but pattern not matched | url=https://shahid.mbc.net/mediaObject/65f2b20b-8ece-4fab-94
+2026-02-22 17:24:46.729 27759-28113 WebViewEngine           com.lagradost.cloudstream3           I  SnifferBridge: Sources found! jsonLen=466
+2026-02-22 17:24:46.729 27759-28113 WebViewStrategy         com.lagradost.cloudstream3           I  [SnifferBridge] === JS Bridge: Sources found! === | jsonLength=466
+2026-02-22 17:24:46.729 27759-28113 WebViewStrategy         com.lagradost.cloudstream3           I  [SnifferBridge] Parsing JS sources | count=1
+2026-02-22 17:24:46.729 27759-28113 WebViewStrategy         com.lagradost.cloudstream3           I  [SnifferBridge] Processing source #0 | src=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b
+2026-02-22 17:24:46.729 27759-28113 WebViewStrategy         com.lagradost.cloudstream3           I  [SnifferBridge] Capturing source from JS | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da
+2026-02-22 17:24:46.729 27759-28113 WebViewEngine           com.lagradost.cloudstream3           D  [captureLink] Ignored segment/asset/dash link | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c
+2026-02-22 17:24:46.733 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #24 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:46.733 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #24 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:46.733 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           I  [intercept] VIDEO URL DETECTED! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0
+2026-02-22 17:24:46.733 27759-28064 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED #[CapturedLinkData(url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c2
+2026-02-22 17:24:46.733 27759-28065 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #25 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:46.733 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED SUCCESSFULLY! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201d
+2026-02-22 17:24:46.733 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #25 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:46.733 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [intercept] VIDEO URL DETECTED! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0
+2026-02-22 17:24:46.733 27759-28065 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED #[CapturedLinkData(url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c2
+2026-02-22 17:24:46.733 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED SUCCESSFULLY! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201d
+2026-02-22 17:24:46.734 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] Updated UI: Found 2 video stream(s)
+2026-02-22 17:24:46.734 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=2
+2026-02-22 17:24:46.734 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=1, limit=2500
+2026-02-22 17:24:46.734 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] Updated UI: Found 2 video stream(s)
+2026-02-22 17:24:46.734 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=2
+2026-02-22 17:24:46.734 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=1, limit=2500
+2026-02-22 17:24:46.753 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [runSession] Videos found, waiting for headers to sync...
+2026-02-22 17:24:46.792 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #26 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:46.793 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #26 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:46.793 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           I  [intercept] VIDEO URL DETECTED! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0
+2026-02-22 17:24:46.793 27759-28064 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED #[CapturedLinkData(url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c2
+2026-02-22 17:24:46.793 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED SUCCESSFULLY! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201d
+2026-02-22 17:24:46.793 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] Updated UI: Found 3 video stream(s)
+2026-02-22 17:24:46.793 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=3
+2026-02-22 17:24:46.793 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=60, limit=2500
+2026-02-22 17:24:46.794 27759-28065 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #27 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:46.794 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #27 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:46.794 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [intercept] VIDEO URL DETECTED! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0
+2026-02-22 17:24:46.794 27759-28065 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED #[CapturedLinkData(url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c2
+2026-02-22 17:24:46.794 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED SUCCESSFULLY! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201d
+2026-02-22 17:24:46.794 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] Updated UI: Found 4 video stream(s)
+2026-02-22 17:24:46.794 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=4
+2026-02-22 17:24:46.794 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=61, limit=2500
+2026-02-22 17:24:47.105 27759-28065 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #28 url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9
+2026-02-22 17:24:47.105 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #28 | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:47.105 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [intercept] VIDEO URL DETECTED! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0
+2026-02-22 17:24:47.105 27759-28065 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED #[CapturedLinkData(url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c2
+2026-02-22 17:24:47.105 27759-28065 WebViewStrategy         com.lagradost.cloudstream3           I  [captureLink] LINK CAPTURED SUCCESSFULLY! | url=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201d
+2026-02-22 17:24:47.107 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [captureLink] Updated UI: Found 5 video stream(s)
+2026-02-22 17:24:47.107 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=5
+2026-02-22 17:24:47.107 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=374, limit=2500
+2026-02-22 17:24:47.184 27759-28064 WebViewEngine           com.lagradost.cloudstream3           D  intercept: Request #29 url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-168884558&e=s&n=7479312602054571&aid=gz_FBsVM
+2026-02-22 17:24:47.184 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [intercept] Request #29 | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-168884558&e=s&n=7479312602054571&aid=gz_FB
+2026-02-22 17:24:47.184 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           D  [isVideoUrl] URL blacklisted | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-168884558&e=s&n=7479312602054571
+2026-02-22 17:24:47.184 27759-28064 WebViewStrategy         com.lagradost.cloudstream3           W  [intercept] URL rejected | url=https://prd.jwpltx.com/v1/jwplayer6/ping.gif?h=-168884558&e=s&n=7479312602054571&aid=gz_F
+2026-02-22 17:24:47.253 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [checkExitCondition] Exit condition met! | count=5
+2026-02-22 17:24:47.253 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [checkExitCondition] Soft waiting for Master M3U8... | elapsed=520, limit=2500
+2026-02-22 17:24:47.256 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [extractCookies] Cookie extraction complete | cmCount=2, jsCount=2, total=2, hasClearance=false
+2026-02-22 17:24:47.256 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [videoMonitorJob] FALLBACK EXIT with 5 links
+2026-02-22 17:24:47.256 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [videoMonitorJob] First link: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a367
+2026-02-22 17:24:47.256 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [runSession] Video monitor forced exit
+2026-02-22 17:24:47.282 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [videoMonitorJob] Completing deferred with 5 links
+2026-02-22 17:24:47.282 27759-27759 WebViewEngine           com.lagradost.cloudstream3           I  [videoMonitorJob] Deferred completed!
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === WEBVIEW COMPLETE === elapsed=1674ms
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] WebViewEngine returned: Success
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] SUCCESS! Found 5 video sources
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link #0: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/a
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link #1: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/a
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link #2: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/a
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link #3: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/a
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link #4: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/a
+2026-02-22 17:24:47.293 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Found 5 video sources
+2026-02-22 17:24:47.300 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  CookieManager flushed
+2026-02-22 17:24:47.300 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] CookieManager flushed
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Processing 5 valid links (sorted)
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D   > Candidate: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/aa44ea0
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D   > Candidate: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/aa44ea0
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D   > Candidate: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/aa44ea0
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D   > Candidate: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/aa44ea0
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           D   > Candidate: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a5/aa44ea0
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Processing first sorted link: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Checking URL: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae55a3673f9aa3a
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] URL passed truncation check
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Link type: VIDEO
+2026-02-22 17:24:47.401 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Set isFinished=true
+2026-02-22 17:24:47.402 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] PREPARING CALLBACK - URL: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543e0ae5
+2026-02-22 17:24:47.402 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Headers: Origin, sec-ch-ua, sec-ch-ua-mobile, Accept, sec-ch-ua-platform, User-Agent, Referer, Cookie, Sec-Fetc
+2026-02-22 17:24:47.403 27759-28597 [Laroza] [...ferResult] com.lagradost.cloudstream3           I  CALLBACK FIRED! URL=https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543
+2026-02-22 17:24:47.403 27759-28597 [Laroza] [...ferResult] com.lagradost.cloudstream3           W  Rejected AUDIO fragment from sniffer: https://mbc-aws.mncdn.com/out/v1/4d79dd46be6f4f4085572078ae76c7b0/7c201da305b543
+2026-02-22 17:24:47.403 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] CALLBACK INVOKED - count=1
+2026-02-22 17:24:47.403 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === LINK PROCESSING COMPLETE === callbacks=1
+2026-02-22 17:24:47.403 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === END === totalFound=5 callbacks=1
+2026-02-22 17:24:47.403 27759-28597 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === END === | totalFound=5, successfulCallbacks=1
+2026-02-22 17:24:48.532 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           D  [startDomVideoExtraction] Polling attempt | attempt=1
+                                                                                                    	at com.cloudstream.shared.webview.WebViewEngine$startDomVideoExtraction$1.invokeSuspend(WebViewEngine.kt:886)
+2026-02-22 17:24:48.537 27759-27759 WebViewStrategy         com.lagradost.cloudstream3           I  [startDomVideoExtraction] === Polling ended (result delivered) === | totalAttempts=1
+                                                                                                    	at com.cloudstream.shared.webview.WebViewEngine$getHtmlFromWebView$2$1.run(WebViewEngine.kt:1084)

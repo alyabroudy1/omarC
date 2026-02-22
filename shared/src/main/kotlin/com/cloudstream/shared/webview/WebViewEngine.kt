@@ -611,6 +611,12 @@ class WebViewEngine(
             return false
         }
         
+        // Reject Shahid/MBC CDN URLs — all streams from mbc domains are DRM-protected
+        if (url.contains("mbc", ignoreCase = true)) {
+            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "MBC domain rejected (DRM)", "url" to url.take(80))
+            return false
+        }
+        
         // Explicitly reject segments if they don't look like master playlists
         if (url.contains(".ts", ignoreCase = true) || 
             url.contains(".key", ignoreCase = true) || 
@@ -648,11 +654,12 @@ class WebViewEngine(
          // Logic to store captured link
          val data = CapturedLinkData(url, qualityLabel, headers)
 
-         // Filter out segment files, non-video assets, and DASH manifests (DRM)
+         // Filter out segment files, non-video assets, DASH manifests (DRM), and MBC CDN (DRM)
          if (url.contains(".ts") || url.contains(".key") || url.contains(".png") || 
              url.contains(".jpg") || url.contains(".gif") || url.contains(".css") || 
-             url.contains(".js") || url.contains("favicon") || url.contains(".mpd")) {
-             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset/dash link | url=${url.take(80)}")
+             url.contains(".js") || url.contains("favicon") || url.contains(".mpd") ||
+             url.contains("mbc")) {
+             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset/drm link | url=${url.take(80)}")
              return
          }
 
