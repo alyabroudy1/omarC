@@ -1,4 +1,4 @@
-package com.cloudstream.shared.provider
+﻿package com.cloudstream.shared.provider
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
@@ -302,23 +302,23 @@ abstract class BaseProvider : MainAPI() {
             Log.d(methodTag, "Extracted $selectorCount/${serverSelectors.size} server selectors from parser")
             
             // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
-            // Extract the domain of the watch page and use it as the referer.
-            // Embed servers validate the origin domain matches the requested page's actual domain
-            val watchUrlForReferer = actualWatchUrl ?: data
-            val referer = try {
-                val uri = java.net.URI(watchUrlForReferer)
-                "${uri.scheme}://${uri.host}/"
-            } catch (e: Exception) {
-                // Fallback if parsing fails
-                "https://$baseDomain/"
-            }
+            // CRITICAL: Use watch page URL as referer, not mainUrl
+            val referer = actualWatchUrl?.let { 
+                try {
+                    val uri = java.net.URI(it)
+                    "${uri.scheme}://${uri.host}/"
+                } catch (e: Exception) {
+                    Log.w(methodTag, "Failed to parse watch URL for referer: $it")
+                    "$mainUrl/"
+                }
+            } ?: "$mainUrl/"
             
             Log.d(methodTag, "Using referer: $referer")
             
             for ((index, url) in urls.withIndex()) {
                 Log.d(methodTag, "Processing player URL: $url")
                 
-                // STEP 1: Try standard extractors (6s timeout)
+                // STEP 1: Try standard extractors (8s timeout)
                 Log.d(methodTag, "STEP 1: Trying standard extractors...")
                 val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 6000L)
                 
@@ -426,13 +426,10 @@ abstract class BaseProvider : MainAPI() {
                 // Use loadExtractor which will trigger SnifferExtractor
                 loadExtractor(sniffUrl, referer, subtitleCallback) { link ->
                     Log.i("[$name] [awaitSnifferResult]", "CALLBACK FIRED! URL=${link.url.take(80)}")
-                    val isAudioChunk = link.url.contains("audio", ignoreCase = true) && link.url.contains(".mp4", ignoreCase = true)
-                    if (!found && !isAudioChunk) {
+                    if (!found) {
                         found = true
                         callback(link)
                         deferred.complete(true)
-                    } else if (isAudioChunk) {
-                        Log.w("[$name] [awaitSnifferResult]", "Rejected AUDIO fragment from sniffer: ${link.url.take(80)}")
                     }
                 }
                 
