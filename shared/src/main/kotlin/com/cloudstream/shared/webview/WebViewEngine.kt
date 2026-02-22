@@ -794,53 +794,63 @@ class WebViewEngine(
     private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
 
     private fun createDialog(activity: android.app.Activity, webView: WebView): Dialog {
-        val container = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1a1a2e"))
-            
-            addView(TextView(activity).apply {
-                text = "Video Search" // Updated title
-                textSize = 18f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                setPadding(16, 32, 16, 16)
-            })
-            
-            statusTextView = TextView(activity).apply {
-                text = "Looking for video streams..." // Updated subtitle
-                textSize = 14f
-                setTextColor(Color.LTGRAY)
-                gravity = Gravity.CENTER
-                setPadding(16, 0, 16, 16)
-            }
-            addView(statusTextView)
-            
-            // TV MOUSE INTEGRATION: Wrap WebView in FrameLayout to support Overlay
-            val webViewContainer = android.widget.FrameLayout(activity).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    0, 1f
-                )
-            }
-            
-            // Add WebView to FrameLayout
-            webViewContainer.addView(webView.apply {
-                layoutParams = android.widget.FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-            })
-            
-            addView(webViewContainer)
-            
-            // Initialize Mouse Controller
-            tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
-            tvMouseController?.attach(webViewContainer)
+        // TV MOUSE INTEGRATION: Wrap WebView in FrameLayout to support Overlay
+        val webViewContainer = android.widget.FrameLayout(activity).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
         
+        // Add WebView to FrameLayout — fills entire screen
+        webViewContainer.addView(webView.apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        })
+        
+        // Status text overlay (hidden by default, shown briefly during search)
+        statusTextView = TextView(activity).apply {
+            text = "Looking for video streams..."
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#80000000"))
+            gravity = Gravity.CENTER
+            setPadding(16, 8, 16, 8)
+            visibility = android.view.View.GONE
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP
+            }
+        }
+        webViewContainer.addView(statusTextView)
+        
+        // Initialize Mouse Controller
+        tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
+        tvMouseController?.attach(webViewContainer)
+        
         return Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen).apply {
-            setContentView(container)
+            setContentView(webViewContainer)
             setCancelable(true)
+            
+            // Make truly immersive — hide status bar and navigation bar
+            window?.let { w ->
+                @Suppress("DEPRECATION")
+                w.decorView.systemUiVisibility = (
+                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                )
+                w.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             
             // Forward Key Events to Mouse Controller
             setOnKeyListener { _, keyCode, event ->

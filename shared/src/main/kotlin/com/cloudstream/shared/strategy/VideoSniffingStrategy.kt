@@ -52,6 +52,7 @@ class VideoSniffingStrategy(
         (function() {
             console.log('[VideoSniffer] Script starting...');
             var sourcesSent = false;
+            var playStarted = false;
             var clickCount = 0;
             var maxClicks = 50; // Increased limit
             
@@ -211,6 +212,7 @@ class VideoSniffingStrategy(
                 // Try play buttons first
                 if (findAndClickPlayButton()) {
                     log('Play button clicked successfully');
+                    playStarted = true; // Stop all further auto-clicking
                     nuclearAttempts = 0; // Reset
                     return true;
                 }
@@ -425,7 +427,7 @@ class VideoSniffingStrategy(
             
             // ===== MUTATION OBSERVER - DETECT DYNAMIC PLAYER =====
             var observer = new MutationObserver(function(mutations) {
-                findAndClickPlayButton();
+                if (!playStarted) findAndClickPlayButton();
                 extractSources();
             });
             
@@ -440,12 +442,12 @@ class VideoSniffingStrategy(
             log('Initializing auto-click system...');
             
             // Immediate attempt
-            setTimeout(function() { attemptAutoPlay(); }, 500);
+            setTimeout(function() { if (!playStarted) attemptAutoPlay(); }, 500);
             
-            // Retry with increasing delays
+            // Retry with increasing delays — stop once play started
             [1000, 2000, 3000, 4000, 5000, 7000, 10000, 15000].forEach(function(delay) {
                 setTimeout(function() {
-                    if (!sourcesSent) {
+                    if (!sourcesSent && !playStarted) {
                         log('Retry #' + (delay/1000) + 's');
                         attemptAutoPlay();
                         skipAds();
@@ -454,15 +456,11 @@ class VideoSniffingStrategy(
                 }, delay);
             });
             
-            // Continuous monitoring
+            // Continuous monitoring — NO more auto-clicking after play starts
             setInterval(function() {
                 if (!sourcesSent) {
                     skipAds();
                     extractSources();
-                    // Periodic click attempt every 3 seconds
-                    if (clickCount < maxClicks) {
-                        findAndClickPlayButton();
-                    }
                 }
             }, 3000);
             
