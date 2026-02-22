@@ -157,7 +157,7 @@ class SnifferExtractor : ExtractorApi() {
             mode = WebViewEngine.Mode.FULLSCREEN,
             userAgent = snifferUserAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = 10_800_000L, // 3 hours — sniffer doubles as player for DRM content
+            timeout = com.cloudstream.shared.webview.WebViewEngine.SNIFFER_PLAYER_TIMEOUT_MS,
             delayMs = 2000, // Wait 2s for page to fully load before starting detection
             preSniffJavaScript = preSniffJs,
             referer = embedReferer // Pass referer for embed servers (e.g., https://laroza.cfd/)

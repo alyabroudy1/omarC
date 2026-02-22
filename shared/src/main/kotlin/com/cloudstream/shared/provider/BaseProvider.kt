@@ -341,7 +341,7 @@ abstract class BaseProvider : MainAPI() {
                     referer, 
                     subtitleCallback, 
                     callback, 
-                    timeoutMs = 10_800_000L, // 3 hours — sniffer doubles as player for DRM content
+                    timeoutMs = com.cloudstream.shared.webview.WebViewEngine.SNIFFER_PLAYER_TIMEOUT_MS,
                     selector = selector
                 )
                 

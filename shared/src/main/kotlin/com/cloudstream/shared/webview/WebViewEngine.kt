@@ -25,6 +25,61 @@ import kotlinx.coroutines.*
 class WebViewEngine(
     private val activityProvider: () -> android.app.Activity?
 ) {
+    companion object {
+        /**
+         * Timeout for sniffer-as-player mode (3 hours).
+         * When no extractable video is found (DRM content), the sniffer stays open
+         * as a fullscreen player. This timeout must be long enough for a full movie.
+         */
+        const val SNIFFER_PLAYER_TIMEOUT_MS = 10_800_000L // 3 hours
+
+        /** Domains whose streams are DRM-protected and cannot be played in ExoPlayer. */
+        private val DRM_DOMAIN_KEYWORDS = listOf("mbc")
+
+        /** File extensions that indicate DRM manifests (unplayable without Widevine). */
+        private val DRM_EXTENSIONS = listOf(".mpd")
+
+        /** Segment/asset patterns that should never be captured as video links. */
+        private val SEGMENT_EXTENSIONS = listOf(".ts", ".key", ".png", ".jpg", ".gif", ".css", ".js")
+        private val SEGMENT_KEYWORDS = listOf("favicon")
+
+        /** JS snippet to make iframes fullscreen for sniffer-as-player mode. */
+        val FULLSCREEN_IFRAME_JS = """
+            (function() {
+                var style = document.createElement('style');
+                style.textContent = '
+                    iframe {
+                        position: fixed !important;
+                        top: 0 !important;
+                        left: 0 !important;
+                        width: 100vw !important;
+                        height: 100vh !important;
+                        z-index: 99999 !important;
+                        border: none !important;
+                    }
+                    body > *:not(iframe) {
+                        display: none !important;
+                    }
+                ';
+                document.head.appendChild(style);
+            })()
+        """.trimIndent()
+
+        /** Check if a URL belongs to a DRM-protected domain or uses a DRM format. */
+        fun isDrmProtected(url: String): Boolean {
+            val lower = url.lowercase()
+            return DRM_EXTENSIONS.any { lower.contains(it) } ||
+                   DRM_DOMAIN_KEYWORDS.any { lower.contains(it) }
+        }
+
+        /** Check if a URL is a segment/asset that should be filtered out. */
+        fun isSegmentOrAsset(url: String): Boolean {
+            val lower = url.lowercase()
+            return SEGMENT_EXTENSIONS.any { lower.contains(it) } ||
+                   SEGMENT_KEYWORDS.any { lower.contains(it) }
+        }
+    }
+
     // Instance variables to share state with helper methods
     private var deferred: CompletableDeferred<WebViewResult>? = null
     private var resultDelivered = false
@@ -361,31 +416,8 @@ class WebViewEngine(
                     android.util.Log.i("WebViewEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
 
-                    // Inject fullscreen CSS for iframes so the embed's player fills the entire screen.
-                    // This is critical for the "sniffer-as-player" mode: when no extractable video
-                    // is detected (e.g., DASH/DRM content), the sniffer stays open and the user
-                    // watches directly in the iframe's built-in player (JWPlayer, etc.).
-                    val fullscreenIframeCss = """
-                        (function() {
-                            var style = document.createElement('style');
-                            style.textContent = '
-                                iframe {
-                                    position: fixed !important;
-                                    top: 0 !important;
-                                    left: 0 !important;
-                                    width: 100vw !important;
-                                    height: 100vh !important;
-                                    z-index: 99999 !important;
-                                    border: none !important;
-                                }
-                                body > *:not(iframe) {
-                                    display: none !important;
-                                }
-                            ';
-                            document.head.appendChild(style);
-                        })()
-                    """.trimIndent()
-                    view?.evaluateJavascript(fullscreenIframeCss, null)
+                    // Inject fullscreen iframe CSS for sniffer-as-player mode
+                    view?.evaluateJavascript(FULLSCREEN_IFRAME_JS, null)
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Injected fullscreen iframe CSS")
 
                     // Inject VideoSniffer JS & Start DOM extraction ONLY if we are looking for video
@@ -585,53 +617,41 @@ class WebViewEngine(
             }
         }
     }
+    /**
+     * Determines if a URL is an extractable video stream.
+     * Rejects: blacklisted URLs, DRM-protected streams, and segment/asset files.
+     * Accepts: .m3u8, .mp4, .mkv, .webm, blob: URLs.
+     */
     private fun isVideoUrl(url: String): Boolean {
         if (isBlacklisted(url)) {
             ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL blacklisted", "url" to url.take(80))
             return false
         }
         
-        // Check for BLOB URLs (WebRTC/MediaSource streams)
+        // Blob URLs (WebRTC/MediaSource) are always considered video
         if (url.startsWith("blob:")) {
             ProviderLogger.i(TAG_WEBVIEW, "isVideoUrl", "BLOB URL detected", "url" to url.take(80))
             return true
         }
         
-        // Check for video patterns
-        val hasM3u8 = url.contains(".m3u8", ignoreCase = true)
-        val hasMp4 = url.contains(".mp4", ignoreCase = true)
-        val hasMkv = url.contains(".mkv", ignoreCase = true)
-        val hasMaster = url.contains("/master.m3u8", ignoreCase = true)
-        val hasWebm = url.contains(".webm", ignoreCase = true)
-        
-        // Reject DASH manifests (.mpd) — these are typically DRM-protected (Shahid, etc.)
-        // and can't be played by ExoPlayer without Widevine. Let the iframe player handle them.
-        if (url.contains(".mpd", ignoreCase = true)) {
-            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "DASH .mpd rejected (DRM)", "url" to url.take(80))
+        // Reject DRM-protected streams (DASH manifests, known DRM CDN domains)
+        if (isDrmProtected(url)) {
+            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "DRM-protected URL rejected", "url" to url.take(80))
             return false
         }
         
-        // Reject Shahid/MBC CDN URLs — all streams from mbc domains are DRM-protected
-        if (url.contains("mbc", ignoreCase = true)) {
-            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "MBC domain rejected (DRM)", "url" to url.take(80))
-            return false
-        }
+        // Reject segments and non-video assets
+        if (isSegmentOrAsset(url)) return false
         
-        // Explicitly reject segments if they don't look like master playlists
-        if (url.contains(".ts", ignoreCase = true) || 
-            url.contains(".key", ignoreCase = true) || 
-            url.contains(".png", ignoreCase = true) || 
-            url.contains(".jpg", ignoreCase = true) || 
-            url.contains("favicon")) {
-            return false
-        }
-        
-        val isVideo = hasM3u8 || hasMp4 || hasMkv || hasMaster || hasWebm
+        // Check for video file patterns
+        val isVideo = url.contains(".m3u8", ignoreCase = true) ||
+                      url.contains(".mp4", ignoreCase = true) ||
+                      url.contains(".mkv", ignoreCase = true) ||
+                      url.contains(".webm", ignoreCase = true)
         
         if (!isVideo && (url.contains("video") || url.contains("stream") || url.contains("media"))) {
             ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "URL looks like video but pattern not matched",
-                "url" to url.take(80),
-                "checks" to "m3u8=$hasM3u8, mp4=$hasMp4, mkv=$hasMkv"
+                "url" to url.take(80)
             )
         }
         
@@ -650,18 +670,19 @@ class WebViewEngine(
     private var firstLinkTime: Long = 0L
     private val SMART_WAIT_TIME_MS = 2500L
 
+    /**
+     * Stores a captured video link if it passes validation.
+     * Called from both network interception (shouldInterceptRequest) and JS bridge (SnifferBridge).
+     * Delegates all URL filtering to [isVideoUrl] and [isDrmProtected] to avoid duplication.
+     */
     private fun captureLink(url: String, qualityLabel: String, headers: Map<String, String>) {
-         // Logic to store captured link
-         val data = CapturedLinkData(url, qualityLabel, headers)
-
-         // Filter out segment files, non-video assets, DASH manifests (DRM), and MBC CDN (DRM)
-         if (url.contains(".ts") || url.contains(".key") || url.contains(".png") || 
-             url.contains(".jpg") || url.contains(".gif") || url.contains(".css") || 
-             url.contains(".js") || url.contains("favicon") || url.contains(".mpd") ||
-             url.contains("mbc")) {
-             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset/drm link | url=${url.take(80)}")
+         // Reject non-video URLs (segments, assets, DRM) — single source of truth
+         if (isDrmProtected(url) || isSegmentOrAsset(url)) {
+             android.util.Log.d("WebViewEngine", "[captureLink] Filtered out | url=${url.take(80)}")
              return
          }
+
+         val data = CapturedLinkData(url, qualityLabel, headers)
 
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)
