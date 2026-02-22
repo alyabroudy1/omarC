@@ -136,7 +136,7 @@ class SnifferExtractor : ExtractorApi() {
         android.util.Log.i("SnifferExtractor", "[getUrl] === STARTING WEBVIEW SNIFF ===")
         android.util.Log.i("SnifferExtractor", "[getUrl] Target URL: ${embedUrl.take(80)}")
         android.util.Log.i("SnifferExtractor", "[getUrl] Mode: FULLSCREEN")
-        android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 60s")
+        android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 3h (sniffer doubles as player)")
         ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
         
         // Build pre-sniff JavaScript if selector is provided
@@ -157,7 +157,7 @@ class SnifferExtractor : ExtractorApi() {
             mode = WebViewEngine.Mode.FULLSCREEN,
             userAgent = snifferUserAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = 60_000L,
+            timeout = 10_800_000L, // 3 hours — sniffer doubles as player for DRM content
             delayMs = 2000, // Wait 2s for page to fully load before starting detection
             preSniffJavaScript = preSniffJs,
             referer = embedReferer // Pass referer for embed servers (e.g., https://laroza.cfd/)

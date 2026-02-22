@@ -341,7 +341,7 @@ abstract class BaseProvider : MainAPI() {
                     referer, 
                     subtitleCallback, 
                     callback, 
-                    timeoutMs = 60000L,
+                    timeoutMs = 10_800_000L, // 3 hours — sniffer doubles as player for DRM content
                     selector = selector
                 )
                 

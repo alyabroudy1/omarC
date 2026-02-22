@@ -361,6 +361,33 @@ class WebViewEngine(
                     android.util.Log.i("WebViewEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== PAGE FINISHED ===", "url" to currentUrl.take(80))
 
+                    // Inject fullscreen CSS for iframes so the embed's player fills the entire screen.
+                    // This is critical for the "sniffer-as-player" mode: when no extractable video
+                    // is detected (e.g., DASH/DRM content), the sniffer stays open and the user
+                    // watches directly in the iframe's built-in player (JWPlayer, etc.).
+                    val fullscreenIframeCss = """
+                        (function() {
+                            var style = document.createElement('style');
+                            style.textContent = '
+                                iframe {
+                                    position: fixed !important;
+                                    top: 0 !important;
+                                    left: 0 !important;
+                                    width: 100vw !important;
+                                    height: 100vh !important;
+                                    z-index: 99999 !important;
+                                    border: none !important;
+                                }
+                                body > *:not(iframe) {
+                                    display: none !important;
+                                }
+                            ';
+                            document.head.appendChild(style);
+                        })()
+                    """.trimIndent()
+                    view?.evaluateJavascript(fullscreenIframeCss, null)
+                    ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "Injected fullscreen iframe CSS")
+
                     // Inject VideoSniffer JS & Start DOM extraction ONLY if we are looking for video
                     if (exitCondition is ExitCondition.VideoFound) {
                         ProviderLogger.i(TAG_WEBVIEW, "onPageFinished", "=== STEP 4: Pre-sniff JavaScript ===")
@@ -574,9 +601,15 @@ class WebViewEngine(
         val hasM3u8 = url.contains(".m3u8", ignoreCase = true)
         val hasMp4 = url.contains(".mp4", ignoreCase = true)
         val hasMkv = url.contains(".mkv", ignoreCase = true)
-        // val hasUrls = url.contains(".urls", ignoreCase = true) || url.contains(".urlset", ignoreCase = true) // Too broad?
         val hasMaster = url.contains("/master.m3u8", ignoreCase = true)
         val hasWebm = url.contains(".webm", ignoreCase = true)
+        
+        // Reject DASH manifests (.mpd) — these are typically DRM-protected (Shahid, etc.)
+        // and can't be played by ExoPlayer without Widevine. Let the iframe player handle them.
+        if (url.contains(".mpd", ignoreCase = true)) {
+            ProviderLogger.d(TAG_WEBVIEW, "isVideoUrl", "DASH .mpd rejected (DRM)", "url" to url.take(80))
+            return false
+        }
         
         // Explicitly reject segments if they don't look like master playlists
         if (url.contains(".ts", ignoreCase = true) || 
@@ -615,11 +648,11 @@ class WebViewEngine(
          // Logic to store captured link
          val data = CapturedLinkData(url, qualityLabel, headers)
 
-         // Filter out segment files and non-video assets
+         // Filter out segment files, non-video assets, and DASH manifests (DRM)
          if (url.contains(".ts") || url.contains(".key") || url.contains(".png") || 
              url.contains(".jpg") || url.contains(".gif") || url.contains(".css") || 
-             url.contains(".js") || url.contains("favicon")) {
-             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset link | url=${url.take(80)}")
+             url.contains(".js") || url.contains("favicon") || url.contains(".mpd")) {
+             android.util.Log.d("WebViewEngine", "[captureLink] Ignored segment/asset/dash link | url=${url.take(80)}")
              return
          }
 
