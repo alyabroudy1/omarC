@@ -240,11 +240,17 @@ class ProviderHttpService private constructor(
         val doc = result.html?.let { Jsoup.parse(it, url) }
         
         if (doc == null || result.responseCode == 403 || 
-            (doc.select("title").text().contains("403 Forbidden"))) {
+            result.html?.contains("403 Forbidden") == true) {
             
             if (config.webViewEnabled) {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403 - WebView fallback", "url" to url.take(80))
-                val cfResult = solveCloudflareThenRequest(url)
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403/null - WebView fallback queueing", "url" to url.take(80))
+                
+                // CRITICAL FIX: Run the fallback solver through the RequestQueue to respect the domain mutex
+                // This prevents parallel search threads from launching simultaneous WebView sessions
+                val cfResult = requestQueue.enqueueAction(url) {
+                    solveCloudflareThenRequest(url)
+                }
+                
                 if (cfResult.success && cfResult.html != null) {
                     if (checkDomainChange) {
                         checkAndUpdateDomain(url, cfResult.finalUrl)
