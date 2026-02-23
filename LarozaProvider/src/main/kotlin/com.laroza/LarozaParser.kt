@@ -150,6 +150,10 @@ class LarozaParser : NewBaseParser() {
         iframe = CssSelector(query = ".brooks_player iframe", attr = "src")
     )
 
+    override fun extractWatchServersUrls(doc: Document): List<String> {
+        return super.extractWatchServersUrls(doc).reversed()
+    }
+
     // Unified Series Detection Logic
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
         // 0. Explicit Movie Checks (Fail-fast)
