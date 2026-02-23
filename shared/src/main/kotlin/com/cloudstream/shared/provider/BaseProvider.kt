@@ -386,6 +386,11 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
+                // loadExtractor returned — if callback never fired (no matching extractor),
+                // complete deferred so we don't hang
+                if (!found) {
+                    deferred.complete(false)
+                }
                 deferred.await()
             } ?: false
         } catch (e: Exception) {
@@ -436,6 +441,12 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
+                // loadExtractor returned — if callback never fired (user cancelled, error, no video),
+                // complete deferred so we don't hang for 3 hours
+                if (!found) {
+                    Log.w("[$name] [awaitSnifferResult]", "loadExtractor returned without callback — completing as cancelled")
+                    deferred.complete(false)
+                }
                 val result = deferred.await()
                 Log.d("[$name] [awaitSnifferResult]", "=== END === result=$result")
                 result
