@@ -38,12 +38,12 @@ class ArabseedV4Parser : NewBaseParser() {
         container = "ul.episodes__list li a, div.epAll a, div.episodes-list a, ul.episodes li a, a.episode__item",
         title = CssSelector(query = "", attr = "text"),
         url = CssSelector(query = "", attr = "href"),
-        episode = CssSelector(query = "div.epi__num b, ", attr = "text", regex = "(\\d+)")
+        episode = CssSelector(query = "div.epi__num b", attr = "text", regex = "(\\d+)")
     )
 
     override val watchServersSelectors = WatchServerSelector(
         url = CssSelector(query = "ul.watch__servers li[data-link], li[data-link]", attr = "data-link"),
-        title = CssSelector(query = "span, ", attr = "text"),
+        title = CssSelector(query = "span", attr = "text"),
         iframe = CssSelector(query = "iframe[src]", attr = "src")
     )
 
