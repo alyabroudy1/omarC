@@ -1,20 +1,10 @@
 package com.arabseedv4
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.api.Log
-import com.cloudstream.shared.provider.ProviderConfig
-import com.cloudstream.shared.service.ProviderHttpService
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 import com.cloudstream.shared.parsing.NewBaseParser
-import com.cloudstream.shared.android.ActivityProvider
-import com.cloudstream.shared.android.PluginContext
-import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlin.coroutines.resume
 import com.cloudstream.shared.provider.BaseProvider
+import kotlinx.coroutines.*
 import org.jsoup.nodes.Document
 
 class ArabseedV4 : BaseProvider() {
@@ -83,141 +73,37 @@ class ArabseedV4 : BaseProvider() {
         return episodes
     }
 
-    // ================= LOAD LINKS LOGIC (LAZY & SNIFFER) =================
+    // ================= RESOLVE SERVER URL (LAZY AJAX) =================
 
-    private data class ArabseedLazySource(
-        val postId: String, 
-        val quality: String, 
-        val serverId: String, 
-        val csrfToken: String, 
-        val baseUrl: String
-    )
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val parser = getParser() as ArabseedV4Parser
+    override suspend fun resolveServerUrl(url: String, referer: String): String? {
+        // Normal URLs pass through
+        if (!url.startsWith("arabseed-lazy://")) return url
         
-        // 1. Resolve Watch Page
-        val doc = httpService.getDocument(data) ?: return false
-        val watchDoc = if (parser.isWatchPage(doc)) doc else {
-            val watchUrl = parser.getWatchUrl(doc)
-            if (watchUrl.isNotBlank()) httpService.getDocument(watchUrl) ?: return false else return false
-        }
-
-        // 2. Extract Metadata for Sources
-        val availableQualities = parser.extractQualities(watchDoc)
-        val defaultQuality = parser.extractDefaultQuality(watchDoc, availableQualities)
-        val visibleServers = parser.extractVisibleServers(watchDoc)
-        val directEmbeds = parser.extractDirectEmbeds(watchDoc)
-        val globalPostId = parser.extractPostId(watchDoc) ?: ""
-        val csrfToken = parser.extractCsrfToken(doc) ?: ""
-
-        val currentBaseUrl = try {
-            val uri = java.net.URI(watchDoc.location())
-            "${uri.scheme}://${uri.host}"
-        } catch (e: Exception) { "https://${httpService.currentDomain}" }
-
-        // 3. Collect Sources (Lazy + Visible)
-        val sources = mutableListOf<Any>() // Can be ArabseedParser.ServerData or specific Lazy object matching V2 logic
-        
-        // A. Qualities (Lazy)
-        availableQualities.forEach { qData ->
-            if (qData.quality != defaultQuality) {
-                 val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
-                 if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
-                     for (serverId in 1..5) {
-                         sources.add(ArabseedLazySource(anyPostId, qData.quality.toString(), serverId.toString(), csrfToken, currentBaseUrl))
-                     }
-                 }
-            } else {
-                 // Default quality types
-                 visibleServers.forEach { server ->
-                     if (server.dataLink.isNotBlank()) {
-                         sources.add(server.dataLink) // Direct link treated as visible source
-                     } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
-                         sources.add(ArabseedLazySource(server.postId, defaultQuality.toString(), server.serverId, csrfToken, currentBaseUrl))
-                     }
-                 }
-            }
-        }
-        
-        // B. Direct Embeds
-        sources.addAll(directEmbeds)
-
-        Log.d(providerName, "Collected ${sources.size} sources")
-
-        // 4. Resolve & Extract Loop
-        var anyFound = false
-        
-        sources.forEach { source ->
-             try {
-                 val sourceUrl = when (source) {
-                     is ArabseedLazySource -> resolveLazyUrl(source)
-                     is String -> source
-                     else -> null
-                 }
-                 
-                 if (!sourceUrl.isNullOrBlank()) {
-                     // Try standard extractors first
-                     val extracted = loadExtractor(sourceUrl, "$currentBaseUrl/", subtitleCallback, callback)
-                     if (extracted) {
-                         anyFound = true
-                     } else {
-                         // Fallback to Sniffer if standard failed
-                         // We can use the visible sniffer logic if it's a private server
-                         if (sourceUrl.contains("arabseed") || sourceUrl.contains("asd")) {
-                              val headers = mapOf("Referer" to "$currentBaseUrl/")
-                              val sniffed = httpService.sniffVideosVisible(sourceUrl, headers)
-                              sniffed.forEach { vid ->
-                                  callback(newExtractorLink(
-                                      providerName,
-                                      providerName,
-                                      vid.url,
-                                      ExtractorLinkType.VIDEO
-                                  ) {
-                                      this.headers = vid.headers
-                                      this.referer = "$currentBaseUrl/"
-                                      this.quality = getQualityFromName(vid.quality)
-                                  })
-                                  anyFound = true
-                              }
-                         }
-                     }
-                 }
-             } catch (e: Exception) {
-                 Log.e(providerName, "Error processing source: ${e.message}")
-             }
-        }
-
-        return anyFound
-    }
-
-    private suspend fun resolveLazyUrl(source: ArabseedLazySource): String? {
-        val lazyUrl = "https://arabseed-lazy.com/?post_id=${source.postId}&quality=${source.quality}&server=${source.serverId}&csrf_token=${source.csrfToken}&base=${source.baseUrl}"
-        val uri = java.net.URI(lazyUrl)
-        val queryParams = uri.query.split("&").associate { 
+        // Parse encoded lazy URL
+        val query = url.substringAfter("?")
+        val params = query.split("&").associate {
             val parts = it.split("=", limit = 2)
             if (parts.size == 2) parts[0] to parts[1] else it to ""
         }
         
-        val baseUrlForAjax = queryParams["base"] ?: "https://asd.pics"
+        val postId = params["post_id"] ?: return null
+        val quality = params["quality"] ?: return null
+        val serverId = params["server"] ?: return null
+        val csrfToken = params["csrf"] ?: return null
+        val baseUrl = params["base"] ?: "https://asd.pics"
         
         val result = httpService.postDebug(
-            "$baseUrlForAjax/get__watch__server/",
+            "$baseUrl/get__watch__server/",
             data = mapOf(
-                "post_id" to source.postId,
-                "quality" to source.quality,
-                "server" to source.serverId,
-                "csrf_token" to source.csrfToken
+                "post_id" to postId,
+                "quality" to quality,
+                "server" to serverId,
+                "csrf_token" to csrfToken
             ),
             headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest",
-                "Origin" to baseUrlForAjax,
-                "Referer" to "$baseUrlForAjax/"
+                "Origin" to baseUrl,
+                "Referer" to "$baseUrl/"
             )
         )
         
@@ -239,7 +125,7 @@ class ArabseedV4 : BaseProvider() {
                 }
             }
         } else {
-            val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrlForAjax/")
+            val serverDoc = org.jsoup.Jsoup.parse(serverResponse, "$baseUrl/")
             embedUrl = serverDoc.select("iframe").attr("src")
         }
         

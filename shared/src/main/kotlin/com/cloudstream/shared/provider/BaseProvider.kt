@@ -154,6 +154,13 @@ abstract class BaseProvider : MainAPI() {
      */
     open fun getSeasonName(seasonNum: Int): String = "Season $seasonNum"
 
+    /**
+     * Hook for providers that need to resolve server URLs before extraction.
+     * Called for each URL in the loadLinks loop. Override to handle virtual URLs
+     * (e.g., lazy AJAX resolution). Return null to skip the URL.
+     */
+    open suspend fun resolveServerUrl(url: String, referer: String): String? = url
+
     override suspend fun load(url: String): LoadResponse? {
         val methodTag = "[$name] [load]"
         Log.i(methodTag, "START url='$url'")
@@ -340,9 +347,19 @@ abstract class BaseProvider : MainAPI() {
             for ((index, url) in urls.withIndex()) {
                 Log.d(methodTag, "Processing player URL: $url")
                 
+                // STEP 0: Resolve URL via provider hook (e.g., lazy AJAX resolution)
+                val resolvedUrl = resolveServerUrl(url, referer)
+                if (resolvedUrl.isNullOrBlank()) {
+                    Log.d(methodTag, "resolveServerUrl returned null, skipping: $url")
+                    continue
+                }
+                if (resolvedUrl != url) {
+                    Log.d(methodTag, "Resolved URL: $url -> $resolvedUrl")
+                }
+                
                 // STEP 1: Try standard extractors (6s timeout)
                 Log.d(methodTag, "STEP 1: Trying standard extractors...")
-                val standardResult = awaitExtractorWithResult(url, referer, subtitleCallback, callback, timeoutMs = 6000L)
+                val standardResult = awaitExtractorWithResult(resolvedUrl, referer, subtitleCallback, callback, timeoutMs = 6000L)
                 
                 if (standardResult) {
                     Log.i(methodTag, "SUCCESS via standard extractor: $url")
@@ -359,7 +376,7 @@ abstract class BaseProvider : MainAPI() {
                 }
                 
                 val snifferResult = awaitSnifferResult(
-                    url, 
+                    resolvedUrl, 
                     referer, 
                     subtitleCallback, 
                     callback, 

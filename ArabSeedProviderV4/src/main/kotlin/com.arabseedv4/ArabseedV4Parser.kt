@@ -46,6 +46,50 @@ class ArabseedV4Parser : NewBaseParser() {
         title = CssSelector(query = "span, this", attr = "text"),
         iframe = CssSelector(query = "iframe[src]", attr = "src")
     )
+
+    override fun getPlayerPageUrl(doc: Document): String? = getWatchUrl(doc).ifBlank { null }
+
+    /**
+     * Returns all source URLs: lazy sources encoded as virtual URLs + direct embeds.
+     * Lazy URLs use format: arabseed-lazy://resolve?post_id=X&quality=Y&server=Z&csrf=W&base=B
+     */
+    override fun extractWatchServersUrls(doc: Document): List<String> {
+        val urls = mutableListOf<String>()
+        
+        val availableQualities = extractQualities(doc)
+        val defaultQuality = extractDefaultQuality(doc, availableQualities)
+        val visibleServers = extractVisibleServers(doc)
+        val globalPostId = extractPostId(doc) ?: ""
+        val csrfToken = extractCsrfToken(doc) ?: ""
+        val currentBaseUrl = doc.location().let { loc ->
+            try { val uri = java.net.URI(loc); "${uri.scheme}://${uri.host}" } catch (_: Exception) { "" }
+        }
+        
+        // A. Qualities × Servers (Lazy)
+        availableQualities.forEach { qData ->
+            if (qData.quality != defaultQuality) {
+                val anyPostId = visibleServers.firstOrNull()?.postId?.ifBlank { globalPostId } ?: globalPostId
+                if (anyPostId.isNotBlank() && csrfToken.isNotBlank()) {
+                    for (serverId in 1..5) {
+                        urls.add("arabseed-lazy://resolve?post_id=$anyPostId&quality=${qData.quality}&server=$serverId&csrf=$csrfToken&base=$currentBaseUrl")
+                    }
+                }
+            } else {
+                visibleServers.forEach { server ->
+                    if (server.dataLink.isNotBlank()) {
+                        urls.add(server.dataLink)
+                    } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
+                        urls.add("arabseed-lazy://resolve?post_id=${server.postId}&quality=$defaultQuality&server=${server.serverId}&csrf=$csrfToken&base=$currentBaseUrl")
+                    }
+                }
+            }
+        }
+        
+        // B. Direct Embeds
+        urls.addAll(extractDirectEmbeds(doc))
+        
+        return urls
+    }
     
     // Series Detection Logic override to match V2
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
