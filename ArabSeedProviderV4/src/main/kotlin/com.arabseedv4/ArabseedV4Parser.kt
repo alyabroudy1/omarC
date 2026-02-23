@@ -96,16 +96,10 @@ class ArabseedV4Parser : NewBaseParser() {
         // 1. Explicit Movie Checks (Fail-fast)
         if (title.contains("فيلم") || title.contains("film", true) || title.contains("movie", true)) return false
 
-        // 2. Element Context Checks
-        if (element != null) {
-            // Check category text
-             val category = element.select("div.post__category, span.category").text()
-             if (category.contains("مسلسلات") || category.contains("أنمي")) return true
-             
-             if (element is Document) {
-                 // Check for seasons/episodes containers
-                 if (element.select("div.epAll, div.episodes-list, ul.episodes, div.seasonDiv, div.series-episodes").isNotEmpty()) return true
-             }
+        // 2. Element Context Checks - works with ANY Element, not just Document
+        element?.let { el ->
+            val category = el.select("div.post__category, span.category").text()
+            if (category.contains("مسلسلات") || category.contains("أنمي")) return true
         }
         
         // 3. Keyword check
