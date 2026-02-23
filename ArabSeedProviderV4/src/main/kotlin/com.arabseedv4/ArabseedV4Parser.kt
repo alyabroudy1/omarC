@@ -239,10 +239,12 @@ class ArabseedV4Parser : NewBaseParser() {
             finalPoster = contentImg?.let { it.attr("data-src").ifBlank { it.attr("src") } }
         }
         
-        return if (finalPoster != data.posterUrl) {
-            data.copy(posterUrl = fixUrl(finalPoster ?: ""))
-        } else {
-            data
-        }
+        // Include watchUrl so BaseProvider.load() can use it for movies
+        val watchUrl = getWatchUrl(doc).ifBlank { null }
+        
+        return data.copy(
+            posterUrl = fixUrl(finalPoster ?: data.posterUrl ?: ""),
+            watchUrl = watchUrl
+        )
     }
 }

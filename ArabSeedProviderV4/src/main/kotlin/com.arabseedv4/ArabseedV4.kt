@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
 import com.cloudstream.shared.provider.BaseProvider
+import org.jsoup.nodes.Document
 
 class ArabseedV4 : BaseProvider() {
 
@@ -31,90 +32,55 @@ class ArabseedV4 : BaseProvider() {
         return ArabseedV4Parser()
     }
 
-    // ================= LOAD LOGIC (AJAX SEASONS) =================
+    // ================= LOAD HOOKS (AJAX SEASONS) =================
 
-    override suspend fun load(url: String): LoadResponse? {
-        val doc = httpService.getDocument(url) ?: return null
-        // 1. Basic parsing via NewBaseParser config
-        val data = (getParser() as ArabseedV4Parser).parseLoadPage(doc, url) ?: return null
+    override fun getSeasonName(seasonNum: Int): String = "الموسم $seasonNum"
 
-        if (data.type == TvType.Movie) {
-             val watchUrl = (getParser() as ArabseedV4Parser).getWatchUrl(doc)
-             return newMovieLoadResponse(data.title, url, TvType.Movie, watchUrl.ifBlank { url }) {
-                 this.posterUrl = data.posterUrl
-                 this.posterHeaders = httpService.getImageHeaders()
-                 this.year = data.year
-                 this.plot = data.plot
-                 this.tags = data.tags
-             }
-        } else {
-            // SERIES: Handle AJAX Seasons
-            val episodes = mutableListOf<ParsedEpisode>()
-            if (data.episodes != null) episodes.addAll(data.episodes!!)
+    override suspend fun fetchExtraEpisodes(
+        doc: Document, url: String, data: com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
+    ): List<com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode> {
+        val episodes = mutableListOf<com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode>()
+        if (data.episodes != null) episodes.addAll(data.episodes!!)
 
-            val parser = getParser() as ArabseedV4Parser
-            val seasonDataList = parser.parseSeasonsWithPostId(doc)
-            val csrfToken = parser.extractCsrfToken(doc)
-            val currentSeason = episodes.firstOrNull()?.season ?: 1
+        val parser = getParser() as ArabseedV4Parser
+        val seasonDataList = parser.parseSeasonsWithPostId(doc)
+        val csrfToken = parser.extractCsrfToken(doc)
+        val currentSeason = episodes.firstOrNull()?.season ?: 1
 
-            if (seasonDataList.isNotEmpty() && !csrfToken.isNullOrBlank()) {
-                coroutineScope {
-                    val otherEpisodes = seasonDataList.map { (seasonNum, postId) ->
-                        async {
-                            try {
-                                if (seasonNum == currentSeason) return@async emptyList<ParsedEpisode>()
-                                
-                                val payload = mapOf(
-                                    "season_id" to postId,
-                                    "csrf_token" to csrfToken
-                                )
-                                
-                                val result = httpService.postDebug(
-                                    url = "/season__episodes/",
-                                    data = payload,
-                                    headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
-                                    referer = url
-                                )
-                                
-                                if (result.success && result.html != null) {
-                                    parser.parseEpisodesFromAjax(result.html, seasonNum)
-                                } else {
-                                    emptyList<ParsedEpisode>()
-                                }
-                            } catch (e: Exception) {
+        if (seasonDataList.isNotEmpty() && !csrfToken.isNullOrBlank()) {
+            coroutineScope {
+                val otherEpisodes = seasonDataList.map { (seasonNum, postId) ->
+                    async {
+                        try {
+                            if (seasonNum == currentSeason) return@async emptyList<ParsedEpisode>()
+                            
+                            val payload = mapOf(
+                                "season_id" to postId,
+                                "csrf_token" to csrfToken
+                            )
+                            
+                            val result = httpService.postDebug(
+                                url = "/season__episodes/",
+                                data = payload,
+                                headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+                                referer = url
+                            )
+                            
+                            if (result.success && result.html != null) {
+                                parser.parseEpisodesFromAjax(result.html, seasonNum)
+                            } else {
                                 emptyList<ParsedEpisode>()
                             }
+                        } catch (e: Exception) {
+                            emptyList<ParsedEpisode>()
                         }
-                    }.awaitAll().flatten()
-                    episodes.addAll(otherEpisodes)
-                }
-            }
-            
-            val sortedEpisodes = episodes.distinctBy { "${it.season}:${it.episode}" }
-                .sortedWith(compareBy({ it.season }, { it.episode }))
-            
-            val mappedEpisodes = sortedEpisodes.map { ep ->
-                newEpisode(ep.url) {
-                    this.name = ep.name
-                    this.season = ep.season
-                    this.episode = ep.episode
-                }
-            }
-
-            val seasonNames = mappedEpisodes.mapNotNull { it.season }.distinct().sorted()
-                .map { SeasonData(it, "الموسم $it") }
-
-            return newTvSeriesLoadResponse(data.title, url, TvType.TvSeries, mappedEpisodes) {
-                this.posterUrl = data.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
-                this.year = data.year
-                this.plot = data.plot
-                this.tags = data.tags
-                if (seasonNames.isNotEmpty()) {
-                    this.seasonNames = seasonNames
-                }
+                    }
+                }.awaitAll().flatten()
+                episodes.addAll(otherEpisodes)
             }
         }
+        
+        return episodes
     }
 
     // ================= LOAD LINKS LOGIC (LAZY & SNIFFER) =================

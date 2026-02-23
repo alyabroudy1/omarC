@@ -140,6 +140,20 @@ abstract class BaseProvider : MainAPI() {
         }
     }
 
+    /**
+     * Hook for providers that need to fetch extra episodes (e.g., AJAX season loading).
+     * Called during load() for series. Override to add episodes from other seasons.
+     */
+    open suspend fun fetchExtraEpisodes(
+        doc: Document, url: String, data: ParserInterface.ParsedLoadData
+    ): List<ParserInterface.ParsedEpisode> = data.episodes ?: emptyList()
+
+    /**
+     * Hook for providers to customize season display names.
+     * Default: "Season N". Override for localized names.
+     */
+    open fun getSeasonName(seasonNum: Int): String = "Season $seasonNum"
+
     override suspend fun load(url: String): LoadResponse? {
         val methodTag = "[$name] [load]"
         Log.i(methodTag, "START url='$url'")
@@ -174,20 +188,24 @@ abstract class BaseProvider : MainAPI() {
             // Refactored Fallback: Swap entire 'data' context if this is an episode pointing to a parent series
             data = resolveParentSeries(data, methodTag)
             
-            val actualEpisodes = data.episodes ?: emptyList()
+            // Fetch extra episodes via provider hook (e.g., AJAX seasons)
+            val allEpisodes = fetchExtraEpisodes(actualDoc, actualUrl, data)
+                .distinctBy { "${it.season}:${it.episode}" }
+                .sortedWith(compareBy({ it.season }, { it.episode }))
             
             // Ultimate Fallback: If it's a series but we have 0 episodes, treat as a Movie to show the Play button
-            val finalType = if (data.type == TvType.TvSeries && actualEpisodes.isEmpty()) {
+            val finalType = if (data.type == TvType.TvSeries && allEpisodes.isEmpty()) {
                 Log.d(methodTag, "Fallback: Series has 0 episodes, treating as Movie to ensure playability.")
                 TvType.Movie
             } else {
                 data.type
             }
 
-            Log.d(methodTag, "Parsed load data: title='${data.title}', type=$finalType")
+            Log.d(methodTag, "Parsed load data: title='${data.title}', type=$finalType, episodes=${allEpisodes.size}")
             
             return if (finalType == TvType.Movie) {
-                newMovieLoadResponse(data.title, data.url, TvType.Movie, data.url) {
+                val movieDataUrl = data.watchUrl ?: data.url
+                newMovieLoadResponse(data.title, data.url, TvType.Movie, movieDataUrl) {
                     this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                     this.plot = data.plot
@@ -195,7 +213,7 @@ abstract class BaseProvider : MainAPI() {
                     this.year = data.year
                 }
             } else {
-                val episodeList = actualEpisodes.map { ep ->
+                val episodeList = allEpisodes.map { ep ->
                     newEpisode(ep.url) {
                         this.name = ep.name
                         this.season = ep.season
@@ -203,12 +221,16 @@ abstract class BaseProvider : MainAPI() {
                     }
                 }
                 
+                val seasonNames = episodeList.mapNotNull { it.season }.distinct().sorted()
+                    .map { SeasonData(it, getSeasonName(it)) }
+                
                 newTvSeriesLoadResponse(data.title, data.url, TvType.TvSeries, episodeList) {
                     this.posterUrl = data.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
+                    if (seasonNames.isNotEmpty()) this.seasonNames = seasonNames
                 }
             }
         } catch (e: Exception) {
