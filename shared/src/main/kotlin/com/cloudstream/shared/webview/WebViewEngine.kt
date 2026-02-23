@@ -519,8 +519,9 @@ class WebViewEngine(
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                             val url = request?.url?.toString()
                             if (!url.isNullOrBlank()) {
-                                ProviderLogger.d(TAG_WEBVIEW, "onCreateWindow", "Redirecting popup to main WebView", "url" to url)
-                                webView.loadUrl(url)
+                                ProviderLogger.d(TAG_WEBVIEW, "onCreateWindow", "Blocked popup from hijacking main WebView", "url" to url.take(80))
+                                android.util.Log.i("WebViewEngine", "Blocked popup: ${url.take(80)}")
+                                // Do NOT call webView.loadUrl(url) here. That ruins the main sniffer session.
                             }
                             return true
                         }
