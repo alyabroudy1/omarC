@@ -22,6 +22,29 @@ class ArabseedV4 : BaseProvider() {
         return ArabseedV4Parser()
     }
 
+    // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
+        mainUrl = "https://${httpService.currentDomain}"
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        
+        return coroutineScope {
+            listOf("movies", "series").map { type ->
+                async {
+                    val url = "$mainUrl/find/?word=$encoded&type=$type"
+                    val doc = httpService.getDocument(url)
+                    if (doc != null) getParser().parseSearch(doc) else emptyList()
+                }
+            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
+                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        }
+    }
+
     // ================= LOAD HOOKS (AJAX SEASONS) =================
 
     override fun getSeasonName(seasonNum: Int): String = "الموسم $seasonNum"
