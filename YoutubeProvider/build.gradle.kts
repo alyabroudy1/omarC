@@ -11,4 +11,9 @@ cloudstream {
 
 android {
     namespace = "com.youtube"
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir("../shared/src/main/kotlin")
+        }
+    }
 }

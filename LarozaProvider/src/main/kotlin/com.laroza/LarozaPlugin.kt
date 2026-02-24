@@ -25,7 +25,7 @@ class LarozaPlugin: Plugin() {
         registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor()) // Handles okprime.site URLs
 
         val sniffer = SnifferExtractor()
-        sniffer.webViewEngine = com.cloudstream.shared.webview.WebViewEngine { ActivityProvider.currentActivity }
+        sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
         registerExtractorAPI(sniffer)       // Handles sniffer:// URLs (video sniffing fallback)
 
         // Register provider

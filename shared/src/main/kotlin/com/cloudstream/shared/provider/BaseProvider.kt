@@ -11,6 +11,10 @@ import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 
 abstract class BaseProvider : MainAPI() {
     abstract val providerName: String
@@ -325,74 +329,128 @@ abstract class BaseProvider : MainAPI() {
             }
             
             // Step 5: Extract server selectors from parser (provider-specific)
-            // Providers like Laroza that need server button clicks implement buildServerSelectors()
             val serverSelectors = getParser().buildServerSelectors(targetDoc, urls)
             val selectorCount = serverSelectors.count { it != null }
             Log.d(methodTag, "Extracted $selectorCount/${serverSelectors.size} server selectors from parser")
             
-            // Step 6: Process URLs with standard extractors + sniffer fallback (Arabseed pattern)
-            // Extract the domain of the watch page and use it as the referer.
-            // Embed servers validate the origin domain matches the requested page's actual domain
+            // Build referer from watch page domain
             val watchUrlForReferer = actualWatchUrl ?: data
             val referer = try {
                 val uri = java.net.URI(watchUrlForReferer)
                 "${uri.scheme}://${uri.host}/"
             } catch (e: Exception) {
-                // Fallback if parsing fails
                 "https://$baseDomain/"
             }
             
             Log.d(methodTag, "Using referer: $referer")
             
-            for ((index, url) in urls.withIndex()) {
-                Log.d(methodTag, "Processing player URL: $url")
+            // ========================================
+            // PHASE 1: Resolve ALL lazy URLs in parallel (AJAX, fast)
+            // ========================================
+            Log.i(methodTag, "PHASE 1: Resolving ${urls.size} URLs in parallel...")
+            
+            // Triple: (originalUrl, resolvedUrl, index)
+            val resolvedServers: List<Triple<String, String, Int>> = coroutineScope {
+                urls.mapIndexed { index, url ->
+                    async {
+                        try {
+                            val resolved = resolveServerUrl(url, referer)
+                            if (!resolved.isNullOrBlank()) {
+                                if (resolved != url) {
+                                    Log.d(methodTag, "PHASE 1: Resolved [$index]: $url -> ${resolved.take(80)}")
+                                }
+                                Triple(url, resolved, index)
+                            } else {
+                                Log.d(methodTag, "PHASE 1: resolveServerUrl returned null [$index], skipping: $url")
+                                null
+                            }
+                        } catch (e: Exception) {
+                            Log.w(methodTag, "PHASE 1: Exception resolving [$index]: ${e.message}")
+                            null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            
+            Log.i(methodTag, "PHASE 1 complete: ${resolvedServers.size}/${urls.size} URLs resolved")
+            
+            if (resolvedServers.isEmpty()) {
+                Log.w(methodTag, "PHASE 1: No URLs could be resolved")
+                return false
+            }
+            
+            // ========================================
+            // PHASE 2: Try standard extractors on ALL resolved URLs in parallel
+            // ========================================
+            Log.i(methodTag, "PHASE 2: Trying standard extractors on ${resolvedServers.size} URLs in parallel...")
+            
+            val allExtractorLinks: List<ExtractorLink> = coroutineScope {
+                resolvedServers.map { (_, resolvedUrl, serverIndex) ->
+                    async {
+                        try {
+                            val links = collectExtractorLinks(resolvedUrl, referer, subtitleCallback, timeoutMs = 8000L)
+                            if (links.isNotEmpty()) {
+                                Log.i(methodTag, "PHASE 2: Extractor found ${links.size} links for [$serverIndex]: ${resolvedUrl.take(60)}")
+                            }
+                            links
+                        } catch (e: Exception) {
+                            Log.w(methodTag, "PHASE 2: Exception for [$serverIndex]: ${e.message}")
+                            emptyList()
+                        }
+                    }
+                }.awaitAll().flatten()
+            }
+            
+            // ========================================
+            // PHASE 3: Deliver all found links to callback (quality picker)
+            // ========================================
+            if (allExtractorLinks.isNotEmpty()) {
+                Log.i(methodTag, "PHASE 3: Delivering ${allExtractorLinks.size} links to callback (quality picker)")
                 
-                // STEP 0: Resolve URL via provider hook (e.g., lazy AJAX resolution)
-                val resolvedUrl = resolveServerUrl(url, referer)
-                if (resolvedUrl.isNullOrBlank()) {
-                    Log.d(methodTag, "resolveServerUrl returned null, skipping: $url")
-                    continue
+                // Deduplicate by URL
+                val uniqueLinks = allExtractorLinks.distinctBy { it.url }
+                uniqueLinks.forEach { link ->
+                    Log.d(methodTag, "PHASE 3: Delivering link: ${link.name} | ${link.url.take(80)}")
+                    callback(link)
                 }
-                if (resolvedUrl != url) {
-                    Log.d(methodTag, "Resolved URL: $url -> $resolvedUrl")
-                }
                 
-                // STEP 1: Try standard extractors (6s timeout)
-                Log.d(methodTag, "STEP 1: Trying standard extractors...")
-                val standardResult = awaitExtractorWithResult(resolvedUrl, referer, subtitleCallback, callback, timeoutMs = 6000L)
-                
-                if (standardResult) {
-                    Log.i(methodTag, "SUCCESS via standard extractor: $url")
-                    return true
-                }
-                
-                // STEP 2: Standard failed, try sniffer (60s timeout)
-                Log.w(methodTag, "STEP 2: Standard extractors failed, trying sniffer...")
-                
-                // Get selector for this URL if available (for WatchList servers)
-                val selector = serverSelectors.getOrNull(index)
+                Log.i(methodTag, "PHASE 3 complete: Delivered ${uniqueLinks.size} unique links")
+                return true
+            }
+            
+            Log.w(methodTag, "PHASE 2-3: No standard extractors succeeded for any URL")
+            
+            // ========================================
+            // PHASE 4: Sniffer fallback — try servers one-by-one until one works
+            // ========================================
+            Log.i(methodTag, "PHASE 4: Sniffer fallback — trying ${resolvedServers.size} servers sequentially...")
+            
+            for ((_, resolvedUrl, serverIndex) in resolvedServers) {
+                val selector = serverSelectors.getOrNull(serverIndex)
                 if (selector != null) {
-                    Log.d(methodTag, "Using selector for sniffer: ${selector.query}")
+                    Log.d(methodTag, "PHASE 4: Using selector for sniffer: ${selector.query}")
                 }
+                
+                Log.d(methodTag, "PHASE 4: Sniffing [$serverIndex]: ${resolvedUrl.take(80)}")
                 
                 val snifferResult = awaitSnifferResult(
                     resolvedUrl, 
                     referer, 
                     subtitleCallback, 
                     callback, 
-                    timeoutMs = com.cloudstream.shared.webview.WebViewEngine.SNIFFER_PLAYER_TIMEOUT_MS,
+                    timeoutMs = com.cloudstream.shared.webview.VideoSnifferEngine.SNIFFER_PLAYER_TIMEOUT_MS,
                     selector = selector
                 )
                 
                 if (snifferResult) {
-                    Log.i(methodTag, "SUCCESS via sniffer: $url")
+                    Log.i(methodTag, "PHASE 4: SUCCESS via sniffer [$serverIndex]: ${resolvedUrl.take(80)}")
                     return true
                 }
                 
-                Log.w(methodTag, "Both methods failed for: $url")
+                Log.w(methodTag, "PHASE 4: Sniffer failed for [$serverIndex]")
             }
             
-            Log.w(methodTag, "END - No videos found from ${urls.size} URLs")
+            Log.w(methodTag, "END - No videos found from ${urls.size} URLs (all 4 phases exhausted)")
             return false
         } catch (e: Exception) {
             Log.e(methodTag, "Error in loadLinks: ${e.message}")
@@ -402,40 +460,29 @@ abstract class BaseProvider : MainAPI() {
     }
     
     /**
-     * Awaits standard extractor result with timeout.
-     * Returns true if a link was found and callback invoked.
+     * Collects ALL extractor links for a URL without calling the final callback.
+     * Used in Phase 2 to gather links from all servers before delivering them.
+     * Returns all found links (may be empty if no extractor matches).
      */
-    private suspend fun awaitExtractorWithResult(
+    private suspend fun collectExtractorLinks(
         targetUrl: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
         timeoutMs: Long
-    ): Boolean {
-        return try {
-            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
-                val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
-                var found = false
-                
+    ): List<ExtractorLink> {
+        val collected = java.util.concurrent.CopyOnWriteArrayList<ExtractorLink>()
+        
+        try {
+            withTimeoutOrNull(timeoutMs) {
                 loadExtractor(targetUrl, referer, subtitleCallback) { link ->
-                    if (!found) {
-                        found = true
-                        callback(link)
-                        deferred.complete(true)
-                    }
+                    collected.add(link)
                 }
-                
-                // loadExtractor returned — if callback never fired (no matching extractor),
-                // complete deferred so we don't hang
-                if (!found) {
-                    deferred.complete(false)
-                }
-                deferred.await()
-            } ?: false
+            }
         } catch (e: Exception) {
-            Log.w("[$name] [awaitExtractorWithResult]", "Exception: ${e.message}")
-            false
+            Log.w("[$name] [collectExtractorLinks]", "Exception: ${e.message}")
         }
+        
+        return collected.toList()
     }
     
     /**
@@ -455,7 +502,7 @@ abstract class BaseProvider : MainAPI() {
         Log.d("[$name] [awaitSnifferResult]", "=== START === target=${targetUrl.take(80)}, hasSelector=${selector != null}")
         
         return try {
-            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            withTimeoutOrNull(timeoutMs) {
                 val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
                 var found = false
                 

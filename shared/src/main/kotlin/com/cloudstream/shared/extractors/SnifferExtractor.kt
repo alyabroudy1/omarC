@@ -4,7 +4,8 @@ import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
-import com.cloudstream.shared.webview.WebViewEngine
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -21,7 +22,7 @@ import java.net.URLEncoder
  * When LazyExtractor fails to find a matching extractor, it prefixes the embed URL
  * with this pattern and calls loadExtractor again. This extractor then:
  * 1. Decodes the embed URL
- * 2. Runs WebViewEngine in FULLSCREEN mode to sniff video URLs
+ * 2. Runs VideoSnifferEngine in FULLSCREEN mode to sniff video URLs
  * 3. Returns the found video URLs as ExtractorLinks
  * 
  * This approach integrates with CloudStream's extractor system properly,
@@ -35,8 +36,8 @@ class SnifferExtractor : ExtractorApi() {
     
     private val TAG = "SnifferExtractor"
     
-    // WebViewEngine instance - will be set by the provider
-    var webViewEngine: WebViewEngine? = null
+    // VideoSnifferEngine instance - will be set by the provider
+    var videoSnifferEngine: VideoSnifferEngine? = null
     var userAgent: String? = null
     
     companion object {
@@ -114,15 +115,15 @@ class SnifferExtractor : ExtractorApi() {
             "embedReferer" to embedReferer.take(40),
             "hasSelector" to (selector != null))
         
-        // Get or create WebViewEngine
-        val engine = webViewEngine ?: run {
+        // Get or create VideoSnifferEngine
+        val engine = videoSnifferEngine ?: run {
             val activity = ActivityProvider.currentActivity
             if (activity == null) {
-                android.util.Log.e("SnifferExtractor", "No Activity available for WebViewEngine")
-                ProviderLogger.e(TAG, "getUrl", "No Activity available for WebViewEngine")
+                android.util.Log.e("SnifferExtractor", "No Activity available for VideoSnifferEngine")
+                ProviderLogger.e(TAG, "getUrl", "No Activity available for VideoSnifferEngine")
                 return
             }
-            WebViewEngine { ActivityProvider.currentActivity }
+            VideoSnifferEngine { ActivityProvider.currentActivity }
         }
         
         // CRITICAL: Use SessionProvider to get the SAME UA used for CF challenge
@@ -137,7 +138,7 @@ class SnifferExtractor : ExtractorApi() {
         android.util.Log.i("SnifferExtractor", "[getUrl] Target URL: ${embedUrl.take(80)}")
         android.util.Log.i("SnifferExtractor", "[getUrl] Mode: FULLSCREEN")
         android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 3h (sniffer doubles as player)")
-        ProviderLogger.d(TAG, "getUrl", "Starting WebViewEngine sniffing (Visible)")
+        ProviderLogger.d(TAG, "getUrl", "Starting VideoSnifferEngine sniffing (Visible)")
         
         // Build pre-sniff JavaScript if selector is provided
         val preSniffJs = selector?.let { buildClickJavaScript(it) }
@@ -154,10 +155,10 @@ class SnifferExtractor : ExtractorApi() {
         val startTime = System.currentTimeMillis()
         val result = engine.runSession(
             url = embedUrl,
-            mode = WebViewEngine.Mode.FULLSCREEN,
+            mode = Mode.FULLSCREEN,
             userAgent = snifferUserAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = com.cloudstream.shared.webview.WebViewEngine.SNIFFER_PLAYER_TIMEOUT_MS,
+            timeout = VideoSnifferEngine.SNIFFER_PLAYER_TIMEOUT_MS,
             delayMs = 2000, // Wait 2s for page to fully load before starting detection
             preSniffJavaScript = preSniffJs,
             referer = embedReferer // Pass referer for embed servers (e.g., https://laroza.cfd/)
@@ -171,7 +172,7 @@ class SnifferExtractor : ExtractorApi() {
 
         val elapsed = System.currentTimeMillis() - startTime
         android.util.Log.i("SnifferExtractor", "[getUrl] === WEBVIEW COMPLETE === elapsed=${elapsed}ms")
-        android.util.Log.i("SnifferExtractor", "[getUrl] WebViewEngine returned: ${result.javaClass.simpleName}")
+        android.util.Log.i("SnifferExtractor", "[getUrl] VideoSnifferEngine returned: ${result.javaClass.simpleName}")
         
         when (result) {
             is WebViewResult.Success -> {
@@ -350,11 +351,11 @@ class SnifferExtractor : ExtractorApi() {
             }
             is WebViewResult.Timeout -> {
                 android.util.Log.w("SnifferExtractor", "[getUrl] TIMEOUT! Last URL: ${result.lastUrl.take(60)}")
-                ProviderLogger.w(TAG, "getUrl", "WebViewEngine timed out", "lastUrl" to result.lastUrl.take(60))
+                ProviderLogger.w(TAG, "getUrl", "VideoSnifferEngine timed out", "lastUrl" to result.lastUrl.take(60))
             }
             is WebViewResult.Error -> {
                 android.util.Log.e("SnifferExtractor", "[getUrl] ERROR: ${result.reason}")
-                ProviderLogger.e(TAG, "getUrl", "WebViewEngine error: ${result.reason}")
+                ProviderLogger.e(TAG, "getUrl", "VideoSnifferEngine error: ${result.reason}")
             }
         }
         

@@ -2,9 +2,6 @@ package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
-import com.cloudstream.shared.webview.ExitCondition
-import com.cloudstream.shared.webview.WebViewEngine
-import com.cloudstream.shared.webview.WebViewEngine.Mode
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -45,7 +42,6 @@ abstract class LazyExtractor : ExtractorApi() {
     // Properties to allow passing session context without changing getUrl signature
     var userAgent: String? = null
     var sessionCookies: Map<String, String> = emptyMap()
-    var webViewEngine: WebViewEngine? = null
     
     private val TAG = "LazyExtractor"
     

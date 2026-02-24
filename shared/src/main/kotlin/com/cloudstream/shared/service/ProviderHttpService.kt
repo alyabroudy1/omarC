@@ -14,8 +14,10 @@ import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionStore
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
+import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
-import com.cloudstream.shared.webview.WebViewEngine
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
 import org.jsoup.Jsoup
@@ -26,12 +28,13 @@ import java.net.URI
  * THE GATEWAY - Single entry point for all provider HTTP operations.
  * 
  * Uses shared module components for CloudflareDetector, RequestQueue,
- * SessionState, SessionStore, WebViewEngine, DomainManager.
+ * SessionState, SessionStore, CfBypassEngine, VideoSnifferEngine, DomainManager.
  */
 class ProviderHttpService private constructor(
     private val config: ProviderConfig,
     private val sessionStore: SessionStore,
-    private val webViewEngine: WebViewEngine,
+    private val cfBypassEngine: CfBypassEngine,
+    private val videoSnifferEngine: VideoSnifferEngine,
     private val domainManager: DomainManager,
     private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface
@@ -57,8 +60,8 @@ class ProviderHttpService private constructor(
     val cookies: Map<String, String>
         get() = sessionState.cookies
         
-    val engine: WebViewEngine
-        get() = webViewEngine
+    val snifferEngine: VideoSnifferEngine
+        get() = videoSnifferEngine
     
     suspend fun ensureInitialized() {
         // Only load and initialize SessionProvider if not already valid
@@ -156,9 +159,9 @@ class ProviderHttpService private constructor(
     }
 
     suspend fun sniffVideos(url: String): List<VideoSource> {
-        val result = webViewEngine.runSession(
+        val result = cfBypassEngine.runSession(
             url = url,
-            mode = WebViewEngine.Mode.HEADLESS,
+            mode = Mode.HEADLESS,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
             timeout = 30_000L
@@ -168,9 +171,9 @@ class ProviderHttpService private constructor(
             is WebViewResult.Success -> extractVideoSources(result.html)
             is WebViewResult.Timeout -> {
                 if (CloudflareDetector.isCloudflareChallenge(result.partialHtml)) {
-                     val retry = webViewEngine.runSession(
+                     val retry = cfBypassEngine.runSession(
                          url = url,
-                         mode = WebViewEngine.Mode.FULLSCREEN,
+                         mode = Mode.FULLSCREEN,
                          userAgent = sessionState.userAgent,
                          exitCondition = ExitCondition.PageLoaded, // Still PageLoaded for CF bypass
                          timeout = 120_000L
@@ -187,9 +190,9 @@ class ProviderHttpService private constructor(
     }
 
     suspend fun sniffVideosVisible(url: String, headers: Map<String, String> = emptyMap()): List<VideoSource> {
-        val result = webViewEngine.runSession(
+        val result = videoSnifferEngine.runSession(
             url = url,
-            mode = WebViewEngine.Mode.FULLSCREEN,
+            mode = Mode.FULLSCREEN,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 60_000L,
@@ -208,8 +211,8 @@ class ProviderHttpService private constructor(
             }
             is WebViewResult.Timeout -> {
                  // Return whatever we found so far? 
-                 // WebViewEngine currently doesn't return partial found links in Timeout.
-                 // We might need to update WebViewEngineResult.Timeout to include foundLinks too?
+                 // VideoSnifferEngine currently doesn't return partial found links in Timeout.
+                 // We might need to update WebViewResult.Timeout to include foundLinks too?
                  // For now, assume empty.
                  emptyList()
             }
@@ -454,14 +457,14 @@ class ProviderHttpService private constructor(
         // Clear system cookies too
         clearSystemCookies(targetUrl)
         
-        val mode = if (config.skipHeadless) WebViewEngine.Mode.FULLSCREEN else WebViewEngine.Mode.HEADLESS
+        val mode = if (config.skipHeadless) Mode.FULLSCREEN else Mode.HEADLESS
         
-        val result = webViewEngine.runSession(
+        val result = cfBypassEngine.runSession(
             url = targetUrl,
             mode = mode,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
-            timeout = if (mode == WebViewEngine.Mode.FULLSCREEN) 120_000L else 30_000L
+            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L
         )
         
         return when (result) {
@@ -562,9 +565,10 @@ class ProviderHttpService private constructor(
                     githubConfigUrl = config.githubConfigUrl,
                     syncWorkerUrl = config.syncWorkerUrl
                 )
-                val webViewEngine = WebViewEngine(activityProvider)
+                val cfBypassEngine = CfBypassEngine(activityProvider)
+                val videoSnifferEngine = VideoSnifferEngine(activityProvider)
                 
-                ProviderHttpService(config, sessionStore, webViewEngine, domainManager, cookieManager, parser)
+                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, domainManager, cookieManager, parser)
             }
         }
     }

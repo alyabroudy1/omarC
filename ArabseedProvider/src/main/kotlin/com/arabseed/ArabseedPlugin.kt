@@ -27,7 +27,7 @@ class ArabseedPlugin: Plugin() {
         registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) // Handles savefiles.com URLs
         
         val sniffer = SnifferExtractor()
-        sniffer.webViewEngine = com.cloudstream.shared.webview.WebViewEngine { ActivityProvider.currentActivity }
+        sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
         registerExtractorAPI(sniffer)       // Handles sniffer:// URLs (video sniffing fallback)
         
         // Register provider

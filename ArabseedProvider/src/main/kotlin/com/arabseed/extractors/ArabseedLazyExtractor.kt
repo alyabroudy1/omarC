@@ -2,7 +2,6 @@ package com.arabseed.extractors
 
 import com.cloudstream.shared.extractors.JsonFetcher
 import com.cloudstream.shared.extractors.LazyExtractor
-import com.cloudstream.shared.webview.WebViewEngine
 
 /**
  * Arabseed-specific lazy extractor.
@@ -12,13 +11,8 @@ import com.cloudstream.shared.webview.WebViewEngine
  * https://arabseed.show/get__watch__server/?post_id=X&quality=Y&server=Z&csrf_token=...
  */
 class ArabseedLazyExtractor(
-    private val fetcher: JsonFetcher? = null,
-    private val engine: WebViewEngine? = null
+    private val fetcher: JsonFetcher? = null
 ) : LazyExtractor() {
-    
-    init {
-        webViewEngine = engine
-    }
     
     override val name = "ArabseedLazy"
     override val mainUrl = "https://asd.pics"
