@@ -375,7 +375,8 @@ class SnifferExtractor : ExtractorApi() {
      */
     private fun isBlacklisted(url: String): Boolean {
         val lowerUrl = url.lowercase()
-        return lowerUrl.contains("/ping.gif") || 
+        return lowerUrl.startsWith("data:") ||  // base64 blob placeholders (e.g. savefiles preload)
+               lowerUrl.contains("/ping.gif") || 
                lowerUrl.contains("/analytics") || 
                lowerUrl.contains("/google-analytics") || 
                lowerUrl.contains("doubleclick.net") ||

@@ -264,6 +264,7 @@ class ArabseedV4Parser : NewBaseParser() {
             ) src else null
         }
     }
+
     override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
         val data = super.parseLoadPage(doc, url) ?: return null
         
