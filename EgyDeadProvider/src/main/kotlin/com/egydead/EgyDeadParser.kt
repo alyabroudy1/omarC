@@ -14,31 +14,31 @@ class EgyDeadParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.MovieBlock, div.item, figure, div.col-md-2, div.postDiv, article, div.media",
-        title = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a", attr = "href"),
+        container = "div.MovieBlock, div.postDiv, article, div.col-md-2, div.item",
+        title = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a, h2 a", attr = "text"),
+        url = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a, h2 a", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img.wp-post-image, img", attr = "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
-        container = "div.search-page div.item, div.MovieBlock, figure, div.postDiv, article",
-        title = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a", attr = "href"),
+        container = "div.MovieBlock, div.postDiv, article, div.col-md-2",
+        title = CssSelector(query = "h1.BottomTitle, h3 a, .news-title a, a[title]", attr = "text"),
+        url = CssSelector(query = "a[href]", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img.wp-post-image, img", attr = "data-src, src")
     )
 
     override val loadPageConfig = LoadPageConfig(
-        title = CssSelector(query = "h1, .single-post-title, .title", attr = "text"),
-        poster = CssSelector(query = "meta[property='og:image'], .poster img", attr = "content, src"),
+        title = CssSelector(query = "h1.BottomTitle, h1, .single-post-title, .title", attr = "text"),
+        poster = CssSelector(query = "meta[property='og:image'], .poster img, img.wp-post-image", attr = "content, src"),
         plot = CssSelector(
             query = "meta[name='description'], meta[property='og:description'], .description, .story, .post-content", 
             attr = "content, text"
         ),
         seriesIndicator = CssSelector(
-            query = ".breadcrumb li:contains(مسلسلات), .breadcrumb li:contains(المسلسلات), .breadcrumb li:contains(season)", 
+            query = "span.cat_name, .breadcrumb li:contains(مسلسلات), .breadcrumb li:contains(المسلسلات)", 
             attr = "text"
         ),
-        parentSeriesUrl = CssSelector(query = "a[href*='/season/'], a[href*='/series/'], a[href*='/selary/']", attr = "href"),
+        parentSeriesUrl = CssSelector(query = "a[href*='/season/'], a[href*='/series/']", attr = "href"),
     )
 
     override val episodeConfig = EpisodeConfig(

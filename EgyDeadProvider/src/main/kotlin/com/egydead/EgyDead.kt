@@ -28,9 +28,9 @@ class EgyDead : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/egydead.json"
 
     override val mainPage = mainPageOf(
-        "/category/افلام-اجنبي" to "English Movies",
-        "/category/افلام-اسيوية" to "Asian Movies",
-        "/season" to "Series"
+        "/category/افلام-اجنبي/?page=" to "English Movies",
+        "/category/افلام-اسيوية/?page=" to "Asian Movies",
+        "/season/?page=" to "Series"
     )
 
     override fun getParser(): NewBaseParser {
