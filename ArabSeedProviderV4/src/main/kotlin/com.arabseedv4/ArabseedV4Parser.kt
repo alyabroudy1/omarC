@@ -72,13 +72,16 @@ class ArabseedV4Parser : NewBaseParser() {
         Log.d("[ArabseedV4Parser]", "extractWatchServersUrls: highestQuality=$highestQuality, servers=${visibleServers.size}, qualities=${availableQualities.size}")
         
         // Build lazy URLs for highest quality × visible servers
+        // Always prefer lazy URL path to force highest quality instead of using
+        // pre-baked data-link (which is locked to the page's default 480p quality)
         visibleServers.forEach { server ->
-            if (server.dataLink.isNotBlank()) {
-                urls.add(server.dataLink)
-            } else if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
+            if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                 urls.add("arabseed-lazy://resolve?post_id=${server.postId}&quality=$highestQuality&server=${server.serverId}&csrf=$csrfToken&base=$currentBaseUrl")
             } else if (globalPostId.isNotBlank() && csrfToken.isNotBlank()) {
                 urls.add("arabseed-lazy://resolve?post_id=$globalPostId&quality=$highestQuality&server=${server.serverId}&csrf=$csrfToken&base=$currentBaseUrl")
+            } else if (server.dataLink.isNotBlank()) {
+                // Fallback to direct link only when lazy resolution isn't possible
+                urls.add(server.dataLink)
             }
         }
         
