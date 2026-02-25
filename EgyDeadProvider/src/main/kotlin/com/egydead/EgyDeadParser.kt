@@ -14,17 +14,17 @@ class EgyDeadParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6",
-        title = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/'], a[title]", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "href"),
-        poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
+        container = "div.MovieBlock, div.item, figure, div.col-md-2, div.postDiv, article, div.media",
+        title = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a", attr = "text"),
+        url = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a, .movie-title a", attr = "href"),
+        poster = CssSelector(query = "img[data-src], img.lazy, img.wp-post-image, img", attr = "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
-        container = "div.search-page div.item, div.MovieBlock, figure.search-page-item, div.col-md-2",
-        title = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "href"),
-        poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
+        container = "div.search-page div.item, div.MovieBlock, figure, div.postDiv, article",
+        title = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a", attr = "text"),
+        url = CssSelector(query = "h3 a, .news-title a, a[title], .entry-title a", attr = "href"),
+        poster = CssSelector(query = "img[data-src], img.lazy, img.wp-post-image, img", attr = "data-src, src")
     )
 
     override val loadPageConfig = LoadPageConfig(
