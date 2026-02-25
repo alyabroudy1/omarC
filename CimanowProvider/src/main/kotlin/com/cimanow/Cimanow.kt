@@ -30,6 +30,7 @@ class Cimanow : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimanow.json"
 
     override val mainPage = mainPageOf(
+        "/category/رمضان-2026" to "رمضان",
         "/category/افلام-اجنبية" to "افلام اجنبية",
         "/category/مسلسلات-اجنبية" to "مسلسلات اجنبية",
         "/category/افلام-نتفليكس" to "افلام نتفليكس",
@@ -37,8 +38,7 @@ class Cimanow : BaseProvider() {
         "/category/افلام-مارفل" to "افلام مارفل",
         "/category/مسلسلات-عربية" to "مسلسلات عربية",
         "/category/افلام-عربية" to "افلام عربية",
-        "/category/برامج-تلفزيونية" to "برامج تلفزيونية",
-        "/category/رمضان-2026" to "رمضان"
+        "/category/برامج-تلفزيونية" to "برامج تلفزيونية"
     )
 
     override fun getParser(): NewBaseParser {
