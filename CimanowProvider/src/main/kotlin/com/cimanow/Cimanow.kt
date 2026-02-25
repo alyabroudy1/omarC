@@ -25,9 +25,9 @@ import com.cloudstream.shared.service.ProviderHttpService
 
 class Cimanow : BaseProvider() {
 
-    override val providerName = "Cimanow"
-    override val baseDomain = "cimanow.cc"
-    override val githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimanow.json"
+    override val providerName get() = "Cimanow"
+    override val baseDomain get() = "cimanow.cc"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimanow.json"
 
     override val mainPage = mainPageOf(
         "/category/افلام-اجنبية/page/" to "افلام اجنبية",
