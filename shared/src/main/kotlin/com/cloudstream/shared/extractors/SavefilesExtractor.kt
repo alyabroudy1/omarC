@@ -81,7 +81,7 @@ class SavefilesExtractor : ExtractorApi() {
             // OPTION 1: Direct Regex
             // ... (rest of logic)
             // Look for sources: [{file:"..."}]
-            val sourcesRegex = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""")
+            val sourcesRegex = Regex("""sources:\s*\[\s*(?:\{\s*file:\s*)?["']([^"']+)["']""")
             var match = sourcesRegex.find(text)
             var videoUrl = match?.groupValues?.get(1)
 
@@ -103,6 +103,19 @@ class SavefilesExtractor : ExtractorApi() {
             }
 
             if (videoUrl != null) {
+                // If the URL isn't a standard absolute URL, it might be Base64-encoded
+                if (!videoUrl!!.startsWith("http") && !videoUrl!!.startsWith("//")) {
+                    try {
+                        val decoded = String(android.util.Base64.decode(videoUrl, android.util.Base64.DEFAULT))
+                        if (decoded.startsWith("http")) {
+                            videoUrl = decoded
+                            ProviderLogger.d(TAG, "getUrl", "Decoded Base64 video URL", "url" to videoUrl!!.take(80))
+                        }
+                    } catch (e: Exception) {
+                        ProviderLogger.d(TAG, "getUrl", "Failed to decode base64, using original", "url" to videoUrl!!.take(80))
+                    }
+                }
+                
                 ProviderLogger.i(TAG, "getUrl", "Found video URL", "url" to videoUrl!!.take(80))
                 
                 callback(

@@ -17,13 +17,13 @@ class FaselHDV2 : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/faselhd.json"
 
     override val mainPage = mainPageOf(
-        "/all-movies/page/" to "جميع الافلام",
-        "/movies_top_views/page/" to "الافلام الاعلي مشاهدة",
-        "/dubbed-movies/page/" to "الأفلام المدبلجة",
-        "/movies_top_imdb/page/" to "الافلام الاعلي تقييما IMDB",
-        "/series/page/" to "مسلسلات",
-        "/recent_series/page/" to "المضاف حديثا",
-        "/anime/page/" to "الأنمي",
+        "/all-movies" to "جميع الافلام",
+        "/movies_top_views" to "الافلام الاعلي مشاهدة",
+        "/dubbed-movies" to "الأفلام المدبلجة",
+        "/movies_top_imdb" to "الافلام الاعلي تقييما IMDB",
+        "/series" to "مسلسلات",
+        "/recent_series" to "المضاف حديثا",
+        "/anime" to "الأنمي",
     )
 
     override fun getParser(): NewBaseParser {
