@@ -37,7 +37,8 @@ class Cimanow : BaseProvider() {
         "/category/افلام-مارفل" to "افلام مارفل",
         "/category/مسلسلات-عربية" to "مسلسلات عربية",
         "/category/افلام-عربية" to "افلام عربية",
-        "/category/برامج-تلفزيونية" to "برامج تلفزيونية"
+        "/category/برامج-تلفزيونية" to "برامج تلفزيونية",
+        "/category/رمضان" to "رمضان"
     )
 
     override fun getParser(): NewBaseParser {
