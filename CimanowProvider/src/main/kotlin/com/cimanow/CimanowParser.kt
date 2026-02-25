@@ -4,6 +4,12 @@ import com.lagradost.api.Log
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.Jsoup
+import java.util.Base64
+import kotlin.text.Regex
+import kotlin.text.contains
+import kotlin.text.substringAfter
+import kotlin.text.substringBeforeLast
 
 
 class CimanowParser : NewBaseParser() {
@@ -13,43 +19,131 @@ class CimanowParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.MovieBlock, div.item, figure",
-        title = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "href"),
-        poster = CssSelector(query = "img[data-src], img.lazy", attr = "data-src, src")
+        container = "div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6",
+        title = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/'], a[title]", attr = "text"),
+        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/ a[titleselary/'],]", attr = "href"),
+        poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
-        container = "div.search-page div.item, div.MovieBlock, figure.search-page-item",
-        title = CssSelector(query = "h3 a, .news-title a", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a", attr = "href"),
-        poster = CssSelector(query = "img[data-src], img.lazy", attr = "data-src, src")
+        container = "div.search-page div.item, div.MovieBlock, figure.search-page-item, div.col-md-2",
+        title = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "text"),
+        url = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "href"),
+        poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
     )
 
     override val loadPageConfig = LoadPageConfig(
-        title = CssSelector(query = "h1, .single-post-title", attr = "text"),
-        poster = CssSelector(query = "meta[property='og:image']", attr = "content"),
+        title = CssSelector(query = "h1, .single-post-title, .title", attr = "text"),
+        poster = CssSelector(query = "meta[property='og:image'], .poster img", attr = "content, src"),
         plot = CssSelector(
-            query = "meta[name='description'], meta[property='og:description'], .description, .story", 
+            query = "meta[name='description'], meta[property='og:description'], .description, .story, .post-content", 
             attr = "content, text"
         ),
-        seriesIndicator = CssSelector(query = ".breadcrumb li:contains(مسلسلات), .breadcrumb li:contains(المسلسلات)", attr = "text"),
-        parentSeriesUrl = CssSelector(query = "a[href*='/season/'], a[href*='/series/']", attr = "href"),
+        seriesIndicator = CssSelector(
+            query = ".breadcrumb li:contains(مسلسلات), .breadcrumb li:contains(المسلسلات), .breadcrumb li:contains(السي сезон), .term-name", 
+            attr = "text"
+        ),
+        parentSeriesUrl = CssSelector(query = "a[href*='/season/'], a[href*='/series/'], a[href*='/selary/']", attr = "href"),
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = "div.episodes-list li, ul.episodes li, div.season-episode a, .episode-item a",
-        title = CssSelector(query = "a, .episode-title", attr = "text"),
+        container = "div.episodes-list li, ul.episodes li, div.season-episode a, .episode-item a, div.episode a",
+        title = CssSelector(query = "a, .episode-title, span", attr = "text"),
         url = CssSelector(query = "a", attr = "href"),
-        episode = CssSelector(query = "a", attr = "text", regex = "(\\d+)")
+        episode = CssSelector(query = "a, span", attr = "text", regex = "(\\d+)")
     )
 
+    private fun decodeObfuscatedHtml(doc: Document): Document {
+        val scriptData = doc.select("script").firstOrNull()?.data() ?: return doc
+        if (!scriptData.contains("hide_my_HTML_")) {
+            return doc
+        }
+
+        val hideMyHtmlContent = Regex("['+\\n\" ]")
+            .replace(
+                scriptData.substringAfter("var hide_my_HTML_").substring(3)
+                    .substringAfter(" =").substringBeforeLast("';").trim(),
+                ""
+            )
+
+        val lastNumber = Regex("-\\d+").findAll(scriptData)
+            .lastOrNull()?.value?.toIntOrNull() ?: 0
+
+        val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
+        val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
+        return Jsoup.parse(encodedHtml)
+    }
+
+    private fun decodeObfuscatedString(concatenated: String, lastNumber: Int): String {
+        val output = StringBuilder()
+        var start = 0
+        val length = concatenated.length
+
+        for (i in 0 until length) {
+            if (concatenated[i] == '.') {
+                val segment = concatenated.substring(start, i)
+                decodeAndAppend(output, lastNumber, segment)
+                start = i + 1
+            }
+        }
+        val lastSegment = concatenated.substring(start)
+        decodeAndAppend(output, lastNumber, lastSegment)
+        return output.toString()
+    }
+
+    private fun decodeAndAppend(output: StringBuilder, lastNumber: Int, segment: String) {
+        try {
+            val decoded = String(Base64.getDecoder().decode(segment), Charsets.UTF_8)
+            val digits = decoded.filter { it.isDigit() }
+            if (digits.isNotEmpty()) {
+                output.append((digits.toInt() + lastNumber).toChar())
+            }
+        } catch (e: Exception) {
+            Log.e("CimanowParser", "Error decoding segment: ${e.message}")
+        }
+    }
+
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
+        val decodedDoc = decodeObfuscatedHtml(doc)
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
 
-        // 1. Check for Episodes List (most common in WordPress)
-        val episodeLinks = doc.select("div.embed-list a, ul.embeds li a, .episodes-list a")
+        // Method 1: Episodes List
+        var episodeLinks = decodedDoc.select("div.embed-list a, ul.embeds li a, .episodes-list a, .episode-list a")
         
+        if (episodeLinks.isEmpty()) {
+            // Method 2: Check for season/episode tabs
+            val seasonTabs = decodedDoc.select(".seasons-list .season-tab, .season-item, .seasons .season")
+            if (seasonTabs.isNotEmpty()) {
+                for (tab in seasonTabs) {
+                    val tabTitle = tab.selectFirst(".season-title, h4, .season-name")?.text() ?: ""
+                    val actualSeason = Regex("""(\d+)""").find(tabTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                        ?: seasonNum ?: 1
+                        
+                    tab.select("a[href*='episode'], a[href*='/selary/']").forEach { link ->
+                        val epUrl = link.attr("href").trim()
+                        val epTitle = link.text().trim()
+                        
+                        if (epUrl.isNotBlank()) {
+                            val epNum = Regex("""(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                                ?: Regex("""(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
+                                ?: 0
+
+                            episodes.add(
+                                ParserInterface.ParsedEpisode(
+                                    name = epTitle.ifBlank { "الحلة $epNum" },
+                                    url = epUrl,
+                                    season = actualSeason,
+                                    episode = epNum
+                                )
+                            )
+                        }
+                    }
+                }
+                return episodes.sortedWith(compareBy({ it.season }, { it.episode }))
+            }
+        }
+        
+        // Method 1: Direct episode links
         if (episodeLinks.isNotEmpty()) {
             episodeLinks.forEach { link ->
                 val epUrl = link.attr("href").trim()
@@ -70,66 +164,34 @@ class CimanowParser : NewBaseParser() {
                     )
                 }
             }
-            return episodes
+            return episodes.sortedBy { it.episode }
         }
         
-        // 2. Check for season/episode tabs
-        val seasonTabs = doc.select(".seasons-list .season-tab, .season-item")
-        
-        if (seasonTabs.isNotEmpty()) {
-            seasonTabs.forEach { tab ->
-                val tabTitle = tab.selectFirst(".season-title, h4")?.text() ?: ""
-                val actualSeason = Regex("""(\d+)""").find(tabTitle)?.groupValues?.get(1)?.toIntOrNull() 
-                    ?: seasonNum 
-                    ?: 1
-                    
-                tab.select("a[href*='episode']").forEach { link ->
-                    val epUrl = link.attr("href").trim()
-                    val epTitle = link.text().trim()
-                    
-                    if (epUrl.isNotBlank()) {
-                        val epNum = Regex("""(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                        
-                        episodes.add(
-                            ParserInterface.ParsedEpisode(
-                                name = epTitle,
-                                url = epUrl,
-                                season = actualSeason,
-                                episode = epNum
-                            )
-                        )
-                    }
-                }
-            }
-            return episodes
-        }
-
-        // 3. Fallback to parent implementation
-        episodes.addAll(super.parseEpisodes(doc, seasonNum))
-        return episodes
+        // Fallback to parent
+        return super.parseEpisodes(decodedDoc, seasonNum)
     }
 
     override val watchServersSelectors = WatchServerSelector(
-        url = CssSelector(query = "div.embed-list a[data-src], ul.embeds li[data-src], .server-link[data-src]", attr = "data-src"),
+        url = CssSelector(query = "div.embed-list a[data-src], ul.embeds li[data-src], .server-link[data-src], a[data-id]", attr = "data-src"),
         id = CssSelector(query = "div.embed-list a, ul.embeds li, .server-link", attr = "data-id"),
-        title = CssSelector(query = "div.embed-list a span, ul.embeds li span, .server-link span", attr = "text"),
+        title = CssSelector(query = "div.embed-list a span, ul.embeds li span, .server-link span, a", attr = "text"),
         iframe = CssSelector(query = "iframe[data-src]", attr = "data-src")
     )
 
     override fun extractWatchServersUrls(doc: Document): List<String> {
-        // Extract from data-src attributes
+        val decodedDoc = decodeObfuscatedHtml(doc)
         val urls = mutableListOf<String>()
         
-        // Method 1: From server list links
-        doc.select("a[data-src]").forEach { link ->
+        // Method 1: From server list links (data-src)
+        decodedDoc.select("a[data-src]").forEach { link ->
             val dataSrc = link.attr("data-src")
             if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
                 urls.add(dataSrc)
             }
         }
         
-        // Method 2: From iframes
-        doc.select("iframe[data-src]").forEach { iframe ->
+        // Method 2: From iframes (data-src)
+        decodedDoc.select("iframe[data-src]").forEach { iframe ->
             val dataSrc = iframe.attr("data-src")
             if (dataSrc.isNotBlank()) {
                 urls.add(dataSrc)
@@ -137,10 +199,18 @@ class CimanowParser : NewBaseParser() {
         }
         
         // Method 3: From inline iframes
-        doc.select("iframe[src]").forEach { iframe ->
+        decodedDoc.select("iframe[src]").forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
                 urls.add(src)
+            }
+        }
+        
+        // Method 4: From data-id (sometimes URLs are there)
+        decodedDoc.select("a[data-id]").forEach { link ->
+            val dataId = link.attr("data-id")
+            if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
+                urls.add(dataId)
             }
         }
         
@@ -149,7 +219,7 @@ class CimanowParser : NewBaseParser() {
 
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
         // Check URL patterns
-        if (url.contains("/selary/") || url.contains("/series/") || url.contains("/mosalsal/")) {
+        if (url.contains("/selary/") || url.contains("/series/") || url.contains("/mosalsal/") || url.contains("/season/")) {
             return true
         }
         
@@ -166,7 +236,9 @@ class CimanowParser : NewBaseParser() {
         // Check element context
         if (element != null) {
             val parentText = element.parent()?.text() ?: ""
-            if (parentText.contains("مسلسلات") || parentText.contains("المسلسلات")) {
+            val grandparentText = element.parent()?.parent()?.text() ?: ""
+            if (parentText.contains("مسلسلات") || parentText.contains("المسلسلات") || 
+                grandparentText.contains("مسلسلات") || grandparentText.contains("المسلسلات")) {
                 return true
             }
         }
@@ -175,12 +247,14 @@ class CimanowParser : NewBaseParser() {
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        // Try to find direct play link
-        val playLink = doc.selectFirst("a[href*='/watch/']")?.attr("href")
-            ?: doc.selectFirst("a[href*='/player/']")?.attr("href")
-            ?: doc.selectFirst(".play-button, .watch-button")?.attr("href")
+        val decodedDoc = decodeObfuscatedHtml(doc)
         
-        Log.d("CimanowParser", "getPlayerPageUrl: found='$playLink'")
+        // Try to find direct play link
+        val playLink = decodedDoc.selectFirst("a[href*='/watch/']")?.attr("href")
+            ?: decodedDoc.selectFirst("a[href*='/player/']")?.attr("href")
+            ?: decodedDoc.selectFirst("a[href*='/selary/']")?.attr("href")
+            ?: decodedDoc.selectFirst(".play-button, .watch-button")?.attr("href")
+        
         return playLink
     }
 }
