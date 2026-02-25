@@ -241,7 +241,7 @@ class ReviewRateExtractor : ExtractorApi() {
         }
     }
     
-    private fun createExtractorLink(
+    private suspend fun createExtractorLink(
         url: String,
         qualityLabel: String,
         pageUrl: String,
@@ -264,7 +264,7 @@ class ReviewRateExtractor : ExtractorApi() {
         }
     }
     
-    private fun emitSingleLink(
+    private suspend fun emitSingleLink(
         callback: (ExtractorLink) -> Unit,
         videoUrl: String,
         qualityLabel: String,
