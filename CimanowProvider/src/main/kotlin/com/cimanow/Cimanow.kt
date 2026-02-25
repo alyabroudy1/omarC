@@ -38,7 +38,7 @@ class Cimanow : BaseProvider() {
         "/category/مسلسلات-عربية" to "مسلسلات عربية",
         "/category/افلام-عربية" to "افلام عربية",
         "/category/برامج-تلفزيونية" to "برامج تلفزيونية",
-        "/category/رمضان" to "رمضان"
+        "/category/رمضان-2026" to "رمضان"
     )
 
     override fun getParser(): NewBaseParser {
