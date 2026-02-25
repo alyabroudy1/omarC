@@ -30,14 +30,14 @@ class Cimanow : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimanow.json"
 
     override val mainPage = mainPageOf(
-        "/category/افلام-اجنبية/page/" to "افلام اجنبية",
-        "/category/مسلسلات-اجنبية/page/" to "مسلسلات اجنبية",
-        "/category/افلام-نتفليكس/page/" to "افلام نتفليكس",
-        "/category/مسلسلات-نتفليكس/page/" to "مسلسلات نتفليكس",
-        "/category/افلام-مارفل/page/" to "افلام مارفل",
-        "/category/مسلسلات-عربية/page/" to "مسلسلات عربية",
-        "/category/افلام-عربية/page/" to "افلام عربية",
-        "/category/برامج-تلفزيونية/page/" to "برامج تلفزيونية"
+        "/category/افلام-اجنبية" to "افلام اجنبية",
+        "/category/مسلسلات-اجنبية" to "مسلسلات اجنبية",
+        "/category/افلام-نتفليكس" to "افلام نتفليكس",
+        "/category/مسلسلات-نتفليكس" to "مسلسلات نتفليكس",
+        "/category/افلام-مارفل" to "افلام مارفل",
+        "/category/مسلسلات-عربية" to "مسلسلات عربية",
+        "/category/افلام-عربية" to "افلام عربية",
+        "/category/برامج-تلفزيونية" to "برامج تلفزيونية"
     )
 
     override fun getParser(): NewBaseParser {
