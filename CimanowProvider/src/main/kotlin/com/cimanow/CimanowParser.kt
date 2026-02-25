@@ -21,7 +21,7 @@ class CimanowParser : NewBaseParser() {
     override val mainPageConfig = MainPageConfig(
         container = "div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6",
         title = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/'], a[title]", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/ a[titleselary/'],]", attr = "href"),
+        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
     )
 
