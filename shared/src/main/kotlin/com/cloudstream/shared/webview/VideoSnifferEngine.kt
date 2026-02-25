@@ -5,7 +5,9 @@ import android.app.Dialog
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.FrameLayout
@@ -128,24 +130,58 @@ class VideoSnifferEngine(
         android.util.Log.d("VideoSnifferEngine", "runSession: Session started, capturedLinks cleared. URL: $url")
         ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Session started, capturedLinks cleared")
 
-        // Timeout handler
+        // Timeout handler — with player mode detection
         this@VideoSnifferEngine.timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeout)
             if (!resultDelivered) {
-                resultDelivered = true
-                val partialHtml = try {
-                    webView?.let { getHtmlFromWebView(it) }
-                } catch (e: Exception) { null }
-
-                cleanup(webView, dialog)
                 // Include any captured links on timeout
                 val foundLinks = capturedLinks.toList()
                 if (foundLinks.isNotEmpty()) {
+                    resultDelivered = true
                     ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Timeout with ${foundLinks.size} captured links")
                     val cookies = webView?.let { extractCookies(it, url) } ?: emptyMap()
+                    cleanup(webView, dialog)
                     deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
                 } else {
-                    deferred.complete(WebViewResult.Timeout(url, partialHtml))
+                    // Check if video is already playing in WebView (DRM / unsniffable)
+                    val wv = webView
+                    if (wv != null && dialog != null) {
+                        wv.evaluateJavascript("(function(){ return window.__snifferIsVideoPlaying ? window.__snifferIsVideoPlaying() : false; })()") { isPlaying ->
+                            if (!resultDelivered) {
+                                if (isPlaying == "true") {
+                                    // Video IS playing — keep WebView open as player
+                                    resultDelivered = true
+                                    ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Timeout: video playing in WebView, transitioning to player mode")
+                                    updateDialogText("") // Hide status text
+
+                                    // Attach cleanup listener for when user exits the player
+                                    dialog!!.setOnDismissListener {
+                                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "WebView player dialog dismissed, cleaning up")
+                                        try {
+                                            webView?.stopLoading()
+                                            webView?.loadUrl("about:blank")
+                                            webView?.destroy()
+                                        } catch (e: Exception) {
+                                            android.util.Log.w("VideoSnifferEngine", "Cleanup on dismiss error: ${e.message}")
+                                        }
+                                        activeWebView = null
+                                        activeDialog = null
+                                    }
+
+                                    deferred.complete(WebViewResult.PlayingInWebView(dialog!!))
+                                } else {
+                                    // Nothing playing — genuine timeout
+                                    resultDelivered = true
+                                    cleanup(webView, dialog)
+                                    deferred.complete(WebViewResult.Timeout(url, null))
+                                }
+                            }
+                        }
+                    } else {
+                        resultDelivered = true
+                        cleanup(webView, dialog)
+                        deferred.complete(WebViewResult.Timeout(url, null))
+                    }
                 }
             }
         }
@@ -201,8 +237,8 @@ class VideoSnifferEngine(
                     userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
-                    javaScriptCanOpenWindowsAutomatically = true // Allow JS to open windows (needed for some popups)
-                    setSupportMultipleWindows(true)
+                    javaScriptCanOpenWindowsAutomatically = false // Block JS popups (ad windows)
+                    setSupportMultipleWindows(true) // Keep true to intercept and block in onCreateWindow
                 }
             }
             this@VideoSnifferEngine.activeWebView = webView
@@ -243,7 +279,13 @@ class VideoSnifferEngine(
                     requestCounter++
 
                     if (requestUrl != null) {
-                        // Log ALL requests for debugging
+                        // LAYER 1: Ad blocking — block known ad domains at network level
+                        if (AdBlocker.shouldBlockRequest(requestUrl)) {
+                            ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "Ad blocked", "url" to requestUrl.take(80))
+                            return android.webkit.WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream("".toByteArray()))
+                        }
+
+                        // Log requests for debugging
                         if (requestCounter % 10 == 0 || requestUrl.contains(".m3u8") || requestUrl.contains(".mp4") || requestUrl.contains("video") || requestUrl.contains("stream")) {
                             android.util.Log.d("VideoSnifferEngine", "intercept: Request #$requestCounter url=${requestUrl.take(100)}")
                             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "Request #$requestCounter",
@@ -253,7 +295,7 @@ class VideoSnifferEngine(
                             )
                         }
 
-                        // Check if it's a video URL with detailed logging
+                        // Check if it's a video URL
                         if (VideoUrlClassifier.isVideoUrl(requestUrl)) {
                              ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "VIDEO URL DETECTED!",
                                  "url" to requestUrl.take(100),
@@ -261,7 +303,6 @@ class VideoSnifferEngine(
                              )
                              captureLink(requestUrl, "Network", request?.requestHeaders ?: emptyMap())
                         } else if (requestUrl.contains("m3u8") || requestUrl.contains("mp4") || requestUrl.contains("video") || requestUrl.contains("stream")) {
-                            // Log why it was rejected
                             ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "URL rejected",
                                 "url" to requestUrl.take(100),
                                 "reason" to "Failed video pattern check",
@@ -379,6 +420,11 @@ class VideoSnifferEngine(
                     // Inject fullscreen iframe CSS for sniffer-as-player mode
                     view?.evaluateJavascript(FULLSCREEN_IFRAME_JS, null)
                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected fullscreen iframe CSS")
+
+                    // LAYER 2+3: Inject ad blocking CSS and JS
+                    view?.evaluateJavascript(AdBlocker.AD_BLOCK_CSS, null)
+                    view?.evaluateJavascript(AdBlocker.AD_BLOCK_JS, null)
+                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected ad blocker CSS+JS")
 
                     // Inject VideoSniffer JS & Start DOM extraction
                     if (exitCondition is ExitCondition.VideoFound) {
@@ -962,12 +1008,41 @@ class VideoSnifferEngine(
             android.util.Log.i("VideoSnifferEngine", "Redirect choice: allowed=$allowed, url=${redirectUrl.take(80)}")
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.SnifferBridge", "Redirect choice", "allowed" to allowed, "url" to redirectUrl.take(80))
             if (allowed) {
-                // User chose to follow the redirect — load the URL in the WebView
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     activeWebView?.loadUrl(redirectUrl)
                 }
             } else {
                 android.util.Log.i("VideoSnifferEngine", "Redirect blocked by user: ${redirectUrl.take(80)}")
+            }
+        }
+
+        /**
+         * Native click dispatch — called from JS to produce isTrusted=true touch events.
+         * Uses WebView.dispatchTouchEvent(MotionEvent) which the browser trusts as real user input.
+         *
+         * @param x Physical pixel X (JS should multiply CSS pixels by devicePixelRatio)
+         * @param y Physical pixel Y
+         */
+        @JavascriptInterface
+        fun requestNativeClick(x: Float, y: Float) {
+            android.util.Log.d("VideoSnifferEngine", "requestNativeClick: x=$x, y=$y")
+            Handler(Looper.getMainLooper()).post {
+                val wv = activeWebView ?: return@post
+                try {
+                    val downTime = SystemClock.uptimeMillis()
+                    val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+                    wv.dispatchTouchEvent(down)
+                    down.recycle()
+
+                    val upTime = downTime + 50L
+                    val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, x, y, 0)
+                    wv.dispatchTouchEvent(up)
+                    up.recycle()
+
+                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.SnifferBridge", "Native click dispatched", "x" to x, "y" to y)
+                } catch (e: Exception) {
+                    android.util.Log.w("VideoSnifferEngine", "requestNativeClick failed: ${e.message}")
+                }
             }
         }
     }

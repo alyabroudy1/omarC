@@ -353,6 +353,10 @@ class SnifferExtractor : ExtractorApi() {
                 android.util.Log.w("SnifferExtractor", "[getUrl] TIMEOUT! Last URL: ${result.lastUrl.take(60)}")
                 ProviderLogger.w(TAG, "getUrl", "VideoSnifferEngine timed out", "lastUrl" to result.lastUrl.take(60))
             }
+            is WebViewResult.PlayingInWebView -> {
+                android.util.Log.i("SnifferExtractor", "[getUrl] Video playing in WebView (DRM or unsniffable). Dialog remains open as player.")
+                ProviderLogger.i(TAG, "getUrl", "Playing in WebView (dialog stays open as player)")
+            }
             is WebViewResult.Error -> {
                 android.util.Log.e("SnifferExtractor", "[getUrl] ERROR: ${result.reason}")
                 ProviderLogger.e(TAG, "getUrl", "VideoSnifferEngine error: ${result.reason}")

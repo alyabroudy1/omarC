@@ -40,6 +40,11 @@ sealed class WebViewResult {
         val foundLinks: List<CapturedLinkData> = emptyList()
     ) : WebViewResult()
 
+    /** Video is playing in the WebView itself (DRM or unsniffable). Dialog stays open as player. */
+    data class PlayingInWebView(
+        val dialog: android.app.Dialog
+    ) : WebViewResult()
+
     data class Timeout(
         val lastUrl: String,
         val partialHtml: String?
