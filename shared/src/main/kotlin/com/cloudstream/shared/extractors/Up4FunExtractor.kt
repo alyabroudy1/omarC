@@ -38,7 +38,19 @@ class Up4FunExtractor : ExtractorApi() {
     ) {
         ProviderLogger.d(TAG, "getUrl", "Processing", "url" to url.take(60), "referer" to (referer?.take(40) ?: "null"))
         
-        val movieId = url.substringAfterLast("/").substringBefore(".html")
+        // Validate URL
+        if (url.isBlank() || !url.startsWith("http")) {
+            ProviderLogger.e(TAG, "getUrl", "Invalid URL: $url")
+            return
+        }
+        
+        val pathParts = url.substringAfterLast("/").substringBefore(".html")
+        if (pathParts.isBlank()) {
+            ProviderLogger.e(TAG, "getUrl", "Could not extract movie ID from URL: $url")
+            return
+        }
+        
+        val movieId = pathParts
         
         try {
             // FIXED: Include Referer header in GET request
@@ -58,6 +70,13 @@ class Up4FunExtractor : ExtractorApi() {
             }
             
             val redirectUrl = fixUrl(redirectForm.attr("action"))
+            if (redirectUrl.isBlank()) {
+                ProviderLogger.e(TAG, "getUrl", "Failed to get redirect URL from form")
+                return
+            }
+            
+            ProviderLogger.d(TAG, "getUrl", "Redirect URL: ${redirectUrl.take(80)}")
+            
             val redirectParams = redirectForm.select("input[type=hidden]").associate { input ->
                 input.attr("name") to input.attr("value")
             }
