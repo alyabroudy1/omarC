@@ -2,9 +2,10 @@ package com.youtube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.SubtitleFile
-import com.cloudstream.shared.extractors.SnifferExtractor
 import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
@@ -173,17 +174,84 @@ class YoutubeProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "loadLinks: data=$data")
 
-        // Use regular watch URL (embed blocks many videos with embedding disabled)
         val videoId = data.substringAfter("v=").substringBefore("&")
-        val watchUrl = "https://www.youtube.com/watch?v=$videoId"
-        Log.d(TAG, "loadLinks: watchUrl=$watchUrl")
+        Log.d(TAG, "loadLinks: videoId=$videoId")
 
-        // Route through SnifferExtractor — WebView loads watch page, captures googlevideo.com stream
-        // If capture fails, PlayingInWebView kicks in (watch page stays as player)
-        val snifferUrl = SnifferExtractor.createSnifferUrl(watchUrl, "https://www.youtube.com/")
-        loadExtractor(snifferUrl, "https://www.youtube.com/", subtitleCallback, callback)
+        // Call InnerTube /player API with ANDROID client → direct muxed MP4 URLs
+        val playerJson = InnerTubeClient.getPlayer(videoId)
+        if (playerJson == null) {
+            Log.e(TAG, "loadLinks: Player API returned null, falling back to WebView")
+            launchWebViewPlayer(data)
+            return true
+        }
 
+        // Check playability
+        val status = playerJson.path("playabilityStatus").path("status").textValue()
+        if (status != "OK") {
+            val reason = playerJson.path("playabilityStatus").path("reason").textValue() ?: "Unknown"
+            Log.w(TAG, "loadLinks: Video not playable: $status — $reason, falling back to WebView")
+            launchWebViewPlayer(data)
+            return true
+        }
+
+        // Parse stream formats
+        val streams = InnerTubeParser.parseStreamingData(playerJson)
+        if (streams.isEmpty()) {
+            Log.w(TAG, "loadLinks: No stream formats found, falling back to WebView")
+            launchWebViewPlayer(data)
+            return true
+        }
+
+        // Return each muxed stream as an ExtractorLink
+        for (stream in streams) {
+            val qualityValue = when {
+                stream.qualityLabel?.contains("1080") == true -> Qualities.P1080.value
+                stream.qualityLabel?.contains("720") == true -> Qualities.P720.value
+                stream.qualityLabel?.contains("480") == true -> Qualities.P480.value
+                stream.qualityLabel?.contains("360") == true -> Qualities.P360.value
+                stream.qualityLabel?.contains("240") == true -> Qualities.P240.value
+                stream.qualityLabel?.contains("144") == true -> Qualities.P144.value
+                else -> Qualities.Unknown.value
+            }
+
+            val linkType = when {
+                stream.mimeType.contains("mp4") -> ExtractorLinkType.VIDEO
+                stream.mimeType.contains("webm") -> ExtractorLinkType.VIDEO
+                else -> ExtractorLinkType.VIDEO
+            }
+
+            callback(
+                newExtractorLink(
+                    source = "YouTube",
+                    name = "YouTube ${stream.qualityLabel ?: "Auto"}",
+                    url = stream.url,
+                    type = linkType
+                ) {
+                    this.referer = "https://www.youtube.com/"
+                    this.quality = qualityValue
+                    this.headers = mapOf(
+                        "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+                    )
+                }
+            )
+            Log.d(TAG, "loadLinks: Added stream itag=${stream.itag} quality=${stream.qualityLabel}")
+        }
+
+        Log.d(TAG, "loadLinks: Returned ${streams.size} streams")
         return true
+    }
+
+    /**
+     * Fallback: launch WebView player for videos that can't provide direct URLs
+     * (DRM, age-restricted, or when Player API fails).
+     */
+    private fun launchWebViewPlayer(url: String) {
+        CommonActivity.activity?.let { activity ->
+            activity.runOnUiThread {
+                val dialog = com.cloudstream.shared.ui.WebViewPlayerDialog(activity, url)
+                dialog.show()
+            }
+        }
     }
 
     // ==================== MAPPING ====================

@@ -108,6 +108,78 @@ object InnerTubeClient {
         return post(InnerTubeConfig.BROWSE_ENDPOINT, body)
     }
 
+    /**
+     * Get player data including streaming URLs for a video.
+     * 
+     * Uses ANDROID client context because:
+     * - Returns direct muxed MP4 URLs (itag 18=360p, 22=720p)
+     * - No signature cipher — URLs are ready to play
+     * - WEB client uses yt-ump protocol which ExoPlayer can't handle
+     * 
+     * @param videoId YouTube video ID
+     * @return Raw JSON response with streamingData or null on failure
+     */
+    suspend fun getPlayer(videoId: String): JsonNode? {
+        val body = mapOf(
+            "context" to mapOf(
+                "client" to mapOf(
+                    "clientName" to "ANDROID",
+                    "clientVersion" to "19.09.37",
+                    "androidSdkVersion" to 30,
+                    "hl" to "en",
+                    "gl" to "US",
+                    "userAgent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+                )
+            ),
+            "videoId" to videoId,
+            "playbackContext" to mapOf(
+                "contentPlaybackContext" to mapOf(
+                    "html5Preference" to "HTML5_PREF_WANTS"
+                )
+            ),
+            "contentCheckOk" to true,
+            "racyCheckOk" to true
+        )
+        
+        val androidHeaders = mapOf(
+            "Content-Type" to "application/json",
+            "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+            "X-YouTube-Client-Name" to "3",
+            "X-YouTube-Client-Version" to "19.09.37"
+        )
+        
+        return try {
+            val jsonBody = mapper.writeValueAsString(body)
+            Log.d(TAG, "POST player | videoId=$videoId")
+            
+            val response = app.post(
+                InnerTubeConfig.PLAYER_ENDPOINT,
+                headers = androidHeaders,
+                requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
+                referer = "https://www.youtube.com/",
+                timeout = 15
+            )
+            
+            val text = response.text
+            if (text.isBlank()) {
+                Log.w(TAG, "Empty player response for $videoId")
+                return null
+            }
+            
+            val json = mapper.readTree(text)
+            val error = json["error"]
+            if (error != null) {
+                Log.e(TAG, "Player API error: ${error["message"]?.textValue()}")
+                return null
+            }
+            
+            json
+        } catch (e: Exception) {
+            Log.e(TAG, "getPlayer failed: ${e.message}")
+            null
+        }
+    }
+
     // ==================== INTERNAL ====================
 
     private suspend fun post(url: String, body: Map<String, Any>): JsonNode? {

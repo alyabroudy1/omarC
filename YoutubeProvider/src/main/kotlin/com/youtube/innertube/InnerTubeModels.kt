@@ -44,3 +44,19 @@ data class YouTubeBrowseResult(
     val title: String,
     val items: List<YouTubeSearchResult>
 )
+
+/**
+ * A playable stream format from the /player API.
+ * Muxed formats (itag 18, 22) contain both video+audio in a single MP4.
+ */
+data class YouTubeStreamFormat(
+    val itag: Int,
+    val url: String,
+    val mimeType: String,
+    val qualityLabel: String?,     // e.g., "720p", "360p"
+    val quality: String?,          // e.g., "hd720", "medium"
+    val width: Int? = null,
+    val height: Int? = null,
+    val bitrate: Long? = null,
+    val contentLength: Long? = null
+)
