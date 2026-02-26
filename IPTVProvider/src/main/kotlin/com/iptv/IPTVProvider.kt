@@ -23,6 +23,8 @@ class IPTVProvider : BaseProvider() {
         return IPTVParser()
     }
 
+    override val supportedTypes: Set<TvType> = setOf(TvType.Live, TvType.Movie, TvType.TvSeries)
+
     data class M3UChannel(
         val name: String,
         val url: String,
@@ -81,7 +83,6 @@ class IPTVProvider : BaseProvider() {
                 .trim()
             
             if (name.isBlank() || url.isBlank()) {
-                Log.w("IPTV", "Failed to parse - blank name or url. info: $info, url: $url")
                 return null
             }
             
@@ -136,7 +137,6 @@ class IPTVProvider : BaseProvider() {
         
         try {
             val url = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
-            Log.d("IPTV", "Fetching playlist from: $url")
             
             val content = app.get(url).text
             val channels = parseM3U(content)
@@ -146,11 +146,8 @@ class IPTVProvider : BaseProvider() {
             }
             
             if (filteredChannels.isEmpty()) {
-                Log.e("IPTV", "No channels after filtering")
                 return null
             }
-            
-            Log.d("IPTV", "Parsed ${channels.size} channels, ${filteredChannels.size} after filtering")
             
             val categories = getCategories(filteredChannels)
             val homePageLists = mutableListOf<HomePageList>()
