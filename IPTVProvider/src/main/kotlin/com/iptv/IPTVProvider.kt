@@ -141,13 +141,18 @@ class IPTVProvider : BaseProvider() {
             val content = app.get(url).text
             val channels = parseM3U(content)
             
-            val filteredChannels = channels.filter { 
-                it.logo != "https://bit.ly/3JQfa8u" && !it.logo.isNullOrBlank() 
+            Log.d("IPTV", "Total channels: ${channels.size}")
+            
+            val filteredChannels = channels.filter { chan ->
+                val hasBadLogo = chan.logo == "https://bit.ly/3JQfa8u" || chan.logo.isNullOrBlank()
+                val hasBadUrl = chan.url.contains("bit.ly") || chan.url.contains("cutt.ly")
+                if (hasBadLogo || hasBadUrl) {
+                    Log.d("IPTV", "Filtered out: name=${chan.name}, logo=${chan.logo}, url=${chan.url}")
+                }
+                !hasBadLogo && !hasBadUrl
             }
             
-            if (filteredChannels.isEmpty()) {
-                return null
-            }
+            Log.d("IPTV", "Filtered channels: ${filteredChannels.size}")
             
             val categories = getCategories(filteredChannels)
             val homePageLists = mutableListOf<HomePageList>()
