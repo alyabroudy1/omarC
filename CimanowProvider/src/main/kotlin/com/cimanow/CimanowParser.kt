@@ -218,8 +218,12 @@ class CimanowParser : NewBaseParser() {
     }
 
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
-        // Check URL patterns
-        if (url.contains("/selary/") || url.contains("/series/") || url.contains("/mosalsal/") || url.contains("/season/")) {
+        // URL-decode for Arabic pattern matching (URLs may contain encoded Arabic)
+        val decodedUrl = try { java.net.URLDecoder.decode(url, "UTF-8") } catch (e: Exception) { url }
+        
+        // Check URL patterns (matching original Braflix: /selary/ is the main series path)
+        if (decodedUrl.contains("/selary/") || decodedUrl.contains("مسلسل") || 
+            url.contains("/series/") || url.contains("/mosalsal/") || url.contains("/season/")) {
             return true
         }
         
@@ -229,12 +233,19 @@ class CimanowParser : NewBaseParser() {
         }
         
         // Check for movie keyword (not series)
-        if (title.contains("فيلم") || title.contains("film", ignoreCase = true) || title.contains("movie", ignoreCase = true)) {
+        if (title.contains("فيلم") || decodedUrl.contains("فيلم") ||
+            title.contains("film", ignoreCase = true) || title.contains("movie", ignoreCase = true)) {
             return false
         }
         
-        // Check element context
+        // Original Braflix uses ul.info li[aria-label=tab] text for series detection
+        // Check this on the element itself (for main page article elements)
         if (element != null) {
+            val tabText = element.select("ul.info li[aria-label=tab]").text()
+            if (tabText.contains("مسلسلات") || tabText.contains("موسم")) {
+                return true
+            }
+            // Also check parent/grandparent context
             val parentText = element.parent()?.text() ?: ""
             val grandparentText = element.parent()?.parent()?.text() ?: ""
             if (parentText.contains("مسلسلات") || parentText.contains("المسلسلات") || 
@@ -243,18 +254,20 @@ class CimanowParser : NewBaseParser() {
             }
         }
         
+        // For Document (load page), check page title like the original: doc.title().contains("فيلم")
+        if (element is Document) {
+            val pageTitle = element.title()
+            if (pageTitle.contains("فيلم")) return false  // It's a movie
+            if (pageTitle.contains("مسلسل") || pageTitle.contains("موسم")) return true
+        }
+        
         return false
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        val decodedDoc = decodeObfuscatedHtml(doc)
-        
-        // Try to find direct play link
-        val playLink = decodedDoc.selectFirst("a[href*='/watch/']")?.attr("href")
-            ?: decodedDoc.selectFirst("a[href*='/player/']")?.attr("href")
-            ?: decodedDoc.selectFirst("a[href*='/selary/']")?.attr("href")
-            ?: decodedDoc.selectFirst(".play-button, .watch-button")?.attr("href")
-        
-        return playLink
+        // In the original Braflix, the watch URL is constructed as data+"watching/" directly in loadLinks.
+        // The Cimanow.loadLinks() override handles this, so we return null here.
+        // The BaseProvider.loadLinks() fallback won't need this since the custom loadLinks runs first.
+        return null
     }
 }

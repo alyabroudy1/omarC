@@ -347,35 +347,37 @@ class Cimanow : BaseProvider() {
         }
     }
 
-    private suspend fun handleCima(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun handleCima(iframeUrl: String, name: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
-            val decodedDoc = decodeObfuscatedHtml(doc)
-            val urls = getParser().extractWatchServersUrls(decodedDoc)
+            Log.d("Cimanow", "handleCima: $iframeUrl")
+            val domain = "https://" + java.net.URL(iframeUrl).host
+            val referer = "https://$baseDomain/"
             
-            for (playerUrl in urls) {
-                val playerUrlLower = playerUrl.lowercase()
-                when {
-                    playerUrlLower.contains("vidpro") -> handleVidPro(playerUrl, url, callback)
-                    playerUrlLower.contains("govid") -> handleGovid(playerUrl, url, callback)
-                    playerUrlLower.contains("vidlook") -> handleVidlook(playerUrl, url, callback)
-                    playerUrlLower.contains("streamwish") -> handleStreamwish(playerUrl, url, callback)
-                    playerUrlLower.contains("streamfile") -> handleStreamfile(playerUrl, url, callback)
-                    playerUrlLower.contains("luluvid") -> handleLuluvid(playerUrl, url, callback)
-                    playerUrlLower.contains("vadbam") -> handleVadbam(playerUrl, url, callback)
-                    playerUrlLower.contains("viidshare") -> handleViidshare(playerUrl, url, callback)
-                    playerUrlLower.contains("ok ru") || playerUrlLower.contains("okru") -> {
-                        loadExtractor(playerUrl, url, {}, callback)
-                    }
-                    else -> {
-                        loadExtractor(playerUrl, url, {}, callback)
-                    }
+            val doc = httpService.getDocument(iframeUrl, headers = mapOf("Referer" to referer)) ?: return
+            Log.d("Cimanow", "handleCima doc fetched")
+            
+            // Original Braflix selects <source> elements for direct video links
+            doc.select("source").forEach { element ->
+                val fileLink = element.attr("src")
+                val quality = element.attr("size").toIntOrNull() ?: Qualities.Unknown.value
+                if (fileLink.isNotBlank()) {
+                    val fullUrl = if (fileLink.startsWith("http")) fileLink else domain + fileLink
+                    callback(newExtractorLink(name, name, fullUrl, type = getLinkType(fullUrl)) {
+                        this.referer = iframeUrl
+                        this.quality = quality
+                    })
                 }
             }
         } catch (e: Exception) {
-            Log.e("Cimanow", "handleCima: ${e.message}")
+            Log.e("Cimanow", "handleCima error: ${e.message}")
         }
     }
+
+    // VidGuard-family domains that use the eval/sigDecode pattern
+    private val vidGuardDomains = listOf(
+        "vidguard", "vgfplay", "vgembed", "moflix-stream", 
+        "v6embed", "vid-guard", "vembed", "embedv", "fslinks"
+    )
 
     override suspend fun loadLinks(
         data: String,
@@ -383,51 +385,171 @@ class Cimanow : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // First try: Decode and extract using custom handlers
+        val methodTag = "Cimanow"
         try {
             httpService.ensureInitialized()
             
-            val detailDoc = httpService.getDocument(data)
-            if (detailDoc == null) {
-                Log.e("Cimanow", "Failed to fetch document")
-                return false
+            // Step 1: Construct watch URL (original: data + "watching/")
+            val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
+            Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
+            
+            // Step 2: Fetch and decode the watching page
+            val watchDoc = httpService.getDocument(watchUrl)
+            if (watchDoc == null) {
+                Log.e(methodTag, "Failed to fetch watching page")
+                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
             
-            val decodedDoc = decodeObfuscatedHtml(detailDoc)
-            val urls = getParser().extractWatchServersUrls(decodedDoc)
-            Log.d("Cimanow", "Extracted ${urls.size} player URLs")
+            val doc = decodeObfuscatedHtml(watchDoc)
+            Log.d(methodTag, "Decoded watching doc")
             
-            if (urls.isNotEmpty()) {
-                for (url in urls) {
-                    val urlLower = url.lowercase()
-                    val referer = "https://$baseDomain/"
+            // Step 3: Select server tabs (original: ul.tabcontent li)
+            val serverElements = doc.select("ul.tabcontent li")
+            Log.d(methodTag, "Found ${serverElements.size} server elements")
+            
+            if (serverElements.isEmpty()) {
+                // Fallback: try extracting servers directly from the page
+                Log.d(methodTag, "No ul.tabcontent li found, trying direct extraction")
+                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+            }
+            
+            // Step 4: For each server, AJAX call to core.php and dispatch
+            for (element in serverElements) {
+                try {
+                    val dataIndex = element.attr("data-index")
+                    val dataId = element.attr("data-id")
+                    val serverName = element.text().trim()
+                    Log.d(methodTag, "Server: name='$serverName', index=$dataIndex, id=$dataId")
                     
-                    when {
-                        urlLower.contains("vidpro") -> handleVidPro(url, referer, callback)
-                        urlLower.contains("govid") -> handleGovid(url, referer, callback)
-                        urlLower.contains("vidlook") -> handleVidlook(url, referer, callback)
-                        urlLower.contains("streamwish") -> handleStreamwish(url, referer, callback)
-                        urlLower.contains("streamfile") -> handleStreamfile(url, referer, callback)
-                        urlLower.contains("luluvid") -> handleLuluvid(url, referer, callback)
-                        urlLower.contains("vadbam") -> handleVadbam(url, referer, callback)
-                        urlLower.contains("viidshare") -> handleViidshare(url, referer, callback)
-                        urlLower.contains("/watching/") -> handleNet(url, referer, callback)
-                        else -> {
-                            try {
-                                loadExtractor(url, referer, subtitleCallback, callback)
-                            } catch (e: Exception) {
-                                Log.d("Cimanow", "loadExtractor failed for $url: ${e.message}")
+                    // AJAX call to core.php (original: mainUrl + /wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=X&id=Y)
+                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
+                    val playerDoc = httpService.getDocument(ajaxUrl, headers = mapOf("Referer" to watchUrl))
+                    
+                    if (playerDoc == null) {
+                        Log.w(methodTag, "Failed to fetch player for server '$serverName'")
+                        continue
+                    }
+                    
+                    // Get iframe URL from AJAX response
+                    val iframeUrl = playerDoc.select("iframe").attr("src")
+                    Log.d(methodTag, "Server '$serverName' -> iframe: $iframeUrl")
+                    
+                    // Check if element itself has an iframe (okframe fallback)
+                    val elementIframe = element.select("iframe").first()
+                    val okframe = if (elementIframe != null) {
+                        "https:" + element.select("iframe").attr("src")
+                    } else {
+                        iframeUrl
+                    }
+                    
+                    // Check if it's a VidGuard domain -> handleNet (eval/sigDecode)
+                    val isVidGuard = vidGuardDomains.any { iframeUrl.contains(it, ignoreCase = true) }
+                    
+                    if (isVidGuard) {
+                        // VidGuard domains use eval + sigDecode
+                        try {
+                            Log.d(methodTag, "VidGuard detected: $iframeUrl")
+                            handleNet(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in VidGuard: ${e.message}")
+                        }
+                    } else if (okframe.isNotBlank() && okframe.contains("ok", ignoreCase = true)) {
+                        // ok.ru -> loadExtractor
+                        try {
+                            loadExtractor(okframe, watchUrl, subtitleCallback, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in okframe: ${e.message}")
+                        }
+                    } else if (serverName.contains("Cima Now", ignoreCase = true)) {
+                        try {
+                            handleCima(iframeUrl, serverName, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Cima Now: ${e.message}")
+                        }
+                    } else if (serverName.contains("VidPro", ignoreCase = true)) {
+                        try {
+                            handleVidPro(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in VidPro: ${e.message}")
+                        }
+                    } else if (serverName.contains("Govid", ignoreCase = true) || serverName.contains("Goovid", ignoreCase = true)) {
+                        try {
+                            handleGovid(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Govid: ${e.message}")
+                        }
+                    } else if (serverName.contains("Vidlook", ignoreCase = true)) {
+                        try {
+                            handleVidlook(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Vidlook: ${e.message}")
+                        }
+                    } else if (serverName.contains("Streamwish", ignoreCase = true)) {
+                        try {
+                            handleStreamwish(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Streamwish: ${e.message}")
+                        }
+                    } else if (serverName.contains("Streamfile", ignoreCase = true) || serverName.contains("Luluvid", ignoreCase = true)) {
+                        try {
+                            handleStreamfile(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Streamfile/Luluvid: ${e.message}")
+                        }
+                    } else if (serverName.contains("Vadbam", ignoreCase = true) || serverName.contains("Viidshare", ignoreCase = true)) {
+                        try {
+                            handleVadbam(iframeUrl, watchUrl, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in Vadbam/Viidshare: ${e.message}")
+                        }
+                    } else if (serverName.contains("upload", ignoreCase = true) || iframeUrl.contains("uqload.io", ignoreCase = true)) {
+                        try {
+                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in upload: ${e.message}")
+                        }
+                    } else {
+                        // Else: try download links from element + loadExtractor fallback
+                        try {
+                            element.select("a").forEach { link ->
+                                val dlink = link.attr("href")
+                                val quality = link.text().let { text ->
+                                    Regex("\\d+").find(text)?.value?.toIntOrNull()
+                                } ?: Qualities.Unknown.value
+                                if (dlink.isNotBlank() && dlink.startsWith("http")) {
+                                    Log.d(methodTag, "Download link: quality=$quality url=$dlink")
+                                    callback(newExtractorLink(name, "Download Server", dlink, type = getLinkType(dlink)) {
+                                        this.referer = mainUrl
+                                        this.quality = quality
+                                    })
+                                }
                             }
+                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, callback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error in else: ${e.message}")
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Error processing server: ${e.message}")
                 }
-                return true
             }
+            return true
         } catch (e: Exception) {
-            Log.e("Cimanow", "loadLinks error: ${e.message}")
+            Log.e(methodTag, "loadLinks error: ${e.message}")
         }
-
-        // Fallback to parent's extraction (with DRM handling)
+        
+        return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+    }
+    
+    /**
+     * Fallback that delegates to BaseProvider.loadLinks with DRM handling.
+     */
+    private suspend fun fallbackLoadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         var handledByDialog = false
         val interceptingCallback: (ExtractorLink) -> Unit = { link ->
             if (link.name.contains("(DRM Protected)") || (link.referer?.contains("shahid.net") == true && link.url.contains(".mpd"))) {
