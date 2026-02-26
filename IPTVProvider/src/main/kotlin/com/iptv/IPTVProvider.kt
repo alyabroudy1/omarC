@@ -139,17 +139,10 @@ class IPTVProvider : BaseProvider() {
         if (page > 1) return null
         
         try {
-            httpService.ensureInitialized()
-            
             val url = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
-            val doc = httpService.getDocument(url)
+            Log.d("IPTV", "Fetching playlist from: $url")
             
-            if (doc == null) {
-                Log.e("IPTV", "Failed to fetch playlist")
-                return null
-            }
-            
-            val content = doc.body().text()
+            val content = app.get(url).text
             val channels = parseM3U(content)
             
             if (channels.isEmpty()) {
