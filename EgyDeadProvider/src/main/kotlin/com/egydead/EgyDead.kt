@@ -46,17 +46,79 @@ class EgyDead : BaseProvider() {
         }
     }
 
+    /**
+     * Trgsfjll handler: fetches iframe URL, extracts M3U8 links from scripts using file:"(https://...)" regex
+     * Reference: EgyDead.java Trgsfjll method
+     */
+    private suspend fun handleTrgsfjll(iframeUrl: String, serverName: String, callback: (ExtractorLink) -> Unit) {
+        try {
+            Log.d("EgyDead", "Trgsfjll: $iframeUrl")
+            val doc = httpService.getDocument(iframeUrl) ?: return
+            
+            // Extract all script contents
+            val scripts = doc.select("script[type='text/javascript']").map { it.html() }
+            
+            // Look for file:"(https://...)" pattern in scripts
+            val filePattern = Regex("""file:"(https://[^"]*)""")
+            for (script in scripts) {
+                val matches = filePattern.findAll(script)
+                for (match in matches) {
+                    val videoUrl = match.groupValues[1]
+                    Log.d("EgyDead", "Trgsfjll found: $videoUrl")
+                    callback(newExtractorLink(serverName, serverName, videoUrl, type = getLinkType(videoUrl)) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("EgyDead", "handleTrgsfjll: ${e.message}")
+        }
+    }
+
     private suspend fun handleVidhide(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
+            Log.d("EgyDead", "handleVidhide: $url")
             val doc = httpService.getDocument(url) ?: return
-            val html = doc.outerHtml()
             
+            // Extract script contents
+            val scripts = doc.select("script[type='text/javascript']").map { it.html() }
+            
+            // Find eval-packed script and unpack it
+            val evalPattern = Regex("""eval\(function\(p,a,c,k,e,d\).*?\)""")
+            var videoScript: String? = null
+            for (script in scripts) {
+                if (evalPattern.containsMatchIn(script)) {
+                    videoScript = script
+                    break
+                }
+            }
+            
+            if (videoScript != null) {
+                val unpacked = try { JsUnpacker(videoScript).unpack() } catch (_: Exception) { null }
+                
+                if (unpacked != null) {
+                    Log.d("EgyDead", "Vidhide unpacked: ${unpacked.take(200)}")
+                    val fileMatch = Regex("""file:"(https://[^"]*)"""").find(unpacked)
+                    if (fileMatch != null) {
+                        val videoUrl = fileMatch.groupValues[1]
+                        Log.d("EgyDead", "Vidhide found: $videoUrl")
+                        callback(newExtractorLink("Vidhide", "Vidhide", videoUrl, type = getLinkType(videoUrl)) {
+                            this.referer = referer
+                            this.quality = Qualities.Unknown.value
+                        })
+                    }
+                }
+            }
+            
+            // Also try direct extraction from HTML
+            val html = doc.outerHtml()
             val packed = html.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
-            val unpacked = if (packed.isNotBlank()) {
+            val directUnpacked = if (packed.isNotBlank()) {
                 JsUnpacker("eval(function(p,a,c,k,e,d)$packed").unpack()
             } else null
-
-            val videoUrl = unpacked?.let {
+            
+            val videoUrl = directUnpacked?.let {
                 Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(it)?.groupValues?.get(1)
             } ?: Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
 
@@ -159,59 +221,98 @@ class EgyDead : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val methodTag = "EgyDead"
         try {
             httpService.ensureInitialized()
             
-            val detailDoc = httpService.getDocument(data)
-            if (detailDoc == null) {
-                Log.e("EgyDead", "Failed to fetch document")
-                return false
+            // Step 1: POST to the data URL with View=1 (matching original reference)
+            // The original: Requests.post(data, data = mapOf("View" to "1"))
+            val doc = httpService.post(data, mapOf("View" to "1"))
+            if (doc == null) {
+                Log.e(methodTag, "Failed to POST for server list")
+                return super.loadLinks(data, isCasting, subtitleCallback, callback)
             }
             
-            val urls = getParser().extractWatchServersUrls(detailDoc)
-            Log.d("EgyDead", "Extracted ${urls.size} player URLs")
+            Log.d(methodTag, "POST successful, parsing server elements")
+            val referer = "https://${httpService.currentDomain}/"
+            var foundLinks = false
             
-            if (urls.isNotEmpty()) {
-                for (url in urls) {
-                    val urlLower = url.lowercase()
-                    val referer = "https://$baseDomain/"
+            // Step 2: Process .donwload-servers-list > li (original: element.select("a").attr("href"))
+            val downloadElements = doc.select(".donwload-servers-list > li")
+            Log.d(methodTag, "Found ${downloadElements.size} download server elements")
+            
+            for (element in downloadElements) {
+                try {
+                    val url = element.select("a").attr("href")
+                    if (url.isBlank()) continue
+                    Log.d(methodTag, "Download server URL: $url")
                     
-                    when {
-                        urlLower.contains("vidhide") -> handleVidhide(url, referer, callback)
-                        urlLower.contains("doodstream") || urlLower.contains("dood") -> handleDoodstream(url, referer, callback)
-                        urlLower.contains("streamtape") -> handleStreamtape(url, referer, callback)
-                        urlLower.contains("vidguard") -> handleVidguard(url, referer, callback)
-                        urlLower.contains("uptostream") -> handleUptostream(url, referer, callback)
-                        else -> {
-                            try {
-                                loadExtractor(url, referer, {}, callback)
-                            } catch (e: Exception) {
-                                Log.d("EgyDead", "loadExtractor failed for $url: ${e.message}")
-                            }
-                        }
+                    val urlLower = url.lowercase()
+                    
+                    // Dispatch based on URL content (matching original)
+                    if (urlLower.contains("trgsfjll")) {
+                        handleTrgsfjll(url, "Trgsfjll", callback)
                     }
+                    if (urlLower.contains("vidhide")) {
+                        handleVidhide(url, referer, callback)
+                    }
+                    
+                    // Always try loadExtractor as fallback (matching original)
+                    try {
+                        loadExtractor(url, data, subtitleCallback, callback)
+                    } catch (e: Exception) {
+                        Log.d(methodTag, "loadExtractor failed for $url: ${e.message}")
+                    }
+                    foundLinks = true
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Error processing download element: ${e.message}")
                 }
-                return true
             }
+            
+            // Step 3: Process ul.serversList > li (original: li.attr("data-link"))
+            val serverElements = doc.select("ul.serversList > li")
+            Log.d(methodTag, "Found ${serverElements.size} serversList elements")
+            
+            for (li in serverElements) {
+                try {
+                    val iframeUrl = li.attr("data-link")
+                    if (iframeUrl.isBlank()) continue
+                    Log.d(methodTag, "Server iframe URL: $iframeUrl")
+                    
+                    val urlLower = iframeUrl.lowercase()
+                    
+                    // Dispatch based on URL content (matching original)
+                    if (urlLower.contains("trgsfjll")) {
+                        handleTrgsfjll(iframeUrl, "Trgsfjll", callback)
+                    }
+                    if (urlLower.contains("vidhide")) {
+                        handleVidhide(iframeUrl, referer, callback)
+                    }
+                    
+                    // Always try loadExtractor as fallback
+                    try {
+                        loadExtractor(iframeUrl, data, subtitleCallback, callback)
+                    } catch (e: Exception) {
+                        Log.d(methodTag, "loadExtractor failed for $iframeUrl: ${e.message}")
+                    }
+                    foundLinks = true
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Error processing server element: ${e.message}")
+                }
+            }
+            
+            if (foundLinks) return true
+            
+            // Debug: log what elements are on the page
+            Log.d(methodTag, "DEBUG: No server elements found. UL elements: ${doc.select("ul").map { it.className() }}")
+            Log.d(methodTag, "DEBUG: HTML snippet: ${doc.outerHtml().take(500)}")
+            
         } catch (e: Exception) {
-            Log.e("EgyDead", "loadLinks error: ${e.message}")
+            Log.e(methodTag, "loadLinks error: ${e.message}")
         }
 
-        var handledByDialog = false
-        val interceptingCallback: (ExtractorLink) -> Unit = { link ->
-            if (link.name.contains("(DRM Protected)") || (link.referer?.contains("shahid.net") == true && link.url.contains(".mpd"))) {
-                handledByDialog = true
-                ActivityProvider.currentActivity?.let { activity ->
-                    activity.runOnUiThread {
-                        val dialogUrl = link.referer ?: link.url
-                        DrmPlayerDialog(activity, dialogUrl, link.referer).show()
-                    }
-                }
-            } else {
-                callback(link)
-            }
-        }
-        
-        return super.loadLinks(data, isCasting, subtitleCallback, interceptingCallback) || handledByDialog
+        // Fallback to base
+        return super.loadLinks(data, isCasting, subtitleCallback, callback)
     }
 }
+
