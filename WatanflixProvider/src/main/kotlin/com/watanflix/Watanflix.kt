@@ -90,19 +90,14 @@ class Watanflix : BaseProvider() {
             return true
         }
 
-        // 2. Individual format streams (muxed + adaptive)
+        // 2. Muxed format streams (video+audio combined)
         if (result.formats.isEmpty()) {
-            Log.w(TAG, "loadLinks: No formats found, falling back to WebView")
+            Log.w(TAG, "loadLinks: No muxed formats found, falling back to WebView")
             launchWebViewPlayer(data)
             return true
         }
 
-        // Deduplicate: keep highest bitrate per quality label
-        val bestByQuality = result.formats
-            .groupBy { it.qualityLabel ?: "unknown" }
-            .mapValues { (_, streams) -> streams.maxByOrNull { it.bitrate ?: 0 }!! }
-
-        for ((_, stream) in bestByQuality) {
+        for (stream in result.formats) {
             callback(
                 newExtractorLink(
                     source = "Watanflix",
@@ -120,16 +115,12 @@ class Watanflix : BaseProvider() {
             Log.d(TAG, "loadLinks: Added itag=${stream.itag} quality=${stream.qualityLabel}")
         }
 
-        Log.d(TAG, "loadLinks: Returned ${bestByQuality.size} streams")
+        Log.d(TAG, "loadLinks: Returned ${result.formats.size} streams")
         return true
     }
 
     /**
-     * Extract YouTube video ID from various URL formats:
-     * - youtube.com/watch?v=ID
-     * - youtu.be/ID
-     * - youtube.com/embed/ID
-     * - just the ID itself
+     * Extract YouTube video ID from various URL formats.
      */
     private fun extractVideoId(url: String): String? {
         return when {

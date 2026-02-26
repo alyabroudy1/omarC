@@ -423,7 +423,7 @@ object InnerTubeParser {
             return StreamingResult()
         }
         
-        // Check for HLS manifest (live streams)
+        // Check for HLS manifest (live streams — M3U8 with all qualities)
         val hlsManifestUrl = streamingData.path("hlsManifestUrl").textValue()
         if (hlsManifestUrl != null) {
             Log.d(TAG, "Found HLS manifest: ${hlsManifestUrl.take(80)}")
@@ -431,7 +431,9 @@ object InnerTubeParser {
         
         val formats = mutableListOf<YouTubeStreamFormat>()
         
-        // 1. Parse muxed formats (video+audio combined — always works in ExoPlayer)
+        // Only use muxed formats (video+audio combined) — these are reliably playable.
+        // Adaptive formats are video-only (no audio track) and break ExoPlayer.
+        // Muxed: itag 18 = 360p MP4, itag 22 = 720p MP4
         val muxedFormats = streamingData.path("formats")
         if (muxedFormats.isArray) {
             for (format in muxedFormats) {
@@ -442,20 +444,7 @@ object InnerTubeParser {
             }
         }
         
-        // 2. Always include adaptive formats for higher quality (1080p, 1440p, 4K)
-        val adaptiveFormats = streamingData.path("adaptiveFormats")
-        if (adaptiveFormats.isArray) {
-            for (format in adaptiveFormats) {
-                parseFormat(format)?.let { 
-                    if (it.mimeType.startsWith("video/")) {
-                        formats.add(it)
-                        Log.d(TAG, "Adaptive: itag=${it.itag} quality=${it.qualityLabel} mime=${it.mimeType}")
-                    }
-                }
-            }
-        }
-        
-        Log.d(TAG, "Parsed ${formats.size} formats, hlsManifest=${hlsManifestUrl != null}")
+        Log.d(TAG, "Parsed ${formats.size} muxed formats, hlsManifest=${hlsManifestUrl != null}")
         return StreamingResult(hlsManifestUrl = hlsManifestUrl, formats = formats)
     }
     
