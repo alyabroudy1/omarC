@@ -19,16 +19,16 @@ class CimanowParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6",
-        title = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/'], a[title]", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "href"),
+        container = "article[aria-label='post'], article, div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6",
+        title = CssSelector(query = "li[aria-label='title'], h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/'], a[title]", attr = "text"),
+        url = CssSelector(query = "article a, h3 a, .news-title a, a[href*='/movie/'], a[href*='/selary/']", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
-        container = "div.search-page div.item, div.MovieBlock, figure.search-page-item, div.col-md-2",
-        title = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "text"),
-        url = CssSelector(query = "h3 a, .news-title a, a[title]", attr = "href"),
+        container = "article[aria-label='post'], article, div.search-page div.item, div.MovieBlock, figure.search-page-item, div.col-md-2",
+        title = CssSelector(query = "li[aria-label='title'], h3 a, .news-title a, a[title]", attr = "text"),
+        url = CssSelector(query = "article a, h3 a, .news-title a, a[title]", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img", attr = "data-src, src")
     )
 
