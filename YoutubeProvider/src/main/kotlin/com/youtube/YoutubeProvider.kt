@@ -1,10 +1,10 @@
 package com.youtube
 
-import android.content.Intent
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.SubtitleFile
-import com.cloudstream.shared.ui.WebViewPlayerDialog
+import com.cloudstream.shared.extractors.SnifferExtractor
 import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
@@ -171,14 +171,18 @@ class YoutubeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        CommonActivity.activity?.let { activity ->
-            activity.runOnUiThread {
-                val dialog = WebViewPlayerDialog(activity, data)
-                dialog.pluginResources = resources
-                dialog.pluginPackageName = pluginPackageName
-                dialog.show()
-            }
-        }
+        Log.d(TAG, "loadLinks: data=$data")
+
+        // Extract video ID and build embed URL with autoplay
+        val videoId = data.substringAfter("v=").substringBefore("&")
+        val embedUrl = "https://www.youtube.com/embed/$videoId?autoplay=1&rel=0&modestbranding=1"
+        Log.d(TAG, "loadLinks: embedUrl=$embedUrl")
+
+        // Route through SnifferExtractor — WebView loads embed, captures googlevideo.com stream
+        // If capture fails, PlayingInWebView kicks in (embed stays as player)
+        val snifferUrl = SnifferExtractor.createSnifferUrl(embedUrl, "https://www.youtube.com/")
+        loadExtractor(snifferUrl, "https://www.youtube.com/", subtitleCallback, callback)
+
         return true
     }
 

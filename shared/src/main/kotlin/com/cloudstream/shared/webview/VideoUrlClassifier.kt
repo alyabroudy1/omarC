@@ -39,7 +39,8 @@ object VideoUrlClassifier {
         return url.contains(".m3u8", ignoreCase = true) ||
                url.contains(".mp4", ignoreCase = true) ||
                url.contains(".mkv", ignoreCase = true) ||
-               url.contains(".webm", ignoreCase = true)
+               url.contains(".webm", ignoreCase = true) ||
+               (url.contains("googlevideo.com") && url.contains("videoplayback"))
     }
 
     /** Check if a URL belongs to a DRM-protected domain or uses a DRM format. */
