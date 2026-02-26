@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.ui.DrmPlayerDialog
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -47,6 +48,105 @@ class Cimanow : BaseProvider() {
     }
 
     private data class SvgObject(val stream: String, val hash: String)
+
+    override fun getSeasonName(seasonNum: Int): String = "الموسم $seasonNum"
+
+    /**
+     * Fetch seasons and episodes matching the original Braflix reference.
+     * Seasons: section[aria-label=seasons] ul li a
+     * Episodes per season: section[aria-label=details] ul#eps li (reversed)
+     * Episode URL: episodeLink.select("a").attr("href")
+     */
+    override suspend fun fetchExtraEpisodes(
+        doc: Document, url: String, data: ParserInterface.ParsedLoadData
+    ): List<ParserInterface.ParsedEpisode> {
+        val methodTag = "Cimanow"
+        val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
+        
+        try {
+            // Decode the main series page
+            val decodedDoc = decodeObfuscatedHtml(doc)
+            
+            // Get first season URL to start navigating seasons
+            val firstSeasonUrl = decodedDoc.select("section[aria-label=seasons] ul li a").attr("href")
+            Log.d(methodTag, "fetchExtraEpisodes: firstSeasonUrl=$firstSeasonUrl")
+            
+            if (firstSeasonUrl.isBlank()) {
+                // No seasons section - maybe episodes are directly on the page
+                val directEpisodes = decodedDoc.select("section[aria-label=details] ul#eps li")
+                Log.d(methodTag, "fetchExtraEpisodes: direct episodes on page: ${directEpisodes.size}")
+                directEpisodes.reversed().forEachIndexed { index, episodeLink ->
+                    val epUrl = episodeLink.select("a").attr("href")
+                    if (epUrl.isNotBlank()) {
+                        episodes.add(ParserInterface.ParsedEpisode(
+                            name = "الحلقة ${index + 1}",
+                            url = epUrl,
+                            season = 1,
+                            episode = index + 1
+                        ))
+                    }
+                }
+                return episodes
+            }
+            
+            // Fetch the first season page to get the season list
+            val firstSeasonDoc = httpService.getDocument(firstSeasonUrl)
+            if (firstSeasonDoc == null) {
+                Log.e(methodTag, "fetchExtraEpisodes: Failed to fetch first season page")
+                return episodes
+            }
+            
+            val decodedFirstSeason = decodeObfuscatedHtml(firstSeasonDoc)
+            val seasonElements = decodedFirstSeason.select("section[aria-label=seasons] ul li")
+            Log.d(methodTag, "fetchExtraEpisodes: Found ${seasonElements.size} seasons")
+            
+            // Iterate through each season
+            seasonElements.forEachIndexed { seasonIndex, season ->
+                try {
+                    val seasonUrl = season.select("a").attr("href")
+                    val seasonNumber = seasonIndex + 1
+                    Log.d(methodTag, "fetchExtraEpisodes: Season $seasonNumber URL=$seasonUrl")
+                    
+                    // Fetch season page (first season already fetched)
+                    val seasonDoc = if (seasonIndex == 0) {
+                        decodedFirstSeason
+                    } else {
+                        val fetchedDoc = httpService.getDocument(seasonUrl)
+                        if (fetchedDoc != null) decodeObfuscatedHtml(fetchedDoc) else null
+                    }
+                    
+                    if (seasonDoc == null) {
+                        Log.e(methodTag, "fetchExtraEpisodes: Failed to fetch season $seasonNumber")
+                        return@forEachIndexed
+                    }
+                    
+                    // Extract episodes (reversed, matching original)
+                    val episodeElements = seasonDoc.select("section[aria-label=details] ul#eps li").reversed()
+                    Log.d(methodTag, "fetchExtraEpisodes: Season $seasonNumber has ${episodeElements.size} episodes")
+                    
+                    episodeElements.forEachIndexed { epIndex, episodeLink ->
+                        val epUrl = episodeLink.select("a").attr("href")
+                        val episodeNumber = epIndex + 1
+                        if (epUrl.isNotBlank()) {
+                            episodes.add(ParserInterface.ParsedEpisode(
+                                name = "الحلقة $episodeNumber",
+                                url = epUrl,
+                                season = seasonNumber,
+                                episode = episodeNumber
+                            ))
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(methodTag, "fetchExtraEpisodes: Error parsing season ${seasonIndex + 1}: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "fetchExtraEpisodes error: ${e.message}")
+        }
+        
+        Log.d(methodTag, "fetchExtraEpisodes: Total episodes found: ${episodes.size}")
+        return episodes
+    }
 
     private fun decodeObfuscatedHtml(doc: Document): Document {
         // Match reference: check doc.toString() for hide_my_HTML_ first
