@@ -60,3 +60,13 @@ data class YouTubeStreamFormat(
     val bitrate: Long? = null,
     val contentLength: Long? = null
 )
+
+/**
+ * Result from parseStreamingData containing all available streams.
+ * For live streams, hlsManifestUrl gives a single M3U8 with all qualities.
+ * For VOD, formats contains individual stream URLs at various qualities.
+ */
+data class StreamingResult(
+    val hlsManifestUrl: String? = null,
+    val formats: List<YouTubeStreamFormat> = emptyList()
+)

@@ -411,85 +411,71 @@ object InnerTubeParser {
 
     /**
      * Parse streaming data from the /player API response.
-     * Extracts muxed formats (video+audio combined) that ExoPlayer can play directly.
      * 
-     * Response structure:
-     * streamingData.formats[] — muxed streams (itag 18=360p, 22=720p)
-     * streamingData.adaptiveFormats[] — separate video/audio (not used, needs merging)
+     * Returns a StreamingResult containing:
+     * - hlsManifestUrl: for live streams (M3U8 with all qualities)
+     * - formats: list of individual stream URLs (muxed + adaptive)
      */
-    fun parseStreamingData(json: JsonNode): List<YouTubeStreamFormat> {
-        val formats = mutableListOf<YouTubeStreamFormat>()
-        
+    fun parseStreamingData(json: JsonNode): StreamingResult {
         val streamingData = json.path("streamingData")
         if (streamingData.isMissingNode) {
             Log.w(TAG, "No streamingData in player response")
-            return formats
+            return StreamingResult()
         }
         
-        // Parse muxed formats (video+audio combined — ExoPlayer compatible)
+        // Check for HLS manifest (live streams)
+        val hlsManifestUrl = streamingData.path("hlsManifestUrl").textValue()
+        if (hlsManifestUrl != null) {
+            Log.d(TAG, "Found HLS manifest: ${hlsManifestUrl.take(80)}")
+        }
+        
+        val formats = mutableListOf<YouTubeStreamFormat>()
+        
+        // 1. Parse muxed formats (video+audio combined — always works in ExoPlayer)
         val muxedFormats = streamingData.path("formats")
         if (muxedFormats.isArray) {
             for (format in muxedFormats) {
-                val url = format.path("url").textValue() ?: continue
-                val itag = format.path("itag").intValue()
-                val mimeType = format.path("mimeType").textValue() ?: "video/mp4"
-                val qualityLabel = format.path("qualityLabel").textValue()
-                val quality = format.path("quality").textValue()
-                val width = format.path("width").intValue().takeIf { it > 0 }
-                val height = format.path("height").intValue().takeIf { it > 0 }
-                val bitrate = format.path("bitrate").longValue().takeIf { it > 0 }
-                val contentLength = format.path("contentLength").textValue()?.toLongOrNull()
-                
-                formats.add(YouTubeStreamFormat(
-                    itag = itag,
-                    url = url,
-                    mimeType = mimeType,
-                    qualityLabel = qualityLabel,
-                    quality = quality,
-                    width = width,
-                    height = height,
-                    bitrate = bitrate,
-                    contentLength = contentLength
-                ))
-                Log.d(TAG, "Stream: itag=$itag quality=$qualityLabel mime=$mimeType url=${url.take(80)}")
-            }
-        }
-        
-        // Also check adaptiveFormats for video-only MP4 streams as fallback
-        // (These don't have audio, but are better than nothing if no muxed formats exist)
-        if (formats.isEmpty()) {
-            Log.w(TAG, "No muxed formats found, checking adaptiveFormats for video+audio")
-            val adaptiveFormats = streamingData.path("adaptiveFormats")
-            if (adaptiveFormats.isArray) {
-                for (format in adaptiveFormats) {
-                    val url = format.path("url").textValue() ?: continue
-                    val mimeType = format.path("mimeType").textValue() ?: continue
-                    // Only take video streams (not audio-only)
-                    if (!mimeType.startsWith("video/")) continue
-                    val itag = format.path("itag").intValue()
-                    val qualityLabel = format.path("qualityLabel").textValue()
-                    val quality = format.path("quality").textValue()
-                    val width = format.path("width").intValue().takeIf { it > 0 }
-                    val height = format.path("height").intValue().takeIf { it > 0 }
-                    val bitrate = format.path("bitrate").longValue().takeIf { it > 0 }
-                    
-                    formats.add(YouTubeStreamFormat(
-                        itag = itag,
-                        url = url,
-                        mimeType = mimeType,
-                        qualityLabel = qualityLabel,
-                        quality = quality,
-                        width = width,
-                        height = height,
-                        bitrate = bitrate
-                    ))
-                    Log.d(TAG, "Adaptive stream: itag=$itag quality=$qualityLabel mime=$mimeType")
+                parseFormat(format)?.let { 
+                    formats.add(it)
+                    Log.d(TAG, "Muxed: itag=${it.itag} quality=${it.qualityLabel} mime=${it.mimeType}")
                 }
             }
         }
         
-        Log.d(TAG, "Parsed ${formats.size} stream formats")
-        return formats
+        // 2. Always include adaptive formats for higher quality (1080p, 1440p, 4K)
+        val adaptiveFormats = streamingData.path("adaptiveFormats")
+        if (adaptiveFormats.isArray) {
+            for (format in adaptiveFormats) {
+                parseFormat(format)?.let { 
+                    if (it.mimeType.startsWith("video/")) {
+                        formats.add(it)
+                        Log.d(TAG, "Adaptive: itag=${it.itag} quality=${it.qualityLabel} mime=${it.mimeType}")
+                    }
+                }
+            }
+        }
+        
+        Log.d(TAG, "Parsed ${formats.size} formats, hlsManifest=${hlsManifestUrl != null}")
+        return StreamingResult(hlsManifestUrl = hlsManifestUrl, formats = formats)
+    }
+    
+    /**
+     * Parse a single format node into YouTubeStreamFormat.
+     * Skips formats without a direct URL (signatureCipher-protected).
+     */
+    private fun parseFormat(format: JsonNode): YouTubeStreamFormat? {
+        val url = format.path("url").textValue() ?: return null
+        return YouTubeStreamFormat(
+            itag = format.path("itag").intValue(),
+            url = url,
+            mimeType = format.path("mimeType").textValue() ?: "video/mp4",
+            qualityLabel = format.path("qualityLabel").textValue(),
+            quality = format.path("quality").textValue(),
+            width = format.path("width").intValue().takeIf { it > 0 },
+            height = format.path("height").intValue().takeIf { it > 0 },
+            bitrate = format.path("bitrate").longValue().takeIf { it > 0 },
+            contentLength = format.path("contentLength").textValue()?.toLongOrNull()
+        )
     }
 
     // ==================== HELPERS ====================

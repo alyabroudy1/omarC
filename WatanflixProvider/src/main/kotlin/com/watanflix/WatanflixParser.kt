@@ -9,7 +9,7 @@ import org.jsoup.nodes.Element
 class WatanflixParser : NewBaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
-        return "$domain/en/search?q=$query"
+        return "$domain/ar/search?q=$query"
     }
     
     override val mainPageConfig = MainPageConfig(

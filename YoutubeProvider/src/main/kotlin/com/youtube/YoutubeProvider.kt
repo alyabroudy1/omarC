@@ -11,6 +11,7 @@ import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
 import com.youtube.innertube.InnerTubeParser
 import com.youtube.innertube.YouTubeSearchResult
+import com.youtube.innertube.YouTubeStreamFormat
 
 /**
  * YouTube provider powered by InnerTube API.
@@ -177,7 +178,7 @@ class YoutubeProvider : MainAPI() {
         val videoId = data.substringAfter("v=").substringBefore("&")
         Log.d(TAG, "loadLinks: videoId=$videoId")
 
-        // Call InnerTube /player API with ANDROID client → direct muxed MP4 URLs
+        // Call InnerTube /player API with ANDROID client
         val playerJson = InnerTubeClient.getPlayer(videoId)
         if (playerJson == null) {
             Log.e(TAG, "loadLinks: Player API returned null, falling back to WebView")
@@ -189,43 +190,55 @@ class YoutubeProvider : MainAPI() {
         val status = playerJson.path("playabilityStatus").path("status").textValue()
         if (status != "OK") {
             val reason = playerJson.path("playabilityStatus").path("reason").textValue() ?: "Unknown"
-            Log.w(TAG, "loadLinks: Video not playable: $status — $reason, falling back to WebView")
+            Log.w(TAG, "loadLinks: Not playable: $status — $reason, falling back to WebView")
             launchWebViewPlayer(data)
             return true
         }
 
-        // Parse stream formats
-        val streams = InnerTubeParser.parseStreamingData(playerJson)
-        if (streams.isEmpty()) {
-            Log.w(TAG, "loadLinks: No stream formats found, falling back to WebView")
+        // Parse streaming data
+        val result = InnerTubeParser.parseStreamingData(playerJson)
+
+        // 1. HLS manifest for live streams — single M3U8 with all qualities
+        if (result.hlsManifestUrl != null) {
+            callback(
+                newExtractorLink(
+                    source = "YouTube",
+                    name = "YouTube Live",
+                    url = result.hlsManifestUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "https://www.youtube.com/"
+                    this.quality = Qualities.Unknown.value
+                    this.headers = mapOf(
+                        "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+                    )
+                }
+            )
+            Log.d(TAG, "loadLinks: Added HLS manifest for live stream")
+            return true
+        }
+
+        // 2. Individual format streams (muxed + adaptive)
+        if (result.formats.isEmpty()) {
+            Log.w(TAG, "loadLinks: No formats found, falling back to WebView")
             launchWebViewPlayer(data)
             return true
         }
 
-        // Return each muxed stream as an ExtractorLink
-        for (stream in streams) {
-            val qualityValue = when {
-                stream.qualityLabel?.contains("1080") == true -> Qualities.P1080.value
-                stream.qualityLabel?.contains("720") == true -> Qualities.P720.value
-                stream.qualityLabel?.contains("480") == true -> Qualities.P480.value
-                stream.qualityLabel?.contains("360") == true -> Qualities.P360.value
-                stream.qualityLabel?.contains("240") == true -> Qualities.P240.value
-                stream.qualityLabel?.contains("144") == true -> Qualities.P144.value
-                else -> Qualities.Unknown.value
-            }
+        // Deduplicate: keep highest bitrate per quality label
+        val bestByQuality = result.formats
+            .groupBy { it.qualityLabel ?: "unknown" }
+            .mapValues { (_, streams) -> streams.maxByOrNull { it.bitrate ?: 0 }!! }
 
-            val linkType = when {
-                stream.mimeType.contains("mp4") -> ExtractorLinkType.VIDEO
-                stream.mimeType.contains("webm") -> ExtractorLinkType.VIDEO
-                else -> ExtractorLinkType.VIDEO
-            }
+        for ((_, stream) in bestByQuality) {
+            val qualityValue = mapQuality(stream.qualityLabel)
 
             callback(
                 newExtractorLink(
                     source = "YouTube",
                     name = "YouTube ${stream.qualityLabel ?: "Auto"}",
                     url = stream.url,
-                    type = linkType
+                    type = ExtractorLinkType.VIDEO
                 ) {
                     this.referer = "https://www.youtube.com/"
                     this.quality = qualityValue
@@ -234,11 +247,27 @@ class YoutubeProvider : MainAPI() {
                     )
                 }
             )
-            Log.d(TAG, "loadLinks: Added stream itag=${stream.itag} quality=${stream.qualityLabel}")
+            Log.d(TAG, "loadLinks: Added itag=${stream.itag} quality=${stream.qualityLabel}")
         }
 
-        Log.d(TAG, "loadLinks: Returned ${streams.size} streams")
+        Log.d(TAG, "loadLinks: Returned ${bestByQuality.size} streams")
         return true
+    }
+
+    /**
+     * Map YouTube quality label to CloudStream Qualities value.
+     */
+    private fun mapQuality(label: String?): Int = when {
+        label == null -> Qualities.Unknown.value
+        label.contains("2160") -> Qualities.P2160.value
+        label.contains("1440") -> Qualities.P1440.value
+        label.contains("1080") -> Qualities.P1080.value
+        label.contains("720") -> Qualities.P720.value
+        label.contains("480") -> Qualities.P480.value
+        label.contains("360") -> Qualities.P360.value
+        label.contains("240") -> Qualities.P240.value
+        label.contains("144") -> Qualities.P144.value
+        else -> Qualities.Unknown.value
     }
 
     /**
