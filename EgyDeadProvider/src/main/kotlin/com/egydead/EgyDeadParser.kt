@@ -153,9 +153,12 @@ class EgyDeadParser : NewBaseParser() {
     /**
      * Override parseSearch to filter out individual episode URLs
      * Reference: search filters out results where a[href] contains "/episode/"
+     * Safety: if filtering removes ALL results, return unfiltered so user sees something
      */
     override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
         val items = super.parseSearch(doc)
-        return items.filter { !it.url.contains("/episode/") }
+        val filtered = items.filter { !it.url.contains("/episode/") }
+        return if (filtered.isNotEmpty()) filtered else items
     }
 }
+
