@@ -173,14 +173,14 @@ class YoutubeProvider : MainAPI() {
     ): Boolean {
         Log.d(TAG, "loadLinks: data=$data")
 
-        // Extract video ID and build embed URL with autoplay
+        // Use regular watch URL (embed blocks many videos with embedding disabled)
         val videoId = data.substringAfter("v=").substringBefore("&")
-        val embedUrl = "https://www.youtube.com/embed/$videoId?autoplay=1&rel=0&modestbranding=1"
-        Log.d(TAG, "loadLinks: embedUrl=$embedUrl")
+        val watchUrl = "https://www.youtube.com/watch?v=$videoId"
+        Log.d(TAG, "loadLinks: watchUrl=$watchUrl")
 
-        // Route through SnifferExtractor — WebView loads embed, captures googlevideo.com stream
-        // If capture fails, PlayingInWebView kicks in (embed stays as player)
-        val snifferUrl = SnifferExtractor.createSnifferUrl(embedUrl, "https://www.youtube.com/")
+        // Route through SnifferExtractor — WebView loads watch page, captures googlevideo.com stream
+        // If capture fails, PlayingInWebView kicks in (watch page stays as player)
+        val snifferUrl = SnifferExtractor.createSnifferUrl(watchUrl, "https://www.youtube.com/")
         loadExtractor(snifferUrl, "https://www.youtube.com/", subtitleCallback, callback)
 
         return true
