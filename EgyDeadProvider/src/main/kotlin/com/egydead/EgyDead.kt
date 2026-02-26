@@ -38,6 +38,96 @@ class EgyDead : BaseProvider() {
         return EgyDeadParser()
     }
 
+    /**
+     * Arabic season names matching reference pattern.
+     */
+    override fun getSeasonName(seasonNum: Int): String = "الموسم $seasonNum"
+
+    /**
+     * Fetch episodes from all seasons.
+     * Reference (EgyDead.java load method):
+     * 1. Get season list: div.seasons-list ul > li > a (reversed)
+     * 2. For each season, fetch its page and parse div.EpsList > li > a
+     * 3. Season number = index + 1
+     * 4. If no season list, use div.EpsList > li > a from current page (season=0)
+     */
+    override suspend fun fetchExtraEpisodes(
+        doc: org.jsoup.nodes.Document, url: String, data: com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
+    ): List<com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode> {
+        val allEpisodes = mutableListOf<com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode>()
+        
+        // Step 1: Get season links (reversed, matching reference)
+        val seasonLinks = doc.select("div.seasons-list ul > li > a").reversed()
+        Log.d("EgyDead", "fetchExtraEpisodes: found ${seasonLinks.size} season links")
+        
+        if (seasonLinks.isNotEmpty()) {
+            // Multi-season: fetch each season page
+            for ((index, seasonElement) in seasonLinks.withIndex()) {
+                val seasonUrl = seasonElement.attr("href")
+                if (seasonUrl.isBlank()) continue
+                
+                val seasonNum = index + 1
+                Log.d("EgyDead", "Fetching season $seasonNum: $seasonUrl")
+                
+                try {
+                    val seasonDoc = httpService.getDocument(seasonUrl)
+                    if (seasonDoc != null) {
+                        val episodeLinks = seasonDoc.select("div.EpsList > li > a")
+                        Log.d("EgyDead", "Season $seasonNum: found ${episodeLinks.size} episodes")
+                        
+                        for (epElement in episodeLinks) {
+                            val epUrl = epElement.attr("href").trim()
+                            val epTitle = epElement.attr("title").trim().ifBlank { epElement.text().trim() }
+                            if (epUrl.isBlank()) continue
+                            
+                            val epNum = Regex("""(\d+)""").find(epElement.text())?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                            
+                            allEpisodes.add(
+                                com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode(
+                                    name = epTitle.ifBlank { "Episode $epNum" },
+                                    url = epUrl,
+                                    season = seasonNum,
+                                    episode = epNum
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("EgyDead", "Error fetching season $seasonNum: ${e.message}")
+                }
+            }
+        } else {
+            // Single season / no seasons: use episodes from current page (season=1)
+            val episodeLinks = doc.select("div.EpsList > li > a")
+            Log.d("EgyDead", "fetchExtraEpisodes: no seasons, found ${episodeLinks.size} episodes on page")
+            
+            for (epElement in episodeLinks) {
+                val epUrl = epElement.attr("href").trim()
+                val epTitle = epElement.attr("title").trim().ifBlank { epElement.text().trim() }
+                if (epUrl.isBlank()) continue
+                
+                val epNum = Regex("""(\d+)""").find(epElement.text())?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                
+                allEpisodes.add(
+                    com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode(
+                        name = epTitle.ifBlank { "Episode $epNum" },
+                        url = epUrl,
+                        season = 1,
+                        episode = epNum
+                    )
+                )
+            }
+        }
+        
+        // If we found episodes from our custom parsing, return them
+        // Otherwise fall back to the parser's default episodes
+        if (allEpisodes.isNotEmpty()) {
+            return allEpisodes
+        }
+        
+        return data.episodes ?: emptyList()
+    }
+
     private fun getLinkType(url: String): ExtractorLinkType {
         return when {
             url.contains(".m3u8") -> ExtractorLinkType.M3U8
