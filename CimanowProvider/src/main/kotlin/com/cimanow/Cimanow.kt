@@ -49,24 +49,54 @@ class Cimanow : BaseProvider() {
     private data class SvgObject(val stream: String, val hash: String)
 
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        val scriptData = doc.select("script").firstOrNull()?.data() ?: return doc
-        if (!scriptData.contains("hide_my_HTML_")) {
+        // Match reference: check doc.toString() for hide_my_HTML_ first
+        val docString = doc.toString()
+        if (!docString.contains("hide_my_HTML_")) {
+            Log.d("Cimanow", "decodeObfuscatedHtml: No decoding needed")
             return doc
         }
+        
+        // Search ALL script elements for the one containing hide_my_HTML_
+        // (reference uses doc.select("script").first() but the obfuscated script 
+        // might not always be the first one)
+        var scriptData: String? = null
+        for (script in doc.select("script")) {
+            val data = script.data()
+            if (data.contains("hide_my_HTML_")) {
+                scriptData = data
+                break
+            }
+        }
+        
+        if (scriptData == null) {
+            Log.d("Cimanow", "decodeObfuscatedHtml: hide_my_HTML_ in doc but not in any script data")
+            return doc
+        }
+        
+        Log.d("Cimanow", "decodeObfuscatedHtml: Found hide_my_HTML_ script, length=${scriptData.length}")
 
-        val hideMyHtmlContent = Regex("['+\\n\" ]")
-            .replace(
-                scriptData.substringAfter("var hide_my_HTML_").substring(3)
-                    .substringAfter(" =").substringBeforeLast("';").trim(),
-                ""
-            )
+        try {
+            val hideMyHtmlContent = Regex("['+\\n\" ]")
+                .replace(
+                    scriptData.substringAfter("var hide_my_HTML_").substring(3)
+                        .substringAfter(" =").substringBeforeLast("';").trim(),
+                    ""
+                )
 
-        val lastNumber = Regex("-\\d+").findAll(scriptData)
-            .lastOrNull()?.value?.toIntOrNull() ?: 0
+            val lastNumber = Regex("-\\d+").findAll(scriptData)
+                .lastOrNull()?.value?.toIntOrNull() ?: 0
+            
+            Log.d("Cimanow", "decodeObfuscatedHtml: contentLength=${hideMyHtmlContent.length}, lastNumber=$lastNumber")
 
-        val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
-        val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
-        return Jsoup.parse(encodedHtml)
+            val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
+            val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
+            val result = Jsoup.parse(encodedHtml)
+            Log.d("Cimanow", "decodeObfuscatedHtml: Decoded HTML length=${encodedHtml.length}")
+            return result
+        } catch (e: Exception) {
+            Log.e("Cimanow", "decodeObfuscatedHtml error: ${e.message}")
+            return doc
+        }
     }
 
     private fun decodeObfuscatedString(concatenated: String, lastNumber: Int): String {
@@ -403,9 +433,35 @@ class Cimanow : BaseProvider() {
             val doc = decodeObfuscatedHtml(watchDoc)
             Log.d(methodTag, "Decoded watching doc")
             
+            // Debug: log what's in the decoded page
+            val allUls = doc.select("ul")
+            Log.d(methodTag, "DEBUG: Found ${allUls.size} <ul> elements")
+            for (ul in allUls.take(10)) {
+                val className = ul.className()
+                val childCount = ul.children().size
+                Log.d(methodTag, "DEBUG: <ul class='$className'> children=$childCount")
+            }
+            val allLis = doc.select("li[data-index], li[data-id]")
+            Log.d(methodTag, "DEBUG: Found ${allLis.size} <li> with data-index/data-id")
+            for (li in allLis.take(5)) {
+                Log.d(methodTag, "DEBUG: <li data-index='${li.attr("data-index")}' data-id='${li.attr("data-id")}'>${li.text().take(50)}")
+            }
+            val allIframes = doc.select("iframe")
+            Log.d(methodTag, "DEBUG: Found ${allIframes.size} iframes")
+            // Also log a snippet of the decoded HTML
+            val htmlSnippet = doc.outerHtml().take(500)
+            Log.d(methodTag, "DEBUG: HTML snippet: $htmlSnippet")
+            
             // Step 3: Select server tabs (original: ul.tabcontent li)
-            val serverElements = doc.select("ul.tabcontent li")
-            Log.d(methodTag, "Found ${serverElements.size} server elements")
+            // Also try alternative selectors in case the class name differs
+            var serverElements = doc.select("ul.tabcontent li")
+            Log.d(methodTag, "Found ${serverElements.size} server elements (ul.tabcontent li)")
+            
+            if (serverElements.isEmpty()) {
+                // Try broader selectors
+                serverElements = doc.select("li[data-index][data-id]")
+                Log.d(methodTag, "Trying li[data-index][data-id]: found ${serverElements.size}")
+            }
             
             if (serverElements.isEmpty()) {
                 // Fallback: try extracting servers directly from the page

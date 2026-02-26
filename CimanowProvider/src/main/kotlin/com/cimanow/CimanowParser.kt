@@ -54,24 +54,41 @@ class CimanowParser : NewBaseParser() {
     )
 
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        val scriptData = doc.select("script").firstOrNull()?.data() ?: return doc
-        if (!scriptData.contains("hide_my_HTML_")) {
+        val docString = doc.toString()
+        if (!docString.contains("hide_my_HTML_")) {
             return doc
         }
+        
+        // Search ALL script elements for the one containing hide_my_HTML_
+        var scriptData: String? = null
+        for (script in doc.select("script")) {
+            val data = script.data()
+            if (data.contains("hide_my_HTML_")) {
+                scriptData = data
+                break
+            }
+        }
+        
+        if (scriptData == null) return doc
 
-        val hideMyHtmlContent = Regex("['+\\n\" ]")
-            .replace(
-                scriptData.substringAfter("var hide_my_HTML_").substring(3)
-                    .substringAfter(" =").substringBeforeLast("';").trim(),
-                ""
-            )
+        try {
+            val hideMyHtmlContent = Regex("['+\\n\" ]")
+                .replace(
+                    scriptData.substringAfter("var hide_my_HTML_").substring(3)
+                        .substringAfter(" =").substringBeforeLast("';").trim(),
+                    ""
+                )
 
-        val lastNumber = Regex("-\\d+").findAll(scriptData)
-            .lastOrNull()?.value?.toIntOrNull() ?: 0
+            val lastNumber = Regex("-\\d+").findAll(scriptData)
+                .lastOrNull()?.value?.toIntOrNull() ?: 0
 
-        val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
-        val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
-        return Jsoup.parse(encodedHtml)
+            val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
+            val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
+            return Jsoup.parse(encodedHtml)
+        } catch (e: Exception) {
+            Log.e("CimanowParser", "decodeObfuscatedHtml error: ${e.message}")
+            return doc
+        }
     }
 
     private fun decodeObfuscatedString(concatenated: String, lastNumber: Int): String {
