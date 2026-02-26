@@ -72,8 +72,6 @@ class IPTVProvider : BaseProvider() {
                 }
             }
             
-            Log.d("IPTV", "EXTINF attributes found: $attributes")
-            
             // Get channel name from after last comma
             val name = info.substringAfterLast(",")
                 .replace("♛", "")
@@ -101,8 +99,6 @@ class IPTVProvider : BaseProvider() {
                 ?: attributes["logo"]
                 ?: attributes["tvglogo"]
                 ?: ""
-            
-            Log.d("IPTV", "Parsed channel: name=$name, group=$group, logo=$logo, url=$url")
             
             return M3UChannel(
                 name = name,
