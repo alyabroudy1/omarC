@@ -31,6 +31,7 @@ class Cimanow : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "/category/رمضان-2026" to "رمضان",
+        "/احدث-الاضافات" to "احدث الاضافات",
         "/category/افلام-اجنبية" to "افلام اجنبية",
         "/category/مسلسلات-اجنبية" to "مسلسلات اجنبية",
         "/category/افلام-نتفليكس" to "افلام نتفليكس",

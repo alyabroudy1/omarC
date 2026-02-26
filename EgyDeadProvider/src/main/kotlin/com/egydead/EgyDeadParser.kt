@@ -14,7 +14,7 @@ class EgyDeadParser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = "div.post, article, div.col-md-2, div.MovieBlock",
+        container = "li.movieItem, div.post, article, div.col-md-2, div.MovieBlock",
         title = CssSelector(query = "h1.BottomTitle, h2 a, h3 a, .news-title a, a[title]", attr = "text"),
         url = CssSelector(query = "a[href]", attr = "href"),
         poster = CssSelector(query = "img[data-src], img.lazy, img.wp-post-image, img", attr = "data-src, src")
