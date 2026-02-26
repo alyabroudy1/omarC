@@ -145,14 +145,18 @@ class IPTVProvider : BaseProvider() {
             val content = app.get(url).text
             val channels = parseM3U(content)
             
-            if (channels.isEmpty()) {
-                Log.e("IPTV", "No channels parsed")
+            val filteredChannels = channels.filter { 
+                it.logo != "https://bit.ly/3JQfa8u" && !it.logo.isNullOrBlank() 
+            }
+            
+            if (filteredChannels.isEmpty()) {
+                Log.e("IPTV", "No channels after filtering")
                 return null
             }
             
-            Log.d("IPTV", "Parsed ${channels.size} channels")
+            Log.d("IPTV", "Parsed ${channels.size} channels, ${filteredChannels.size} after filtering")
             
-            val categories = getCategories(channels)
+            val categories = getCategories(filteredChannels)
             val homePageLists = mutableListOf<HomePageList>()
             
             val sortedCategories = categories.toList().sortedBy { it.first }
@@ -173,7 +177,7 @@ class IPTVProvider : BaseProvider() {
             }
             
             // Add all channels
-            val allChannels = channels.take(100).map { chan ->
+            val allChannels = filteredChannels.take(100).map { chan ->
                 newMovieSearchResponse(chan.name, chan.url, TvType.Live) {
                     this.posterUrl = chan.logo
                 }
@@ -188,6 +192,31 @@ class IPTVProvider : BaseProvider() {
         } catch (e: Exception) {
             Log.e("IPTV", "Error in getMainPage: ${e.message}")
             return null
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        try {
+            val url = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
+            val content = app.get(url).text
+            val channels = parseM3U(content)
+            
+            val filteredChannels = channels.filter { 
+                it.logo != "https://bit.ly/3JQfa8u" && !it.logo.isNullOrBlank() 
+            }
+            
+            val queryLower = query.lowercase()
+            return filteredChannels
+                .filter { it.name.lowercase().contains(queryLower) }
+                .take(50)
+                .map { chan ->
+                    newMovieSearchResponse(chan.name, chan.url, TvType.Live) {
+                        this.posterUrl = chan.logo
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("IPTV", "Error in search: ${e.message}")
+            return emptyList()
         }
     }
 
