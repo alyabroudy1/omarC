@@ -4,7 +4,6 @@ android {
     sourceSets {
         getByName("main") {
             kotlin.srcDir("../shared/src/main/kotlin")
-            kotlin.srcDir("../YoutubeProvider/src/main/kotlin")
         }
     }
 }

@@ -4,6 +4,7 @@ import android.content.Intent
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
+import com.cloudstream.shared.ui.WebViewPlayerDialog
 import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
@@ -172,7 +173,7 @@ class YoutubeProvider : MainAPI() {
     ): Boolean {
         CommonActivity.activity?.let { activity ->
             activity.runOnUiThread {
-                val dialog = YouTubePlayerDialog(activity, data)
+                val dialog = WebViewPlayerDialog(activity, data)
                 dialog.pluginResources = resources
                 dialog.pluginPackageName = pluginPackageName
                 dialog.show()
