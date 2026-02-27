@@ -157,6 +157,11 @@ class VideoSnifferEngine(
                                     // Attach cleanup listener for when user exits the player
                                     dialog!!.setOnDismissListener {
                                         ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "WebView player dialog dismissed, cleaning up")
+
+                                        // Cleanup TV mouse controller
+                                        tvMouseController?.detach()
+                                        tvMouseController = null
+
                                         try {
                                             webView?.stopLoading()
                                             webView?.loadUrl("about:blank")

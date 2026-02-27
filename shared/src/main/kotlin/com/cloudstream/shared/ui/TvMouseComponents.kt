@@ -12,7 +12,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.DecelerateInterpolator
 import android.webkit.WebView
 import android.widget.FrameLayout
 import kotlin.math.abs
@@ -22,6 +21,14 @@ import kotlin.math.min
 /**
  * A hardware-accelerated, physics-based mouse cursor overlay for TV interfaces.
  * Designed to be plug-and-play with any WebView.
+ *
+ * Movement model:
+ *   - Tap (quick press/release): moves cursor exactly 1 pixel in that direction.
+ *   - Hold: starts slow, then smoothly ramps up speed over ~1 second.
+ *   - Releasing the key applies friction so the cursor glides to a stop.
+ *
+ * This gives precise single-pixel control for clicking small buttons
+ * while still allowing fast traversal when the key is held down.
  */
 class TvMouseController(
     private val context: Context,
@@ -31,18 +38,35 @@ class TvMouseController(
     private var overlay: TvMouseOverlay? = null
     private var container: FrameLayout? = null
 
-    // Physics constants
-    private val ACCELERATION = 2.0f
-    private val MAX_VELOCITY = 25.0f
-    private val FRICTION = 0.90f
-    private val SCROLL_SPEED = 15
-    private val EDGE_THRESHOLD = 50 // pixels from edge to trigger scroll
+    // ── Movement tuning ──────────────────────────────────────────────
+    // How quickly speed builds while D-pad is held (pixels/frame²).
+    // Low value = gentle ramp-up, no sudden jumps.
+    private val ACCELERATION = 0.35f
 
-    // State
-    private var position = PointF(-1f, -1f)  // -1 indicates not initialized yet
+    // Terminal velocity (pixels/frame). Reached after ~1s of holding.
+    private val MAX_VELOCITY = 12.0f
+
+    // Friction multiplier applied every frame. 0.92 means velocity
+    // drops to ~45% after 10 frames (~160ms) once the key is released.
+    private val FRICTION = 0.92f
+
+    // Minimum velocity for a single D-pad tap (pixels).
+    // Ensures even the quickest tap moves the cursor by 1px.
+    private val TAP_IMPULSE = 1.0f
+
+    // Edge scrolling
+    private val SCROLL_SPEED = 8
+    private val EDGE_THRESHOLD = 40 // pixels from edge to trigger scroll
+
+    // ── State ────────────────────────────────────────────────────────
+    private var position = PointF(-1f, -1f)  // -1 = not initialised yet
     private var velocity = PointF(0f, 0f)
-    private var lastFrameTime = 0L
     private var isAttached = false
+
+    // Track how many consecutive frames each direction has been held.
+    // Used for the ramp-up curve so the first frame produces a tiny nudge.
+    private var holdFramesX = 0
+    private var holdFramesY = 0
 
     // Input state
     private var isUpPressed = false
@@ -52,24 +76,19 @@ class TvMouseController(
 
     /**
      * Attach the mouse controller to the WebView.
-     * Use this when you have a container that holds the WebView.
-     * Ideally, the WebView should be inside a FrameLayout.
+     * The WebView should be inside a FrameLayout.
      */
     fun attach(parentContainer: FrameLayout) {
         if (isAttached) return
         this.container = parentContainer
 
-        // Initialize position to center of the container
-        // Try to get actual dimensions, fallback to reasonable defaults if not laid out yet
         val containerWidth = parentContainer.width.toFloat()
         val containerHeight = parentContainer.height.toFloat()
-        
+
         if (containerWidth > 0 && containerHeight > 0) {
-            // Container has dimensions, center the cursor
             position.x = containerWidth / 2f
             position.y = containerHeight / 2f
         } else {
-            // Container not laid out yet, use post to wait for layout
             parentContainer.post {
                 if (!isAttached) return@post
                 val w = parentContainer.width.toFloat()
@@ -79,7 +98,6 @@ class TvMouseController(
                     position.y = h / 2f
                     overlay?.setCursorPosition(position.x, position.y)
                 } else {
-                    // Final fallback: use screen center approximation
                     position.x = 500f
                     position.y = 500f
                     overlay?.setCursorPosition(position.x, position.y)
@@ -100,7 +118,6 @@ class TvMouseController(
         parentContainer.addView(overlay)
 
         isAttached = true
-        lastFrameTime = System.nanoTime()
         Choreographer.getInstance().postFrameCallback(this)
     }
 
@@ -114,22 +131,49 @@ class TvMouseController(
 
     /**
      * Handle key events from D-pad.
-     * Returns true if handled.
+     * Returns true if the event was consumed.
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
         if (!isAttached) return false
 
         val isDown = event.action == KeyEvent.ACTION_DOWN
-        
+
         when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP -> { isUpPressed = isDown; return true }
-            KeyEvent.KEYCODE_DPAD_DOWN -> { isDownPressed = isDown; return true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { isLeftPressed = isDown; return true }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { isRightPressed = isDown; return true }
+            KeyEvent.KEYCODE_DPAD_UP -> {
+                if (isDown && !isUpPressed) {
+                    // First press — give a tiny impulse so a tap moves at least 1px
+                    velocity.y = -TAP_IMPULSE
+                    holdFramesY = 0
+                }
+                isUpPressed = isDown
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (isDown && !isDownPressed) {
+                    velocity.y = TAP_IMPULSE
+                    holdFramesY = 0
+                }
+                isDownPressed = isDown
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (isDown && !isLeftPressed) {
+                    velocity.x = -TAP_IMPULSE
+                    holdFramesX = 0
+                }
+                isLeftPressed = isDown
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (isDown && !isRightPressed) {
+                    velocity.x = TAP_IMPULSE
+                    holdFramesX = 0
+                }
+                isRightPressed = isDown
+                return true
+            }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                if (isDown) { // Trigger click on DOWN or UP? Standard is UP usually, but for TV immediate feedback is good.
-                    // Let's do click on UP to avoid repeat clicks if held
-                } else {
+                if (!isDown) { // Click on key-up to avoid repeat-clicks when held
                     simulateClick()
                 }
                 return true
@@ -141,7 +185,7 @@ class TvMouseController(
     override fun doFrame(frameTimeNanos: Long) {
         if (!isAttached || overlay == null) return
 
-        // Safety check: if position hasn't been initialized yet, center it now
+        // Lazy-init position if the container wasn't laid out at attach time
         if (position.x < 0 || position.y < 0) {
             val width = overlay!!.width.toFloat()
             val height = overlay!!.height.toFloat()
@@ -154,58 +198,64 @@ class TvMouseController(
             }
         }
 
-        // Calculate delta time in seconds (approx 0.016 for 60fps)
-        // Capping to avoid huge jumps if frame interaction lags
-        val dt = 1.0f // Using constant step for consistent physics logic feels better on TV than variable dt sometimes
+        // ── Horizontal acceleration ──
+        val heldX = isLeftPressed || isRightPressed
+        if (heldX) {
+            holdFramesX++
+            // Ramp factor: starts near 0 and approaches 1 over ~60 frames (~1 second)
+            val ramp = min(1.0f, holdFramesX / 60.0f)
+            val accel = ACCELERATION * ramp
+            if (isLeftPressed) velocity.x -= accel
+            if (isRightPressed) velocity.x += accel
+        } else {
+            holdFramesX = 0
+            velocity.x *= FRICTION
+        }
 
-        // Update Velocity based on Input
-        if (isUpPressed) velocity.y -= ACCELERATION
-        if (isDownPressed) velocity.y += ACCELERATION
-        if (isLeftPressed) velocity.x -= ACCELERATION
-        if (isRightPressed) velocity.x += ACCELERATION
+        // ── Vertical acceleration ──
+        val heldY = isUpPressed || isDownPressed
+        if (heldY) {
+            holdFramesY++
+            val ramp = min(1.0f, holdFramesY / 60.0f)
+            val accel = ACCELERATION * ramp
+            if (isUpPressed) velocity.y -= accel
+            if (isDownPressed) velocity.y += accel
+        } else {
+            holdFramesY = 0
+            velocity.y *= FRICTION
+        }
 
-        // Apply Friction
-        velocity.x *= FRICTION
-        velocity.y *= FRICTION
+        // Snap to zero when effectively stopped (avoids sub-pixel drift)
+        if (abs(velocity.x) < 0.05f) velocity.x = 0f
+        if (abs(velocity.y) < 0.05f) velocity.y = 0f
 
-        // Snap to 0 if very low
-        if (abs(velocity.x) < 0.1f) velocity.x = 0f
-        if (abs(velocity.y) < 0.1f) velocity.y = 0f
+        // Clamp to max speed
+        velocity.x = velocity.x.coerceIn(-MAX_VELOCITY, MAX_VELOCITY)
+        velocity.y = velocity.y.coerceIn(-MAX_VELOCITY, MAX_VELOCITY)
 
-        // Clamp Velocity
-        velocity.x = max(-MAX_VELOCITY, min(velocity.x, MAX_VELOCITY))
-        velocity.y = max(-MAX_VELOCITY, min(velocity.y, MAX_VELOCITY))
-
-        // Update Position
+        // Update position
         position.x += velocity.x
         position.y += velocity.y
 
-        // Constraints & Edge Scrolling
+        // Boundary clamping & edge scrolling
         val width = overlay!!.width.toFloat()
         val height = overlay!!.height.toFloat()
 
-        // X Axis Constraints
         if (position.x < 0) position.x = 0f
         if (position.x > width) position.x = width
-        
-        // Edge Scrolling X
-        if (position.x < EDGE_THRESHOLD) webView.scrollBy(-SCROLL_SPEED, 0)
-        if (position.x > width - EDGE_THRESHOLD) webView.scrollBy(SCROLL_SPEED, 0)
-
-
-        // Y Axis Constraints
         if (position.y < 0) position.y = 0f
         if (position.y > height) position.y = height
 
-        // Edge Scrolling Y
+        // Scroll the WebView when the cursor reaches the edge
+        if (position.x < EDGE_THRESHOLD) webView.scrollBy(-SCROLL_SPEED, 0)
+        if (position.x > width - EDGE_THRESHOLD) webView.scrollBy(SCROLL_SPEED, 0)
         if (position.y < EDGE_THRESHOLD) webView.scrollBy(0, -SCROLL_SPEED)
         if (position.y > height - EDGE_THRESHOLD) webView.scrollBy(0, SCROLL_SPEED)
 
-
-        // Update Visuals
+        // Draw
         overlay!!.setCursorPosition(position.x, position.y)
 
-        // Request next frame
+        // Next frame
         Choreographer.getInstance().postFrameCallback(this)
     }
 
@@ -214,33 +264,17 @@ class TvMouseController(
         val eventTime = SystemClock.uptimeMillis() + 100
         val x = position.x
         val y = position.y
-        
-        // Offset relative to webview scroll? 
-        // dispatchTouchEvent uses view-local coordinates (pixels relative to top-left of view)
-        // Since overlay matches webview size/position, position.x/y are correct relative to webview.
-        
+
         val metaState = 0
         val motionEventDown = MotionEvent.obtain(
-            downTime,
-            downTime,
-            MotionEvent.ACTION_DOWN,
-            x,
-            y,
-            metaState
+            downTime, downTime, MotionEvent.ACTION_DOWN, x, y, metaState
         )
-        
         val motionEventUp = MotionEvent.obtain(
-            downTime,
-            eventTime,
-            MotionEvent.ACTION_UP,
-            x,
-            y,
-            metaState
+            downTime, eventTime, MotionEvent.ACTION_UP, x, y, metaState
         )
 
         webView.dispatchTouchEvent(motionEventDown)
-        
-        // Dispatch UP after a small delay to ensure it registers as a click
+
         webView.postDelayed({
             webView.dispatchTouchEvent(motionEventUp)
             motionEventDown.recycle()
@@ -250,7 +284,7 @@ class TvMouseController(
 }
 
 /**
- * Custom View to draw the cursor.
+ * Custom View that draws the cursor arrow.
  */
 class TvMouseOverlay(context: Context) : View(context) {
 
@@ -258,7 +292,13 @@ class TvMouseOverlay(context: Context) : View(context) {
         color = Color.WHITE
         style = Paint.Style.FILL
         isAntiAlias = true
-        setShadowLayer(4f, 2f, 2f, Color.BLACK)
+    }
+
+    private val outlinePaint = Paint().apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        isAntiAlias = true
     }
 
     private val cursorPath = Path().apply {
@@ -271,18 +311,14 @@ class TvMouseOverlay(context: Context) : View(context) {
         lineTo(20f, 20f)
         close()
     }
-    
-    // Scale the cursor
+
     private val scale = 1.5f
-    private val pointerX = 0f
-    private val pointerY = 0f
-    
+
     // Current draw position
     private var cx = 0f
     private var cy = 0f
 
     init {
-        // Hardware acceleration should be on by default for Views, but force it just in case
         setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
@@ -294,10 +330,12 @@ class TvMouseOverlay(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        
+
         canvas.save()
         canvas.translate(cx, cy)
         canvas.scale(scale, scale)
+        // Draw black outline first, then white fill on top — gives a visible edge on any background
+        canvas.drawPath(cursorPath, outlinePaint)
         canvas.drawPath(cursorPath, cursorPaint)
         canvas.restore()
     }
