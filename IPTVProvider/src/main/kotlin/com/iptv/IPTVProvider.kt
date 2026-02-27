@@ -144,7 +144,7 @@ class IPTVProvider : BaseProvider() {
             Log.d("IPTV", "Total channels: ${channels.size}")
             
             val filteredChannels = channels.filter { chan ->
-                val hasBadLogo = chan.logo == "https://bit.ly/3JQfa8u" || chan.logo.isNullOrBlank()
+                val hasBadLogo = chan.logo == "https://bit.ly/3JQfa8u" || chan.logo == "https://bit.ly/jpgairmaxtv" || chan.logo.isNullOrBlank()
                 val hasBadUrl = chan.url.contains("bit.ly") || chan.url.contains("cutt.ly")
                 if (hasBadLogo || hasBadUrl) {
                     Log.d("IPTV", "Filtered out: name=${chan.name}, logo=${chan.logo}, url=${chan.url}")
@@ -200,7 +200,7 @@ class IPTVProvider : BaseProvider() {
             val channels = parseM3U(content)
             
             val filteredChannels = channels.filter { 
-                it.logo != "https://bit.ly/3JQfa8u" && !it.logo.isNullOrBlank() 
+                it.logo != "https://bit.ly/3JQfa8u" && it.logo != "https://bit.ly/jpgairmaxtv" && !it.logo.isNullOrBlank() 
             }
             
             val queryLower = query.lowercase()
