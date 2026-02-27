@@ -11,6 +11,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeParser
+import com.fasterxml.jackson.annotation.JsonProperty
 
 class Watanflix : BaseProvider() {
 
@@ -32,6 +33,37 @@ class Watanflix : BaseProvider() {
 
     override fun getParser(): NewBaseParser {
         return WatanflixParser()
+    }
+
+    data class WatanflixSearchResponse(
+        @JsonProperty("data") val data: List<WatanflixSearchItem>? = null
+    )
+
+    data class WatanflixSearchItem(
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("url") val url: String? = null
+    )
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$mainUrl/ar/search?q=$query"
+        val response = app.get(url).parsedSafe<WatanflixSearchResponse>()
+        return response?.data?.mapNotNull { item ->
+            val title = item.title?.trim() ?: return@mapNotNull null
+            val itemUrl = item.url ?: return@mapNotNull null
+
+            val isSeries = itemUrl.contains("series") || title.contains("مسلسل")
+            val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
+
+            if (tvType == TvType.TvSeries) {
+                newTvSeriesSearchResponse(title, itemUrl, TvType.TvSeries) {
+                    this.posterUrl = null
+                }
+            } else {
+                newMovieSearchResponse(title, itemUrl, TvType.Movie) {
+                    this.posterUrl = null
+                }
+            }
+        } ?: emptyList()
     }
 
     override suspend fun loadLinks(
