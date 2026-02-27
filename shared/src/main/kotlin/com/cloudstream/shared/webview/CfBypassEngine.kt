@@ -25,6 +25,7 @@ class CfBypassEngine(
     private var deferred: CompletableDeferred<WebViewResult>? = null
     private var resultDelivered = false
     private var timeoutJob: Job? = null
+    private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
 
     /**
      * Run a WebView session for CF bypass.
@@ -260,8 +261,9 @@ class CfBypassEngine(
     }
 
     /**
-     * Creates a simple fullscreen dialog for manual CAPTCHA solving.
-     * No TV mouse controller or status text — just the WebView.
+     * Creates a fullscreen dialog for manual CAPTCHA solving.
+     * Includes TV mouse controller so users can navigate and click
+     * the Cloudflare/Turnstile challenge using a D-pad remote.
      */
     private fun createCfDialog(activity: android.app.Activity, webView: WebView): android.app.Dialog {
         val container = android.widget.FrameLayout(activity).apply {
@@ -278,6 +280,10 @@ class CfBypassEngine(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
         })
+
+        // TV MOUSE: Attach cursor overlay so D-pad can navigate the CF challenge
+        tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
+        tvMouseController?.attach(container)
 
         return android.app.Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen).apply {
             setContentView(container)
@@ -297,7 +303,16 @@ class CfBypassEngine(
                 w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
 
+            // Forward D-pad key events to the TV mouse controller
+            setOnKeyListener { _, _, event ->
+                tvMouseController?.onKeyEvent(event) ?: false
+            }
+
             setOnDismissListener {
+                // Cleanup TV mouse controller
+                tvMouseController?.detach()
+                tvMouseController = null
+
                 if (!resultDelivered) {
                     ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine", "Dialog dismissed by user")
                     resultDelivered = true
