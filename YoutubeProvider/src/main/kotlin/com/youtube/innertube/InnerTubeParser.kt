@@ -411,10 +411,11 @@ object InnerTubeParser {
 
     /**
      * Parse streaming data from the /player API response.
-     * 
+     *
      * Returns a StreamingResult containing:
      * - hlsManifestUrl: for live streams (M3U8 with all qualities)
-     * - formats: list of individual stream URLs (muxed + adaptive)
+     * - muxedFormats: video+audio combined (itag 18=360p, 22=720p)
+     * - adaptiveFormats: video-only + audio-only streams for DASH
      */
     fun parseStreamingData(json: JsonNode): StreamingResult {
         val streamingData = json.path("streamingData")
@@ -422,37 +423,50 @@ object InnerTubeParser {
             Log.w(TAG, "No streamingData in player response")
             return StreamingResult()
         }
-        
+
         // Check for HLS manifest (live streams — M3U8 with all qualities)
         val hlsManifestUrl = streamingData.path("hlsManifestUrl").textValue()
         if (hlsManifestUrl != null) {
             Log.d(TAG, "Found HLS manifest: ${hlsManifestUrl.take(80)}")
         }
-        
-        val formats = mutableListOf<YouTubeStreamFormat>()
-        
-        // Only use muxed formats (video+audio combined) — these are reliably playable.
-        // Adaptive formats are video-only (no audio track) and break ExoPlayer.
-        // Muxed: itag 18 = 360p MP4, itag 22 = 720p MP4
-        val muxedFormats = streamingData.path("formats")
-        if (muxedFormats.isArray) {
-            for (format in muxedFormats) {
-                parseFormat(format)?.let { 
-                    formats.add(it)
+
+        // ── Muxed formats (video+audio combined) ──
+        val muxedFormats = mutableListOf<YouTubeStreamFormat>()
+        val muxedArray = streamingData.path("formats")
+        if (muxedArray.isArray) {
+            for (format in muxedArray) {
+                parseMuxedFormat(format)?.let {
+                    muxedFormats.add(it)
                     Log.d(TAG, "Muxed: itag=${it.itag} quality=${it.qualityLabel} mime=${it.mimeType}")
                 }
             }
         }
-        
-        Log.d(TAG, "Parsed ${formats.size} muxed formats, hlsManifest=${hlsManifestUrl != null}")
-        return StreamingResult(hlsManifestUrl = hlsManifestUrl, formats = formats)
+
+        // ── Adaptive formats (video-only + audio-only) ──
+        val adaptiveFormats = mutableListOf<YouTubeStreamFormat>()
+        val adaptiveArray = streamingData.path("adaptiveFormats")
+        if (adaptiveArray.isArray) {
+            for (format in adaptiveArray) {
+                parseAdaptiveFormat(format)?.let {
+                    adaptiveFormats.add(it)
+                    Log.d(TAG, "Adaptive: itag=${it.itag} ${it.qualityLabel ?: it.baseMimeType} codecs=${it.codecs}")
+                }
+            }
+        }
+
+        Log.d(TAG, "Parsed ${muxedFormats.size} muxed, ${adaptiveFormats.size} adaptive, hlsManifest=${hlsManifestUrl != null}")
+        return StreamingResult(
+            hlsManifestUrl = hlsManifestUrl,
+            muxedFormats = muxedFormats,
+            adaptiveFormats = adaptiveFormats
+        )
     }
-    
+
     /**
-     * Parse a single format node into YouTubeStreamFormat.
+     * Parse a muxed format node (video+audio combined).
      * Skips formats without a direct URL (signatureCipher-protected).
      */
-    private fun parseFormat(format: JsonNode): YouTubeStreamFormat? {
+    private fun parseMuxedFormat(format: JsonNode): YouTubeStreamFormat? {
         val url = format.path("url").textValue() ?: return null
         return YouTubeStreamFormat(
             itag = format.path("itag").intValue(),
@@ -465,6 +479,53 @@ object InnerTubeParser {
             bitrate = format.path("bitrate").longValue().takeIf { it > 0 },
             contentLength = format.path("contentLength").textValue()?.toLongOrNull()
         )
+    }
+
+    /**
+     * Parse an adaptive format node (video-only or audio-only).
+     * Extracts DASH-required fields: initRange, indexRange, codecs, duration.
+     * Skips cipher-protected or formats missing required range data.
+     */
+    private fun parseAdaptiveFormat(format: JsonNode): YouTubeStreamFormat? {
+        val url = format.path("url").textValue() ?: return null
+
+        // initRange and indexRange are required for DASH SegmentBase
+        val initRange = buildRangeString(format.path("initRange"))
+        val indexRange = buildRangeString(format.path("indexRange"))
+        if (initRange == null || indexRange == null) return null
+
+        // Extract codecs from compound mimeType: "video/mp4; codecs=\"avc1.64001F\""
+        val rawMimeType = format.path("mimeType").textValue() ?: return null
+        val codecs = extractCodecs(rawMimeType)
+
+        return YouTubeStreamFormat(
+            itag = format.path("itag").intValue(),
+            url = url,
+            mimeType = rawMimeType,
+            qualityLabel = format.path("qualityLabel").textValue(),
+            quality = format.path("quality").textValue(),
+            width = format.path("width").intValue().takeIf { it > 0 },
+            height = format.path("height").intValue().takeIf { it > 0 },
+            bitrate = format.path("bitrate").longValue().takeIf { it > 0 },
+            contentLength = format.path("contentLength").textValue()?.toLongOrNull(),
+            codecs = codecs,
+            initRange = initRange,
+            indexRange = indexRange,
+            approxDurationMs = format.path("approxDurationMs").textValue()?.toLongOrNull()
+        )
+    }
+
+    /** Build "start-end" range string from a JSON object with start/end fields. */
+    private fun buildRangeString(rangeNode: JsonNode): String? {
+        val start = rangeNode.path("start").textValue() ?: return null
+        val end = rangeNode.path("end").textValue() ?: return null
+        return "$start-$end"
+    }
+
+    /** Extract codecs value from compound mimeType like `video/mp4; codecs="avc1.64001F"`. */
+    private fun extractCodecs(mimeType: String): String? {
+        val match = Regex("""codecs="([^"]+)"""").find(mimeType)
+        return match?.groupValues?.getOrNull(1)
     }
 
     // ==================== HELPERS ====================

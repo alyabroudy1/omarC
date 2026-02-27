@@ -47,7 +47,12 @@ data class YouTubeBrowseResult(
 
 /**
  * A playable stream format from the /player API.
- * Muxed formats (itag 18, 22) contain both video+audio in a single MP4.
+ *
+ * Two categories:
+ *   - Muxed (itag 18, 22): video+audio combined in a single MP4.
+ *   - Adaptive: video-only OR audio-only at a specific quality.
+ *     Adaptive streams carry [initRange]/[indexRange] for DASH SegmentBase
+ *     and a parsed [codecs] string extracted from the compound mimeType.
  */
 data class YouTubeStreamFormat(
     val itag: Int,
@@ -58,15 +63,33 @@ data class YouTubeStreamFormat(
     val width: Int? = null,
     val height: Int? = null,
     val bitrate: Long? = null,
-    val contentLength: Long? = null
-)
+    val contentLength: Long? = null,
+
+    // Adaptive-only fields (null for muxed formats)
+    val codecs: String? = null,           // e.g., "avc1.64001F", "mp4a.40.2"
+    val initRange: String? = null,        // e.g., "0-740"
+    val indexRange: String? = null,       // e.g., "741-1192"
+    val approxDurationMs: Long? = null    // e.g., 215000
+) {
+    /** True when this is a video track (not audio). */
+    val isVideo: Boolean get() = mimeType.startsWith("video/")
+
+    /** True when this is an audio track. */
+    val isAudio: Boolean get() = mimeType.startsWith("audio/")
+
+    /** The base mime type without the codecs parameter, e.g. "video/mp4". */
+    val baseMimeType: String get() = mimeType.substringBefore(";").trim()
+}
 
 /**
  * Result from parseStreamingData containing all available streams.
- * For live streams, hlsManifestUrl gives a single M3U8 with all qualities.
- * For VOD, formats contains individual stream URLs at various qualities.
+ *
+ * - [hlsManifestUrl]: for live streams — single M3U8 with all qualities.
+ * - [muxedFormats]: video+audio combined (itag 18/22), always playable.
+ * - [adaptiveFormats]: video-only + audio-only streams for DASH manifest generation.
  */
 data class StreamingResult(
     val hlsManifestUrl: String? = null,
-    val formats: List<YouTubeStreamFormat> = emptyList()
+    val muxedFormats: List<YouTubeStreamFormat> = emptyList(),
+    val adaptiveFormats: List<YouTubeStreamFormat> = emptyList()
 )

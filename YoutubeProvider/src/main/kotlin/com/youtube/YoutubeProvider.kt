@@ -218,14 +218,30 @@ class YoutubeProvider : MainAPI() {
             return true
         }
 
-        // 2. Muxed format streams (video+audio combined, itag 18=360p, 22=720p)
-        if (result.formats.isEmpty()) {
-            Log.w(TAG, "loadLinks: No muxed formats found, falling back to WebView")
-            launchWebViewPlayer(data)
-            return true
+        // 2. DASH manifest from adaptive formats — high quality with ABR
+        if (result.adaptiveFormats.isNotEmpty()) {
+            val dashUri = com.youtube.innertube.DashManifestGenerator.generateDataUri(result.adaptiveFormats)
+            if (dashUri != null) {
+                callback(
+                    newExtractorLink(
+                        source = "YouTube",
+                        name = "YouTube DASH",
+                        url = dashUri,
+                        type = ExtractorLinkType.DASH
+                    ) {
+                        this.referer = "https://www.youtube.com/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+                        )
+                    }
+                )
+                Log.d(TAG, "loadLinks: Added DASH manifest with ${result.adaptiveFormats.size} adaptive streams")
+            }
         }
 
-        for (stream in result.formats) {
+        // 3. Muxed format streams as fallback (itag 18=360p, 22=720p)
+        for (stream in result.muxedFormats) {
             val qualityValue = mapQuality(stream.qualityLabel)
 
             callback(
@@ -242,10 +258,15 @@ class YoutubeProvider : MainAPI() {
                     )
                 }
             )
-            Log.d(TAG, "loadLinks: Added itag=${stream.itag} quality=${stream.qualityLabel}")
+            Log.d(TAG, "loadLinks: Added muxed itag=${stream.itag} quality=${stream.qualityLabel}")
         }
 
-        Log.d(TAG, "loadLinks: Returned ${result.formats.size} streams")
+        if (result.adaptiveFormats.isEmpty() && result.muxedFormats.isEmpty()) {
+            Log.w(TAG, "loadLinks: No formats found, falling back to WebView")
+            launchWebViewPlayer(data)
+        }
+
+        Log.d(TAG, "loadLinks: Done — ${result.adaptiveFormats.size} adaptive, ${result.muxedFormats.size} muxed")
         return true
     }
 
