@@ -1,7 +1,5 @@
 package com.youtube.innertube
 
-import android.util.Base64
-
 /**
  * Generates a DASH MPD (Media Presentation Description) manifest from
  * YouTube adaptive format streams.
@@ -15,16 +13,16 @@ import android.util.Base64
 object DashManifestGenerator {
 
     /**
-     * Build a DASH MPD manifest from adaptive formats.
+     * Build a DASH MPD manifest from adaptive formats and serve it
+     * via a local HTTP server that CloudStream's HttpDataSource can reach.
      *
      * @param adaptiveFormats List of video-only and audio-only streams
-     * @return A `data:` URI containing the base64-encoded MPD XML,
+     * @return An http://127.0.0.1:{port}/manifest.mpd URL,
      *         or null if there are no usable formats.
      */
-    fun generateDataUri(adaptiveFormats: List<YouTubeStreamFormat>): String? {
+    fun generateUrl(adaptiveFormats: List<YouTubeStreamFormat>): String? {
         val mpd = generateMpd(adaptiveFormats) ?: return null
-        val encoded = Base64.encodeToString(mpd.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        return "data:application/dash+xml;base64,$encoded"
+        return LocalMpdServer.serve(mpd)
     }
 
     /**

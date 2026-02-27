@@ -92,7 +92,7 @@ class Watanflix : BaseProvider() {
 
         // 2. DASH manifest from adaptive formats — high quality with ABR
         if (result.adaptiveFormats.isNotEmpty()) {
-            val dashUri = com.youtube.innertube.DashManifestGenerator.generateDataUri(result.adaptiveFormats)
+            val dashUri = com.youtube.innertube.DashManifestGenerator.generateUrl(result.adaptiveFormats)
             if (dashUri != null) {
                 callback(
                     newExtractorLink(
