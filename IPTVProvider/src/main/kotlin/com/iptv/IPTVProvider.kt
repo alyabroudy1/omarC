@@ -136,7 +136,7 @@ class IPTVProvider : BaseProvider() {
         if (page > 1) return null
         
         try {
-            val url = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
+            val url = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
             
             val content = app.get(url).text
             val channels = parseM3U(content)
@@ -195,7 +195,7 @@ class IPTVProvider : BaseProvider() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         try {
-            val url = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
+            val url = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
             val content = app.get(url).text
             val channels = parseM3U(content)
             
