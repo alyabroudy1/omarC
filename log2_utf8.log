@@ -1,0 +1,105 @@
+﻿2026-02-28 10:59:01.842  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-02-28 10:59:01.842  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-02-28 10:59:01.842  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-02-28 10:59:02.032  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-28 10:59:02.032  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-28 10:59:04.212  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-02-28 10:59:04.215  2656-2722  InnerTubeClient         com.lagradost.cloudstream3           D  POST https://www.youtube.com/youtubei/v1/next | body={"context":{"client":{"clientName":"WEB","clientVersion":"2.20250220.01.00","hl":"ar","gl":"SA","userAgent":"Mozilla/5.0
+2026-02-28 10:59:04.220  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-02-28 10:59:04.220  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-28 10:59:04.220  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-28 10:59:06.042  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
+2026-02-28 10:59:06.047  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-02-28 10:59:06.047  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-02-28 10:59:06.047  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-02-28 10:59:06.049  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-02-28 10:59:06.049  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-02-28 10:59:06.081  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-02-28 10:59:06.083  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-02-28 10:59:06.083  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-02-28 10:59:06.084  2656-2728  YoutubeProvider         com.lagradost.cloudstream3           D  loadLinks: data=https://www.youtube.com/watch?v=wHf3-aQ9TDU
+2026-02-28 10:59:06.084  2656-2728  YoutubeProvider         com.lagradost.cloudstream3           D  loadLinks: videoId=wHf3-aQ9TDU
+2026-02-28 10:59:06.084  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-02-28 10:59:06.084  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-02-28 10:59:06.084  2656-2728  InnerTubeClient         com.lagradost.cloudstream3           D  POST player [IOS] | videoId=wHf3-aQ9TDU
+2026-02-28 10:59:06.121  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-02-28 10:59:06.121  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-28 10:59:06.121  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-28 10:59:06.132  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-02-28 10:59:06.132  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-02-28 10:59:06.132  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-28 10:59:06.132  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-28 10:59:06.238  2656-2728  InnerTubeClient         com.lagradost.cloudstream3           D  Player [IOS]: adaptive=22 muxed=0 hls=true
+2026-02-28 10:59:06.238  2656-2728  InnerTubeClient         com.lagradost.cloudstream3           D  getPlayer: IOS client returned usable streams for wHf3-aQ9TDU
+2026-02-28 10:59:06.238  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Found HLS manifest: https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1772294346/ei/a
+2026-02-28 10:59:06.238  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=137 1080p codecs=avc1.640028
+2026-02-28 10:59:06.238  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=248 1080p codecs=vp09.00.40.08
+2026-02-28 10:59:06.238  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=136 720p codecs=avc1.64001F
+2026-02-28 10:59:06.238  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=247 720p codecs=vp09.00.31.08
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=135 480p codecs=avc1.4D401E
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=244 480p codecs=vp09.00.30.08
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=134 360p codecs=avc1.4D401E
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=243 360p codecs=vp09.00.21.08
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=133 240p codecs=avc1.4D4015
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=242 240p codecs=vp09.00.20.08
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=160 144p codecs=avc1.4D400C
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=278 144p codecs=vp09.00.11.08
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=139 audio/mp4 codecs=mp4a.40.5
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=139 audio/mp4 codecs=mp4a.40.5
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=140 audio/mp4 codecs=mp4a.40.2
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=140 audio/mp4 codecs=mp4a.40.2
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=249 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=249 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=250 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=250 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=251 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Adaptive: itag=251 audio/webm codecs=opus
+2026-02-28 10:59:06.239  2656-2728  InnerTubeParser         com.lagradost.cloudstream3           D  Parsed 0 muxed, 22 adaptive, hlsManifest=true
+2026-02-28 10:59:06.240  2656-2728  YoutubeProvider         com.lagradost.cloudstream3           D  loadLinks: [Tier 1] HLS manifest emitted — done
+2026-02-28 10:59:06.243  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  loadPlayer
+2026-02-28 10:59:06.243  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-02-28 10:59:06.243  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-02-28 10:59:06.243  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  loadOnlinePlayer ExtractorLink(name=YouTube Live, url=https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1772294346/ei/aryiacnXHYqH6dsPoqDdoQU/ip/2001%3A16b8%3A30%3A700%3A1044%3Aae60%3Ac27f%3A9381/id/c077f7f9a43d4c35/source/youtube/requiressl/yes/xpc/EgVo2aDSNQ%3D%3D/playback_host/rr4---sn-8xgn5uxa-quhl.googlevideo.com/cps/536/met/1772272746%2C/mh/j5/mm/31%2C26/mn/sn-8xgn5uxa-quhl%2Csn-h0jelne6/ms/au%2Conr/mv/m/mvi/4/pl/40/rms/au%2Cau/tx/51539831/txs/51539830%2C51539831/hfr/1/demuxed/1/tts_caps/1/maudio/1/initcwndbps/3160000/bui/AVNa5-y9QkOM6R0S2L0Dzg_MoVhl2QxLxX0mNxO86nqyLlKhShQ15Njw2KZuW1R7N4iwQiNUQmAvEhE4/spc/6dlaFEYNJFpyUbBumd_ZDzcTtR8TFsyHtF3FsukgK4lQrZhLlt1kaQ/vprv/1/go/1/rqh/5/mt/1772272380/fvip/2/nvgoi/1/short_key/1/ncsapi/1/keepalive/yes/fexp/51552689%2C51565116%2C51565681%2C51580968%2C51791333/dover/13/itag/0/playlist_type/DVR/sparams/expire%2Cei%2Cip%2Cid%2Csource%2Crequiressl%2Cxpc%2Ctx%2Ctxs%2Chfr%2Cdemuxed%2Ctts_caps%2Cmaudio%2Cbui%2Cspc%2Cvprv%2Cgo%2Crqh%2Citag%2Cplaylist_type/sig/AHEqNM4wRAIgCn2ruDJrtGCCBkDMh1pAVy75QStjZ4bVQBLXNd1xpsACIE1JWjFB4atpbMWR4yoTmg3veVDfQNxgd-beLuPAr7GN/lsparams/playback_host%2Ccps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps/lsig/APaTxxMwRQIhAMkdTshwfgZQhApcHtJbaAtFZy8ZHC16wHs1R0qJyWl3AiBQrMF4m-6EsO6lirWSSRixDm-AT1O8SVd10Mh45WzYgg%3D%3D/file/index.m3u8, referer=https://www.youtube.com/, type=M3U8)
+2026-02-28 10:59:06.243  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  loadExo
+2026-02-28 10:59:06.244  2656-2656  ExoPlayerImpl           com.lagradost.cloudstream3           I  Init 9980678 [AndroidXMedia3/1.8.0] [dm3q, SM-S918B, samsung, 36]
+2026-02-28 10:59:06.246  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=androidx.media3.exoplayer.ExoPlayerImpl@9980678, source=Player)
+2026-02-28 10:59:06.261  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: StatusEvent(wasPlaying=IsBuffering, isPlaying=IsBuffering, source=Player)
+2026-02-28 10:59:06.263  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=0, toMs=0, durationMs=-9223372036854775807)
+2026-02-28 10:59:06.264  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-02-28 10:59:06.264  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-02-28 10:59:06.550  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: EmbeddedSubtitlesFetchedEvent(tracks=[], source=Player)
+2026-02-28 10:59:06.550  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: TracksChangedEvent(source=Player)
+2026-02-28 10:59:06.552  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: SubtitlesUpdatedEvent(source=Player)
+2026-02-28 10:59:09.998  2656-6198  ExoPlayerImplInternal   com.lagradost.cloudstream3           E  Playback error (Explain with AI)
+                                                                                                      androidx.media3.exoplayer.ExoPlaybackException: Source error
+                                                                                                          at androidx.media3.exoplayer.ExoPlayerImplInternal.handleIoException(ExoPlayerImplInternal.java:927)
+                                                                                                          at androidx.media3.exoplayer.ExoPlayerImplInternal.handleMessage(ExoPlayerImplInternal.java:899)
+                                                                                                          at android.os.Handler.dispatchMessage(Handler.java:106)
+                                                                                                          at android.os.Looper.loopOnce(Looper.java:273)
+                                                                                                          at android.os.Looper.loop(Looper.java:363)
+                                                                                                          at android.os.HandlerThread.run(HandlerThread.java:85)
+                                                                                                      Caused by: androidx.media3.datasource.HttpDataSource$InvalidResponseCodeException: Response code: 403
+                                                                                                          at androidx.media3.datasource.DefaultHttpDataSource.open(DefaultHttpDataSource.java:400)
+                                                                                                          at androidx.media3.datasource.TeeDataSource.open(TeeDataSource.java:54)
+                                                                                                          at androidx.media3.datasource.cache.CacheDataSource.openNextSource(CacheDataSource.java:802)
+                                                                                                          at androidx.media3.datasource.cache.CacheDataSource.open(CacheDataSource.java:615)
+                                                                                                          at androidx.media3.datasource.StatsDataSource.open(StatsDataSource.java:88)
+                                                                                                          at androidx.media3.exoplayer.hls.HlsMediaChunk.prepareExtraction(HlsMediaChunk.java:557)
+                                                                                                          at androidx.media3.exoplayer.hls.HlsMediaChunk.feedDataToExtractor(HlsMediaChunk.java:530)
+                                                                                                          at androidx.media3.exoplayer.hls.HlsMediaChunk.loadMedia(HlsMediaChunk.java:499)
+                                                                                                          at androidx.media3.exoplayer.hls.HlsMediaChunk.load(HlsMediaChunk.java:443)
+                                                                                                          at androidx.media3.exoplayer.upstream.Loader$LoadTask.run(Loader.java:453)
+                                                                                                          at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1154)
+                                                                                                          at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:652)
+                                                                                                          at java.lang.Thread.run(Thread.java:1564)
+2026-02-28 10:59:09.999  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: ResizedEvent(height=0, width=0, source=Player)
+2026-02-28 10:59:10.004  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: ErrorEvent(error=androidx.media3.exoplayer.ExoPlaybackException: Source error, source=Player)
+2026-02-28 10:59:10.004  2656-2656  CS3ExoPlayer            com.lagradost.cloudstream3           E  playerError: (ExtractorLink(name=YouTube Live, url=https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1772294346/ei/aryiacnXHYqH6dsPoqDdoQU/ip/2001%3A16b8%3A30%3A700%3A1044%3Aae60%3Ac27f%3A9381/id/c077f7f9a43d4c35/source/youtube/requiressl/yes/xpc/EgVo2aDSNQ%3D%3D/playback_host/rr4---sn-8xgn5uxa-quhl.googlevideo.com/cps/536/met/1772272746%2C/mh/j5/mm/31%2C26/mn/sn-8xgn5uxa-quhl%2Csn-h0jelne6/ms/au%2Conr/mv/m/mvi/4/pl/40/rms/au%2Cau/tx/51539831/txs/51539830%2C51539831/hfr/1/demuxed/1/tts_caps/1/maudio/1/initcwndbps/3160000/bui/AVNa5-y9QkOM6R0S2L0Dzg_MoVhl2QxLxX0mNxO86nqyLlKhShQ15Njw2KZuW1R7N4iwQiNUQmAvEhE4/spc/6dlaFEYNJFpyUbBumd_ZDzcTtR8TFsyHtF3FsukgK4lQrZhLlt1kaQ/vprv/1/go/1/rqh/5/mt/1772272380/fvip/2/nvgoi/1/short_key/1/ncsapi/1/keepalive/yes/fexp/51552689%2C51565116%2C51565681%2C51580968%2C51791333/dover/13/itag/0/playlist_type/DVR/sparams/expire%2Cei%2Cip%2Cid%2Csource%2Crequiressl%2Cxpc%2Ctx%2Ctxs%2Chfr%2Cdemuxed%2Ctts_caps%2Cmaudio%2Cbui%2Cspc%2Cvprv%2Cgo%2Crqh%2Citag%2Cplaylist_type/sig/AHEqNM4wRAIgCn2ruDJrtGCCBkDMh1pAVy75QStjZ4bVQBLXNd1xpsACIE1JWjFB4atpbMWR4yoTmg3veVDfQNxgd-beLuPAr7GN/lsparams/playback_host%2Ccps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps/lsig/APaTxxMwRQIhAMkdTshwfgZQhApcHtJbaAtFZy8ZHC16wHs1R0qJyWl3AiBQrMF4m-6EsO6lirWSSRixDm-AT1O8SVd10Mh45WzYgg%3D%3D/file/index.m3u8, referer=https://www.youtube.com/, type=M3U8), null), type=androidx.media3.exoplayer.ExoPlaybackException, message=Source error, url=https://manifest.googlevideo.com/api/manifest/hls_variant/expire/1772294346/ei/aryiacnXHYqH6dsPoqDdoQU/ip/2001%3A16b8%3A30%3A700%3A1044%3Aae60%3Ac27f%3A9381/id/c077f7f9a43d4c35/source/youtube/requiressl/yes/xpc/EgVo2aDSNQ%3D%3D/playback_host/rr4---sn-8xgn5uxa-quhl.googlevideo.com/cps/536/met/1772272746%2C/mh/j5/mm/31%2C26/mn/sn-8xgn5uxa-quhl%2Csn-h0jelne6/ms/au%2Conr/mv/m/mvi/4/pl/40/rms/au%2Cau/tx/51539831/txs/51539830%2C51539831/hfr/1/demuxed/1/tts_caps/1/maudio/1/initcwndbps/3160000/bui/AVNa5-y9QkOM6R0S2L0Dzg_MoVhl2QxLxX0mNxO86nqyLlKhShQ15Njw2KZuW1R7N4iwQiNUQmAvEhE4/spc/6dlaFEYNJFpyUbBumd_ZDzcTtR8TFsyHtF3FsukgK4lQrZhLlt1kaQ/vprv/1/go/1/rqh/5/mt/1772272380/fvip/2/nvgoi/1/short_key/1/ncsapi/1/keepalive/yes/fexp/51552689%2C51565116%2C51565681%2C51580968%2C51791333/dover/13/itag/0/playlist_type/DVR/sparams/expire%2Cei%2Cip%2Cid%2Csource%2Crequiressl%2Cxpc%2Ctx%2Ctxs%2Chfr%2Cdemuxed%2Ctts_caps%2Cmaudio%2Cbui%2Cspc%2Cvprv%2Cgo%2Crqh%2Citag%2Cplaylist_type/sig/AHEqNM4wRAIgCn2ruDJrtGCCBkDMh1pAVy75QStjZ4bVQBLXNd1xpsACIE1JWjFB4atpbMWR4yoTmg3veVDfQNxgd-beLuPAr7GN/lsparams/playback_host%2Ccps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps/lsig/APaTxxMwRQIhAMkdTshwfgZQhApcHtJbaAtFZy8ZHC16wHs1R0qJyWl3AiBQrMF4m-6EsO6lirWSSRixDm-AT1O8SVd10Mh45WzYgg%3D%3D/file/index.m3u8, headers={User-Agent=com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)}, referer=https://www.youtube.com/, position=0, duration=165582, isPlaying=false (Explain with AI)
+                                                                                                    androidx.media3.exoplayer.ExoPlaybackException: Source error
+                                                                                                    	at androidx.media3.exoplayer.ExoPlayerImplInternal.handleIoException(ExoPlayerImplInternal.java:927)
+                                                                                                    	at androidx.media3.exoplayer.ExoPlayerImplInternal.handleMessage(ExoPlayerImplInternal.java:899)
+                                                                                                    	at android.os.Handler.dispatchMessage(Handler.java:106)
+                                                                                                    	at android.os.Looper.loopOnce(Looper.java:273)
+                                                                                                    	at android.os.Looper.loop(Looper.java:363)
+                                                                                                    	at android.os.HandlerThread.run(HandlerThread.java:85)
+                                                                                                    Caused by: androidx.media3.datasource.HttpDataSource$InvalidResponseCodeException: Response code: 403

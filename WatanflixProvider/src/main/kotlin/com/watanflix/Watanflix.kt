@@ -73,7 +73,7 @@ class Watanflix : BaseProvider() {
         var linksEmitted = 0
 
         // ── Tier 1: HLS manifest for live streams ──
-        if (result.hlsManifestUrl != null) {
+        if (result.hlsManifestUrl != null && result.isLive) {
             callback(
                 newExtractorLink(
                     source = "Watanflix",
@@ -89,6 +89,8 @@ class Watanflix : BaseProvider() {
             linksEmitted++
             Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted — done")
             return true
+        } else if (result.hlsManifestUrl != null) {
+            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest skipped — video is not live")
         }
 
         // ── Tier 2: DASH manifest from adaptive formats ──

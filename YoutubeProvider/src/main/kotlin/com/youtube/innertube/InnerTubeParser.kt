@@ -424,10 +424,14 @@ object InnerTubeParser {
             return StreamingResult()
         }
 
+        // Check if the content is actually a live stream
+        val isLive = json.path("videoDetails").path("isLiveContent").asBoolean(false)
+
         // Check for HLS manifest (live streams — M3U8 with all qualities)
+        // Note: IOS client returns HLS even for VODs! Only trust it if isLive == true.
         val hlsManifestUrl = streamingData.path("hlsManifestUrl").textValue()
         if (hlsManifestUrl != null) {
-            Log.d(TAG, "Found HLS manifest: ${hlsManifestUrl.take(80)}")
+            Log.d(TAG, "Found HLS manifest (isLive=$isLive): ${hlsManifestUrl.take(80)}")
         }
 
         // ── Muxed formats (video+audio combined) ──
@@ -458,7 +462,8 @@ object InnerTubeParser {
         return StreamingResult(
             hlsManifestUrl = hlsManifestUrl,
             muxedFormats = muxedFormats,
-            adaptiveFormats = adaptiveFormats
+            adaptiveFormats = adaptiveFormats,
+            isLive = isLive
         )
     }
 

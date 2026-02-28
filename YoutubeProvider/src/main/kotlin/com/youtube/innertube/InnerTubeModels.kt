@@ -91,5 +91,6 @@ data class YouTubeStreamFormat(
 data class StreamingResult(
     val hlsManifestUrl: String? = null,
     val muxedFormats: List<YouTubeStreamFormat> = emptyList(),
-    val adaptiveFormats: List<YouTubeStreamFormat> = emptyList()
+    val adaptiveFormats: List<YouTubeStreamFormat> = emptyList(),
+    val isLive: Boolean = false
 )

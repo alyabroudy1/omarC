@@ -1,0 +1,49 @@
+{
+  "data": [
+    {
+      "id": 92,
+      "title": " المحقق العبقري - رات مان",
+      "title_en": "Rat Man",
+      "slug": "المحقق-العبقري-رات-مان",
+      "website_link": "https://watanflix.com/series/المحقق-العبقري-رات-مان",
+      "url": "https://watanflix.com/ar/series/المحقق-العبقري-رات-مان",
+      "class": "Episode"
+    },
+    {
+      "id": 328,
+      "title": " بهذا كان يدعو",
+      "title_en": "Bee haza kan yadeu",
+      "slug": "بهذا-كان-يدعو",
+      "website_link": "https://watanflix.com/series/بهذا-كان-يدعو",
+      "url": "https://watanflix.com/ar/series/بهذا-كان-يدعو",
+      "class": "Episode"
+    },
+    {
+      "id": 304,
+      "title": " عائلتي و أنا",
+      "title_en": "Aelati wa Ana",
+      "slug": "عائلتي-و-أنا",
+      "website_link": "https://watanflix.com/series/عائلتي-و-أنا",
+      "url": "https://watanflix.com/ar/series/عائلتي-و-أنا",
+      "class": "Episode"
+    },
+    {
+      "id": 55,
+      "title": " قاع المدينة",
+      "title_en": "Qaa Al Madina",
+      "slug": "قاع-المدينة",
+      "website_link": "https://watanflix.com/series/قاع-المدينة",
+      "url": "https://watanflix.com/ar/series/قاع-المدينة",
+      "class": "Episode"
+    },
+    {
+      "id": 253,
+      "title": " وعدي الجزء الثاني",
+      "title_en": " Waadi Season Two",
+      "slug": "وعدي-الجزء-الثاني",
+      "website_link": "https://watanflix.com/series/وعدي-الجزء-الثاني",
+      "url": "https://watanflix.com/ar/series/وعدي-الجزء-الثاني",
+      "class": "Episode"
+    }
+  ]
+}
