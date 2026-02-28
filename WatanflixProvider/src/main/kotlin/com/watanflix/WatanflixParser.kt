@@ -37,7 +37,7 @@ class WatanflixParser : NewBaseParser() {
         container = "div.item:has(a.linkPlay)",
         title = CssSelector(query = "p b", attr = "text"),
         url = CssSelector(query = "a.linkPlay", attr = "href"),
-        episode = CssSelector(query = "p", attr = "text", regex = "Episode (\\d+)")
+        episode = CssSelector(query = "p", attr = "text", regex = "(?:Episode|الحلقة)\\s*(\\d+)")
     )
 
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
@@ -52,7 +52,7 @@ class WatanflixParser : NewBaseParser() {
         episodeBlocks.forEach { block ->
             val link = block.selectFirst("a.linkPlay")?.attr("href") ?: return@forEach
             val title = block.selectFirst("p")?.text() ?: ""
-            val epNum = Regex("Episode (\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val epNum = Regex("(?:Episode|الحلقة)\\s*(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             
             if (link.isNotBlank()) {
                 episodes.add(
