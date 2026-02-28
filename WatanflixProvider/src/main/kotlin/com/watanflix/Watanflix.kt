@@ -34,11 +34,11 @@ class Watanflix : BaseProvider() {
     }
 
     override val mainPage = mainPageOf(
-        "/en/category/مسلسلات" to "مسلسلات",
-        "/en/category/الأفلام" to "الأفلام",
-        "/en/category/مسرحيات" to "مسرحيات",
-        "/en/category/برامج" to "برامج",
-        "/en/category/أطفال" to "أطفال"
+        "/ar/category/مسلسلات" to "مسلسلات",
+        "/ar/category/الأفلام" to "الأفلام",
+        "/ar/category/مسرحيات" to "مسرحيات",
+        "/ar/category/برامج" to "برامج",
+        "/ar/category/أطفال" to "أطفال"
     )
 
     override fun getParser(): NewBaseParser {
