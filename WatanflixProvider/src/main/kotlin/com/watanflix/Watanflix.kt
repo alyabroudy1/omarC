@@ -171,22 +171,25 @@ class Watanflix : BaseProvider() {
             Log.w(TAG, "loadLinks: [Tier 2] DASH skipped — no adaptive formats parsed")
         }
 
-        // ── Tier 3: Muxed formats (always emitted alongside DASH for robustness) ──
+        // ── Tier 3: Muxed formats (Progressive MP4 fallback) ──
         for (stream in result.muxedFormats) {
+            val qualityValue = mapQuality(stream.qualityLabel)
+            val name = "YouTube ${stream.qualityLabel ?: "MP4"}"
+            
             callback(
                 newExtractorLink(
-                    source = "Watanflix",
-                    name = "Watanflix ${stream.qualityLabel ?: "Auto"}",
+                    source = "YouTube",
+                    name = name,
                     url = stream.url,
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.referer = "https://www.youtube.com/"
-                    this.quality = mapQuality(stream.qualityLabel)
+                    this.quality = qualityValue
                     this.headers = buildPlayerHeaders()
                 }
             )
             linksEmitted++
-            Log.d(TAG, "loadLinks: [Tier 3] Muxed itag=${stream.itag} quality=${stream.qualityLabel}")
+            Log.d(TAG, "loadLinks: [Tier 3] Muxed fallback emitted: ${stream.qualityLabel}")
         }
 
         // ── Tier 4: WebView last resort ──

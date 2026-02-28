@@ -23,6 +23,10 @@ object InnerTubeConfig {
     /** WEB client version — update periodically when YouTube changes */
     const val CLIENT_VERSION = "2.20250220.01.00"
     const val CLIENT_NAME = "WEB"
+
+    /** ANDROID_VR client (bypasses strict PO-Token/n-sig checks for streaming) */
+    const val VR_CLIENT_VERSION = "1.56.29"
+    const val VR_CLIENT_NAME = "ANDROID_VR"
     
     /** User agent matching the client version */
     const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
@@ -34,12 +38,17 @@ object InnerTubeConfig {
      * Build the InnerTube client context JSON body.
      * This is required for every API call.
      */
-    fun buildContext(hl: String = "ar", gl: String = "SA"): Map<String, Any> {
+    fun buildContext(
+        hl: String = "ar", 
+        gl: String = "SA",
+        clientName: String = CLIENT_NAME,
+        clientVersion: String = CLIENT_VERSION
+    ): Map<String, Any> {
         return mapOf(
             "context" to mapOf(
                 "client" to mapOf(
-                    "clientName" to CLIENT_NAME,
-                    "clientVersion" to CLIENT_VERSION,
+                    "clientName" to clientName,
+                    "clientVersion" to clientVersion,
                     "hl" to hl,
                     "gl" to gl,
                     "userAgent" to USER_AGENT

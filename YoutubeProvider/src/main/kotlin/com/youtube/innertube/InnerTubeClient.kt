@@ -135,18 +135,26 @@ object InnerTubeClient {
             Log.d(TAG, "getPlayer: IOS client returned usable streams for $videoId")
             return iosResult
         }
-        Log.w(TAG, "getPlayer: IOS client failed or returned no usable streams, trying ANDROID_TESTSUITE")
+        Log.w(TAG, "getPlayer: IOS client failed or returned no usable streams, trying ANDROID_VR")
 
-        // 2. Fallback: ANDROID_TESTSUITE (also returns direct URLs)
+        // 2. Fallback: ANDROID_VR (Often bypasses strict PO-Token/n-sig checks causing 403s on seek)
+        val vrResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_VR)
+        if (vrResult != null && hasUsableStreams(vrResult)) {
+            Log.d(TAG, "getPlayer: ANDROID_VR returned usable streams for $videoId")
+            return vrResult
+        }
+        Log.w(TAG, "getPlayer: ANDROID_VR also failed for $videoId, trying ANDROID_TESTSUITE")
+
+        // 3. Last resort: ANDROID_TESTSUITE (legacy embedded client)
         val testsuiteResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_TESTSUITE)
         if (testsuiteResult != null && hasUsableStreams(testsuiteResult)) {
             Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams for $videoId")
             return testsuiteResult
         }
-        Log.w(TAG, "getPlayer: ANDROID_TESTSUITE also failed for $videoId")
+        Log.w(TAG, "getPlayer: ANDROID_TESTSUITE failed as well for $videoId")
 
-        // 3. Return whatever we got (even without streams) so caller can check playability
-        return iosResult ?: testsuiteResult
+        // 4. Return whatever we got (even without streams) so caller can check playability
+        return vrResult ?: iosResult ?: testsuiteResult
     }
 
     /** Check if a player response contains any formats with direct URLs. */
@@ -188,6 +196,12 @@ object InnerTubeClient {
             clientVersion = "19.45.4",
             userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
             headerClientName = "5"
+        ),
+        ANDROID_VR(
+            clientName = "ANDROID_VR",
+            clientVersion = "1.56.29",
+            userAgent = "com.google.android.apps.youtube.vr/1.56.29 (Linux; U; Android 10) gzip",
+            headerClientName = "28"
         ),
         ANDROID_TESTSUITE(
             clientName = "ANDROID_TESTSUITE",
