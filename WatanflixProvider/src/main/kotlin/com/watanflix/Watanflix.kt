@@ -125,12 +125,13 @@ class Watanflix : BaseProvider() {
         val result = InnerTubeParser.parseStreamingData(playerJson)
         var linksEmitted = 0
 
-        // ── Tier 1: HLS manifest for live streams ──
-        if (result.hlsManifestUrl != null && result.isLive) {
+        // ── Tier 1: HLS manifest ──
+        if (result.hlsManifestUrl != null) {
+            val nameSuffix = if (result.isLive) "Live" else "HLS"
             callback(
                 newExtractorLink(
                     source = "Watanflix",
-                    name = "Watanflix Live",
+                    name = "Watanflix $nameSuffix",
                     url = result.hlsManifestUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
@@ -140,10 +141,10 @@ class Watanflix : BaseProvider() {
                 }
             )
             linksEmitted++
-            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted — done")
-            return true
-        } else if (result.hlsManifestUrl != null) {
-            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest skipped — video is not live")
+            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted ($nameSuffix)")
+            
+            // Only short-circuit if it's genuinely live (DASH doesn't work for live)
+            if (result.isLive) return true
         }
 
         // ── Tier 2: DASH manifest from adaptive formats ──
