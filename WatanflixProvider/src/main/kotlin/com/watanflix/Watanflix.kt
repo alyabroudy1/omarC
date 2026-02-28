@@ -12,6 +12,9 @@ import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeParser
 import com.fasterxml.jackson.annotation.JsonProperty
+import org.jsoup.Jsoup
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 
 class Watanflix : BaseProvider() {
 
@@ -19,13 +22,20 @@ class Watanflix : BaseProvider() {
     override val providerName get() = "Watanflix"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/watanflix.json"
 
+    override var mainUrl = "https://$baseDomain"
+
+    override val supportedTypes = setOf(
+        TvType.Movie,
+        TvType.TvSeries
+    )
+
     companion object {
         private const val TAG = "Watanflix"
     }
 
     override val mainPage = mainPageOf(
         "/en/category/مسلسلات" to "مسلسلات",
-        "/en/category/الأفلام" to "أفلام",
+        "/en/category/الأفلام" to "الأفلام",
         "/en/category/مسرحيات" to "مسرحيات",
         "/en/category/برامج" to "برامج",
         "/en/category/أطفال" to "أطفال"
@@ -33,6 +43,49 @@ class Watanflix : BaseProvider() {
 
     override fun getParser(): NewBaseParser {
         return WatanflixParser()
+    }
+
+    data class WatanflixSearchResponse(
+        @JsonProperty("data") val data: List<WatanflixSearchItem>? = null
+    )
+
+    data class WatanflixSearchItem(
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("url") val url: String? = null
+    )
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$mainUrl/ar/search?q=$query"
+        val response = app.get(url).parsedSafe<WatanflixSearchResponse>()
+        val items = response?.data ?: return emptyList()
+
+        return items.mapNotNull { item ->
+            val title = item.title?.trim() ?: return@mapNotNull null
+            val itemUrl = item.url ?: return@mapNotNull null
+
+            val isSeries = itemUrl.contains("series") || title.contains("مسلسل")
+            val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
+
+            // Fetch the individual page to extract the poster
+            var fetchedPoster: String? = null
+            try {
+                val html = app.get(itemUrl).text
+                val doc = Jsoup.parse(html)
+                fetchedPoster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+            } catch (e: Exception) {
+                Log.w(TAG, "search: Failed to fetch poster for $itemUrl - ${e.message}")
+            }
+
+            if (tvType == TvType.TvSeries) {
+                newTvSeriesSearchResponse(title, itemUrl, TvType.TvSeries) {
+                    this.posterUrl = fetchedPoster
+                }
+            } else {
+                newMovieSearchResponse(title, itemUrl, TvType.Movie) {
+                    this.posterUrl = fetchedPoster
+                }
+            }
+        }.filterNotNull()
     }
 
     override suspend fun loadLinks(
