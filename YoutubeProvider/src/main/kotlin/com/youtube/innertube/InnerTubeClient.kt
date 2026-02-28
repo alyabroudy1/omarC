@@ -132,16 +132,22 @@ object InnerTubeClient {
         // 1. Fetch from WEB first. Web natively supports embeds and returns both adaptive and progressive (muxed) streams.
         val webResult = getPlayerWithClient(videoId, ClientProfile.WEB)
         
-        // 2. Fetch from ANDROID_VR (Backup for stable DASH adaptiveFormats)
+        // 2. Fetch from WEB_CREATOR (Bypasses extremely strict embed restrictions that WEB fails on)
+        val creatorResult = getPlayerWithClient(videoId, ClientProfile.WEB_CREATOR)
+        
+        // 3. Fetch from ANDROID_VR (Backup for stable DASH adaptiveFormats)
         val vrResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_VR)
         
-        // 3. Fetch from IOS (Backup for progressive MP4 muxedFormats)
+        // 4. Fetch from IOS (Backup for progressive MP4 muxedFormats)
         val iosResult = getPlayerWithClient(videoId, ClientProfile.IOS)
 
         // Find the best baseline object
         val bestResult = if (webResult != null && hasUsableStreams(webResult)) {
             Log.d(TAG, "getPlayer: WEB returned usable streams")
             webResult
+        } else if (creatorResult != null && hasUsableStreams(creatorResult)) {
+            Log.d(TAG, "getPlayer: WEB_CREATOR returned usable streams")
+            creatorResult
         } else if (vrResult != null && hasUsableStreams(vrResult)) {
             Log.d(TAG, "getPlayer: ANDROID_VR returned usable streams")
             vrResult
@@ -149,13 +155,13 @@ object InnerTubeClient {
             Log.d(TAG, "getPlayer: IOS returned usable streams")
             iosResult
         } else {
-            // 4. Last resort: ANDROID_TESTSUITE (legacy embedded client)
+            // 5. Last resort: ANDROID_TESTSUITE (legacy embedded client)
             val testsuiteResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_TESTSUITE)
             if (testsuiteResult != null && hasUsableStreams(testsuiteResult)) {
                 Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams")
                 return testsuiteResult
             }
-            return webResult ?: vrResult ?: iosResult ?: testsuiteResult
+            return webResult ?: creatorResult ?: vrResult ?: iosResult ?: testsuiteResult
         }
 
         // --- MERGE MUXED FORMATS ---
@@ -218,6 +224,12 @@ object InnerTubeClient {
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             headerClientName = "1"
         ),
+        WEB_CREATOR(
+            clientName = "WEB_CREATOR",
+            clientVersion = "1.20250220.01.00",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            headerClientName = "62"
+        ),
         TV_EMBEDDED(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
@@ -270,7 +282,7 @@ object InnerTubeClient {
             ))
             
             // Add thirdParty context required for WEB embed bypass
-            if (profile == ClientProfile.WEB) {
+            if (profile == ClientProfile.WEB || profile == ClientProfile.WEB_CREATOR) {
                 put("thirdParty", mapOf(
                     "embedUrl" to "https://www.youtube.com/"
                 ))

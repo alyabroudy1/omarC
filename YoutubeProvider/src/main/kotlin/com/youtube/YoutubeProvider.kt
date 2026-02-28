@@ -199,13 +199,12 @@ class YoutubeProvider : MainAPI() {
         val result = InnerTubeParser.parseStreamingData(playerJson)
         var linksEmitted = 0
 
-        // ── Tier 1: HLS manifest ──
-        if (result.hlsManifestUrl != null) {
-            val nameSuffix = if (result.isLive) "Live" else "HLS"
+        // ── Tier 1: HLS manifest for live streams ──
+        if (result.hlsManifestUrl != null && result.isLive) {
             callback(
                 newExtractorLink(
                     source = "YouTube",
-                    name = "YouTube $nameSuffix",
+                    name = "YouTube Live",
                     url = result.hlsManifestUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
@@ -215,10 +214,10 @@ class YoutubeProvider : MainAPI() {
                 }
             )
             linksEmitted++
-            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted ($nameSuffix)")
-            
-            // Only short-circuit if it's genuinely live (DASH doesn't work for live)
-            if (result.isLive) return true
+            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted — done")
+            return true
+        } else if (result.hlsManifestUrl != null) {
+            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest skipped — video is not live")
         }
 
         // ── Tier 2: DASH manifest from adaptive formats ──
