@@ -129,48 +129,48 @@ object InnerTubeClient {
      * @return Raw JSON response with streamingData or null on failure
      */
     suspend fun getPlayer(videoId: String): JsonNode? {
-        // 1. Fetch from ANDROID_VR first (Crucial: provides stable DASH adaptiveFormats that survive seeking)
+        // 1. Fetch from TV_EMBEDDED first (Best for restricted VODs, provides extremely stable TV HTML5 DASH links)
+        val tvResult = getPlayerWithClient(videoId, ClientProfile.TV_EMBEDDED)
+        
+        // 2. Fetch from ANDROID_VR (Backup for stable DASH adaptiveFormats)
         val vrResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_VR)
         
-        // 2. Fetch from IOS (Crucial: provides stable Progressive MP4 muxedFormats)
+        // 3. Fetch from IOS (Provides progressive MP4 muxedFormats if available)
         val iosResult = getPlayerWithClient(videoId, ClientProfile.IOS)
 
-        // 3. Merge them: We want VR's adaptiveFormats + IOS's muxedFormats
-        if (vrResult != null && hasUsableStreams(vrResult)) {
-            Log.d(TAG, "getPlayer: ANDROID_VR returned usable streams for $videoId")
-            
-            // If IOS has muxed formats, artificially inject them into the VR JSON payload
-            val vrStreamingData = vrResult.path("streamingData") as? com.fasterxml.jackson.databind.node.ObjectNode
-            val iosFormats = iosResult?.path("streamingData")?.path("formats")
-
-            if (vrStreamingData != null && iosFormats != null && !iosFormats.isMissingNode) {
-                vrStreamingData.set<JsonNode>("formats", iosFormats)
-                Log.d(TAG, "getPlayer: Injected IOS progressive muxedFormats into VR payload")
+        // Find the best baseline object (preferably TV_EMBEDDED or VR)
+        val bestResult = if (tvResult != null && hasUsableStreams(tvResult)) {
+            Log.d(TAG, "getPlayer: TV_EMBEDDED returned usable streams")
+            tvResult
+        } else if (vrResult != null && hasUsableStreams(vrResult)) {
+            Log.d(TAG, "getPlayer: ANDROID_VR returned usable streams")
+            vrResult
+        } else if (iosResult != null && hasUsableStreams(iosResult)) {
+            Log.d(TAG, "getPlayer: IOS returned usable streams")
+            iosResult
+        } else {
+            // 4. Last resort: ANDROID_TESTSUITE (legacy embedded client)
+            val testsuiteResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_TESTSUITE)
+            if (testsuiteResult != null && hasUsableStreams(testsuiteResult)) {
+                Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams")
+                return testsuiteResult
             }
-            return vrResult
+            return tvResult ?: vrResult ?: iosResult ?: testsuiteResult
         }
+
+        // --- MERGE MUXED FORMATS ---
+        // ALWAYS inject IOS muxed formats into the final result if IOS found them, because TV/VR usually strip them out
+        val bestStreamingData = bestResult.path("streamingData") as? com.fasterxml.jackson.databind.node.ObjectNode
+        val iosFormats = iosResult?.path("streamingData")?.path("formats")
         
-        Log.w(TAG, "getPlayer: ANDROID_VR failed for $videoId, falling back to IOS")
-
-        if (iosResult != null && hasUsableStreams(iosResult)) {
-            Log.d(TAG, "getPlayer: IOS returned usable streams for $videoId")
-            return iosResult
+        if (bestStreamingData != null && iosFormats != null && !iosFormats.isMissingNode && iosFormats.size() > 0) {
+            bestStreamingData.set<JsonNode>("formats", iosFormats)
+            Log.d(TAG, "getPlayer: Injected ${iosFormats.size()} IOS progressive muxedFormats into final payload")
         }
-        
-        Log.w(TAG, "getPlayer: IOS failed as well, trying ANDROID_TESTSUITE")
 
-        // 4. Last resort: ANDROID_TESTSUITE (legacy embedded client)
-        val testsuiteResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_TESTSUITE)
-
-        if (testsuiteResult != null && hasUsableStreams(testsuiteResult)) {
-            Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams for $videoId")
-            return testsuiteResult
-        }
-        Log.w(TAG, "getPlayer: ANDROID_TESTSUITE failed as well for $videoId")
-
-        // 4. Return whatever we got (even without streams) so caller can check playability
-        return vrResult ?: iosResult ?: testsuiteResult
+        return bestResult
     }
+
 
     /** Check if a player response contains any formats with direct URLs. */
     private fun hasUsableStreams(json: JsonNode): Boolean {
@@ -211,6 +211,12 @@ object InnerTubeClient {
             clientVersion = "19.45.4",
             userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
             headerClientName = "5"
+        ),
+        TV_EMBEDDED(
+            clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            clientVersion = "2.0",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Safari/537.36; SmartTv",
+            headerClientName = "67"
         ),
         ANDROID_VR(
             clientName = "ANDROID_VR",
