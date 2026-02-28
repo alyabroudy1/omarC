@@ -129,19 +129,19 @@ object InnerTubeClient {
      * @return Raw JSON response with streamingData or null on failure
      */
     suspend fun getPlayer(videoId: String): JsonNode? {
-        // 1. Fetch from TV_EMBEDDED first (Best for restricted VODs, provides extremely stable TV HTML5 DASH links)
-        val tvResult = getPlayerWithClient(videoId, ClientProfile.TV_EMBEDDED)
+        // 1. Fetch from WEB first. Web natively supports embeds and returns both adaptive and progressive (muxed) streams.
+        val webResult = getPlayerWithClient(videoId, ClientProfile.WEB)
         
         // 2. Fetch from ANDROID_VR (Backup for stable DASH adaptiveFormats)
         val vrResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_VR)
         
-        // 3. Fetch from IOS (Provides progressive MP4 muxedFormats if available)
+        // 3. Fetch from IOS (Backup for progressive MP4 muxedFormats)
         val iosResult = getPlayerWithClient(videoId, ClientProfile.IOS)
 
-        // Find the best baseline object (preferably TV_EMBEDDED or VR)
-        val bestResult = if (tvResult != null && hasUsableStreams(tvResult)) {
-            Log.d(TAG, "getPlayer: TV_EMBEDDED returned usable streams")
-            tvResult
+        // Find the best baseline object
+        val bestResult = if (webResult != null && hasUsableStreams(webResult)) {
+            Log.d(TAG, "getPlayer: WEB returned usable streams")
+            webResult
         } else if (vrResult != null && hasUsableStreams(vrResult)) {
             Log.d(TAG, "getPlayer: ANDROID_VR returned usable streams")
             vrResult
@@ -155,7 +155,7 @@ object InnerTubeClient {
                 Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams")
                 return testsuiteResult
             }
-            return tvResult ?: vrResult ?: iosResult ?: testsuiteResult
+            return webResult ?: vrResult ?: iosResult ?: testsuiteResult
         }
 
         // --- MERGE MUXED FORMATS ---
@@ -212,6 +212,12 @@ object InnerTubeClient {
             userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
             headerClientName = "5"
         ),
+        WEB(
+            clientName = "WEB",
+            clientVersion = "2.20250220.01.00",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            headerClientName = "1"
+        ),
         TV_EMBEDDED(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
@@ -254,11 +260,22 @@ object InnerTubeClient {
                 }
             ))
             put("videoId", videoId)
+            
+            // Critical for bypassing embed restrictions in WEB/TV clients
             put("playbackContext", mapOf(
                 "contentPlaybackContext" to mapOf(
-                    "html5Preference" to "HTML5_PREF_WANTS"
+                    "html5Preference" to "HTML5_PREF_WANTS",
+                    "signatureTimestamp" to 20183
                 )
             ))
+            
+            // Add thirdParty context required for WEB embed bypass
+            if (profile == ClientProfile.WEB) {
+                put("thirdParty", mapOf(
+                    "embedUrl" to "https://www.youtube.com/"
+                ))
+            }
+            
             put("contentCheckOk", true)
             put("racyCheckOk", true)
         }
