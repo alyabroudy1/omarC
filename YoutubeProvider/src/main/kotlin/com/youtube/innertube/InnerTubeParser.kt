@@ -487,19 +487,32 @@ object InnerTubeParser {
      * Skips cipher-protected or formats missing required range data.
      */
     private fun parseAdaptiveFormat(format: JsonNode): YouTubeStreamFormat? {
-        val url = format.path("url").textValue() ?: return null
+        val itag = format.path("itag").intValue()
+        val url = format.path("url").textValue()
+        if (url == null) {
+            val hasCipher = format.has("signatureCipher") || format.has("cipher")
+            Log.d(TAG, "Adaptive itag=$itag SKIPPED: no direct URL (cipher=$hasCipher)")
+            return null
+        }
 
         // initRange and indexRange are required for DASH SegmentBase
         val initRange = buildRangeString(format.path("initRange"))
         val indexRange = buildRangeString(format.path("indexRange"))
-        if (initRange == null || indexRange == null) return null
+        if (initRange == null || indexRange == null) {
+            Log.d(TAG, "Adaptive itag=$itag SKIPPED: missing ranges (init=${initRange != null} index=${indexRange != null})")
+            return null
+        }
 
         // Extract codecs from compound mimeType: "video/mp4; codecs=\"avc1.64001F\""
-        val rawMimeType = format.path("mimeType").textValue() ?: return null
+        val rawMimeType = format.path("mimeType").textValue()
+        if (rawMimeType == null) {
+            Log.d(TAG, "Adaptive itag=$itag SKIPPED: no mimeType")
+            return null
+        }
         val codecs = extractCodecs(rawMimeType)
 
         return YouTubeStreamFormat(
-            itag = format.path("itag").intValue(),
+            itag = itag,
             url = url,
             mimeType = rawMimeType,
             qualityLabel = format.path("qualityLabel").textValue(),

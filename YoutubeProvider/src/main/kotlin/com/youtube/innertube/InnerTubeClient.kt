@@ -110,72 +110,166 @@ object InnerTubeClient {
 
     /**
      * Get player data including streaming URLs for a video.
-     * 
-     * Uses ANDROID client context because:
-     * - Returns direct muxed MP4 URLs (itag 18=360p, 22=720p)
-     * - No signature cipher — URLs are ready to play
-     * - WEB client uses yt-ump protocol which ExoPlayer can't handle
-     * 
+     *
+     * Strategy: Try IOS client first (most reliable for direct URLs),
+     * fall back to ANDROID_TESTSUITE if IOS returns no usable streams.
+     *
+     * Why IOS?
+     * - Apple devices don't support signature-based cipher decryption,
+     *   so YouTube serves direct playable URLs
+     * - Returns both adaptive (video-only + audio-only) and muxed formats
+     * - Much less likely to return signatureCipher-protected streams
+     *
+     * Why not ANDROID?
+     * - YouTube increasingly returns cipher-protected URLs for the
+     *   ANDROID client, especially with stale client versions
+     * - The old ANDROID v19.09.37 is frequently blocked or degraded
+     *
      * @param videoId YouTube video ID
      * @return Raw JSON response with streamingData or null on failure
      */
     suspend fun getPlayer(videoId: String): JsonNode? {
-        val body = mapOf(
-            "context" to mapOf(
-                "client" to mapOf(
-                    "clientName" to "ANDROID",
-                    "clientVersion" to "19.09.37",
-                    "androidSdkVersion" to 30,
-                    "hl" to "en",
-                    "gl" to "US",
-                    "userAgent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
-                )
-            ),
-            "videoId" to videoId,
-            "playbackContext" to mapOf(
+        // 1. Try IOS client first (best for direct URLs)
+        val iosResult = getPlayerWithClient(videoId, ClientProfile.IOS)
+        if (iosResult != null && hasUsableStreams(iosResult)) {
+            Log.d(TAG, "getPlayer: IOS client returned usable streams for $videoId")
+            return iosResult
+        }
+        Log.w(TAG, "getPlayer: IOS client failed or returned no usable streams, trying ANDROID_TESTSUITE")
+
+        // 2. Fallback: ANDROID_TESTSUITE (also returns direct URLs)
+        val testsuiteResult = getPlayerWithClient(videoId, ClientProfile.ANDROID_TESTSUITE)
+        if (testsuiteResult != null && hasUsableStreams(testsuiteResult)) {
+            Log.d(TAG, "getPlayer: ANDROID_TESTSUITE returned usable streams for $videoId")
+            return testsuiteResult
+        }
+        Log.w(TAG, "getPlayer: ANDROID_TESTSUITE also failed for $videoId")
+
+        // 3. Return whatever we got (even without streams) so caller can check playability
+        return iosResult ?: testsuiteResult
+    }
+
+    /** Check if a player response contains any formats with direct URLs. */
+    private fun hasUsableStreams(json: JsonNode): Boolean {
+        val sd = json.path("streamingData")
+        if (sd.isMissingNode) return false
+
+        // Check for HLS (live) — always usable
+        if (sd.path("hlsManifestUrl").textValue() != null) return true
+
+        // Check adaptive formats for at least one with a direct "url"
+        val adaptive = sd.path("adaptiveFormats")
+        if (adaptive.isArray) {
+            for (fmt in adaptive) {
+                if (fmt.path("url").textValue() != null) return true
+            }
+        }
+
+        // Check muxed formats
+        val muxed = sd.path("formats")
+        if (muxed.isArray) {
+            for (fmt in muxed) {
+                if (fmt.path("url").textValue() != null) return true
+            }
+        }
+
+        return false
+    }
+
+    /** Client profiles for the player API. */
+    private enum class ClientProfile(
+        val clientName: String,
+        val clientVersion: String,
+        val userAgent: String,
+        val headerClientName: String
+    ) {
+        IOS(
+            clientName = "IOS",
+            clientVersion = "19.45.4",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            headerClientName = "5"
+        ),
+        ANDROID_TESTSUITE(
+            clientName = "ANDROID_TESTSUITE",
+            clientVersion = "1.9",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
+            headerClientName = "30"
+        )
+    }
+
+    /** Make a player API call with a specific client profile. */
+    private suspend fun getPlayerWithClient(videoId: String, profile: ClientProfile): JsonNode? {
+        val body = buildMap<String, Any> {
+            put("context", mapOf(
+                "client" to buildMap {
+                    put("clientName", profile.clientName)
+                    put("clientVersion", profile.clientVersion)
+                    put("hl", "en")
+                    put("gl", "US")
+                    put("userAgent", profile.userAgent)
+                    if (profile == ClientProfile.ANDROID_TESTSUITE) {
+                        put("androidSdkVersion", 30)
+                    }
+                    if (profile == ClientProfile.IOS) {
+                        put("deviceMake", "Apple")
+                        put("deviceModel", "iPhone16,2")
+                        put("osName", "iPhone")
+                        put("osVersion", "18.1.0.22B83")
+                    }
+                }
+            ))
+            put("videoId", videoId)
+            put("playbackContext", mapOf(
                 "contentPlaybackContext" to mapOf(
                     "html5Preference" to "HTML5_PREF_WANTS"
                 )
-            ),
-            "contentCheckOk" to true,
-            "racyCheckOk" to true
-        )
-        
-        val androidHeaders = mapOf(
+            ))
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
+        }
+
+        val headers = mapOf(
             "Content-Type" to "application/json",
-            "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
-            "X-YouTube-Client-Name" to "3",
-            "X-YouTube-Client-Version" to "19.09.37"
+            "User-Agent" to profile.userAgent,
+            "X-YouTube-Client-Name" to profile.headerClientName,
+            "X-YouTube-Client-Version" to profile.clientVersion
         )
-        
+
         return try {
             val jsonBody = mapper.writeValueAsString(body)
-            Log.d(TAG, "POST player | videoId=$videoId")
-            
+            Log.d(TAG, "POST player [${profile.clientName}] | videoId=$videoId")
+
             val response = app.post(
                 InnerTubeConfig.PLAYER_ENDPOINT,
-                headers = androidHeaders,
+                headers = headers,
                 requestBody = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()),
                 referer = "https://www.youtube.com/",
                 timeout = 15
             )
-            
+
             val text = response.text
             if (text.isBlank()) {
-                Log.w(TAG, "Empty player response for $videoId")
+                Log.w(TAG, "Empty player response [${profile.clientName}] for $videoId")
                 return null
             }
-            
+
             val json = mapper.readTree(text)
             val error = json["error"]
             if (error != null) {
-                Log.e(TAG, "Player API error: ${error["message"]?.textValue()}")
+                Log.e(TAG, "Player API error [${profile.clientName}]: ${error["message"]?.textValue()}")
                 return null
             }
-            
+
+            // Log stream counts for diagnostics
+            val sd = json.path("streamingData")
+            val adaptiveCount = if (sd.path("adaptiveFormats").isArray) sd.path("adaptiveFormats").size() else 0
+            val muxedCount = if (sd.path("formats").isArray) sd.path("formats").size() else 0
+            val hasHls = sd.path("hlsManifestUrl").textValue() != null
+            Log.d(TAG, "Player [${profile.clientName}]: adaptive=$adaptiveCount muxed=$muxedCount hls=$hasHls")
+
             json
         } catch (e: Exception) {
-            Log.e(TAG, "getPlayer failed: ${e.message}")
+            Log.e(TAG, "getPlayer [${profile.clientName}] failed: ${e.message}")
             null
         }
     }

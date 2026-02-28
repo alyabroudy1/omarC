@@ -1,5 +1,7 @@
 package com.youtube.innertube
 
+import com.lagradost.api.Log
+
 /**
  * Generates a DASH MPD (Media Presentation Description) manifest from
  * YouTube adaptive format streams.
@@ -11,6 +13,8 @@ package com.youtube.innertube
  * which matches YouTube's adaptive stream layout (no separate segments).
  */
 object DashManifestGenerator {
+
+    private const val TAG = "DashManifestGen"
 
     /**
      * Build a DASH MPD manifest from adaptive formats and serve it
@@ -34,7 +38,16 @@ object DashManifestGenerator {
         val videoFormats = adaptiveFormats.filter { it.isVideo && it.codecs != null }
         val audioFormats = adaptiveFormats.filter { it.isAudio && it.codecs != null }
 
-        if (videoFormats.isEmpty()) return null
+        Log.d(TAG, "generateMpd: ${videoFormats.size} video, ${audioFormats.size} audio formats")
+
+        if (videoFormats.isEmpty()) {
+            Log.w(TAG, "generateMpd: No video formats — cannot build manifest")
+            return null
+        }
+        if (audioFormats.isEmpty()) {
+            Log.w(TAG, "generateMpd: No audio formats — skipping DASH (would be silent)")
+            return null
+        }
 
         // Duration from the first video format (all formats share the same duration)
         val durationMs = videoFormats.firstNotNullOfOrNull { it.approxDurationMs }
@@ -51,13 +64,12 @@ object DashManifestGenerator {
         appendAdaptationSet(sb, videoFormats, "video")
 
         // ── Audio AdaptationSet ──
-        if (audioFormats.isNotEmpty()) {
-            appendAdaptationSet(sb, audioFormats, "audio")
-        }
+        appendAdaptationSet(sb, audioFormats, "audio")
 
         sb.appendLine("  </Period>")
         sb.appendLine("</MPD>")
 
+        Log.d(TAG, "generateMpd: Built MPD with ${videoFormats.size}V + ${audioFormats.size}A streams")
         return sb.toString()
     }
 

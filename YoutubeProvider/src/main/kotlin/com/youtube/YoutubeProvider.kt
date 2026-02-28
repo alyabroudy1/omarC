@@ -178,27 +178,28 @@ class YoutubeProvider : MainAPI() {
         val videoId = data.substringAfter("v=").substringBefore("&")
         Log.d(TAG, "loadLinks: videoId=$videoId")
 
-        // Call InnerTube /player API with ANDROID client
+        // ── Step 1: Fetch player data (IOS → ANDROID_TESTSUITE fallback) ──
         val playerJson = InnerTubeClient.getPlayer(videoId)
         if (playerJson == null) {
-            Log.e(TAG, "loadLinks: Player API returned null, falling back to WebView")
+            Log.e(TAG, "loadLinks: Player API returned null — falling back to WebView")
             launchWebViewPlayer(data)
             return true
         }
 
-        // Check playability
+        // ── Step 2: Check playability ──
         val status = playerJson.path("playabilityStatus").path("status").textValue()
         if (status != "OK") {
             val reason = playerJson.path("playabilityStatus").path("reason").textValue() ?: "Unknown"
-            Log.w(TAG, "loadLinks: Not playable: $status — $reason, falling back to WebView")
+            Log.w(TAG, "loadLinks: Not playable: $status — $reason — falling back to WebView")
             launchWebViewPlayer(data)
             return true
         }
 
-        // Parse streaming data
+        // ── Step 3: Parse streaming data ──
         val result = InnerTubeParser.parseStreamingData(playerJson)
+        var linksEmitted = 0
 
-        // 1. HLS manifest for live streams — single M3U8 with all qualities
+        // ── Tier 1: HLS manifest for live streams ──
         if (result.hlsManifestUrl != null) {
             callback(
                 newExtractorLink(
@@ -209,16 +210,15 @@ class YoutubeProvider : MainAPI() {
                 ) {
                     this.referer = "https://www.youtube.com/"
                     this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
-                        "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
-                    )
+                    this.headers = buildPlayerHeaders()
                 }
             )
-            Log.d(TAG, "loadLinks: Added HLS manifest for live stream")
+            linksEmitted++
+            Log.d(TAG, "loadLinks: [Tier 1] HLS manifest emitted — done")
             return true
         }
 
-        // 2. DASH manifest from adaptive formats — high quality with ABR
+        // ── Tier 2: DASH manifest from adaptive formats ──
         if (result.adaptiveFormats.isNotEmpty()) {
             val dashUri = com.youtube.innertube.DashManifestGenerator.generateUrl(result.adaptiveFormats)
             if (dashUri != null) {
@@ -231,19 +231,21 @@ class YoutubeProvider : MainAPI() {
                     ) {
                         this.referer = "https://www.youtube.com/"
                         this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
-                        )
+                        this.headers = buildPlayerHeaders()
                     }
                 )
-                Log.d(TAG, "loadLinks: Added DASH manifest with ${result.adaptiveFormats.size} adaptive streams")
+                linksEmitted++
+                Log.d(TAG, "loadLinks: [Tier 2] DASH manifest emitted (${result.adaptiveFormats.size} adaptive streams)")
+            } else {
+                Log.w(TAG, "loadLinks: [Tier 2] DASH skipped — generator returned null (check audio/video format counts)")
             }
+        } else {
+            Log.w(TAG, "loadLinks: [Tier 2] DASH skipped — no adaptive formats parsed")
         }
 
-        // 3. Muxed format streams as fallback (itag 18=360p, 22=720p)
+        // ── Tier 3: Muxed formats (always emitted alongside DASH for robustness) ──
         for (stream in result.muxedFormats) {
             val qualityValue = mapQuality(stream.qualityLabel)
-
             callback(
                 newExtractorLink(
                     source = "YouTube",
@@ -253,22 +255,27 @@ class YoutubeProvider : MainAPI() {
                 ) {
                     this.referer = "https://www.youtube.com/"
                     this.quality = qualityValue
-                    this.headers = mapOf(
-                        "User-Agent" to "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
-                    )
+                    this.headers = buildPlayerHeaders()
                 }
             )
-            Log.d(TAG, "loadLinks: Added muxed itag=${stream.itag} quality=${stream.qualityLabel}")
+            linksEmitted++
+            Log.d(TAG, "loadLinks: [Tier 3] Muxed itag=${stream.itag} quality=${stream.qualityLabel}")
         }
 
-        if (result.adaptiveFormats.isEmpty() && result.muxedFormats.isEmpty()) {
-            Log.w(TAG, "loadLinks: No formats found, falling back to WebView")
+        // ── Tier 4: WebView last resort ──
+        if (linksEmitted == 0) {
+            Log.w(TAG, "loadLinks: No links emitted from any tier — falling back to WebView")
             launchWebViewPlayer(data)
         }
 
-        Log.d(TAG, "loadLinks: Done — ${result.adaptiveFormats.size} adaptive, ${result.muxedFormats.size} muxed")
+        Log.d(TAG, "loadLinks: Done — $linksEmitted links emitted (${result.adaptiveFormats.size} adaptive, ${result.muxedFormats.size} muxed)")
         return true
     }
+
+    /** Build consistent headers for stream requests. Matches the IOS client used by InnerTubeClient. */
+    private fun buildPlayerHeaders(): Map<String, String> = mapOf(
+        "User-Agent" to "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)"
+    )
 
     /**
      * Map YouTube quality label to CloudStream Qualities value.
