@@ -25,6 +25,10 @@ class IPTVProvider : BaseProvider() {
 
     override val supportedTypes: Set<TvType> = setOf(TvType.Live, TvType.Movie, TvType.TvSeries)
 
+    companion object {
+        private const val M3U_URL = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
+    }
+
     data class M3UChannel(
         val name: String,
         val url: String,
@@ -33,6 +37,25 @@ class IPTVProvider : BaseProvider() {
         val tvgId: String?,
         val headers: Map<String, String> = emptyMap()
     )
+
+    // ── Cached M3U data ──
+    private var cachedChannels: List<M3UChannel>? = null
+
+    private suspend fun getChannels(): List<M3UChannel> {
+        cachedChannels?.let { return it }
+        val content = app.get(M3U_URL).text
+        val channels = parseM3U(content)
+        cachedChannels = channels
+        return channels
+    }
+
+    private suspend fun getFilteredChannels(): List<M3UChannel> {
+        return getChannels().filter { chan ->
+            val hasBadLogo = chan.logo == "https://bit.ly/3JQfa8u" || chan.logo == "https://bit.ly/jpgairmaxtv" || chan.logo.isNullOrBlank()
+            val hasBadUrl = chan.url.contains("bit.ly") || chan.url.contains("cutt.ly")
+            !hasBadLogo && !hasBadUrl
+        }
+    }
 
     private fun parseM3U(content: String): List<M3UChannel> {
         val channels = mutableListOf<M3UChannel>()
@@ -136,22 +159,7 @@ class IPTVProvider : BaseProvider() {
         if (page > 1) return null
         
         try {
-            val url = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
-            
-            val content = app.get(url).text
-            val channels = parseM3U(content)
-            
-            Log.d("IPTV", "Total channels: ${channels.size}")
-            
-            val filteredChannels = channels.filter { chan ->
-                val hasBadLogo = chan.logo == "https://bit.ly/3JQfa8u" || chan.logo == "https://bit.ly/jpgairmaxtv" || chan.logo.isNullOrBlank()
-                val hasBadUrl = chan.url.contains("bit.ly") || chan.url.contains("cutt.ly")
-                if (hasBadLogo || hasBadUrl) {
-                    Log.d("IPTV", "Filtered out: name=${chan.name}, logo=${chan.logo}, url=${chan.url}")
-                }
-                !hasBadLogo && !hasBadUrl
-            }
-            
+            val filteredChannels = getFilteredChannels()
             Log.d("IPTV", "Filtered channels: ${filteredChannels.size}")
             
             val categories = getCategories(filteredChannels)
@@ -195,13 +203,7 @@ class IPTVProvider : BaseProvider() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         try {
-            val url = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
-            val content = app.get(url).text
-            val channels = parseM3U(content)
-            
-            val filteredChannels = channels.filter { 
-                it.logo != "https://bit.ly/3JQfa8u" && it.logo != "https://bit.ly/jpgairmaxtv" && !it.logo.isNullOrBlank() 
-            }
+            val filteredChannels = getFilteredChannels()
             
             val queryLower = query.lowercase()
             return filteredChannels
@@ -219,8 +221,20 @@ class IPTVProvider : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        return newLiveStreamLoadResponse(url, url, url) {
-            // Metadata is handled by SearchHelper handleDirectPlay for continue watching
+        // Look up channel metadata from cached M3U data
+        val channel = try {
+            getChannels().find { it.url == url }
+        } catch (e: Exception) {
+            Log.w("IPTV", "Could not look up channel metadata: ${e.message}")
+            null
+        }
+
+        return newLiveStreamLoadResponse(
+            name = channel?.name ?: url.substringAfterLast("/").substringBefore("?"),
+            url = url,
+            dataUrl = url
+        ) {
+            this.posterUrl = channel?.logo
         }
     }
 
