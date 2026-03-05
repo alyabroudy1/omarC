@@ -308,16 +308,27 @@ class YoutubeProvider : MainAPI() {
     }
 
     /**
-     * Fallback: launch WebView player for videos that can't provide direct URLs
+     * Fallback: launch native Activity for videos that can't provide direct URLs
      * (DRM, age-restricted, or when Player API fails).
      */
     private fun launchWebViewPlayer(url: String) {
         CommonActivity.activity?.let { activity ->
             activity.runOnUiThread {
-                val dialog = com.cloudstream.shared.ui.WebViewPlayerDialog(activity, url)
-                dialog.pluginResources = resources
-                dialog.pluginPackageName = pluginPackageName
-                dialog.show()
+                try {
+                    val intent = android.content.Intent().apply {
+                        setClassName(
+                            "com.lagradost.cloudstream3",
+                            "com.lagradost.cloudstream3.ui.player.YouTubePlayerActivity"
+                        )
+                        putExtra("url", url)
+                    }
+                    activity.startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("YouTubeProvider", "Failed to launch native player, falling back to browser: ${e.message}")
+                    // Fallback to browser if activity not found
+                    val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    activity.startActivity(browserIntent)
+                }
             }
         }
     }
