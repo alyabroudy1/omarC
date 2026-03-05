@@ -178,6 +178,18 @@ class YoutubeProvider : MainAPI() {
         val videoId = data.substringAfter("v=").substringBefore("&")
         Log.d(TAG, "loadLinks: videoId=$videoId")
 
+        // ── Tier 0: CloudStream's built-in YoutubeExtractor (NewPipe-based) ──
+        try {
+            com.lagradost.cloudstream3.utils.loadExtractor(
+                "https://youtube.com/watch?v=$videoId",
+                subtitleCallback,
+                callback
+            )
+            Log.d(TAG, "loadLinks: [Tier 0] CS extractor completed")
+        } catch (e: Exception) {
+            Log.w(TAG, "loadLinks: [Tier 0] CS extractor failed: ${e.message}")
+        }
+
         // ── Step 1: Fetch player data (IOS → ANDROID_TESTSUITE fallback) ──
         val playerJson = InnerTubeClient.getPlayer(videoId)
         if (playerJson == null) {
