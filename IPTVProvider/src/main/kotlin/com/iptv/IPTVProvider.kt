@@ -218,6 +218,12 @@ class IPTVProvider : BaseProvider() {
         }
     }
 
+    override suspend fun load(url: String): LoadResponse {
+        return newLiveStreamLoadResponse(url, url, url) {
+            // Metadata is handled by SearchHelper handleDirectPlay for continue watching
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
