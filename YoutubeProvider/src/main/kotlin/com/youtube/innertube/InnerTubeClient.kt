@@ -26,7 +26,7 @@ object InnerTubeClient {
         "Content-Type" to "application/json",
         "User-Agent" to InnerTubeConfig.USER_AGENT,
         "Cookie" to InnerTubeConfig.CONSENT_COOKIE,
-        "Accept-Language" to "en-US,en;q=0.9,ar;q=0.8",
+        "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
         "X-YouTube-Client-Name" to "1",
         "X-YouTube-Client-Version" to InnerTubeConfig.CLIENT_VERSION
     )
@@ -257,8 +257,8 @@ object InnerTubeClient {
                 "client" to buildMap {
                     put("clientName", profile.clientName)
                     put("clientVersion", profile.clientVersion)
-                    put("hl", "en")
-                    put("gl", "US")
+                    put("hl", "ar")
+                    put("gl", "SA")
                     put("userAgent", profile.userAgent)
                     if (profile == ClientProfile.ANDROID_TESTSUITE) {
                         put("androidSdkVersion", 30)

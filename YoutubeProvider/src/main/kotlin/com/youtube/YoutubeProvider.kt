@@ -25,7 +25,7 @@ class YoutubeProvider : MainAPI() {
     override var mainUrl = "https://www.youtube.com"
     override var name = "YoutubeProvider"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override var lang = "en"
+    override var lang = "ar"
     override val hasMainPage = true
 
     // Plugin context resources (for YouTubePlayerDialog)
