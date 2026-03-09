@@ -40,7 +40,7 @@ class YouTubePlayer(
     private var isSeeking = false
     private var videoDuration = 0.0
     private var isScaleCover = false
-    private var previousOrientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var previousOrientation: Int = -999
 
     private val autoHideRunnable = Runnable { ui.hide() }
     private val progressUpdateRunnable = object : Runnable {
@@ -157,7 +157,7 @@ class YouTubePlayer(
         try {
             val act = scanForActivity(context)
             if (act != null) {
-                if (previousOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                if (previousOrientation == -999) {
                     previousOrientation = act.requestedOrientation
                 }
                 if (act.requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
@@ -378,6 +378,17 @@ class YouTubePlayer(
     override fun dismiss() {
         handler.removeCallbacksAndMessages(null)
         webView.destroy()
+        try {
+            if (previousOrientation != -999) {
+                val act = scanForActivity(context)
+                if (act != null) {
+                    act.requestedOrientation = previousOrientation
+                    Log.d(TAG, "dismiss: Restored orientation to $previousOrientation")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore orientation", e)
+        }
         super.dismiss()
     }
 }
