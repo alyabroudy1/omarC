@@ -17,7 +17,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.Toast
-import com.lagradost.cloudstream3.utils.UIHelper.popupMenuNoIconsAndNoStringRes
+import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialogInstant
 
 /**
  * A clean, production-ready YouTube WebView Player orchestrator.
@@ -254,36 +254,32 @@ class YouTubePlayer(
         
         ui.btnSpeed.setOnClickListener {
             resetAutoHide()
+            val act = scanForActivity(context) ?: return@setOnClickListener
             val speeds = arrayOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
-            val items = speeds.mapIndexed { i, speed -> Pair(i, "${speed}x") }
-            ui.btnSpeed.popupMenuNoIconsAndNoStringRes(items) {
-                jsBridge.setPlaybackSpeed(speeds[itemId])
-                Toast.makeText(context, "Speed: ${speeds[itemId]}x", Toast.LENGTH_SHORT).show()
-            }
+            val labels = speeds.map { "${it}x" }
+            act.showBottomDialogInstant(labels, "Playback Speed", {}, { index ->
+                jsBridge.setPlaybackSpeed(speeds[index])
+                Toast.makeText(context, "Speed: ${labels[index]}", Toast.LENGTH_SHORT).show()
+            })
         }
 
         ui.btnQuality.setOnClickListener {
             resetAutoHide()
+            val act = scanForActivity(context) ?: return@setOnClickListener
             val qualities = arrayOf("auto", "hd2160", "hd1440", "hd1080", "hd720", "large", "medium", "small", "tiny")
-            val labels = arrayOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
-            val items = labels.mapIndexed { i, label -> Pair(i, label) }
-            ui.btnQuality.popupMenuNoIconsAndNoStringRes(items) {
-                jsBridge.setPlaybackQuality(qualities[itemId])
-                Toast.makeText(context, "Quality: ${labels[itemId]}", Toast.LENGTH_SHORT).show()
-            }
+            val labels = listOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
+            act.showBottomDialogInstant(labels, "Video Quality", {}, { index ->
+                jsBridge.setPlaybackQuality(qualities[index])
+                Toast.makeText(context, "Quality: ${labels[index]}", Toast.LENGTH_SHORT).show()
+            })
         }
 
         ui.btnCaptions.setOnClickListener {
             resetAutoHide()
-            val items = listOf(
-                Pair(0, "Off"),
-                Pair(1, "Arabic"),
-                Pair(2, "English"),
-                Pair(3, "Auto-translate to Arabic"),
-                Pair(4, "Auto-translate to English")
-            )
-            ui.btnCaptions.popupMenuNoIconsAndNoStringRes(items) {
-                when (itemId) {
+            val act = scanForActivity(context) ?: return@setOnClickListener
+            val labels = listOf("Off", "Arabic", "English", "Auto-translate to Arabic", "Auto-translate to English")
+            act.showBottomDialogInstant(labels, "Captions", {}, { index ->
+                when (index) {
                     0 -> jsBridge.setCaptions(false)
                     1 -> jsBridge.setCaptions(true, languageCode = "ar")
                     2 -> jsBridge.setCaptions(true, languageCode = "en")
@@ -291,7 +287,7 @@ class YouTubePlayer(
                     4 -> jsBridge.setCaptions(true, translateTo = "en")
                 }
                 Toast.makeText(context, "Captions updated", Toast.LENGTH_SHORT).show()
-            }
+            })
         }
 
         ui.btnExit.setOnClickListener { dismiss() }

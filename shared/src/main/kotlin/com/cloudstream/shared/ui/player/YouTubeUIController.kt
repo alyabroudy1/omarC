@@ -403,31 +403,36 @@ class YouTubeUIController(private val context: Context) {
             isFocusableInTouchMode = true
             splitTrack = false
 
-            // Track Background: Very Fine Solid White Line, 1px thick
-            val trackHeight = 1 // 1 physical pixel for ultra-thin line
+            val viewHeight = dp(28)
+            val trackHeight = dp(2).coerceAtLeast(1) // extremely thin line
+            val insetVertical = (viewHeight - trackHeight) / 2
+
+            // Track Background: Very Fine Solid White Line
             val trackBg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(0x66FFFFFF) // Translucent white for unplayed
-                setSize(0, trackHeight)
             }
             
             // Track Progress: Very Fine Solid Red Line
             val trackProgress = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(Color.RED)
-                setSize(0, trackHeight)
             }
             val clip = ClipDrawable(trackProgress, Gravity.START, ClipDrawable.HORIZONTAL)
-            progressDrawable = LayerDrawable(arrayOf(trackBg, clip)).apply {
+            
+            val insetBg = android.graphics.drawable.InsetDrawable(trackBg, 0, insetVertical, 0, insetVertical)
+            val insetProgress = android.graphics.drawable.InsetDrawable(clip, 0, insetVertical, 0, insetVertical)
+
+            progressDrawable = LayerDrawable(arrayOf(insetBg, insetProgress)).apply {
                 setId(0, android.R.id.background)
                 setId(1, android.R.id.progress)
             }
 
-            // Thumb: Large Red circle crossing the fine line
+            // Thumb: Red circle sitting on top of the fine line
             thumb = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.RED)
-                setSize(dp(24), dp(24))
+                setSize(dp(16), dp(16))
             }
             thumbOffset = 0 // Allows the fine line to perfectly hit the center of the thumb
         }
