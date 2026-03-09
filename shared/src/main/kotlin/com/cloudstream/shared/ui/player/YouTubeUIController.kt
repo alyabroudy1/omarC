@@ -174,44 +174,12 @@ class YouTubeUIController(private val context: Context) {
             clipToPadding = false
         }
 
-        // Left: Avatar + Description Pill
+        // Left: Empty (User requested removal of Avatar and Description)
         val leftGroup = LinearLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
         }
-        
-        imgAvatar = android.widget.ImageView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                marginEnd = dp(12)
-            }
-            setImageResource(android.R.drawable.sym_def_app_icon) // Placeholder
-            // Make it circular
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xFF333333.toInt())
-            }
-            clipToOutline = true
-        }
-
-        btnDescription = TextView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(40)
-            )
-            text = "Description"
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setPadding(dp(16), 0, dp(16), 0)
-            background = createGlassPillBackground()
-            isFocusable = true
-            isFocusableInTouchMode = true
-        }
-        
-        leftGroup.addView(imgAvatar)
-        leftGroup.addView(btnDescription)
 
         // Center: Large Play/Pause
         val centerGroup = FrameLayout(context).apply {
@@ -443,19 +411,17 @@ class YouTubeUIController(private val context: Context) {
             isFocusableInTouchMode = true
             splitTrack = false
 
-            // Track Background: Solid White Line, 2dp thick
-            val trackHeight = dp(2)
+            // Track Background: Very Fine Solid White Line, 1.5dp thick
+            val trackHeight = dp(2).coerceAtLeast(1)
             val trackBg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(1).toFloat()
-                setColor(0x88FFFFFF.toInt()) // Translucent white for unplayed
+                setColor(0x66FFFFFF) // Translucent white for unplayed
                 setSize(0, trackHeight)
             }
             
-            // Track Progress: Solid Red Line
+            // Track Progress: Very Fine Solid Red Line
             val trackProgress = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(1).toFloat()
                 setColor(Color.RED)
                 setSize(0, trackHeight)
             }
@@ -465,13 +431,13 @@ class YouTubeUIController(private val context: Context) {
                 setId(1, android.R.id.progress)
             }
 
-            // Thumb: Slightly larger white circle, no red
+            // Thumb: Red circle crossing the fine line
             thumb = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.WHITE)
-                setSize(dp(16), dp(16))
+                setColor(Color.RED)
+                setSize(dp(12), dp(12))
             }
-            thumbOffset = dp(8)
+            thumbOffset = 0 // Allows the fine line to perfectly hit the center of the thumb
         }
     }
 }

@@ -40,7 +40,6 @@ class YouTubePlayer(
     private var isSeeking = false
     private var videoDuration = 0.0
     private var isScaleCover = false
-    private var previousOrientation: Int = -999
     private var hasFetchedMetadata = false
 
     private val autoHideRunnable = Runnable { ui.hide() }
@@ -165,15 +164,11 @@ class YouTubePlayer(
 
     private fun forceLandscape() {
         try {
-            val act = scanForActivity(context)
-            if (act != null) {
-                if (previousOrientation == -999) {
-                    previousOrientation = act.requestedOrientation
-                }
-                if (act.requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
-                    act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    Log.d(TAG, "forceLandscape: Requested STRICT LANDSCAPE on ${act.localClassName}")
-                }
+            window?.let {
+                val params = it.attributes
+                params.screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                it.attributes = params
+                Log.d(TAG, "forceLandscape: Requested Sensor Landscape on Dialog Window")
             }
         } catch (e: Exception) {
             Log.e(TAG, "forceLandscape: Failed", e)
@@ -239,10 +234,7 @@ class YouTubePlayer(
             Toast.makeText(context, if (isPlaying) "Playing" else "Paused", Toast.LENGTH_SHORT).show()
         }
 
-        ui.btnDescription.setOnClickListener {
-            resetAutoHide()
-            jsBridge.clickDescription()
-        }
+
 
         ui.btnRewind.setOnClickListener {
             resetAutoHide()
@@ -393,24 +385,6 @@ class YouTubePlayer(
     override fun dismiss() {
         handler.removeCallbacksAndMessages(null)
         webView.destroy()
-        try {
-            if (previousOrientation != -999) {
-                val act = scanForActivity(context)
-                if (act != null) {
-                    // If the previous orientation was unspecified (auto-rotate), force it to re-evaluate the sensor immediately.
-                    // On phones, if they hit "back" while holding portrait, it might be stuck in the forced landscape state 
-                    // unless we explicitly trigger an orientation change back to user/sensor preference.
-                    if (previousOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
-                        act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER
-                    }
-                    // Apply original
-                    act.requestedOrientation = previousOrientation
-                    Log.d(TAG, "dismiss: Restored orientation to $previousOrientation")
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore orientation", e)
-        }
         super.dismiss()
     }
 }
