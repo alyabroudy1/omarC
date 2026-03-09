@@ -302,6 +302,61 @@ class YouTubeJsBridge(private val webView: WebView) {
             })();
         """.trimIndent())
     }
+
+    fun clickDescription() {
+        evaluateJs("""
+            (function() {
+                var descBtn = document.querySelector('.slim-video-metadata-header, .slim-video-information-renderer, ytm-slim-video-information-renderer');
+                if (descBtn) descBtn.click();
+            })();
+        """.trimIndent())
+    }
+
+    fun fetchMetadata(onResult: (title: String, channel: String, avatarUrl: String) -> Unit) {
+        val js = """
+            (function() {
+                try {
+                    var title = document.title || '';
+                    var titleNode = document.querySelector('.slim-video-metadata-title, .title, .video-title');
+                    if (titleNode && titleNode.textContent) title = titleNode.textContent.trim();
+                    if (title.endsWith(' - YouTube')) title = title.replace(' - YouTube', '');
+
+                    var channel = '';
+                    var channelNode = document.querySelector('.slim-owner-channel-name, .channel-name');
+                    if (channelNode && channelNode.textContent) channel = channelNode.textContent.trim();
+
+                    var avatar = '';
+                    var avatarNode = document.querySelector('.slim-owner-icon img, .channel-avatar img');
+                    if (avatarNode && avatarNode.src) avatar = avatarNode.src;
+
+                    return JSON.stringify({
+                        'title': title,
+                        'channel': channel,
+                        'avatar': avatar
+                    });
+                } catch(e) { return null; }
+            })();
+        """.trimIndent()
+        
+        webView.evaluateJavascript(js) { result ->
+            try {
+                if (result != null && result != "null" && result.startsWith("\"")) {
+                    val unescaped = result.substring(1, result.length - 1)
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\")
+                    val json = org.json.JSONObject(unescaped)
+                    val t = json.optString("title", "")
+                    val c = json.optString("channel", "")
+                    val a = json.optString("avatar", "")
+                    if (t.isNotEmpty()) {
+                        onResult(t, c, a)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse metadata", e)
+            }
+        }
+    }
     fun pollPlaybackState(onResult: (currentTime: Double, duration: Double, isPaused: Boolean) -> Unit) {
         val js = """
             (function() {

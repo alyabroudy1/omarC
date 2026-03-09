@@ -41,6 +41,7 @@ class YouTubePlayer(
     private var videoDuration = 0.0
     private var isScaleCover = false
     private var previousOrientation: Int = -999
+    private var hasFetchedMetadata = false
 
     private val autoHideRunnable = Runnable { ui.hide() }
     private val progressUpdateRunnable = object : Runnable {
@@ -54,6 +55,15 @@ class YouTubePlayer(
                     if (isPlaying == paused) { // Sync state if it drifted
                         isPlaying = !paused
                         ui.setPlayingUI(isPlaying)
+                    }
+                }
+                if (!hasFetchedMetadata) {
+                    jsBridge.fetchMetadata { title, channel, avatar ->
+                        if (title.isNotEmpty()) {
+                            hasFetchedMetadata = true
+                            ui.textTitle.text = title
+                            if (channel.isNotEmpty()) ui.textChannel.text = channel
+                        }
                     }
                 }
             }
@@ -227,6 +237,11 @@ class YouTubePlayer(
             ui.setPlayingUI(isPlaying)
             if (isPlaying) jsBridge.play() else jsBridge.pause()
             Toast.makeText(context, if (isPlaying) "Playing" else "Paused", Toast.LENGTH_SHORT).show()
+        }
+
+        ui.btnDescription.setOnClickListener {
+            resetAutoHide()
+            jsBridge.clickDescription()
         }
 
         ui.btnRewind.setOnClickListener {
