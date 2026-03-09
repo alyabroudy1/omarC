@@ -22,19 +22,30 @@ class YouTubeJsBridge(private val webView: WebView) {
                     // Bypass GDPR consent screen if redirected
                     if (window.location.hostname.indexOf('consent.youtube.com') !== -1) {
                         console.log("On consent page, attempting to auto-accept...");
+                        
+                        // 1. Try known YouTube consent button classes first
+                        var acceptBtn = document.querySelector('.eom-accept, .VfPpkd-LgbsSe, button[aria-label="Accept all"], button[aria-label="Agree"]');
+                        if (acceptBtn) {
+                            acceptBtn.click();
+                            return;
+                        }
+
+                        // 2. Try generic form submit fallback
                         var forms = document.querySelectorAll('form');
                         if (forms.length > 0) {
                             var buttons = document.querySelectorAll('button');
                             if (buttons.length > 0) {
                                 for (var i = 0; i < buttons.length; i++) {
-                                    if (buttons[i].textContent.indexOf('Accept') !== -1 || 
-                                        buttons[i].textContent.indexOf('قبول') !== -1 ||   
-                                        buttons[i].textContent.indexOf('Agree') !== -1) {
+                                    var text = buttons[i].textContent.toLowerCase();
+                                    if (text.indexOf('accept all') !== -1 || text.indexOf('accept') !== -1 || 
+                                        text.indexOf('قبول الكل') !== -1 || text.indexOf('موافق') !== -1 ||   
+                                        text.indexOf('agree') !== -1 || text.indexOf('ich stimme zu') !== -1 ||
+                                        text.indexOf('accepter') !== -1 || text.indexOf('aceptar') !== -1) {
                                         buttons[i].click();
                                         return;
                                     }
                                 }
-                                buttons[buttons.length - 1].click();
+                                forms[0].submit();
                             } else {
                                 forms[0].submit();
                             }

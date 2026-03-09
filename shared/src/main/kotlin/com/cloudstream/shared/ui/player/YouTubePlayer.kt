@@ -189,8 +189,8 @@ class YouTubePlayer(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                // Use a proper Mobile User-Agent to match omerFlex5-ref's CSS targeting
-                userAgentString = "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
+                // Use the device's true cached User-Agent to avoid YouTube's anti-bot "consent/login" wall
+                userAgentString = com.cloudstream.shared.util.WebConfig.getCachedUserAgent() ?: android.webkit.WebSettings.getDefaultUserAgent(context)
                 useWideViewPort = true
                 loadWithOverviewMode = true
             }
