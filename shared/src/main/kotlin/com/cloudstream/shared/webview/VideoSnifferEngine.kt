@@ -826,10 +826,16 @@ class VideoSnifferEngine(
             while (!resultDelivered && attempts < 30) { // Max 60 seconds
                 delay(2000)
                 attempts++
+                
+                if (activeWebView != view) {
+                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "WebView changed or destroyed, stopping polling")
+                    break
+                }
 
                 ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "Polling attempt", "attempt" to attempts)
 
-                view.evaluateJavascript("""
+                try {
+                    view.evaluateJavascript("""
                     (function() {
                         console.log('[VideoSnifferEngine] DOM extraction running...');
                         var sources = [];
@@ -943,6 +949,9 @@ class VideoSnifferEngine(
                     } catch (e: Exception) {
                         ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Error parsing result", e)
                     }
+                }
+                } catch (e: Exception) {
+                    ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "evaluateJavascript execution failed", e)
                 }
             }
 
