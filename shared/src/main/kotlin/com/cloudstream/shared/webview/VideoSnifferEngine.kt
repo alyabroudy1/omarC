@@ -768,17 +768,35 @@ class VideoSnifferEngine(
         val skipContainer = android.widget.LinearLayout(activity).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#E6000000")) // Semi-transparent black 90%
+            setBackgroundColor(Color.TRANSPARENT) // Let webview show through
             visibility = android.view.View.GONE
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
 
+            // The 'Card' holding the content
+            val card = android.widget.LinearLayout(activity).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(64, 64, 64, 64)
+                
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#E61E1E1E")) // 90% opaque dark surface
+                    cornerRadius = 32f
+                }
+                
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+
             // Title
-            addView(TextView(activity).apply {
-                text = "Invalid Page or Missing Video Detected"
-                textSize = 20f
+            card.addView(TextView(activity).apply {
+                text = "Invalid Page or Missing Video"
+                textSize = 22f
+                setTypeface(null, android.graphics.Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, 16)
@@ -790,9 +808,9 @@ class VideoSnifferEngine(
                 textSize = 16f
                 setTextColor(Color.LTGRAY)
                 gravity = Gravity.CENTER
-                setPadding(0, 0, 0, 32)
+                setPadding(0, 0, 0, 48)
             }
-            addView(skipCountdownText)
+            card.addView(skipCountdownText)
 
             // Buttons Layout
             val buttonLayout = android.widget.LinearLayout(activity).apply {
@@ -805,13 +823,23 @@ class VideoSnifferEngine(
                 text = "Skip Now"
                 isFocusable = true
                 isFocusableInTouchMode = true
-                setBackgroundColor(Color.parseColor("#444444"))
                 setTextColor(Color.WHITE)
-                setPadding(32, 16, 32, 16)
+                setPadding(48, 24, 48, 24)
                 
-                // Focus styling
+                val defaultBg = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#D32F2F")) // Red for skip/cancel
+                    cornerRadius = 16f
+                }
+                val focusBg = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#F44336"))
+                    cornerRadius = 16f
+                    setStroke(6, Color.WHITE) // White stroke to highlight focus for TV
+                }
+                
+                background = defaultBg
+                
                 setOnFocusChangeListener { _, hasFocus ->
-                    setBackgroundColor(Color.parseColor(if (hasFocus) "#007BFF" else "#444444"))
+                    background = if (hasFocus) focusBg else defaultBg
                 }
 
                 setOnClickListener {
@@ -826,13 +854,23 @@ class VideoSnifferEngine(
                 text = "Wait"
                 isFocusable = true
                 isFocusableInTouchMode = true
-                setBackgroundColor(Color.parseColor("#444444"))
                 setTextColor(Color.WHITE)
-                setPadding(32, 16, 32, 16)
+                setPadding(48, 24, 48, 24)
                 
-                // Focus styling
+                val defaultBg = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#444444")) // Neutral dark gray
+                    cornerRadius = 16f
+                }
+                val focusBg = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.parseColor("#6C757D"))
+                    cornerRadius = 16f
+                    setStroke(6, Color.WHITE)
+                }
+                
+                background = defaultBg
+                
                 setOnFocusChangeListener { _, hasFocus ->
-                    setBackgroundColor(Color.parseColor(if (hasFocus) "#6C757D" else "#444444"))
+                    background = if (hasFocus) focusBg else defaultBg
                 }
 
                 setOnClickListener {
@@ -845,11 +883,12 @@ class VideoSnifferEngine(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                marginStart = 48
+                marginStart = 32
             }
             buttonLayout.addView(waitButton, marginParams)
 
-            addView(buttonLayout)
+            card.addView(buttonLayout)
+            addView(card)
         }
         skipOverlayContainer = skipContainer
         webViewContainer.addView(skipContainer)
