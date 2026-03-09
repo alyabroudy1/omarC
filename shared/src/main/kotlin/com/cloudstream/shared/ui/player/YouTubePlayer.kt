@@ -17,7 +17,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.Toast
-import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showBottomDialogInstant
+import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 
 /**
  * A clean, production-ready YouTube WebView Player orchestrator.
@@ -257,10 +257,10 @@ class YouTubePlayer(
             val act = scanForActivity(context) ?: return@setOnClickListener
             val speeds = arrayOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
             val labels = speeds.map { "${it}x" }
-            act.showBottomDialogInstant(labels, "Playback Speed", {}, { index ->
+            act.showDialog(labels, -1, "Playback Speed", false, {}) { index ->
                 jsBridge.setPlaybackSpeed(speeds[index])
                 Toast.makeText(context, "Speed: ${labels[index]}", Toast.LENGTH_SHORT).show()
-            })
+            }
         }
 
         ui.btnQuality.setOnClickListener {
@@ -268,17 +268,17 @@ class YouTubePlayer(
             val act = scanForActivity(context) ?: return@setOnClickListener
             val qualities = arrayOf("auto", "hd2160", "hd1440", "hd1080", "hd720", "large", "medium", "small", "tiny")
             val labels = listOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
-            act.showBottomDialogInstant(labels, "Video Quality", {}, { index ->
+            act.showDialog(labels, -1, "Video Quality", false, {}) { index ->
                 jsBridge.setPlaybackQuality(qualities[index])
                 Toast.makeText(context, "Quality: ${labels[index]}", Toast.LENGTH_SHORT).show()
-            })
+            }
         }
 
         ui.btnCaptions.setOnClickListener {
             resetAutoHide()
             val act = scanForActivity(context) ?: return@setOnClickListener
             val labels = listOf("Off", "Arabic", "English", "Auto-translate to Arabic", "Auto-translate to English")
-            act.showBottomDialogInstant(labels, "Captions", {}, { index ->
+            act.showDialog(labels, -1, "Captions", false, {}) { index ->
                 when (index) {
                     0 -> jsBridge.setCaptions(false)
                     1 -> jsBridge.setCaptions(true, languageCode = "ar")
@@ -287,7 +287,7 @@ class YouTubePlayer(
                     4 -> jsBridge.setCaptions(true, translateTo = "en")
                 }
                 Toast.makeText(context, "Captions updated", Toast.LENGTH_SHORT).show()
-            })
+            }
         }
 
         ui.btnExit.setOnClickListener { dismiss() }
