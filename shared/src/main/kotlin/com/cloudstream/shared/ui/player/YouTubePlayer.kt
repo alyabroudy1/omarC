@@ -40,6 +40,7 @@ class YouTubePlayer(
     private var isSeeking = false
     private var videoDuration = 0.0
     private var isScaleCover = false
+    private var previousOrientation: Int = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
     private val autoHideRunnable = Runnable { ui.hide() }
     private val progressUpdateRunnable = object : Runnable {
@@ -107,6 +108,15 @@ class YouTubePlayer(
                 }
             }
 
+            window?.decorView?.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                val w = right - left
+                val h = bottom - top
+                if (h > w) { // Portrait usage detected
+                    Log.d(TAG, "Layout Listener: Portrait dimensions detected ($w x $h) - Re-forcing LANDSCAPE")
+                    forceLandscape()
+                }
+            }
+
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
                 window?.setDecorFitsSystemWindows(true)
                 window?.insetsController?.hide(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars())
@@ -129,7 +139,27 @@ class YouTubePlayer(
     }
 
     private fun forceLandscape() {
-        activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        try {
+            val act = scanForActivity(context)
+            if (act != null) {
+                if (previousOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                    previousOrientation = act.requestedOrientation
+                }
+                if (act.requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
+                    act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                    Log.d(TAG, "forceLandscape: Requested STRICT LANDSCAPE on ${act.localClassName}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "forceLandscape: Failed", e)
+        }
+    }
+
+    private fun scanForActivity(cont: android.content.Context?): Activity? {
+        if (cont == null) return null
+        if (cont is Activity) return cont
+        if (cont is android.content.ContextWrapper) return scanForActivity(cont.baseContext)
+        return null
     }
 
     private fun setupWebView() {
@@ -144,9 +174,8 @@ class YouTubePlayer(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                userAgentString = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
-                useWideViewPort = true
-                loadWithOverviewMode = true
+                // Use a Desktop User-Agent to bypass YouTube's strict mobile tap-to-play overlay
+                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
             }
             
             webChromeClient = object : WebChromeClient() {
@@ -155,7 +184,8 @@ class YouTubePlayer(
             
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    jsBridge.injectFullscreenCss()
+                    handler.postDelayed({ jsBridge.injectFullscreenCss() }, 500)
+                    handler.postDelayed({ jsBridge.injectFullscreenCss() }, 1500)
                     ui.show()
                     resetAutoHide()
                     handler.post(progressUpdateRunnable)

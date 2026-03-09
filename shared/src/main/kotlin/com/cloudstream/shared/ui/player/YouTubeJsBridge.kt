@@ -84,6 +84,16 @@ class YouTubeJsBridge(private val webView: WebView) {
                     
                     var vid = document.querySelector('video');
                     if(vid) { vid.muted = false; vid.play(); }
+                    
+                    // Force a simulated click on the screen to bypass YouTube's required mobile user gesture to play
+                    var clickEvent = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    var player = document.querySelector('.html5-video-player') || document.body;
+                    if(player) { player.dispatchEvent(clickEvent); }
+                    
                 } catch(e) {
                     console.error("CSS Injection Failed: " + e.message);
                 }
