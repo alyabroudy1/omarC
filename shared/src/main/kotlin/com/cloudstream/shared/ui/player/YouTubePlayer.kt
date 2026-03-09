@@ -83,7 +83,8 @@ class YouTubePlayer(
         setContentView(rootLayout)
         setupListeners()
         
-        webView.loadUrl(url)
+        val finalUrl = if (url.contains("?")) "$url&cc_load_policy=1&cc_lang_pref=ar&hl=ar" else "$url?cc_load_policy=1&cc_lang_pref=ar&hl=ar"
+        webView.loadUrl(finalUrl)
     }
 
     private fun setupWindowFlags() {
@@ -174,8 +175,10 @@ class YouTubePlayer(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                // Use a Desktop User-Agent to bypass YouTube's strict mobile tap-to-play overlay
-                userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+                // Use a proper Mobile User-Agent to match omerFlex5-ref's CSS targeting
+                userAgentString = "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
+                useWideViewPort = true
+                loadWithOverviewMode = true
             }
             
             webChromeClient = object : WebChromeClient() {
@@ -184,8 +187,14 @@ class YouTubePlayer(
             
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    handler.postDelayed({ jsBridge.injectFullscreenCss() }, 500)
-                    handler.postDelayed({ jsBridge.injectFullscreenCss() }, 1500)
+                    Log.d(TAG, "onPageFinished: Launching staggered injection")
+                    
+                    // Staggered injection exactly like omerFlex5-ref to handle YouTube SPA DOM delays
+                    val delays = longArrayOf(1000, 2000, 3000, 5000, 7000, 10000, 15000)
+                    for (delay in delays) {
+                        handler.postDelayed({ jsBridge.injectFullscreenCss() }, delay)
+                    }
+                    
                     ui.show()
                     resetAutoHide()
                     handler.post(progressUpdateRunnable)

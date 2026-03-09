@@ -5,97 +5,169 @@ import android.util.Log
 
 /**
  * Manages communication with the underlying HTML5/YouTube player.
+ * Logic adopted from omerFlex5-ref for production reliability.
  */
 class YouTubeJsBridge(private val webView: WebView) {
 
     private val TAG = "YouTubeJsBridge"
 
-    fun injectFullscreenCss() {
-        Log.d(TAG, "injectFullscreenCss: Injecting CSS with viewport fix")
+    /**
+     * Injects the CSS and JS logic used by omerFlex5-ref.
+     * Includes aggressive ad-skipping, Arabic caption forcing, and fullscreen CSS.
+     */
+    fun injectFullscreenCss(isMuted: Boolean = false) {
         val js = """
             (function() {
                 try {
-                    var viewport = document.querySelector('meta[name="viewport"]');
-                    if (!viewport) {
-                        viewport = document.createElement('meta');
-                        viewport.name = 'viewport';
-                        document.head.appendChild(viewport);
+                    var style = document.querySelector('#cs-youtube-style');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'cs-youtube-style';
+                        document.head.appendChild(style);
                     }
-                    viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
                     
-                    var css = `
-                      * { box-sizing: border-box !important; }
-                      html, body {
-                        background: #000 !important; 
-                        width: 100% !important; height: 100% !important;
-                        min-height: 100% !important;
-                        margin: 0 !important; padding: 0 !important; 
-                        overflow: hidden !important;
-                        position: fixed !important;
-                        top: 0 !important; left: 0 !important;
-                      }
-                      #page, #content, ytd-app, ytd-watch-flexy, #player-theater-container,
-                      #player, .player-container, #movie_player, .html5-video-player,
-                      .html5-video-container {
-                        position: fixed !important; 
-                        top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-                        width: 100% !important; height: 100% !important;
-                        min-height: 100% !important;
-                        margin: 0 !important; padding: 0 !important;
-                        background: #000 !important;
-                        z-index: 9999 !important;
-                        transform: none !important;
-                      }
-                      video, .video-stream, .html5-main-video, iframe {
-                        position: absolute !important;
-                        top: 0 !important; left: 0 !important;
-                        width: 100% !important; height: 100% !important;
-                        min-height: 100% !important;
-                        object-fit: contain !important;
-                        object-position: center center !important;
-                        background: #000 !important;
-                        z-index: 1 !important;
-                      }
-                      .mobile-topbar-header, .player-controls-top, .watch-below-the-player, 
-                      .ytp-chrome-top, .ytp-chrome-bottom, .ytp-gradient-top, .ytp-gradient-bottom,
-                      .ad-showing, .video-ads, .ytp-ad-overlay-container, .ytp-ad-module,
-                      .ytp-upnext, .ytp-suggestion-set, .ytp-share-panel, .ytp-watermark,
-                      .ytp-title, .ytp-title-link, .ytp-show-cards-title,
-                      #secondary, #related, #comments, #masthead, #guide,
-                      ytd-watch-next-secondary-results-renderer, ytd-compact-video-renderer { 
-                          display: none !important; 
-                          opacity: 0 !important; 
-                          visibility: hidden !important;
-                          pointer-events: none !important;
-                          height: 0 !important;
-                          width: 0 !important;
-                      }
-                      video { opacity: 1 !important; visibility: visible !important; }
-                      .caption-window, .ytp-caption-window-container, .ytp-caption-segment {
-                          display: block !important;
-                          opacity: 1 !important;
-                          visibility: visible !important;
-                          z-index: 20000 !important;
-                      }
+                    style.textContent = `
+                        html, body { 
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            overflow: hidden !important;
+                            background: #000 !important;
+                        }
+                        
+                        /* Hide ALL mobile YouTube UI elements */
+                        .mobile-topbar-header, 
+                        .player-controls-top, 
+                        .watch-below-the-player, 
+                        ytm-app-header-layout header, 
+                        .ytm-autonav-bar, 
+                        .related-chips-slot-wrapper, 
+                        .slim-video-metadata-header, 
+                        .slim-video-information-renderer, 
+                        ytm-item-section-renderer, 
+                        ytm-comments-entry-point-header-renderer, 
+                        ytm-comments-simplebox-renderer, 
+                        .ytp-chrome-top, 
+                        .ytp-chrome-bottom,
+                        .ytp-gradient-top,
+                        .ytp-gradient-bottom,
+                        #masthead-container,
+                        #header { display: none !important; visibility: hidden !important; }
+                        
+                        ytm-watch, ytm-app { background: #000 !important; padding: 0 !important; margin: 0 !important; }
+
+                        /* Force ALL containers to fill screen */
+                        #player-container-id, 
+                        .player-container, 
+                        #player, 
+                        ytm-player, 
+                        #movie_player, 
+                        .html5-video-container, 
+                        .html5-video-player, 
+                        .html5-main-video { 
+                            position: fixed !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            right: 0 !important;
+                            bottom: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            max-width: 100vw !important;
+                            max-height: 100vh !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            z-index: 9999 !important;
+                            background: #000 !important;
+                        }
+
+                        /* Force video element to fill entire screen */
+                        video { 
+                            position: fixed !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            object-fit: contain !important; /* contain is better for non-stretched video */
+                            z-index: 9998 !important;
+                            background: #000 !important;
+                        }
+
+                        /* ENSURE CAPTION CONTAINERS ARE VISIBLE */
+                        .ytp-caption-window-container, 
+                        .caption-window, 
+                        .captions-text, 
+                        .ytp-caption-segment { 
+                            display: block !important;
+                            visibility: visible !important;
+                            opacity: 1 !important;
+                            z-index: 99999 !important;
+                        }
                     `;
-                    var style = document.createElement('style');
-                    style.appendChild(document.createTextNode(css));
-                    document.head.appendChild(style);
-                    
-                    var vid = document.querySelector('video');
-                    if(vid) { vid.muted = false; vid.play(); }
-                    
-                    // Force a simulated click on the screen to bypass YouTube's required mobile user gesture to play
-                    var clickEvent = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    var player = document.querySelector('.html5-video-player') || document.body;
-                    if(player) { player.dispatchEvent(clickEvent); }
-                    
+
+                    // Auto-play video
+                    var video = document.querySelector('video');
+                    if (video) {
+                        video.muted = $isMuted;
+                        video.play().catch(function(e) { console.log('Autoplay blocked'); });
+                    }
+
+                    // AD SKIPPER & CAPTION MANAGER - Loop runs every 500ms
+                    if (!window.csAdManagerRunning) {
+                        window.csAdManagerRunning = true;
+                        setInterval(function() {
+                            try {
+                                var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, [class*="skip"][class*="button"]');
+                                if (skipBtn && skipBtn.style.display !== 'none') {
+                                    skipBtn.click();
+                                }
+                                
+                                var mPlayer = document.querySelector('#movie_player');
+                                if (mPlayer) {
+                                    // Fast-forward through unskippable ads
+                                    if (mPlayer.classList.contains('ad-showing')) {
+                                        var v = document.querySelector('video');
+                                        if (v && v.duration && v.duration > 0 && v.duration < 120) {
+                                            v.currentTime = v.duration;
+                                        }
+                                    }
+                                    
+                                    // Ensure captions are enabled in Arabic
+                                    if (mPlayer.getOption) {
+                                        var tracks = mPlayer.getOption('captions', 'tracklist');
+                                        if (tracks && tracks.length > 0) {
+                                            var arabicTrack = tracks.find(function(t) { return t.languageCode === 'ar'; });
+                                            if (arabicTrack) {
+                                                if (mPlayer.getOption('captions', 'track')?.languageCode !== 'ar') {
+                                                    mPlayer.setOption('captions', 'track', arabicTrack);
+                                                }
+                                            } else {
+                                                // Try auto-translate
+                                                var autoTrack = tracks.find(function(t) { return t.kind === 'asr' || t.is_default; }) || tracks[0];
+                                                if (autoTrack) {
+                                                    mPlayer.setOption('captions', 'track', {languageCode: autoTrack.languageCode});
+                                                    mPlayer.setOption('captions', 'translationLanguage', {languageCode: 'ar', languageName: 'Arabic'});
+                                                }
+                                            }
+                                            
+                                            // Force CC visibility if not on
+                                            var ccBtn = document.querySelector('.ytp-subtitles-button');
+                                            if (ccBtn && ccBtn.getAttribute('aria-pressed') !== 'true') {
+                                                ccBtn.click();
+                                            }
+                                            
+                                            // Additional check from omerFlex5-ref
+                                            if (mPlayer.toggleSubtitles && (!mPlayer.isSubtitlesOn || !mPlayer.isSubtitlesOn())) {
+                                                mPlayer.toggleSubtitles();
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch(e) {}
+                        }, 500);
+                    }
                 } catch(e) {
-                    console.error("CSS Injection Failed: " + e.message);
+                    console.error("Injection error: " + e.message);
                 }
             })();
         """.trimIndent()
@@ -111,36 +183,28 @@ class YouTubeJsBridge(private val webView: WebView) {
     }
 
     fun seekRelative(seconds: Int) {
-        evaluateJs("var v = document.querySelector('video'); if(v) { v.currentTime += $seconds; }")
-    }
-
-    fun seekTo(timeSeconds: Double) {
-        evaluateJs("var v = document.querySelector('video'); if(v) { v.currentTime = $timeSeconds; }")
-    }
-
-    fun setPlaybackSpeed(speed: Double) {
-        evaluateJs("var v = document.querySelector('video'); if(v) { v.playbackRate = $speed; }")
-    }
-
-    fun setQuality(qualityStr: String) {
         evaluateJs("""
-            try {
-                var player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                if (player && typeof player.setPlaybackQualityRange === 'function') {
-                    player.setPlaybackQualityRange('$qualityStr');
-                }
-            } catch(e) {}
+            (function() { 
+                var v = document.querySelector('video'); 
+                if (v) { 
+                  var wasPlaying = !v.paused; 
+                  v.currentTime = Math.max(0, Math.min(v.duration, v.currentTime + $seconds)); 
+                  if (wasPlaying) { v.pause(); setTimeout(function() { v.play(); }, 100); }
+                } 
+            })();
         """.trimIndent())
     }
 
-    fun setCaptionLanguage(langCode: String) {
+    fun seekTo(timeSeconds: Double) {
         evaluateJs("""
-            try {
-                var player = document.getElementById('movie_player');
-                if (player && player.setOption) {
-                    player.setOption('captions', 'track', {'languageCode': '$langCode'});
-                }
-            } catch(e) {}
+            (function() { 
+                var v = document.querySelector('video'); 
+                if (v) { 
+                  var wasPlaying = !v.paused; 
+                  v.currentTime = $timeSeconds; 
+                  if (wasPlaying) { v.pause(); setTimeout(function() { v.play(); }, 100); }
+                } 
+            })();
         """.trimIndent())
     }
 
@@ -154,10 +218,10 @@ class YouTubeJsBridge(private val webView: WebView) {
         """.trimIndent())
     }
 
-    /**
-     * Polls the video state. In a full implementation, this could use a JavascriptInterface,
-     * but polling via evaluateJavascript is simpler to inject securely dynamically.
-     */
+    fun setPlaybackSpeed(speed: Double) {
+        evaluateJs("var v = document.querySelector('video'); if(v) { v.playbackRate = $speed; }")
+    }
+
     fun pollPlaybackState(onResult: (currentTime: Double, duration: Double, isPaused: Boolean) -> Unit) {
         val js = """
             (function() {
@@ -176,7 +240,6 @@ class YouTubeJsBridge(private val webView: WebView) {
         webView.evaluateJavascript(js) { result ->
             try {
                 if (result != null && result != "null" && result.startsWith("\"")) {
-                    // Result comes back wrapped in quotes and escaped.
                     val unescaped = result.substring(1, result.length - 1).replace("\\\"", "\"")
                     val json = org.json.JSONObject(unescaped)
                     val t = json.optDouble("t", 0.0)
@@ -184,9 +247,7 @@ class YouTubeJsBridge(private val webView: WebView) {
                     val p = json.optBoolean("p", true)
                     onResult(t, d, p)
                 }
-            } catch (e: Exception) {
-                // Ignore parse errors or null states during navigation
-            }
+            } catch (e: Exception) {}
         }
     }
 
