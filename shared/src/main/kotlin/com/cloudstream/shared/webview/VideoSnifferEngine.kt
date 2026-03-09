@@ -238,9 +238,16 @@ class VideoSnifferEngine(
 
             // Create WebView
             webView = WebView(activity).apply {
+                // CRITICAL FOR TV MOUSE: Prevent WebView from stealing D-Pad focus.
+                // If focusable, Cloudflare checkboxes and HTML inputs will trap the D-pad
+                // and freeze the TvMouseController.
+                isFocusable = false
+                isFocusableInTouchMode = false
+                
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
+                    @Suppress("DEPRECATION")
                     databaseEnabled = true
                     useWideViewPort = true
                     loadWithOverviewMode = true
@@ -736,6 +743,9 @@ class VideoSnifferEngine(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         }
 
         // Add WebView to FrameLayout — fills entire screen
