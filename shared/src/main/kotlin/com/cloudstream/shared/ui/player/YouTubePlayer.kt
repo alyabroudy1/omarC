@@ -40,6 +40,7 @@ class YouTubePlayer(
     private var isSeeking = false
     private var videoDuration = 0.0
     private var isScaleCover = false
+    private var previousOrientation: Int = -999
     private var hasFetchedMetadata = false
 
     private val autoHideRunnable = Runnable { ui.hide() }
@@ -164,11 +165,15 @@ class YouTubePlayer(
 
     private fun forceLandscape() {
         try {
-            window?.let {
-                val params = it.attributes
-                params.screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                it.attributes = params
-                Log.d(TAG, "forceLandscape: Requested Sensor Landscape on Dialog Window")
+            val act = scanForActivity(context)
+            if (act != null) {
+                if (previousOrientation == -999) {
+                    previousOrientation = act.requestedOrientation
+                }
+                if (act.requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                    act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    Log.d(TAG, "forceLandscape: Requested Sensor Landscape on ${act.localClassName}")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "forceLandscape: Failed", e)
@@ -385,6 +390,20 @@ class YouTubePlayer(
     override fun dismiss() {
         handler.removeCallbacksAndMessages(null)
         webView.destroy()
+        try {
+            if (previousOrientation != -999) {
+                val act = scanForActivity(context)
+                if (act != null) {
+                    if (previousOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                        act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER
+                    }
+                    act.requestedOrientation = previousOrientation
+                    Log.d(TAG, "dismiss: Restored orientation to $previousOrientation")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore orientation", e)
+        }
         super.dismiss()
     }
 }
