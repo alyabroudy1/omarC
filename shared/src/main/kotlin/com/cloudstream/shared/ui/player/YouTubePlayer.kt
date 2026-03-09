@@ -253,7 +253,7 @@ class YouTubePlayer(
         
         ui.btnSpeed.setOnClickListener {
             resetAutoHide()
-            val popup = android.widget.PopupMenu(context, ui.btnSpeed)
+            val popup = android.widget.PopupMenu(context, ui.btnSpeed, android.view.Gravity.NO_GRAVITY, android.R.attr.popupMenuStyle, com.lagradost.cloudstream3.R.style.PopupMenu)
             val speeds = arrayOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
             speeds.forEachIndexed { i, speed -> popup.menu.add(0, i, i, "${speed}x") }
             popup.setOnMenuItemClickListener { item ->
@@ -266,7 +266,7 @@ class YouTubePlayer(
 
         ui.btnQuality.setOnClickListener {
             resetAutoHide()
-            val popup = android.widget.PopupMenu(context, ui.btnQuality)
+            val popup = android.widget.PopupMenu(context, ui.btnQuality, android.view.Gravity.NO_GRAVITY, android.R.attr.popupMenuStyle, com.lagradost.cloudstream3.R.style.PopupMenu)
             val qualities = arrayOf("auto", "hd2160", "hd1440", "hd1080", "hd720", "large", "medium", "small", "tiny")
             val labels = arrayOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
             labels.forEachIndexed { i, label -> popup.menu.add(0, i, i, label) }
@@ -280,7 +280,7 @@ class YouTubePlayer(
 
         ui.btnCaptions.setOnClickListener {
             resetAutoHide()
-            val popup = android.widget.PopupMenu(context, ui.btnCaptions)
+            val popup = android.widget.PopupMenu(context, ui.btnCaptions, android.view.Gravity.NO_GRAVITY, android.R.attr.popupMenuStyle, com.lagradost.cloudstream3.R.style.PopupMenu)
             popup.menu.add(0, 0, 0, "Off")
             popup.menu.add(0, 1, 1, "Arabic")
             popup.menu.add(0, 2, 2, "English")

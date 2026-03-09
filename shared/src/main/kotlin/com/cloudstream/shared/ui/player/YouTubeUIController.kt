@@ -61,6 +61,7 @@ class YouTubeUIController(private val context: Context) {
             )
             setBackgroundColor(Color.TRANSPARENT)
             visibility = View.GONE
+            layoutDirection = View.LAYOUT_DIRECTION_LOCALE
             isClickable = true
             isFocusable = true
         }
@@ -72,8 +73,8 @@ class YouTubeUIController(private val context: Context) {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.TOP }
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(8))
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(16), dp(16), dp(16), dp(8))
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(0xCC000000.toInt(), 0x00000000)
@@ -107,15 +108,41 @@ class YouTubeUIController(private val context: Context) {
         infoContainer.addView(textTitle)
         infoContainer.addView(textChannel)
 
-        // Keep the exit button at the very top right, styled to match the pill aesthetic
+        // Top Right: Group containing Scale, CC, Speed, Quality, and Exit
+        val topRightGroup = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val rightPillContainer = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(48)
+            )
+            orientation = LinearLayout.HORIZONTAL
+            background = createGlassPillBackground()
+            setPaddingRelative(dp(8), 0, dp(8), 0)
+        }
+
+        btnScale = createTransparentIconButton(android.R.drawable.ic_menu_crop, "Scale: Fit")
+        btnCaptions = createTransparentIconButton(android.R.drawable.ic_menu_more, "Captions")
+        btnSpeed = createTransparentIconButton(android.R.drawable.ic_menu_recent_history, "Speed")
+        btnQuality = createTransparentIconButton(android.R.drawable.ic_menu_preferences, "Quality")
+
+        rightPillContainer.addView(btnScale)
+        rightPillContainer.addView(btnCaptions)
+        rightPillContainer.addView(btnSpeed)
+        rightPillContainer.addView(btnQuality)
+
         btnExit = createPillIconButton(android.R.drawable.ic_menu_close_clear_cancel, "Close")
-        
-        // No speed button in top bar anymore, we will add it to the bottom settings menu eventually if needed, 
-        // but for now, let's just keep speed in the settings group if the user requests it. 
-        // Actually, the user asked for: Right: Global Actions (Scale Fit, CC, Settings)
-        // I'll leave the title/exit on top.
+        (btnExit.layoutParams as LinearLayout.LayoutParams).marginStart = dp(12)
+
+        topRightGroup.addView(rightPillContainer)
+        topRightGroup.addView(btnExit)
+
         topBar.addView(infoContainer)
-        topBar.addView(btnExit)
+        topBar.addView(topRightGroup)
 
         // ===== BOTTOM CONTAINER =====
         val bottomContainer = LinearLayout(context).apply {
@@ -124,7 +151,7 @@ class YouTubeUIController(private val context: Context) {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.BOTTOM }
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(16), dp(24), dp(32))
+            setPaddingRelative(dp(24), dp(16), dp(24), dp(32))
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(0xDD000000.toInt(), 0x00000000)
@@ -140,7 +167,7 @@ class YouTubeUIController(private val context: Context) {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(8), dp(4), dp(8), dp(12))
+            setPaddingRelative(dp(8), dp(4), dp(8), dp(12))
         }
 
         textCurrentTime = TextView(context).apply {
@@ -162,79 +189,30 @@ class YouTubeUIController(private val context: Context) {
         bottomContainer.addView(seekBar)
         bottomContainer.addView(timeRow)
 
-        // 2. CONTROLS ROW
-        val controlsRow = LinearLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(64)
-            )
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        // Left: Empty (User requested removal of Avatar and Description)
-        val leftGroup = LinearLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
-        }
-
-        // Center: Large Play/Pause
-        val centerGroup = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
+        // ===== CENTER CONTAINER =====
+        val centerContainer = LinearLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+            ).apply { gravity = Gravity.CENTER }
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
         }
+
+        btnRewind = createCenterSecondaryButton(android.R.drawable.ic_media_rew, "Rewind")
+        (btnRewind.layoutParams as LinearLayout.LayoutParams).marginEnd = dp(32)
+        
         btnPlayPause = createPrimaryPlayButton()
-        centerGroup.addView(btnPlayPause)
+        
+        btnForward = createCenterSecondaryButton(android.R.drawable.ic_media_ff, "Fast Forward")
+        (btnForward.layoutParams as LinearLayout.LayoutParams).marginStart = dp(32)
 
-        // Right: Glass Pill Group (Scale, CC, Settings)
-        val rightGroup = LinearLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-        }
-
-        val rightPillContainer = LinearLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(40)
-            )
-            orientation = LinearLayout.HORIZONTAL
-            background = createGlassPillBackground()
-            setPadding(dp(8), 0, dp(8), 0)
-        }
-
-        btnScale = createTransparentIconButton(android.R.drawable.ic_menu_crop, "Scale: Fit")
-        btnCaptions = createTransparentIconButton(android.R.drawable.ic_menu_more, "Captions")
-        // We reuse the Quality and Speed buttons into one "Settings" dropdown conceptually,
-        // but since the original implementation wired them up separately, we will keep them as separate buttons
-        // for ease of integration without breaking YouTubePlayer.kt.
-        btnSpeed = createTransparentIconButton(android.R.drawable.ic_menu_recent_history, "Speed")
-        btnQuality = createTransparentIconButton(android.R.drawable.ic_menu_preferences, "Quality")
-
-        rightPillContainer.addView(btnScale)
-        rightPillContainer.addView(btnCaptions)
-        rightPillContainer.addView(btnSpeed)
-        rightPillContainer.addView(btnQuality)
-
-        rightGroup.addView(rightPillContainer)
-
-        // Assemble Row
-        controlsRow.addView(leftGroup)
-        controlsRow.addView(centerGroup)
-        controlsRow.addView(rightGroup)
-
-        bottomContainer.addView(controlsRow)
-
-        // The user asked to remove Rewind and Forward from the design
-        btnRewind = ImageButton(context) // Dummy for compatibility
-        btnForward = ImageButton(context) // Dummy for compatibility
+        centerContainer.addView(btnRewind)
+        centerContainer.addView(btnPlayPause)
+        centerContainer.addView(btnForward)
 
         rootView.addView(topBar)
+        rootView.addView(centerContainer)
         rootView.addView(bottomContainer)
     }
 
@@ -338,12 +316,12 @@ class YouTubeUIController(private val context: Context) {
         }
 
         return ImageButton(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(40))
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             background = stateList
             setImageResource(iconRes)
             setColorFilter(Color.WHITE)
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = desc
             isFocusable = true
             isFocusableInTouchMode = true
@@ -355,12 +333,12 @@ class YouTubeUIController(private val context: Context) {
      */
     private fun createPillIconButton(iconRes: Int, desc: String): ImageButton {
         return ImageButton(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(8) }
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(8) }
             background = createGlassPillBackground()
             setImageResource(iconRes)
             setColorFilter(Color.WHITE)
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = desc
             isFocusable = true
             isFocusableInTouchMode = true
@@ -394,6 +372,20 @@ class YouTubeUIController(private val context: Context) {
             scaleType = android.widget.ImageView.ScaleType.CENTER
             setPadding(dp(12), dp(12), dp(12), dp(12))
             contentDescription = "Play/Pause"
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+    }
+
+    private fun createCenterSecondaryButton(iconResId: Int, contentDesc: String): ImageButton {
+        return ImageButton(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            setImageResource(iconResId)
+            background = createGlassPillBackground()
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setColorFilter(Color.WHITE)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            contentDescription = contentDesc
             isFocusable = true
             isFocusableInTouchMode = true
         }
