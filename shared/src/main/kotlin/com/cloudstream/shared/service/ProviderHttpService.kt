@@ -14,6 +14,7 @@ import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionStore
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
+import com.cloudstream.shared.util.WebConfig
 import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
@@ -322,7 +323,7 @@ class ProviderHttpService private constructor(
                 put("Referer", "https://${urlDomain ?: sessionState.domain}/")
                 put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
                 put("Accept-Language", "en-US,en;q=0.9")
-                put("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+                put("Sec-Ch-Ua", WebConfig.buildSecChUa(sessionState.userAgent))
                 put("Sec-Ch-Ua-Mobile", "?1")
                 put("Sec-Ch-Ua-Platform", "\"Android\"")
                 put("Upgrade-Insecure-Requests", "1")
@@ -555,6 +556,9 @@ class ProviderHttpService private constructor(
             parser: ParserInterface,
             activityProvider: () -> android.app.Activity?
         ): ProviderHttpService {
+            // Initialize dynamic User-Agent from the real system WebView
+            WebConfig.getUserAgent(context)
+            
             return instances.getOrPut(config.name) {
                 val sessionStore = SessionStore(context, config.name)
                 val cookieManager = CookieLifecycleManager()

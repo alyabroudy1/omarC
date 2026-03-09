@@ -1,0 +1,496 @@
+> Task :ArabSeedProviderV4:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :ArabSeedProviderV4:preBuild UP-TO-DATE
+> Task :ArabSeedProviderV4:preDebugBuild UP-TO-DATE
+> Task :ArabSeedProviderV4:generateDebugResValues UP-TO-DATE
+> Task :ArabSeedProviderV4:generateDebugResources UP-TO-DATE
+> Task :ArabSeedProviderV4:packageDebugResources UP-TO-DATE
+> Task :ArabSeedProviderV4:parseDebugLocalResources UP-TO-DATE
+> Task :ArabSeedProviderV4:generateDebugRFile UP-TO-DATE
+> Task :CimanowProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :CimanowProvider:preBuild UP-TO-DATE
+> Task :CimanowProvider:preDebugBuild UP-TO-DATE
+> Task :CimanowProvider:generateDebugResValues UP-TO-DATE
+> Task :CimanowProvider:generateDebugResources UP-TO-DATE
+> Task :CimanowProvider:packageDebugResources UP-TO-DATE
+> Task :CimanowProvider:parseDebugLocalResources UP-TO-DATE
+> Task :CimanowProvider:generateDebugRFile UP-TO-DATE
+> Task :EgyDeadProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :EgyDeadProvider:preBuild UP-TO-DATE
+> Task :EgyDeadProvider:preDebugBuild UP-TO-DATE
+> Task :EgyDeadProvider:generateDebugResValues UP-TO-DATE
+> Task :EgyDeadProvider:generateDebugResources UP-TO-DATE
+> Task :EgyDeadProvider:packageDebugResources UP-TO-DATE
+> Task :EgyDeadProvider:parseDebugLocalResources UP-TO-DATE
+> Task :EgyDeadProvider:generateDebugRFile UP-TO-DATE
+> Task :FaselHDV2Provider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :FaselHDV2Provider:preBuild UP-TO-DATE
+> Task :FaselHDV2Provider:preDebugBuild UP-TO-DATE
+> Task :FaselHDV2Provider:generateDebugResValues UP-TO-DATE
+> Task :FaselHDV2Provider:generateDebugResources UP-TO-DATE
+> Task :FaselHDV2Provider:packageDebugResources UP-TO-DATE
+> Task :FaselHDV2Provider:parseDebugLocalResources UP-TO-DATE
+> Task :FaselHDV2Provider:generateDebugRFile UP-TO-DATE
+> Task :InvidiousProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :InvidiousProvider:preBuild UP-TO-DATE
+> Task :InvidiousProvider:preDebugBuild UP-TO-DATE
+> Task :InvidiousProvider:generateDebugResValues UP-TO-DATE
+> Task :InvidiousProvider:generateDebugResources UP-TO-DATE
+> Task :InvidiousProvider:packageDebugResources UP-TO-DATE
+> Task :InvidiousProvider:parseDebugLocalResources UP-TO-DATE
+> Task :InvidiousProvider:generateDebugRFile UP-TO-DATE
+> Task :InvidiousProvider:compileDebugKotlin UP-TO-DATE
+> Task :InvidiousProvider:compileDex UP-TO-DATE
+> Task :InvidiousProvider:make UP-TO-DATE
+> Task :IPTVProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :IPTVProvider:preBuild UP-TO-DATE
+> Task :IPTVProvider:preDebugBuild UP-TO-DATE
+> Task :IPTVProvider:generateDebugResValues UP-TO-DATE
+> Task :IPTVProvider:generateDebugResources UP-TO-DATE
+> Task :IPTVProvider:packageDebugResources UP-TO-DATE
+> Task :IPTVProvider:parseDebugLocalResources UP-TO-DATE
+> Task :IPTVProvider:generateDebugRFile UP-TO-DATE
+> Task :LarozaProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :LarozaProvider:preBuild UP-TO-DATE
+> Task :LarozaProvider:preDebugBuild UP-TO-DATE
+> Task :LarozaProvider:generateDebugResValues UP-TO-DATE
+> Task :LarozaProvider:generateDebugResources UP-TO-DATE
+> Task :LarozaProvider:packageDebugResources UP-TO-DATE
+> Task :LarozaProvider:parseDebugLocalResources UP-TO-DATE
+> Task :LarozaProvider:generateDebugRFile UP-TO-DATE
+> Task :WatanflixProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :WatanflixProvider:preBuild UP-TO-DATE
+> Task :WatanflixProvider:preDebugBuild UP-TO-DATE
+> Task :WatanflixProvider:generateDebugResValues UP-TO-DATE
+> Task :WatanflixProvider:generateDebugResources UP-TO-DATE
+> Task :WatanflixProvider:packageDebugResources UP-TO-DATE
+> Task :WatanflixProvider:parseDebugLocalResources UP-TO-DATE
+> Task :WatanflixProvider:generateDebugRFile UP-TO-DATE
+> Task :YoutubeProvider:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :YoutubeProvider:preBuild UP-TO-DATE
+> Task :YoutubeProvider:preDebugBuild UP-TO-DATE
+> Task :YoutubeProvider:generateDebugResValues UP-TO-DATE
+> Task :YoutubeProvider:generateDebugResources UP-TO-DATE
+> Task :YoutubeProvider:packageDebugResources UP-TO-DATE
+> Task :YoutubeProvider:parseDebugLocalResources UP-TO-DATE
+> Task :YoutubeProvider:generateDebugRFile UP-TO-DATE
+
+> Task :EgyDeadProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :FaselHDV2Provider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :ArabSeedProviderV4:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :LarozaProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :IPTVProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :CimanowProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :WatanflixProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+> Task :YoutubeProvider:compileDebugKotlin FAILED
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:44 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:50 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:142:79 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:143:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:180:37 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:187:25 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:53 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:59 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:214:88 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:219:30 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:275:44 Unresolved reference 'SnifferBridge'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:479:40 Unresolved reference 'getHtmlFromWebView'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:496:47 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:501:33 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:602:13 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:619:17 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:50 Cannot infer type for type parameter 'R'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:56 Unresolved reference 'extractCookies'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:703:84 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:710:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:798:21 Unresolved reference 'cleanup'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:953:14 Syntax error: Expecting 'catch' or 'finally'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:963:5 Modifier 'inner' is not applicable inside 'function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1062:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1084:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1089:17 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'K'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1090:20 Cannot infer type for type parameter 'V'. Specify it explicitly.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1099:33 Unresolved reference 'parseCookieString'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1107:44 Unresolved reference 'size'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1126:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1133:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///Users/mohammad/AndroidStudioProjects/cloudstream-standard-v2/omarC/shared/src/main/kotlin/com/cloudstream/shared/webview/VideoSnifferEngine.kt:1158:2 Syntax error: Missing '}.
+
+FAILURE: Build completed with 8 failures.
+
+1: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':EgyDeadProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+2: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':FaselHDV2Provider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+3: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':ArabSeedProviderV4:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+4: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':LarozaProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+5: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':IPTVProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+6: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':CimanowProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+7: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':WatanflixProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+8: Task failed with an exception.
+-----------
+* What went wrong:
+Execution failed for task ':YoutubeProvider:compileDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+==============================================================================
+
+BUILD FAILED in 2s
+56 actionable tasks: 8 executed, 48 up-to-date

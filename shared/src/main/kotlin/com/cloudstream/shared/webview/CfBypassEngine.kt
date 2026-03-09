@@ -121,20 +121,16 @@ class CfBypassEngine(
                     if (resultDelivered) return
                     ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageStarted", "Page started", "url" to url?.take(80))
 
-                    // Inject Fingerprint Spoofing
+                    // Inject anti-bot spoofing (hide WebView/automation markers)
                     view?.evaluateJavascript(
                         """
                         (function() {
-                            // 1. Polyfill for sites that expect object__info
+                            // Hide webdriver flag (CF checks this for headless bot detection)
+                            Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
+                            
+                            // Polyfill for sites that expect object__info
                             if (typeof window.object__info === 'undefined') {
                                 window.object__info = {};
-                            }
-                            
-                            // 2. Fingerprint Spoofing (Match Desktop UA)
-                            if (navigator.userAgent.indexOf("Windows") !== -1) {
-                                Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; } });
-                                Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
-                                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
                             }
                         })();
                         """.trimIndent(), null

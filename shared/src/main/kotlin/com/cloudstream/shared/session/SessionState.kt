@@ -3,6 +3,7 @@ package com.cloudstream.shared.session
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_SESSION
 import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
+import com.cloudstream.shared.util.WebConfig
 
 /**
  * SINGLE SOURCE OF TRUTH for all session-related data.
@@ -79,8 +80,8 @@ data class SessionState(
             put("Referer", "https://$domain/")
             put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
             put("Accept-Language", "en-US,en;q=0.9")
-            // Critical Client Hints for Chrome 120+ spoofing
-            put("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+            // Client Hints — dynamically matches the real Chrome version
+            put("Sec-Ch-Ua", WebConfig.buildSecChUa(userAgent))
             put("Sec-Ch-Ua-Mobile", "?1")
             put("Sec-Ch-Ua-Platform", "\"Android\"")
             put("Upgrade-Insecure-Requests", "1")

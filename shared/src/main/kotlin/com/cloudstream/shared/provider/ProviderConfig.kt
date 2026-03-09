@@ -44,12 +44,11 @@ data class ProviderConfig(
 /**
  * Unified User-Agent: Single source of truth.
  * 
- * This exact string is used by:
- * - DirectHttpStrategy (OkHttp requests)
- * - WebViewStrategy (ConfigurableCloudflareKiller)
- * - VideoSniffingStrategy (WebView.settings.userAgentString)
+ * Now dynamically resolved via [com.cloudstream.shared.util.WebConfig].
+ * Uses the device's REAL WebView User-Agent to prevent Cloudflare
+ * fingerprint mismatch (old Chrome/65 UA vs actual Chrome/131+ engine).
  * 
- * It is a sanitized Chrome Mobile UA WITHOUT WebView markers.
  * Cloudflare binds cookies to the User-Agent.
  */
-const val UNIFIED_USER_AGENT = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Mobile Safari/537.36"
+val UNIFIED_USER_AGENT: String
+    get() = com.cloudstream.shared.util.WebConfig.getCachedUserAgent()
