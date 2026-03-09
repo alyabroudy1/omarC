@@ -423,11 +423,11 @@ class YouTubeUIController(private val context: Context) {
                 setId(1, android.R.id.progress)
             }
 
-            // Thumb: Red circle crossing the fine line
+            // Thumb: Large Red circle crossing the fine line
             thumb = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.RED)
-                setSize(dp(12), dp(12))
+                setSize(dp(24), dp(24))
             }
             thumbOffset = 0 // Allows the fine line to perfectly hit the center of the thumb
         }
