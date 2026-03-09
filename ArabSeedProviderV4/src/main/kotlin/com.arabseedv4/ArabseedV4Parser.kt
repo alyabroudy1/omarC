@@ -88,9 +88,18 @@ class ArabseedV4Parser : NewBaseParser() {
         // Direct Embeds (iframes already on the page)
         urls.addAll(extractDirectEmbeds(doc))
         
-        Log.d("[ArabseedV4Parser]", "extractWatchServersUrls: total=${urls.size} URLs")
+        // Final Validation: Only keep structurally valid URLs 
+        // (must have proper schema/host and not just "https://")
+        val validUrls = urls.filter { 
+            it.isNotBlank() && 
+            it != "https://" && 
+            it != "http://" && 
+            (it.startsWith("arabseed-lazy://") || (it.startsWith("http") && it.length > 10))
+        }
         
-        return urls
+        Log.d("[ArabseedV4Parser]", "extractWatchServersUrls: total=${validUrls.size} valid URLs out of ${urls.size}")
+        
+        return validUrls
     }
     
     // Series Detection Logic override to match V2
@@ -114,6 +123,7 @@ class ArabseedV4Parser : NewBaseParser() {
     // ================= HELPERS FOR ARABSEED LOGIC =================
 
     private fun fixUrl(url: String): String {
+        if (url.isBlank()) return ""
         if (url.startsWith("//")) return "https:$url"
         if (!url.startsWith("http")) return "https://$url"
         return url

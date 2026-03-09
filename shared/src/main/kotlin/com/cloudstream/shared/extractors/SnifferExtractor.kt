@@ -114,6 +114,12 @@ class SnifferExtractor : ExtractorApi() {
             "embedUrl" to embedUrl.take(60),
             "embedReferer" to embedReferer.take(40),
             "hasSelector" to (selector != null))
+            
+        if (embedUrl.isBlank() || embedUrl == "https://" || embedUrl == "http://") {
+            android.util.Log.e("SnifferExtractor", "Invalid or blank embed URL detected: '$embedUrl'. Aborting.")
+            ProviderLogger.e(TAG, "getUrl", "Invalid embed URL: $embedUrl")
+            return
+        }
         
         // Get or create VideoSnifferEngine
         val engine = videoSnifferEngine ?: run {
@@ -356,10 +362,22 @@ class SnifferExtractor : ExtractorApi() {
             is WebViewResult.PlayingInWebView -> {
                 android.util.Log.i("SnifferExtractor", "[getUrl] Video playing in WebView (DRM or unsniffable). Dialog remains open as player.")
                 ProviderLogger.i(TAG, "getUrl", "Playing in WebView (dialog stays open as player)")
+                
+                // Wait indefinitely while the user watches the video in the WebView dialog
+                while (result.dialog.isShowing) {
+                    kotlinx.coroutines.delay(500)
+                }
+                
+                // If the user dismisses the dialog (Back press), we should cancel the entire loop. 
+                // They are trying to exit the player, not move to the next server.
+                throw kotlinx.coroutines.CancellationException("User exited WebView player")
             }
             is WebViewResult.Error -> {
                 android.util.Log.e("SnifferExtractor", "[getUrl] ERROR: ${result.reason}")
                 ProviderLogger.e(TAG, "getUrl", "VideoSnifferEngine error: ${result.reason}")
+                if (result.reason.contains("cancel", ignoreCase = true)) {
+                    throw kotlinx.coroutines.CancellationException("User cancelled sniffing")
+                }
             }
         }
         
