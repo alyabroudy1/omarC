@@ -238,6 +238,55 @@ class YouTubePlayer(
             resetAutoHide()
             jsBridge.seekRelative(10)
         }
+        
+        ui.btnSpeed.setOnClickListener {
+            resetAutoHide()
+            val popup = android.widget.PopupMenu(context, ui.btnSpeed)
+            val speeds = arrayOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
+            speeds.forEachIndexed { i, speed -> popup.menu.add(0, i, i, "${speed}x") }
+            popup.setOnMenuItemClickListener { item ->
+                jsBridge.setPlaybackSpeed(speeds[item.itemId])
+                Toast.makeText(context, "Speed: ${speeds[item.itemId]}x", Toast.LENGTH_SHORT).show()
+                true
+            }
+            popup.show()
+        }
+
+        ui.btnQuality.setOnClickListener {
+            resetAutoHide()
+            val popup = android.widget.PopupMenu(context, ui.btnQuality)
+            val qualities = arrayOf("auto", "hd2160", "hd1440", "hd1080", "hd720", "large", "medium", "small", "tiny")
+            val labels = arrayOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
+            labels.forEachIndexed { i, label -> popup.menu.add(0, i, i, label) }
+            popup.setOnMenuItemClickListener { item ->
+                jsBridge.setPlaybackQuality(qualities[item.itemId])
+                Toast.makeText(context, "Quality: ${labels[item.itemId]}", Toast.LENGTH_SHORT).show()
+                true
+            }
+            popup.show()
+        }
+
+        ui.btnCaptions.setOnClickListener {
+            resetAutoHide()
+            val popup = android.widget.PopupMenu(context, ui.btnCaptions)
+            popup.menu.add(0, 0, 0, "Off")
+            popup.menu.add(0, 1, 1, "Arabic")
+            popup.menu.add(0, 2, 2, "English")
+            popup.menu.add(0, 3, 3, "Auto-translate to Arabic")
+            popup.menu.add(0, 4, 4, "Auto-translate to English")
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    0 -> jsBridge.setCaptions(false)
+                    1 -> jsBridge.setCaptions(true, languageCode = "ar")
+                    2 -> jsBridge.setCaptions(true, languageCode = "en")
+                    3 -> jsBridge.setCaptions(true, translateTo = "ar")
+                    4 -> jsBridge.setCaptions(true, translateTo = "en")
+                }
+                Toast.makeText(context, "Captions updated", Toast.LENGTH_SHORT).show()
+                true
+            }
+            popup.show()
+        }
 
         ui.btnExit.setOnClickListener { dismiss() }
 

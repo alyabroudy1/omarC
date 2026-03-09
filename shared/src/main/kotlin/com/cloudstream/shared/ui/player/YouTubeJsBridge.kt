@@ -256,6 +256,52 @@ class YouTubeJsBridge(private val webView: WebView) {
         evaluateJs("var v = document.querySelector('video'); if(v) { v.playbackRate = $speed; }")
     }
 
+    fun setPlaybackQuality(quality: String) {
+        evaluateJs("""
+            (function() {
+                var player = document.querySelector('#movie_player');
+                if (player && player.setPlaybackQualityRange) {
+                    player.setPlaybackQualityRange('$quality');
+                    player.setPlaybackQuality('$quality');
+                }
+            })();
+        """.trimIndent())
+    }
+
+    fun setCaptions(enabled: Boolean, languageCode: String? = null, translateTo: String? = null) {
+        val translateToJs = if (translateTo != null) "'$translateTo'" else "null"
+        val languageCodeJs = if (languageCode != null) "'$languageCode'" else "null"
+        evaluateJs("""
+            (function() {
+                try {
+                    var player = document.querySelector('#movie_player');
+                    if (player && player.setOption) {
+                        var tracks = player.getOption('captions', 'tracklist') || [];
+                        if ($enabled) {
+                            if ($translateToJs !== null) {
+                                var track = tracks.find(function(t) { return t.kind === 'asr' || t.is_default; }) || tracks[0];
+                                if (track) {
+                                    player.setOption('captions', 'track', {languageCode: track.languageCode});
+                                    player.setOption('captions', 'translationLanguage', {languageCode: $translateToJs});
+                                }
+                            } else if ($languageCodeJs !== null) {
+                                var track = tracks.find(function(t) { return t.languageCode === $languageCodeJs; }) || tracks[0];
+                                if (track) player.setOption('captions', 'track', track);
+                            } else {
+                                if (tracks.length > 0) player.setOption('captions', 'track', tracks[0]);
+                            }
+                            var ccBtn = document.querySelector('.ytp-subtitles-button');
+                            if (ccBtn && ccBtn.getAttribute('aria-pressed') !== 'true') ccBtn.click();
+                        } else {
+                            player.setOption('captions', 'track', {});
+                            var ccBtn = document.querySelector('.ytp-subtitles-button');
+                            if (ccBtn && ccBtn.getAttribute('aria-pressed') === 'true') ccBtn.click();
+                        }
+                    }
+                } catch(e) {}
+            })();
+        """.trimIndent())
+    }
     fun pollPlaybackState(onResult: (currentTime: Double, duration: Double, isPaused: Boolean) -> Unit) {
         val js = """
             (function() {
