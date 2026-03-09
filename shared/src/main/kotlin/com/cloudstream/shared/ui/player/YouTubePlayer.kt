@@ -397,6 +397,13 @@ class YouTubePlayer(
             if (previousOrientation != -999) {
                 val act = scanForActivity(context)
                 if (act != null) {
+                    // If the previous orientation was unspecified (auto-rotate), force it to re-evaluate the sensor immediately.
+                    // On phones, if they hit "back" while holding portrait, it might be stuck in the forced landscape state 
+                    // unless we explicitly trigger an orientation change back to user/sensor preference.
+                    if (previousOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+                        act.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER
+                    }
+                    // Apply original
                     act.requestedOrientation = previousOrientation
                     Log.d(TAG, "dismiss: Restored orientation to $previousOrientation")
                 }
