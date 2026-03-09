@@ -315,17 +315,10 @@ class YoutubeProvider : MainAPI() {
         CommonActivity.activity?.let { activity ->
             activity.runOnUiThread {
                 try {
-                    val intent = android.content.Intent().apply {
-                        setClassName(
-                            "com.lagradost.cloudstream3",
-                            "com.lagradost.cloudstream3.ui.player.YouTubePlayerActivity"
-                        )
-                        putExtra("url", url)
-                    }
-                    activity.startActivity(intent)
+                    val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
+                    dialog.show()
                 } catch (e: Exception) {
                     Log.e("YouTubeProvider", "Failed to launch native player, falling back to browser: ${e.message}")
-                    // Fallback to browser if activity not found
                     val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
                     activity.startActivity(browserIntent)
                 }

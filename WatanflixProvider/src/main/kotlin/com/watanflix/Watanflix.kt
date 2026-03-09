@@ -237,7 +237,7 @@ class Watanflix : BaseProvider() {
         CommonActivity.activity?.let { activity ->
             if (activity is android.app.Activity) {
                 activity.runOnUiThread {
-                    val dialog = com.cloudstream.shared.ui.WebViewPlayerDialog(activity, url)
+                    val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
                     dialog.show()
                 }
             }
