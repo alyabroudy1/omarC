@@ -33,6 +33,9 @@ class YouTubePlayer(
     private val PROGRESS_UPDATE_INTERVAL_MS = 1000L
 
     private val handler = Handler(Looper.getMainLooper())
+    private var currentSpeedIndex = 3
+    private var currentQualityIndex = 0
+    private var currentCaptionIndex = 0
     private lateinit var webView: WebView
     private lateinit var ui: YouTubeUIController
     private lateinit var jsBridge: YouTubeJsBridge
@@ -257,7 +260,8 @@ class YouTubePlayer(
             val act = scanForActivity(context) ?: return@setOnClickListener
             val speeds = arrayOf(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
             val labels = speeds.map { "${it}x" }
-            act.showDialog(labels, -1, "Playback Speed", false, {}) { index ->
+            act.showDialog(labels, currentSpeedIndex, "Playback Speed", false, {}) { index ->
+                currentSpeedIndex = index
                 jsBridge.setPlaybackSpeed(speeds[index])
                 Toast.makeText(context, "Speed: ${labels[index]}", Toast.LENGTH_SHORT).show()
             }
@@ -268,7 +272,8 @@ class YouTubePlayer(
             val act = scanForActivity(context) ?: return@setOnClickListener
             val qualities = arrayOf("auto", "hd2160", "hd1440", "hd1080", "hd720", "large", "medium", "small", "tiny")
             val labels = listOf("Auto", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p")
-            act.showDialog(labels, -1, "Video Quality", false, {}) { index ->
+            act.showDialog(labels, currentQualityIndex, "Video Quality", false, {}) { index ->
+                currentQualityIndex = index
                 jsBridge.setPlaybackQuality(qualities[index])
                 Toast.makeText(context, "Quality: ${labels[index]}", Toast.LENGTH_SHORT).show()
             }
@@ -278,7 +283,8 @@ class YouTubePlayer(
             resetAutoHide()
             val act = scanForActivity(context) ?: return@setOnClickListener
             val labels = listOf("Off", "Arabic", "English", "Auto-translate to Arabic", "Auto-translate to English")
-            act.showDialog(labels, -1, "Captions", false, {}) { index ->
+            act.showDialog(labels, currentCaptionIndex, "Captions", false, {}) { index ->
+                currentCaptionIndex = index
                 when (index) {
                     0 -> jsBridge.setCaptions(false)
                     1 -> jsBridge.setCaptions(true, languageCode = "ar")

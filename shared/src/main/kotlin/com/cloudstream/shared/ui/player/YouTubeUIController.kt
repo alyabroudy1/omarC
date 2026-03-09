@@ -403,27 +403,17 @@ class YouTubeUIController(private val context: Context) {
             isFocusableInTouchMode = true
             splitTrack = false
 
-            val viewHeight = dp(28)
-            val trackHeight = dp(2).coerceAtLeast(1) // extremely thin line
-            val insetVertical = (viewHeight - trackHeight) / 2
+            val trackHeight = dp(2).coerceAtLeast(1).toFloat()
 
             // Track Background: Very Fine Solid White Line
-            val trackBg = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(0x66FFFFFF) // Translucent white for unplayed
-            }
+            val trackBg = ThinTrackDrawable(0x66FFFFFF, trackHeight)
             
             // Track Progress: Very Fine Solid Red Line
-            val trackProgress = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(Color.RED)
-            }
-            val clip = ClipDrawable(trackProgress, Gravity.START, ClipDrawable.HORIZONTAL)
+            val trackProgress = ThinTrackDrawable(Color.RED, trackHeight)
             
-            val insetBg = android.graphics.drawable.InsetDrawable(trackBg, 0, insetVertical, 0, insetVertical)
-            val insetProgress = android.graphics.drawable.InsetDrawable(clip, 0, insetVertical, 0, insetVertical)
+            val clip = ClipDrawable(trackProgress, Gravity.START, ClipDrawable.HORIZONTAL)
 
-            progressDrawable = LayerDrawable(arrayOf(insetBg, insetProgress)).apply {
+            progressDrawable = LayerDrawable(arrayOf(trackBg, clip)).apply {
                 setId(0, android.R.id.background)
                 setId(1, android.R.id.progress)
             }
@@ -436,5 +426,23 @@ class YouTubeUIController(private val context: Context) {
             }
             thumbOffset = 0 // Allows the fine line to perfectly hit the center of the thumb
         }
+    }
+    
+    private class ThinTrackDrawable(val trackColor: Int, val heightPx: Float) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint().apply { 
+            color = trackColor 
+            isAntiAlias = true
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            val centerY = b.centerY().toFloat()
+            val top = centerY - heightPx / 2f
+            val bottom = centerY + heightPx / 2f
+            canvas.drawRect(b.left.toFloat(), top, b.right.toFloat(), bottom, paint)
+        }
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(filter: android.graphics.ColorFilter?) { paint.colorFilter = filter }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
     }
 }
