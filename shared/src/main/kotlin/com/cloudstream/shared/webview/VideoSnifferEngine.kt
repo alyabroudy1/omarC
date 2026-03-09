@@ -81,6 +81,12 @@ class VideoSnifferEngine(
     private var activeDialog: Dialog? = null
     private var statusTextView: TextView? = null
     private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
+    
+    // Skip Server Overlay state
+    private var skipOverlayContainer: android.widget.LinearLayout? = null
+    private var skipCountdownText: TextView? = null
+    private var skipCountdownJob: Job? = null
+    private var skipButton: android.widget.Button? = null
 
     private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()
     private var firstLinkTime: Long = 0L
@@ -758,6 +764,96 @@ class VideoSnifferEngine(
         }
         webViewContainer.addView(statusTextView)
 
+        // TV-Friendly Skip Server Overlay (hidden by default)
+        val skipContainer = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#E6000000")) // Semi-transparent black 90%
+            visibility = android.view.View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+
+            // Title
+            addView(TextView(activity).apply {
+                text = "Invalid Page or Missing Video Detected"
+                textSize = 20f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 16)
+            })
+
+            // Countdown Subtitle
+            skipCountdownText = TextView(activity).apply {
+                text = "Skipping server in 5s..."
+                textSize = 16f
+                setTextColor(Color.LTGRAY)
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 32)
+            }
+            addView(skipCountdownText)
+
+            // Buttons Layout
+            val buttonLayout = android.widget.LinearLayout(activity).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+            }
+
+            // Skip Now Button
+            skipButton = android.widget.Button(activity).apply {
+                text = "Skip Now"
+                isFocusable = true
+                isFocusableInTouchMode = true
+                setBackgroundColor(Color.parseColor("#444444"))
+                setTextColor(Color.WHITE)
+                setPadding(32, 16, 32, 16)
+                
+                // Focus styling
+                setOnFocusChangeListener { _, hasFocus ->
+                    setBackgroundColor(Color.parseColor(if (hasFocus) "#007BFF" else "#444444"))
+                }
+
+                setOnClickListener {
+                    skipCountdownJob?.cancel()
+                    handleSkipServer(webView, activeDialog)
+                }
+            }
+            buttonLayout.addView(skipButton)
+
+            // Wait Button
+            val waitButton = android.widget.Button(activity).apply {
+                text = "Wait"
+                isFocusable = true
+                isFocusableInTouchMode = true
+                setBackgroundColor(Color.parseColor("#444444"))
+                setTextColor(Color.WHITE)
+                setPadding(32, 16, 32, 16)
+                
+                // Focus styling
+                setOnFocusChangeListener { _, hasFocus ->
+                    setBackgroundColor(Color.parseColor(if (hasFocus) "#6C757D" else "#444444"))
+                }
+
+                setOnClickListener {
+                    skipCountdownJob?.cancel()
+                    skipOverlayContainer?.visibility = android.view.View.GONE
+                }
+            }
+            
+            val marginParams = android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = 48
+            }
+            buttonLayout.addView(waitButton, marginParams)
+
+            addView(buttonLayout)
+        }
+        skipOverlayContainer = skipContainer
+        webViewContainer.addView(skipContainer)
+
         // Initialize Mouse Controller
         tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
         tvMouseController?.attach(webViewContainer)
@@ -802,8 +898,43 @@ class VideoSnifferEngine(
                  // Cleanup Mouse
                  tvMouseController?.detach()
                  tvMouseController = null
+                 skipCountdownJob?.cancel()
             }
         }
+    }
+
+    private fun showSkipOverlay(view: WebView?) {
+        if (resultDelivered || skipOverlayContainer?.visibility == android.view.View.VISIBLE) return
+
+        skipOverlayContainer?.visibility = android.view.View.VISIBLE
+        
+        // Request focus on the skip button for TV remotes
+        skipButton?.requestFocus()
+
+        skipCountdownJob?.cancel()
+        skipCountdownJob = CoroutineScope(Dispatchers.Main).launch {
+            for (i in 5 downTo 1) {
+                if (resultDelivered) break
+                skipCountdownText?.text = "Skipping server in ${i}s..."
+                delay(1000)
+            }
+            if (!resultDelivered && skipOverlayContainer?.visibility == android.view.View.VISIBLE) {
+                android.util.Log.i("VideoSnifferEngine", "[showSkipOverlay] Countdown finished, auto-skipping.")
+                handleSkipServer(view, activeDialog)
+            }
+        }
+    }
+
+    private fun handleSkipServer(view: WebView?, dialog: Dialog?) {
+        if (resultDelivered) return
+        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine", "Skipping server (user/auto cancelled)")
+        resultDelivered = true
+        timeoutJob?.cancel()
+        videoMonitorJob?.cancel()
+        skipCountdownJob?.cancel()
+
+        cleanup(view, dialog)
+        deferred?.complete(WebViewResult.Error("User cancelled sniffing"))
     }
 
     private fun startDomVideoExtraction(view: WebView?) {
@@ -906,8 +1037,24 @@ class VideoSnifferEngine(
                             console.log('[VideoSnifferEngine] Error checking player objects:', e);
                         }
                         
-                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length);
-                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources});
+                        // 5. Check for Server Error / Deleted File texts
+                        var invalidPageDetected = false;
+                        var textContent = document.body ? document.body.innerText.toLowerCase() : "";
+                        if (textContent.length > 0 && textContent.length < 5000) { // Don't check massive DOMs to save perf
+                            var errorTexts = [
+                                "file was deleted", "video not found", "404 not found", 
+                                "no longer available", "file not found", "we're sorry, this video is no longer available"
+                            ];
+                            for (var i = 0; i < errorTexts.length; i++) {
+                                if (textContent.indexOf(errorTexts[i]) !== -1) {
+                                    invalidPageDetected = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected);
+                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected});
                     })()
                 """) { result ->
                     try {
@@ -920,12 +1067,21 @@ class VideoSnifferEngine(
                             val videoCount = jsonObj.optInt("videoCount", 0)
                             val sourceCount = jsonObj.optInt("sourceCount", 0)
                             val sourcesArray = jsonObj.optJSONArray("sources")
+                            val invalidPageDetected = jsonObj.optBoolean("invalidPageDetected", false)
 
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Page analysis",
                                 "videos" to videoCount,
                                 "sources" to sourceCount,
-                                "foundUrls" to (sourcesArray?.length() ?: 0)
+                                "foundUrls" to (sourcesArray?.length() ?: 0),
+                                "invalidPage" to invalidPageDetected
                             )
+                            
+                            if (invalidPageDetected && (sourcesArray == null || sourcesArray.length() == 0)) {
+                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Invalid page detected! Initiating skip server.")
+                                CoroutineScope(Dispatchers.Main).launch {
+                                    showSkipOverlay(view)
+                                }
+                            }
 
                             if (sourcesArray != null && sourcesArray.length() > 0) {
                                 ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Found video sources!", "count" to sourcesArray.length())
@@ -937,7 +1093,7 @@ class VideoSnifferEngine(
 
                                     if (src.isNotBlank() && src.length > 20) {
                                         ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Capturing URL", "url" to src.take(100), "type" to type)
-                                        captureLink(src, type, emptyMap())
+                                        captureLink(src, type, emptyMap<String, String>())
                                     }
                                 }
                             } else {
