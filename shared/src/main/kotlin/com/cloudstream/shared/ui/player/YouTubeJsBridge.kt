@@ -19,6 +19,29 @@ class YouTubeJsBridge(private val webView: WebView) {
         val js = """
             (function() {
                 try {
+                    // Bypass GDPR consent screen if redirected
+                    if (window.location.hostname.indexOf('consent.youtube.com') !== -1) {
+                        console.log("On consent page, attempting to auto-accept...");
+                        var forms = document.querySelectorAll('form');
+                        if (forms.length > 0) {
+                            var buttons = document.querySelectorAll('button');
+                            if (buttons.length > 0) {
+                                for (var i = 0; i < buttons.length; i++) {
+                                    if (buttons[i].textContent.indexOf('Accept') !== -1 || 
+                                        buttons[i].textContent.indexOf('قبول') !== -1 ||   
+                                        buttons[i].textContent.indexOf('Agree') !== -1) {
+                                        buttons[i].click();
+                                        return;
+                                    }
+                                }
+                                buttons[buttons.length - 1].click();
+                            } else {
+                                forms[0].submit();
+                            }
+                        }
+                        return; // DO NOT apply fullscreen CSS to the consent page
+                    }
+
                     var style = document.querySelector('#cs-youtube-style');
                     if (!style) {
                         style = document.createElement('style');

@@ -84,6 +84,20 @@ class YouTubePlayer(
         setupListeners()
         
         val finalUrl = if (url.contains("?")) "$url&cc_load_policy=1&cc_lang_pref=ar&hl=ar" else "$url?cc_load_policy=1&cc_lang_pref=ar&hl=ar"
+        
+        // Pre-approve GDPR consent to avoid the "black screen" redirect
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            val consentCookie = "CONSENT=YES+cb.20230101-08-p0.en+FX+0;"
+            cookieManager.setCookie("https://youtube.com", consentCookie)
+            cookieManager.setCookie("https://www.youtube.com", consentCookie)
+            cookieManager.setCookie("https://consent.youtube.com", consentCookie)
+            cookieManager.flush()
+        } catch (e: Exception) {
+            android.util.Log.e("YouTubePlayer", "Failed to set consent cookie", e)
+        }
+        
         webView.loadUrl(finalUrl)
     }
 
