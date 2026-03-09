@@ -403,8 +403,8 @@ class YouTubeUIController(private val context: Context) {
             isFocusableInTouchMode = true
             splitTrack = false
 
-            // Track Background: Very Fine Solid White Line, 1.5dp thick
-            val trackHeight = dp(2).coerceAtLeast(1)
+            // Track Background: Very Fine Solid White Line, 1px thick
+            val trackHeight = 1 // 1 physical pixel for ultra-thin line
             val trackBg = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(0x66FFFFFF) // Translucent white for unplayed
