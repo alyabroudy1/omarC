@@ -255,6 +255,18 @@ class YouTubePlayer(
             jsBridge.seekRelative(10)
         }
         
+        ui.btnEpisodes.setOnClickListener {
+            resetAutoHide()
+            // TODO: Figure out how Cloudstream native player handles the episode list
+            Toast.makeText(context, "Episodes Menu", Toast.LENGTH_SHORT).show()
+        }
+
+        ui.btnNextEpisode.setOnClickListener {
+            resetAutoHide()
+            // TODO: Figure out how Cloudstream native player triggers next episode
+            Toast.makeText(context, "Next Episode", Toast.LENGTH_SHORT).show()
+        }
+
         ui.btnSpeed.setOnClickListener {
             resetAutoHide()
             val act = scanForActivity(context) ?: return@setOnClickListener

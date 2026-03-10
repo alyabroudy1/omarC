@@ -35,6 +35,8 @@ class YouTubeUIController(private val context: Context) {
     lateinit var btnCaptions: ImageButton private set
     lateinit var btnScale: ImageButton private set
     lateinit var btnExit: ImageButton private set
+    lateinit var btnEpisodes: ImageButton private set
+    lateinit var btnNextEpisode: ImageButton private set
     lateinit var seekBar: SeekBar private set
     lateinit var textCurrentTime: TextView private set
     lateinit var textDuration: TextView private set
@@ -127,11 +129,15 @@ class YouTubeUIController(private val context: Context) {
 
         btnScale = createTransparentIconButton(android.R.drawable.ic_menu_crop, "Scale: Fit")
         btnCaptions = createTransparentIconButton(android.R.drawable.ic_menu_more, "Captions")
+        btnEpisodes = createTransparentIconButton(com.lagradost.cloudstream3.R.drawable.ic_baseline_playlist_play_24, "Episodes")
+        btnNextEpisode = createTransparentIconButton(com.lagradost.cloudstream3.R.drawable.ic_baseline_skip_next_24, "Next Episode")
         btnSpeed = createTransparentIconButton(android.R.drawable.ic_menu_recent_history, "Speed")
         btnQuality = createTransparentIconButton(android.R.drawable.ic_menu_preferences, "Quality")
 
         rightPillContainer.addView(btnScale)
         rightPillContainer.addView(btnCaptions)
+        rightPillContainer.addView(btnEpisodes)
+        rightPillContainer.addView(btnNextEpisode)
         rightPillContainer.addView(btnSpeed)
         rightPillContainer.addView(btnQuality)
 
@@ -186,8 +192,8 @@ class YouTubeUIController(private val context: Context) {
         timeRow.addView(spacer)
         timeRow.addView(textDuration)
 
-        bottomContainer.addView(seekBar)
         bottomContainer.addView(timeRow)
+        bottomContainer.addView(seekBar)
 
         // ===== CENTER CONTAINER =====
         val centerContainer = LinearLayout(context).apply {
