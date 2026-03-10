@@ -357,13 +357,18 @@ class YouTubeJsBridge(private val webView: WebView) {
             }
         }
     }
-    fun pollPlaybackState(onResult: (currentTime: Double, duration: Double, isPaused: Boolean) -> Unit) {
+    fun pollPlaybackState(onResult: (currentTime: Double, bufferedTime: Double, duration: Double, isPaused: Boolean) -> Unit) {
         val js = """
             (function() {
                 var v = document.querySelector('video');
                 if (v) {
+                    var b = 0;
+                    if (v.buffered && v.buffered.length > 0) {
+                        b = v.buffered.end(v.buffered.length - 1);
+                    }
                     return JSON.stringify({
                         't': v.currentTime || 0,
+                        'b': b,
                         'd': v.duration || 0,
                         'p': v.paused
                     });
@@ -378,9 +383,10 @@ class YouTubeJsBridge(private val webView: WebView) {
                     val unescaped = result.substring(1, result.length - 1).replace("\\\"", "\"")
                     val json = org.json.JSONObject(unescaped)
                     val t = json.optDouble("t", 0.0)
+                    val b = json.optDouble("b", 0.0)
                     val d = json.optDouble("d", 0.0)
                     val p = json.optBoolean("p", true)
-                    onResult(t, d, p)
+                    onResult(t, b, d, p)
                 }
             } catch (e: Exception) {}
         }

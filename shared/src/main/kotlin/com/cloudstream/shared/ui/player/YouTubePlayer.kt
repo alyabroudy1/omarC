@@ -51,10 +51,10 @@ class YouTubePlayer(
     private val progressUpdateRunnable = object : Runnable {
         override fun run() {
             if (ui.isVisible || isPlaying) {
-                jsBridge.pollPlaybackState { currentTime, duration, paused ->
+                jsBridge.pollPlaybackState { currentTime, buffered, duration, paused ->
                     if (duration > 0) videoDuration = duration
                     if (!isSeeking) {
-                        ui.updateProgress(currentTime, duration)
+                        ui.updateProgress(currentTime, buffered, duration)
                     }
                     if (isPlaying == paused) { // Sync state if it drifted
                         isPlaying = !paused
@@ -303,6 +303,43 @@ class YouTubePlayer(
                 if (fragment != null) {
                     val showEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "showEpisodesOverlay" }
                     showEpisodesMethod?.invoke(fragment)
+
+                    // Emulate ExoPlayer's native highlight by scrolling the RecyclerView to the active index natively
+                    try {
+                        val viewModelField = fragment.javaClass.declaredFields.firstOrNull { 
+                            it.name.contains("viewModel", ignoreCase = true) 
+                        }
+                        if (viewModelField != null) {
+                            viewModelField.isAccessible = true
+                            val viewModel = viewModelField.get(fragment)
+                            val getCurrentIndexMethod = viewModel?.javaClass?.methods?.firstOrNull { it.name == "getCurrentIndex" }
+                            val index = getCurrentIndexMethod?.invoke(viewModel) as? Int
+                            
+                            if (index != null && index >= 0) {
+                                val bindingField = fragment.javaClass.declaredFields.firstOrNull { 
+                                    it.name.contains("playerBinding", ignoreCase = true) 
+                                }
+                                if (bindingField != null) {
+                                    bindingField.isAccessible = true
+                                    val binding = bindingField.get(fragment)
+                                    val recyclerViewField = binding?.javaClass?.declaredFields?.firstOrNull {
+                                        it.name == "playerEpisodeList"
+                                    }
+                                    if (recyclerViewField != null) {
+                                        recyclerViewField.isAccessible = true
+                                        val recyclerView = recyclerViewField.get(binding) as? androidx.recyclerview.widget.RecyclerView
+                                        recyclerView?.post {
+                                            recyclerView.scrollToPosition(index)
+                                            val viewHolder = recyclerView.findViewHolderForAdapterPosition(index)
+                                            viewHolder?.itemView?.requestFocus()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (innerE: Exception) {
+                        Log.w(TAG, "Failed resolving index scroll hook", innerE)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "btnEpisodes invocation failed", e)

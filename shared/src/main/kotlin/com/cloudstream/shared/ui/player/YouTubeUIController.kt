@@ -254,10 +254,11 @@ class YouTubeUIController(private val context: Context) {
             isVisible = false
         }
     }
-
-    fun updateProgress(currentTime: Double, duration: Double) {
+    fun updateProgress(currentTime: Double, buffered: Double, duration: Double) {
         val progress = if (duration > 0) ((currentTime / duration) * 100).toInt() else 0
+        val secondary = if (duration > 0) ((buffered / duration) * 100).toInt() else 0
         seekBar.progress = progress
+        seekBar.secondaryProgress = secondary
         textCurrentTime.text = formatTime(currentTime.toInt())
         textDuration.text = formatTime(duration.toInt())
     }
