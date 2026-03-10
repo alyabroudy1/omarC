@@ -449,7 +449,7 @@ class YouTubePlayer(
                 if (fromUser) {
                     resetAutoHide()
                     val time = (progress.toDouble() / 100.0) * videoDuration
-                    ui.updateProgress(time, videoDuration)
+                    ui.updateProgress(time, time, videoDuration)
 
                     isSeeking = true
                     seekDebouncerRunnable?.let { handler.removeCallbacks(it) }
