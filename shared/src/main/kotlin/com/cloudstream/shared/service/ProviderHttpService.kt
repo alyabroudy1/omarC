@@ -267,6 +267,29 @@ class ProviderHttpService private constructor(
         return doc
     }
 
+    /**
+     * Like [getDocument] but does NOT fall back to WebView CF solve.
+     * Instead, throws [CloudflareBlockedSearchException] if CF is detected.
+     * Used by lazy search to avoid WebView popups during global search.
+     */
+    suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false): Document? {
+        val result = requestQueue.enqueue(url, headers)
+        
+        if (result.success && checkDomainChange) {
+            checkAndUpdateDomain(url, result.finalUrl)
+        }
+        
+        // If CF blocked, throw instead of falling back to WebView
+        if (result.isCloudflareBlocked || result.responseCode == 403 || 
+            result.html?.contains("403 Forbidden") == true) {
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "getDocumentNoFallback", 
+                "CF detected — throwing for lazy search", "url" to url.take(80))
+            throw CloudflareBlockedSearchException(config.name, sessionState.domain)
+        }
+        
+        return result.html?.let { Jsoup.parse(it, url) }
+    }
+
     fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
         val domain = targetDomain ?: sessionState.domain
         

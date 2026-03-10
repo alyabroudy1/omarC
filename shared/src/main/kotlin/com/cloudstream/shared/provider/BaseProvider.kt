@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import org.jsoup.nodes.Document
+import com.cloudstream.shared.service.CloudflareBlockedSearchException
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.android.ActivityProvider
@@ -27,6 +28,13 @@ abstract class BaseProvider : MainAPI() {
     override val hasMainPage: Boolean = true
     override val hasDownloadSupport: Boolean = true
     override val supportedTypes: Set<TvType> = setOf(TvType.TvSeries, TvType.Movie)
+
+    /**
+     * Indicates this provider supports lazy search (skip CF WebView during global search).
+     * When true, SearchViewModel will try [searchLazy] first and show a "tap to search"
+     * placeholder if CF is detected, instead of opening a WebView immediately.
+     */
+    open val supportsLazySearch: Boolean = true
 
     protected abstract fun getParser(): NewBaseParser
 
@@ -141,6 +149,41 @@ abstract class BaseProvider : MainAPI() {
             Log.e(methodTag, "Error in search: ${e.message}")
             e.printStackTrace()
             return emptyList()
+        }
+    }
+
+    /**
+     * Lazy search: attempts HTTP search WITHOUT Cloudflare WebView fallback.
+     * If CF blocks the request, throws [CloudflareBlockedSearchException]
+     * so the caller (SearchViewModel) can show a placeholder instead.
+     * 
+     * The full [search] method (with CF solve) is called later if the user taps the placeholder.
+     */
+    open suspend fun searchLazy(query: String): List<SearchResponse> {
+        val methodTag = "[$name] [searchLazy]"
+        Log.i(methodTag, "START query='$query'")
+
+        httpService.ensureInitialized()
+        mainUrl = "https://${httpService.currentDomain}"
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = getParser().getSearchUrl(mainUrl, encoded)
+        Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
+
+        // This throws CloudflareBlockedSearchException if CF is detected
+        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true)
+        if (doc == null) {
+            Log.e(methodTag, "Failed to fetch search document (no CF)")
+            return emptyList()
+        }
+
+        val items = getParser().parseSearch(doc)
+        Log.d(methodTag, "Parsed ${items.size} search items")
+
+        return items.map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+            }
         }
     }
 
