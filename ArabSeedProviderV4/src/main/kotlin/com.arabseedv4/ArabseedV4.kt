@@ -33,8 +33,14 @@ class ArabseedV4 : BaseProvider() {
             listOf("movies", "series").map { type ->
                 async {
                     val url = "$mainUrl/find/?word=$encoded&type=$type"
-                    val doc = httpService.getDocumentNoFallback(url)
-                    if (doc != null) getParser().parseSearch(doc) else emptyList()
+                    android.util.Log.d("ArabseedV4", "searchLazy: requesting $url")
+                    try {
+                        val doc = httpService.getDocumentNoFallback(url)
+                        if (doc != null) getParser().parseSearch(doc) else emptyList()
+                    } catch (e: Exception) {
+                        android.util.Log.e("ArabseedV4", "searchLazy: throwing $e")
+                        throw e
+                    }
                 }
             }.awaitAll().flatten().distinctBy { it.url }.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -46,11 +52,14 @@ class ArabseedV4 : BaseProvider() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        val appSupports = com.cloudstream.shared.service.LazySearchConfig.appSupportsLazySearch
+        android.util.Log.d("ArabseedV4", "search: query=$query, supportsLazySearch=$supportsLazySearch, appSupportsLazySearch=$appSupports")
         // ── Lazy search path ──
-        if (supportsLazySearch && com.cloudstream.shared.service.LazySearchConfig.appSupportsLazySearch) {
+        if (supportsLazySearch && appSupports) {
             try {
                 return searchLazy(query)
             } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
+                android.util.Log.d("ArabseedV4", "search: Caught CloudflareBlockedSearchException, returning lazy prefix")
                 return listOf(
                     newMovieSearchResponse(
                         "\uD83D\uDD0D $name",  // 🔍 ProviderName
@@ -59,10 +68,12 @@ class ArabseedV4 : BaseProvider() {
                     )
                 )
             } catch (e: Exception) {
+                android.util.Log.e("ArabseedV4", "search: Lazy search failed with ${e.javaClass.simpleName}: ${e.message}", e)
                 // Fall through to normal search
             }
         }
 
+        android.util.Log.d("ArabseedV4", "search: Falling through to NORMAL search")
         // ── Normal search path ──
         httpService.ensureInitialized()
         mainUrl = "https://${httpService.currentDomain}"

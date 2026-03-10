@@ -20,10 +20,20 @@ object LazySearchConfig {
      */
     val appSupportsLazySearch: Boolean by lazy {
         try {
-            Class.forName("com.lagradost.cloudstream3.ui.search.SearchViewModel")
-                .getMethod("resolveLazySearch", String::class.java)
-            true
+            // Plugins have a separate ClassLoader from the main app. We need to use the parent
+            // or context ClassLoader to check for app classes.
+            val cl = Thread.currentThread().contextClassLoader ?: LazySearchConfig::class.java.classLoader
+            val clazz = Class.forName("com.lagradost.cloudstream3.ui.search.SearchViewModel", false, cl)
+            val method = clazz.methods.find { it.name == "resolveLazySearch" }
+            if (method != null) {
+                android.util.Log.i("LazySearchConfig", "Reflection succeeded! Method found.")
+                true
+            } else {
+                android.util.Log.w("LazySearchConfig", "Class found but method not found!")
+                false
+            }
         } catch (e: Exception) {
+            android.util.Log.e("LazySearchConfig", "Reflection failed: ${e.message}", e)
             false
         }
     }
