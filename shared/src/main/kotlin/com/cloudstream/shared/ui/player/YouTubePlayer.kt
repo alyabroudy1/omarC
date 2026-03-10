@@ -113,6 +113,47 @@ class YouTubePlayer(
         }
         
         webView.loadUrl(finalUrl)
+        checkEpisodesStatus()
+    }
+
+    /**
+     * Finds the underlying `GeneratorPlayer` or `FullScreenPlayer` Fragment associated
+     * with this Activity via reflection to the main app module.
+     */
+    private fun getGeneratorPlayerFragment(): Any? {
+        try {
+            if (activity !is androidx.fragment.app.FragmentActivity) return null
+            
+            // Player framework stores the active fragment here 
+            val navHost = activity.supportFragmentManager.findFragmentById(
+                context.resources.getIdentifier("nav_host_fragment", "id", context.packageName)
+            )
+            val childManager = navHost?.childFragmentManager ?: return null
+            val fragments = childManager.fragments
+            
+            // Find any fragment ending in "Player" (like GeneratorPlayer or FullScreenPlayer)
+            return fragments.firstOrNull { it.javaClass.simpleName.contains("Player") }
+        } catch (e: Exception) {
+            Log.e(TAG, "getGeneratorPlayerFragment failed", e)
+            return null
+        }
+    }
+
+    private fun checkEpisodesStatus() {
+        try {
+            val fragment = getGeneratorPlayerFragment() ?: return
+            
+            // GeneratorPlayer -> open fun isThereEpisodes(): Boolean
+            val isThereEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "isThereEpisodes" }
+            val hasEpisodes = isThereEpisodesMethod?.invoke(fragment) as? Boolean ?: false
+            
+            if (!hasEpisodes) {
+                ui.btnEpisodes.visibility = View.GONE
+                ui.btnNextEpisode.visibility = View.GONE
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "checkEpisodesStatus failed", e)
+        }
     }
 
     private fun setupWindowFlags() {
@@ -257,14 +298,38 @@ class YouTubePlayer(
         
         ui.btnEpisodes.setOnClickListener {
             resetAutoHide()
-            // TODO: Figure out how Cloudstream native player handles the episode list
-            Toast.makeText(context, "Episodes Menu", Toast.LENGTH_SHORT).show()
+            try {
+                val fragment = getGeneratorPlayerFragment()
+                if (fragment != null) {
+                    val showEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "showEpisodesOverlay" }
+                    showEpisodesMethod?.invoke(fragment)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "btnEpisodes invocation failed", e)
+                Toast.makeText(context, "Cannot open episodes here", Toast.LENGTH_SHORT).show()
+            }
         }
 
         ui.btnNextEpisode.setOnClickListener {
             resetAutoHide()
-            // TODO: Figure out how Cloudstream native player triggers next episode
-            Toast.makeText(context, "Next Episode", Toast.LENGTH_SHORT).show()
+            try {
+                val fragment = getGeneratorPlayerFragment()
+                if (fragment != null) {
+                    val nextEpisodeMethod = fragment.javaClass.methods.firstOrNull { it.name == "nextEpisode" }
+                    val hasNext = nextEpisodeMethod != null
+                    
+                    if (hasNext) {
+                        nextEpisodeMethod?.invoke(fragment)
+                        // Note: after invoking nextEpisode, Cloudstream orchestrates spinning up ExoPlayer
+                        // or launching the next extractor. We must gracefully dismiss this WebView overlay
+                        // so it doesn't stay alive indefinitely taking up screen estate and audio focus.
+                        dismiss()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "btnNextEpisode invocation failed", e)
+                Toast.makeText(context, "Cannot play next episode", Toast.LENGTH_SHORT).show()
+            }
         }
 
         ui.btnSpeed.setOnClickListener {
