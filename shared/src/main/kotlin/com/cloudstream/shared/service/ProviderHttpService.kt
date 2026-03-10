@@ -273,7 +273,8 @@ class ProviderHttpService private constructor(
      * Used by lazy search to avoid WebView popups during global search.
      */
     suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false): Document? {
-        val result = requestQueue.enqueue(url, headers)
+        // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
+        val result = executeDirectRequest(url, headers)
         
         if (result.success && checkDomainChange) {
             checkAndUpdateDomain(url, result.finalUrl)
