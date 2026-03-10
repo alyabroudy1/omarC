@@ -54,10 +54,42 @@ class Watanflix : BaseProvider() {
         @JsonProperty("url") val url: String? = null
     )
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
         val url = "$mainUrl/ar/search?q=$query"
-        val response = app.get(url).parsedSafe<WatanflixSearchResponse>()
-        val items = response?.data ?: return emptyList()
+        val response = httpService.getDocumentNoFallback(url)?.text() ?: return emptyList()
+        val parsed = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readValue(response, WatanflixSearchResponse::class.java)
+        return buildWatanflixSearchItems(parsed.data ?: emptyList())
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        // ── Lazy search path ──
+        if (supportsLazySearch && com.cloudstream.shared.service.LazySearchConfig.appSupportsLazySearch) {
+            try {
+                return searchLazy(query)
+            } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
+                return listOf(
+                    newMovieSearchResponse(
+                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
+                        "${com.cloudstream.shared.service.LazySearchConfig.LAZY_SEARCH_PREFIX}$name",
+                        TvType.Movie
+                    )
+                )
+            } catch (e: Exception) {
+                // Fall through to normal search
+            }
+        }
+
+        // ── Normal search path ──
+        val url = "$mainUrl/ar/search?q=$query"
+        val response = httpService.getDocument(url)?.text() ?: return emptyList()
+        val parsed = try {
+            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readValue(response, WatanflixSearchResponse::class.java)
+        } catch (e: Exception) { null }
+        
+        return buildWatanflixSearchItems(parsed?.data ?: emptyList())
+    }
+
+    private suspend fun buildWatanflixSearchItems(items: List<WatanflixSearchItem>): List<SearchResponse> {
 
         return items.mapNotNull { item ->
             val title = item.title?.trim() ?: return@mapNotNull null
@@ -85,7 +117,13 @@ class Watanflix : BaseProvider() {
                     this.posterUrl = fetchedPoster
                 }
             }
-        }.filterNotNull()
+        }
+    }
+
+    override suspend fun load(url: String): LoadResponse? {
+        Log.d(TAG, "load: url=$url")
+        // Just return the URL itself disguised as a movie so we can play it
+        return newMovieLoadResponse(providerName, url, TvType.Movie, url)
     }
 
     override suspend fun loadLinks(

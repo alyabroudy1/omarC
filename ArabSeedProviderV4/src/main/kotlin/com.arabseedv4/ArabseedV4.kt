@@ -24,7 +24,46 @@ class ArabseedV4 : BaseProvider() {
 
     // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
 
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
+        mainUrl = "https://${httpService.currentDomain}"
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        
+        return coroutineScope {
+            listOf("movies", "series").map { type ->
+                async {
+                    val url = "$mainUrl/find/?word=$encoded&type=$type"
+                    val doc = httpService.getDocumentNoFallback(url)
+                    if (doc != null) getParser().parseSearch(doc) else emptyList()
+                }
+            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
+                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        }
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
+        // ── Lazy search path ──
+        if (supportsLazySearch && com.cloudstream.shared.service.LazySearchConfig.appSupportsLazySearch) {
+            try {
+                return searchLazy(query)
+            } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
+                return listOf(
+                    newMovieSearchResponse(
+                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
+                        "${com.cloudstream.shared.service.LazySearchConfig.LAZY_SEARCH_PREFIX}$name",
+                        TvType.Movie
+                    )
+                )
+            } catch (e: Exception) {
+                // Fall through to normal search
+            }
+        }
+
+        // ── Normal search path ──
         httpService.ensureInitialized()
         mainUrl = "https://${httpService.currentDomain}"
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
