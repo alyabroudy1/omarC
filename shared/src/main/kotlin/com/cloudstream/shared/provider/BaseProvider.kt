@@ -6,6 +6,8 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import org.jsoup.nodes.Document
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
+import com.cloudstream.shared.service.LazySearchConfig
+import com.cloudstream.shared.service.LazySearchConfig.LAZY_SEARCH_PREFIX
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.android.ActivityProvider
@@ -122,7 +124,30 @@ abstract class BaseProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val methodTag = "[$name] [search]"
         Log.i(methodTag, "START query='$query'")
-        
+
+        // ── Lazy search path: if the app supports it AND this provider opts in ──
+        if (supportsLazySearch && LazySearchConfig.appSupportsLazySearch) {
+            try {
+                val results = searchLazy(query)
+                Log.d(methodTag, "Lazy search succeeded with ${results.size} items")
+                return results
+            } catch (e: CloudflareBlockedSearchException) {
+                // App supports lazy search → return a placeholder instead of opening WebView
+                Log.i(methodTag, "CF blocked — returning lazy placeholder for '$name'")
+                return listOf(
+                    newMovieSearchResponse(
+                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
+                        "${LAZY_SEARCH_PREFIX}$name",
+                        TvType.Movie
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(methodTag, "Lazy search failed (non-CF): ${e.message}")
+                // Fall through to normal search
+            }
+        }
+
+        // ── Normal search path: full CF WebView fallback (old app or lazy failed) ──
         try {
             httpService.ensureInitialized()
             mainUrl = "https://${httpService.currentDomain}"
