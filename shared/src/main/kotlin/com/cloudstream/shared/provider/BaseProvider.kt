@@ -173,7 +173,9 @@ abstract class BaseProvider : MainAPI() {
                         "\uD83D\uDD0D $name",  // 🔍 ProviderName
                         "${LAZY_SEARCH_PREFIX}$name",
                         TvType.Movie
-                    )
+                    ) {
+                        this.posterUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/assets/lazy_search_poster.png"
+                    }
                 )
             } catch (e: Exception) {
                 Log.e(methodTag, "Lazy search failed (non-CF): ${e.message}")
