@@ -122,17 +122,29 @@ class YouTubePlayer(
      */
     private fun getGeneratorPlayerFragment(): Any? {
         try {
-            if (activity !is androidx.fragment.app.FragmentActivity) return null
+            if (activity !is androidx.fragment.app.FragmentActivity) {
+                Log.d(TAG, "getGeneratorPlayerFragment: activity is NOT FragmentActivity")
+                return null
+            }
             
             // Player framework stores the active fragment here 
-            val navHost = activity.supportFragmentManager.findFragmentById(
-                context.resources.getIdentifier("nav_host_fragment", "id", context.packageName)
-            )
-            val childManager = navHost?.childFragmentManager ?: return null
+            val resId = context.resources.getIdentifier("nav_host_fragment", "id", context.packageName)
+            Log.d(TAG, "getGeneratorPlayerFragment: searching for nav_host_fragment resId=$resId")
+            
+            val navHost = activity.supportFragmentManager.findFragmentById(resId)
+            Log.d(TAG, "getGeneratorPlayerFragment: navHost=$navHost")
+            
+            val childManager = navHost?.childFragmentManager ?: run {
+                Log.d(TAG, "getGeneratorPlayerFragment: childFragmentManager is null")
+                return null
+            }
             val fragments = childManager.fragments
+            Log.d(TAG, "getGeneratorPlayerFragment: found ${fragments.size} child fragments")
             
             // Find any fragment ending in "Player" (like GeneratorPlayer or FullScreenPlayer)
-            return fragments.firstOrNull { it.javaClass.simpleName.contains("Player") }
+            val playerFrag = fragments.firstOrNull { it.javaClass.simpleName.contains("Player") }
+            Log.d(TAG, "getGeneratorPlayerFragment: result=$playerFrag (${playerFrag?.javaClass?.simpleName})")
+            return playerFrag
         } catch (e: Exception) {
             Log.e(TAG, "getGeneratorPlayerFragment failed", e)
             return null
@@ -140,16 +152,29 @@ class YouTubePlayer(
     }
 
     private fun checkEpisodesStatus() {
+        Log.d(TAG, "checkEpisodesStatus: starting check")
         try {
-            val fragment = getGeneratorPlayerFragment() ?: return
+            val fragment = getGeneratorPlayerFragment()
+            if (fragment == null) {
+                Log.d(TAG, "checkEpisodesStatus: fragment is null, returning")
+                return
+            }
             
             // GeneratorPlayer -> open fun isThereEpisodes(): Boolean
             val isThereEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "isThereEpisodes" }
+            Log.d(TAG, "checkEpisodesStatus: isThereEpisodesMethod found=${isThereEpisodesMethod != null}")
+            
             val hasEpisodes = isThereEpisodesMethod?.invoke(fragment) as? Boolean ?: false
+            Log.d(TAG, "checkEpisodesStatus: hasEpisodes=$hasEpisodes")
             
             if (!hasEpisodes) {
+                Log.d(TAG, "checkEpisodesStatus: No episodes detected, hiding buttons")
                 ui.btnEpisodes.visibility = View.GONE
                 ui.btnNextEpisode.visibility = View.GONE
+            } else {
+                Log.d(TAG, "checkEpisodesStatus: Episodes detected, ensuring buttons visible")
+                ui.btnEpisodes.visibility = View.VISIBLE
+                ui.btnNextEpisode.visibility = View.VISIBLE
             }
         } catch (e: Exception) {
             Log.e(TAG, "checkEpisodesStatus failed", e)
