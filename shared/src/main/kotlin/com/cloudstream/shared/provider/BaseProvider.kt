@@ -121,33 +121,8 @@ abstract class BaseProvider : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val methodTag = "[$name] [search]"
-        Log.i(methodTag, "START query='$query'")
-
-        // ── Lazy search path: if the app supports it AND this provider opts in ──
-        if (supportsLazySearch && LazySearchConfig.appSupportsLazySearch) {
-            try {
-                val results = searchLazy(query)
-                Log.d(methodTag, "Lazy search succeeded with ${results.size} items")
-                return results
-            } catch (e: CloudflareBlockedSearchException) {
-                // App supports lazy search → return a placeholder instead of opening WebView
-                Log.i(methodTag, "CF blocked — returning lazy placeholder for '$name'")
-                return listOf(
-                    newMovieSearchResponse(
-                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
-                        "${LAZY_SEARCH_PREFIX}$name",
-                        TvType.Movie
-                    )
-                )
-            } catch (e: Exception) {
-                Log.e(methodTag, "Lazy search failed (non-CF): ${e.message}")
-                // Fall through to normal search
-            }
-        }
-
-        // ── Normal search path: full CF WebView fallback (old app or lazy failed) ──
+    open suspend fun searchNormal(query: String): List<SearchResponse> {
+        val methodTag = "[$name] [searchNormal]"
         try {
             httpService.ensureInitialized()
             mainUrl = "https://${httpService.currentDomain}"
@@ -171,10 +146,43 @@ abstract class BaseProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(methodTag, "Error in search: ${e.message}")
+            Log.e(methodTag, "Error in searchNormal: ${e.message}")
             e.printStackTrace()
             return emptyList()
         }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val bypassLazy = query.startsWith("LAZY_BYPASS:")
+        val realQuery = if (bypassLazy) query.removePrefix("LAZY_BYPASS:") else query
+
+        val methodTag = "[$name] [search]"
+        Log.i(methodTag, "START query='$realQuery', bypassLazy=$bypassLazy")
+
+        // ── Lazy search path: if the app supports it AND this provider opts in ──
+        if (!bypassLazy && supportsLazySearch && LazySearchConfig.appSupportsLazySearch) {
+            try {
+                val results = searchLazy(realQuery)
+                Log.d(methodTag, "Lazy search succeeded with ${results.size} items")
+                return results
+            } catch (e: CloudflareBlockedSearchException) {
+                // App supports lazy search → return a placeholder instead of opening WebView
+                Log.i(methodTag, "CF blocked — returning lazy placeholder for '$name'")
+                return listOf(
+                    newMovieSearchResponse(
+                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
+                        "${LAZY_SEARCH_PREFIX}$name",
+                        TvType.Movie
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(methodTag, "Lazy search failed (non-CF): ${e.message}")
+                // Fall through to normal search
+            }
+        }
+
+        // ── Normal search path: full CF WebView fallback (old app or lazy failed) ──
+        return searchNormal(realQuery)
     }
 
     /**

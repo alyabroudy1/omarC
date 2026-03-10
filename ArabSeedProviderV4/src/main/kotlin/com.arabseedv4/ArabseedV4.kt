@@ -51,30 +51,8 @@ class ArabseedV4 : BaseProvider() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val appSupports = com.cloudstream.shared.service.LazySearchConfig.appSupportsLazySearch
-        android.util.Log.d("ArabseedV4", "search: query=$query, supportsLazySearch=$supportsLazySearch, appSupportsLazySearch=$appSupports")
-        // ── Lazy search path ──
-        if (supportsLazySearch && appSupports) {
-            try {
-                return searchLazy(query)
-            } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
-                android.util.Log.d("ArabseedV4", "search: Caught CloudflareBlockedSearchException, returning lazy prefix")
-                return listOf(
-                    newMovieSearchResponse(
-                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
-                        "${com.cloudstream.shared.service.LazySearchConfig.LAZY_SEARCH_PREFIX}$name",
-                        TvType.Movie
-                    )
-                )
-            } catch (e: Exception) {
-                android.util.Log.e("ArabseedV4", "search: Lazy search failed with ${e.javaClass.simpleName}: ${e.message}", e)
-                // Fall through to normal search
-            }
-        }
-
-        android.util.Log.d("ArabseedV4", "search: Falling through to NORMAL search")
-        // ── Normal search path ──
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
+        android.util.Log.d("ArabseedV4", "searchNormal: Executing parallel search for movies and series")
         httpService.ensureInitialized()
         mainUrl = "https://${httpService.currentDomain}"
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
