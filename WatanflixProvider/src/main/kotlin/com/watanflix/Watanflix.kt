@@ -85,13 +85,7 @@ class Watanflix : BaseProvider() {
                     this.posterUrl = fetchedPoster
                 }
             }
-        }
-    }
-
-    override suspend fun load(url: String): LoadResponse? {
-        Log.d(TAG, "load: url=$url")
-        // Just return the URL itself disguised as a movie so we can play it
-        return newMovieLoadResponse(providerName, url, TvType.Movie, url)
+        }.filterNotNull()
     }
 
     override suspend fun loadLinks(
