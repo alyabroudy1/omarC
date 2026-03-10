@@ -14,9 +14,17 @@ object LazySearchConfig {
     const val LAZY_SEARCH_PREFIX = "lazy://"
 
     /**
-     * Set to true by the app's SearchViewModel if it supports
-     * intercepting lazy search placeholders and resolving them on-demand.
+     * Set to true if the app's SearchViewModel supports intercepting lazy search
+     * placeholders and resolving them on-demand. Evaluated via reflection so this
+     * module doesn't force a dependency on newer app versions.
      */
-    @Volatile
-    var appSupportsLazySearch: Boolean = false
+    val appSupportsLazySearch: Boolean by lazy {
+        try {
+            Class.forName("com.lagradost.cloudstream3.ui.search.SearchViewModel")
+                .getMethod("resolveLazySearch", String::class.java)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }
