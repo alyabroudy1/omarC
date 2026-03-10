@@ -164,8 +164,31 @@ class YouTubePlayer(
             val isThereEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "isThereEpisodes" }
             Log.d(TAG, "checkEpisodesStatus: isThereEpisodesMethod found=${isThereEpisodesMethod != null}")
             
-            val hasEpisodes = isThereEpisodesMethod?.invoke(fragment) as? Boolean ?: false
-            Log.d(TAG, "checkEpisodesStatus: hasEpisodes=$hasEpisodes")
+            var hasEpisodes = isThereEpisodesMethod?.invoke(fragment) as? Boolean ?: false
+            Log.d(TAG, "checkEpisodesStatus: isThereEpisodes() returns $hasEpisodes")
+            
+            if (!hasEpisodes) {
+                Log.d(TAG, "checkEpisodesStatus: Checking viewModel fallback because allMeta might not be loaded yet.")
+                try {
+                    val viewModelField = fragment.javaClass.getDeclaredField("viewModel")
+                    viewModelField.isAccessible = true
+                    val viewModel = viewModelField.get(fragment)
+                    if (viewModel != null) {
+                        val getAllMetaMethod = viewModel.javaClass.methods.firstOrNull { it.name == "getAllMeta" }
+                        val metaList = getAllMetaMethod?.invoke(viewModel) as? List<*>
+                        if (metaList != null) {
+                            Log.d(TAG, "checkEpisodesStatus: viewModel.getAllMeta() size=${metaList.size}")
+                            if (metaList.size > 1) {
+                                hasEpisodes = true
+                            }
+                        } else {
+                            Log.d(TAG, "checkEpisodesStatus: viewModel.getAllMeta() returned null")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "checkEpisodesStatus: viewModel reflection failed: ${e.message}")
+                }
+            }
             
             if (!hasEpisodes) {
                 Log.d(TAG, "checkEpisodesStatus: No episodes detected, hiding buttons")
@@ -300,6 +323,67 @@ class YouTubePlayer(
 
     private var seekDebouncerRunnable: Runnable? = null
 
+    private fun showEpisodesOverlay() {
+        try {
+            val fragment = getGeneratorPlayerFragment() ?: return
+            
+            val method = fragment.javaClass.methods.firstOrNull { it.name == "showEpisodesOverlay" }
+            method?.invoke(fragment)
+            
+            // Fix async allMeta gap by manually injecting episodes from viewModel if empty
+            try {
+                val viewModelField = fragment.javaClass.getDeclaredField("viewModel")
+                viewModelField.isAccessible = true
+                val viewModel = viewModelField.get(fragment)
+                if (viewModel != null) {
+                    val getAllMetaMethod = viewModel.javaClass.methods.firstOrNull { it.name == "getAllMeta" }
+                    val metaList = getAllMetaMethod?.invoke(viewModel) as? List<*>
+                    
+                    if (metaList != null && metaList.isNotEmpty()) {
+                        Log.d(TAG, "showEpisodesOverlay: Injecting ${metaList.size} episodes into adapter manually")
+                        
+                        // Wait for UI to setup from native invoke
+                        ui.rootView.postDelayed({
+                            try {
+                                val playerBindingField = fragment.javaClass.getDeclaredField("playerBinding")
+                                playerBindingField.isAccessible = true
+                                val playerBinding = playerBindingField.get(fragment)
+                                if (playerBinding != null) {
+                                    val playerEpisodeListField = playerBinding.javaClass.getDeclaredField("playerEpisodeList")
+                                    playerEpisodeListField.isAccessible = true
+                                    val recyclerView = playerEpisodeListField.get(playerBinding) as? androidx.recyclerview.widget.RecyclerView
+                                    val adapter = recyclerView?.adapter
+                                    if (adapter != null) {
+                                        val updateListMethod = adapter.javaClass.methods.firstOrNull { it.name == "updateList" }
+                                        updateListMethod?.invoke(adapter, metaList)
+                                        
+                                        // Scroll to active index
+                                        val getCurrentIndexMethod = viewModel.javaClass.methods.firstOrNull { it.name == "getCurrentIndex" }
+                                        val index = getCurrentIndexMethod?.invoke(viewModel) as? Int
+                                        if (index != null && index >= 0) {
+                                            recyclerView.scrollToPosition(index)
+                                            val viewHolder = recyclerView.findViewHolderForAdapterPosition(index)
+                                            viewHolder?.itemView?.requestFocus()
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "showEpisodesOverlay delayed injection failed", e)
+                            }
+                        }, 100)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "showEpisodesOverlay: Failed to manually inject episodes: ${e.message}")
+            }
+            // Dialog has a transparent background initially, but we might want to fade it out 
+            // to see the native UI underneath if it sits above it
+            dismiss()
+        } catch (e: Exception) {
+            Log.e(TAG, "showEpisodesOverlay failed", e)
+        }
+    }
+
     private fun setupListeners() {
         ui.btnPlayPause.setOnClickListener {
             resetAutoHide()
@@ -323,53 +407,7 @@ class YouTubePlayer(
         
         ui.btnEpisodes.setOnClickListener {
             resetAutoHide()
-            try {
-                val fragment = getGeneratorPlayerFragment()
-                if (fragment != null) {
-                    val showEpisodesMethod = fragment.javaClass.methods.firstOrNull { it.name == "showEpisodesOverlay" }
-                    showEpisodesMethod?.invoke(fragment)
-
-                    // Emulate ExoPlayer's native highlight by scrolling the RecyclerView to the active index natively
-                    try {
-                        val viewModelField = fragment.javaClass.declaredFields.firstOrNull { 
-                            it.name.contains("viewModel", ignoreCase = true) 
-                        }
-                        if (viewModelField != null) {
-                            viewModelField.isAccessible = true
-                            val viewModel = viewModelField.get(fragment)
-                            val getCurrentIndexMethod = viewModel?.javaClass?.methods?.firstOrNull { it.name == "getCurrentIndex" }
-                            val index = getCurrentIndexMethod?.invoke(viewModel) as? Int
-                            
-                            if (index != null && index >= 0) {
-                                val bindingField = fragment.javaClass.declaredFields.firstOrNull { 
-                                    it.name.contains("playerBinding", ignoreCase = true) 
-                                }
-                                if (bindingField != null) {
-                                    bindingField.isAccessible = true
-                                    val binding = bindingField.get(fragment)
-                                    val recyclerViewField = binding?.javaClass?.declaredFields?.firstOrNull {
-                                        it.name == "playerEpisodeList"
-                                    }
-                                    if (recyclerViewField != null) {
-                                        recyclerViewField.isAccessible = true
-                                        val recyclerView = recyclerViewField.get(binding) as? androidx.recyclerview.widget.RecyclerView
-                                        recyclerView?.post {
-                                            recyclerView.scrollToPosition(index)
-                                            val viewHolder = recyclerView.findViewHolderForAdapterPosition(index)
-                                            viewHolder?.itemView?.requestFocus()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } catch (innerE: Exception) {
-                        Log.w(TAG, "Failed resolving index scroll hook", innerE)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "btnEpisodes invocation failed", e)
-                Toast.makeText(context, "Cannot open episodes here", Toast.LENGTH_SHORT).show()
-            }
+            showEpisodesOverlay()
         }
 
         ui.btnNextEpisode.setOnClickListener {

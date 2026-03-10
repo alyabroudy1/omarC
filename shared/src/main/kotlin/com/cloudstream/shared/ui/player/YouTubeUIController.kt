@@ -418,11 +418,16 @@ class YouTubeUIController(private val context: Context) {
             // Track Progress: Very Fine Solid Red Line
             val trackProgress = ThinTrackDrawable(Color.RED, trackHeight)
             
+            // Track Secondary (Buffered): Semi-transparent White
+            val trackSecondary = ThinTrackDrawable(0x99FFFFFF.toInt(), trackHeight)
+            
             val clip = ClipDrawable(trackProgress, Gravity.START, ClipDrawable.HORIZONTAL)
+            val clipSecondary = ClipDrawable(trackSecondary, Gravity.START, ClipDrawable.HORIZONTAL)
 
-            progressDrawable = LayerDrawable(arrayOf(trackBg, clip)).apply {
+            progressDrawable = LayerDrawable(arrayOf(trackBg, clipSecondary, clip)).apply {
                 setId(0, android.R.id.background)
-                setId(1, android.R.id.progress)
+                setId(1, android.R.id.secondaryProgress)
+                setId(2, android.R.id.progress)
             }
 
             // Thumb: Red circle sitting on top of the fine line
