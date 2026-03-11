@@ -75,4 +75,110 @@ class FaselHDV2 : BaseProvider() {
         currentEpisodes.addAll(extraEpisodes)
         return currentEpisodes
     }
+
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
+        val methodTag = "[$name] [searchNormal override]"
+        try {
+            httpService.ensureInitialized()
+            mainUrl = "https://${httpService.currentDomain}"
+            
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = getParser().getSearchUrl(mainUrl, encoded)
+            Log.d(methodTag, "Fetching normal search URL: $url")
+            
+            var doc = httpService.getDocument(url, checkDomainChange = true)
+            var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
+            
+            if (items.isEmpty()) {
+                Log.w(methodTag, "Normal search failed or found 0 items. Trying AJAX fallback...")
+                
+                val ajaxUrl = "$mainUrl/wp-admin/admin-ajax.php"
+                val headers = mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "*/*",
+                    "Origin" to mainUrl
+                )
+                val data = mapOf(
+                    "action" to "ajx_search",
+                    "q" to query
+                )
+                
+                doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
+                if (doc != null) {
+                    items = getParser().parseSearch(doc)
+                    Log.d(methodTag, "AJAX search returned ${items.size} items")
+                } else {
+                    Log.e(methodTag, "AJAX search also failed")
+                }
+            } else {
+                Log.d(methodTag, "Normal search returned ${items.size} items")
+            }
+
+            return items.map { item ->
+                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in searchNormal: ${e.message}")
+            e.printStackTrace()
+            return emptyList()
+        }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        val methodTag = "[$name] [searchLazy override]"
+        try {
+            httpService.ensureInitialized()
+            mainUrl = "https://${httpService.currentDomain}"
+            
+            val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = getParser().getSearchUrl(mainUrl, encoded)
+            Log.d(methodTag, "Fetching lazy search URL: $url")
+            
+            var doc = httpService.getDocumentNoFallback(url, checkDomainChange = true)
+            var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
+            
+            if (items.isEmpty()) {
+                Log.w(methodTag, "Lazy search failed or found 0 items. Trying AJAX fallback...")
+                
+                val ajaxUrl = "$mainUrl/wp-admin/admin-ajax.php"
+                val headers = mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "*/*",
+                    "Origin" to mainUrl
+                )
+                val data = mapOf(
+                    "action" to "ajx_search",
+                    "q" to query
+                )
+                
+                // For post requests without fallback, we use executeDirectRequest/executePostRequest directly
+                val result = httpService.postText(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
+                if (result != null) {
+                    doc = org.jsoup.Jsoup.parse(result, ajaxUrl)
+                    items = getParser().parseSearch(doc)
+                    Log.d(methodTag, "AJAX search returned ${items.size} items")
+                } else {
+                    Log.e(methodTag, "AJAX search also failed")
+                }
+            } else {
+                Log.d(methodTag, "Lazy search returned ${items.size} items")
+            }
+
+            return items.map { item ->
+                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in searchLazy: ${e.message}")
+            e.printStackTrace()
+            return emptyList()
+        }
+    }
 }
