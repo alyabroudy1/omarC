@@ -63,7 +63,9 @@ class FaselHDExtractor : ExtractorApi() {
                 // Fallback to searching for ANY .m3u8 in the decoded array strings
                 val fallbackUrl = decodedStrings.find { it.contains(".m3u8") && it.startsWith("http") }
                 if (fallbackUrl != null) {
-                    callback(newExtractorLink(name, name, fallbackUrl, true, Qualities.P1080.value))
+                    callback(newExtractorLink(name, name, fallbackUrl, type = ExtractorLinkType.M3U8) {
+                        this.quality = Qualities.P1080.value
+                    })
                 }
                 return
             }
@@ -97,10 +99,11 @@ class FaselHDExtractor : ExtractorApi() {
                         source = name,
                         name = name,
                         url = finalUrl,
-                        referer = url,
-                        quality = Qualities.P1080.value,
                         type = ExtractorLinkType.M3U8
-                    )
+                    ) {
+                        this.referer = url
+                        this.quality = Qualities.P1080.value
+                    }
                 )
             } else {
                 // If we couldn't reconstruct it simply, the tokens might be dynamic.
