@@ -24,6 +24,7 @@ class FaselHDV2Plugin: Plugin() {
         registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) // Handles savefiles.com URLs
         registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor()) // Handles okprime.site URLs
         registerExtractorAPI(com.cloudstream.shared.extractors.Up4FunExtractor())
+        registerExtractorAPI(com.cloudstream.shared.extractors.FaselHDExtractor())
 
         val sniffer = SnifferExtractor()
         sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
