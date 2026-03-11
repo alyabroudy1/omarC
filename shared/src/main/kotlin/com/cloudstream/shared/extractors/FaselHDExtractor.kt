@@ -58,55 +58,22 @@ class FaselHDExtractor : ExtractorApi() {
             
             val decodedStrings = encodedStrings.map { decodeFaselB64(it) }
             
-            ProviderLogger.d(TAG, "getUrl", "Decoded array size: ${decodedStrings.size}")
-            if (decodedStrings.isNotEmpty()) {
-                ProviderLogger.d(TAG, "getUrl", "First 5 decoded: ${decodedStrings.take(5)}")
-                // Log anything containing scdns or m3u8
-                decodedStrings.filter { it.contains("scdns") || it.contains("m3u8") }.forEach {
-                    ProviderLogger.d(TAG, "getUrl", "Found relevant string: $it")
-                }
-            }
-
-            // 2. Identify and reconstruct the master.m3u8 URL
-            // Instead of complex index-following which is prone to breakage if they change offsets,
-            // we look for the fragments we know exist in the decoded array.
+            // 2. Join all strings to find the reconstructed URL
+            // The obfuscator often splits the URL into multiple array elements.
+            // Joining them all usually reveals the final URL as a substring.
+            val giantString = decodedStrings.joinToString("")
             
-            val domainPart = decodedStrings.find { it.contains("master.c.scdns.io") || it.contains("g.scdns.io") || it.contains(".scdns.io") } ?: ""
-            val masterPart = decodedStrings.find { it.contains("master.m3u8") || it.contains(".m3u8") } ?: ""
+            ProviderLogger.d(TAG, "getUrl", "Giant string length: ${giantString.length}")
             
-            if (domainPart.isBlank() || masterPart.isBlank()) {
-                ProviderLogger.e(TAG, "getUrl", "Could not find URL fragments in array. Domain: '$domainPart', Master: '$masterPart'")
-                // Fallback to searching for ANY .m3u8 in the decoded array strings
-                val fallbackUrl = decodedStrings.find { it.contains(".m3u8") && it.startsWith("http") }
-                if (fallbackUrl != null) {
-                    ProviderLogger.i(TAG, "getUrl", "Fallback found .m3u8 URL: $fallbackUrl")
-                    callback(newExtractorLink(name, name, fallbackUrl, type = ExtractorLinkType.M3U8) {
-                        this.quality = Qualities.P1080.value
-                    })
-                }
-                return
-            }
-
-            // Reconstruct the full URL
-            // Based on our analysis, the components are present. We try to find the full construction.
-            // Example: https://master.c.scdns.io/stream/v2/.../master.m3u8
+            // Regex to find the master m3u8 link. It might be preceded by "url=" or "file="
+            val urlRegex = Regex("""https?://[a-zA-Z0-9.\-]+\.scdns\.io/stream/v[12]/[a-zA-Z0-9_\-]+/\d+/normal/0/[0-9.]+/yes/[a-f0-9]+/([a-zA-Z0-9.\-]*)/master\.m3u8""")
+            val match = urlRegex.find(giantString)
             
-            // Look for the "yes/" or "normal/" parts
-            val hashPart1 = decodedStrings.find { it.contains("yes/") || it.contains("normal/") } ?: ""
-            
-            // Reassemble the URL. The obfuscated code builds it piece by piece.
-            // We'll look for a string that starts with http and use it if it looks complete,
-            // otherwise we'll try to find the full URL in the entire HTML if it's there (sometimes it's not).
-            
-            val finalUrl = if (domainPart.startsWith("http")) {
-                domainPart // Sometimes the whole URL is one of the strings
-            } else {
-                // Heuristic reconstruction if it's fragmented
-                // This is a simplified version of what eval() would do.
-                val protocol = if (domainPart.contains("https://")) "" else "https://"
-                "$protocol$domainPart/stream/v2/REPLACE_TOKEN/REPLACE_TIME/normal/0/REPLACE_IP/$hashPart1/.../$masterPart"
-                // Actually, let's just search for the first string in decodedStrings that starts with http and ends with m3u8
-                decodedStrings.find { it.startsWith("http") && it.contains(".m3u8") }
+            val finalUrl = match?.value ?: run {
+                // Fallback: search for any http...m3u8 if the specific scdns pattern doesn't match
+                ProviderLogger.w(TAG, "getUrl", "Specific SC DNS pattern failed, trying generic M3U8 search")
+                val genericRegex = Regex("""https?://[a-zA-Z0-9.\-/?&=_%]+master\.m3u8""")
+                genericRegex.find(giantString)?.value
             }
 
             if (finalUrl != null) {
@@ -123,10 +90,11 @@ class FaselHDExtractor : ExtractorApi() {
                     }
                 )
             } else {
-                // If we couldn't reconstruct it simply, the tokens might be dynamic.
-                // In that case, we can try to find the URL via more aggressive regex on the entire response
-                // after swapping all base64-looking strings.
-                ProviderLogger.w(TAG, "getUrl", "Could not reconstruct URL, trying fallback")
+                ProviderLogger.e(TAG, "getUrl", "Could not find any M3U8 URL in the array strings")
+                // Log the giant string in chunks if it failed to debug
+                giantString.chunked(1000).forEach { chunk ->
+                    ProviderLogger.d(TAG, "getUrl", "Array Dump: $chunk")
+                }
             }
 
         } catch (e: Exception) {
