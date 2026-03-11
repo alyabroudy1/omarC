@@ -30,6 +30,7 @@ class FaselHDExtractor : ExtractorApi() {
 
                 String(Base64.decode(swapped, Base64.DEFAULT))
             } catch (e: Exception) {
+                ProviderLogger.e(TAG, "decodeFaselB64", "Failed to decode swapped='$data'", e)
                 data
             }
         }
@@ -46,23 +47,39 @@ class FaselHDExtractor : ExtractorApi() {
             
             // 1. Extract the string array
             val arrayRegex = Regex("""var _0x[a-f0-9]+\s*=\s*(\[.*?\]);""")
-            val arrayMatch = arrayRegex.find(response) ?: return
+            val arrayMatch = arrayRegex.find(response)
+            if (arrayMatch == null) {
+                ProviderLogger.e(TAG, "getUrl", "Failed to find encoded array with regex")
+                return
+            }
             
             val encodedStrings = Regex("""'(.*?)'""").findAll(arrayMatch.groupValues[1]).map { it.groupValues[1] }.toList()
+            ProviderLogger.d(TAG, "getUrl", "Encoded strings found: ${encodedStrings.size}")
+            
             val decodedStrings = encodedStrings.map { decodeFaselB64(it) }
+            
+            ProviderLogger.d(TAG, "getUrl", "Decoded array size: ${decodedStrings.size}")
+            if (decodedStrings.isNotEmpty()) {
+                ProviderLogger.d(TAG, "getUrl", "First 5 decoded: ${decodedStrings.take(5)}")
+                // Log anything containing scdns or m3u8
+                decodedStrings.filter { it.contains("scdns") || it.contains("m3u8") }.forEach {
+                    ProviderLogger.d(TAG, "getUrl", "Found relevant string: $it")
+                }
+            }
 
             // 2. Identify and reconstruct the master.m3u8 URL
             // Instead of complex index-following which is prone to breakage if they change offsets,
             // we look for the fragments we know exist in the decoded array.
             
-            val domainPart = decodedStrings.find { it.contains("master.c.scdns.io") || it.contains("g.scdns.io") } ?: ""
-            val masterPart = decodedStrings.find { it.contains("master.m3u8") } ?: ""
+            val domainPart = decodedStrings.find { it.contains("master.c.scdns.io") || it.contains("g.scdns.io") || it.contains(".scdns.io") } ?: ""
+            val masterPart = decodedStrings.find { it.contains("master.m3u8") || it.contains(".m3u8") } ?: ""
             
             if (domainPart.isBlank() || masterPart.isBlank()) {
-                ProviderLogger.e(TAG, "getUrl", "Could not find URL fragments in array")
+                ProviderLogger.e(TAG, "getUrl", "Could not find URL fragments in array. Domain: '$domainPart', Master: '$masterPart'")
                 // Fallback to searching for ANY .m3u8 in the decoded array strings
                 val fallbackUrl = decodedStrings.find { it.contains(".m3u8") && it.startsWith("http") }
                 if (fallbackUrl != null) {
+                    ProviderLogger.i(TAG, "getUrl", "Fallback found .m3u8 URL: $fallbackUrl")
                     callback(newExtractorLink(name, name, fallbackUrl, type = ExtractorLinkType.M3U8) {
                         this.quality = Qualities.P1080.value
                     })
