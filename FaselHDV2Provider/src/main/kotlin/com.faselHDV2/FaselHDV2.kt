@@ -184,4 +184,39 @@ class FaselHDV2 : BaseProvider() {
             return emptyList()
         }
     }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[$name] [loadLinks override]"
+        Log.i(methodTag, "START data='$data'")
+
+        // Call base logic first to get standard servers
+        val baseResult = super.loadLinks(data, isCasting, subtitleCallback, callback)
+
+        // FaselHD often has a "FaselHD" direct server which corresponds to /video_player
+        try {
+            val doc = httpService.getDocument(data) ?: return baseResult
+            val playerUrl = getParser().getPlayerPageUrl(doc)
+            if (playerUrl != null) {
+                val fullUrl = if (playerUrl.startsWith("http")) playerUrl else "$mainUrl/$playerUrl".replace("//", "/").replace("https:/", "https://")
+                val targetDoc = httpService.getDocument(fullUrl) ?: doc
+                val urls = getParser().extractWatchServersUrls(targetDoc)
+
+                urls.forEach { url ->
+                    if (url.contains("/video_player")) {
+                        Log.i(methodTag, "Detected FaselHD internal player URL: $url")
+                        com.cloudstream.shared.extractors.FaselHDExtractor().getUrl(url, fullUrl, subtitleCallback, callback)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in loadLinks override: ${e.message}")
+        }
+
+        return baseResult
+    }
 }

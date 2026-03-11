@@ -512,9 +512,15 @@ class ProviderHttpService private constructor(
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
         
-        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
+        // RELAXED: Only rewrite if domains are explicitly related (subdomains or aliases)
+        // This prevents breaking external players (e.g. vidstream, doodstream) 
+        // that were being forced onto the provider's main domain.
+        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && 
+            urlDomain != currentDomain && 
+            com.cloudstream.shared.session.SessionProvider.areDomainsRelated(urlDomain, currentDomain)) {
+            
             val rewritten = url.replace(urlDomain, currentDomain)
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote RELATED URL",
                 "from" to urlDomain, "to" to currentDomain)
             rewritten
         } else {
@@ -528,11 +534,20 @@ class ProviderHttpService private constructor(
         val finalHost = extractDomain(finalUrl)
         
         if (requestHost != finalHost && finalHost.isNotBlank()) {
-            ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected",
-                "from" to requestHost, "to" to finalHost)
-            updateDomain(finalHost)
-            domainManager.updateDomain(finalHost)
-            domainManager.syncToRemote()
+            // RELAXED: Only update the provider's main domain if the redirect is to a related domain
+            // or if we're on the main page. This prevents ad-redirects from hijacking the provider domain.
+            if (com.cloudstream.shared.session.SessionProvider.areDomainsRelated(requestHost, finalHost) || 
+                requestUrl.length < 40) { // Main page requests are usually short
+                
+                ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected and updated",
+                    "from" to requestHost, "to" to finalHost)
+                updateDomain(finalHost)
+                domainManager.updateDomain(finalHost)
+                domainManager.syncToRemote()
+            } else {
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Unrelated domain redirect ignored",
+                    "from" to requestHost, "to" to finalHost)
+            }
         }
     }
     
