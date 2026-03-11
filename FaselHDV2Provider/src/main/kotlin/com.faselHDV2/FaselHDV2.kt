@@ -99,8 +99,8 @@ class FaselHDV2 : BaseProvider() {
                     "Origin" to mainUrl
                 )
                 val data = mapOf(
-                    "action" to "ajx_search",
-                    "q" to query
+                    "action" to "dtc_live",
+                    "trsearch" to query
                 )
                 
                 doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
@@ -152,8 +152,8 @@ class FaselHDV2 : BaseProvider() {
                     "Origin" to mainUrl
                 )
                 val data = mapOf(
-                    "action" to "ajx_search",
-                    "q" to query
+                    "action" to "dtc_live",
+                    "trsearch" to query
                 )
                 
                 // For post requests without fallback, we use executeDirectRequest/executePostRequest directly
