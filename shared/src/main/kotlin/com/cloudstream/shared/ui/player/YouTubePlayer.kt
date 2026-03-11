@@ -141,8 +141,22 @@ class YouTubePlayer(
             val fragments = childManager.fragments
             Log.d(TAG, "getGeneratorPlayerFragment: found ${fragments.size} child fragments")
             
-            // Find any fragment ending in "Player" (like GeneratorPlayer or FullScreenPlayer)
-            val playerFrag = fragments.firstOrNull { it.javaClass.simpleName.contains("Player") }
+            // Must find GeneratorPlayer specifically — ResultTrailerPlayer also matches "Player"
+            // but its showEpisodesOverlay/nextEpisode throw NotImplementedError
+            val generatorFrag = fragments.firstOrNull { it.javaClass.simpleName == "GeneratorPlayer" }
+            if (generatorFrag != null) {
+                Log.d(TAG, "getGeneratorPlayerFragment: found GeneratorPlayer=$generatorFrag")
+                return generatorFrag
+            }
+            // Fallback: walk class hierarchy of each fragment looking for GeneratorPlayer superclass
+            val playerFrag = fragments.firstOrNull { frag ->
+                var cls: Class<*>? = frag.javaClass
+                while (cls != null) {
+                    if (cls.simpleName == "GeneratorPlayer") return@firstOrNull true
+                    cls = cls.superclass
+                }
+                false
+            }
             Log.d(TAG, "getGeneratorPlayerFragment: result=$playerFrag (${playerFrag?.javaClass?.simpleName})")
             return playerFrag
         } catch (e: Exception) {
@@ -325,10 +339,21 @@ class YouTubePlayer(
 
     private fun showEpisodesOverlay() {
         try {
-            val fragment = getGeneratorPlayerFragment() ?: return
+            val fragment = getGeneratorPlayerFragment()
+            if (fragment == null) {
+                Log.w(TAG, "showEpisodesOverlay: No GeneratorPlayer fragment found — episodes not available")
+                Toast.makeText(context, "Episodes not available", Toast.LENGTH_SHORT).show()
+                return
+            }
             
+            Log.d(TAG, "showEpisodesOverlay: invoking on ${fragment.javaClass.simpleName}")
             val method = fragment.javaClass.methods.firstOrNull { it.name == "showEpisodesOverlay" }
-            method?.invoke(fragment)
+            if (method == null) {
+                Log.w(TAG, "showEpisodesOverlay: method not found on ${fragment.javaClass.simpleName}")
+                return
+            }
+            method.invoke(fragment)
+            Log.d(TAG, "showEpisodesOverlay: successfully invoked")
             
             // Fix async allMeta gap by manually injecting episodes from viewModel if empty
             try {
@@ -376,9 +401,8 @@ class YouTubePlayer(
             } catch (e: Exception) {
                 Log.d(TAG, "showEpisodesOverlay: Failed to manually inject episodes: ${e.message}")
             }
-            // Dialog has a transparent background initially, but we might want to fade it out 
-            // to see the native UI underneath if it sits above it
-            dismiss()
+            // Do NOT dismiss() here — the YouTube player must stay alive while the native
+            // episodes overlay slides on top. Dismissing kills the WebView.
         } catch (e: Exception) {
             Log.e(TAG, "showEpisodesOverlay failed", e)
         }

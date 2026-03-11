@@ -456,5 +456,8 @@ class YouTubeUIController(private val context: Context) {
         override fun setColorFilter(filter: android.graphics.ColorFilter?) { paint.colorFilter = filter }
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+        // Required for ClipDrawable to properly calculate clip bounds
+        override fun getIntrinsicHeight(): Int = heightPx.toInt().coerceAtLeast(1)
+        override fun getIntrinsicWidth(): Int = -1 // fill available width
     }
 }
