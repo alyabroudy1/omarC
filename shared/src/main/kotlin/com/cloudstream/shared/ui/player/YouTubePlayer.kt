@@ -139,11 +139,11 @@ class YouTubePlayer(
                 return null
             }
             val fragments = childManager.fragments
-            Log.d(TAG, "getGeneratorPlayerFragment: found ${fragments.size} child fragments")
+            val fragmentNames = fragments.joinToString { "${it.javaClass.simpleName} (${it})" }
+            Log.d(TAG, "getGeneratorPlayerFragment: found ${fragments.size} child fragments: $fragmentNames")
             
-            // Must find GeneratorPlayer specifically — ResultTrailerPlayer also matches "Player"
-            // but its showEpisodesOverlay/nextEpisode throw NotImplementedError
-            val generatorFrag = fragments.firstOrNull { it.javaClass.simpleName == "GeneratorPlayer" }
+            // Must find GeneratorPlayer specifically
+            val generatorFrag = fragments.firstOrNull { it.javaClass.simpleName == "GeneratorPlayer" || it.javaClass.name.contains("GeneratorPlayer") }
             if (generatorFrag != null) {
                 Log.d(TAG, "getGeneratorPlayerFragment: found GeneratorPlayer=$generatorFrag")
                 return generatorFrag
