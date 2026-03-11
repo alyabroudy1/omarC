@@ -105,6 +105,8 @@ class FaselHDV2 : BaseProvider() {
                 
                 doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
                 if (doc != null) {
+                    val rawHtml = doc.html()
+                    Log.d(methodTag, "AJAX response HTML (length: ${rawHtml.length}):\n${rawHtml.take(2000)}")
                     items = getParser().parseSearch(doc)
                     Log.d(methodTag, "AJAX search returned ${items.size} items")
                 } else {
@@ -157,9 +159,10 @@ class FaselHDV2 : BaseProvider() {
                 // For post requests without fallback, we use executeDirectRequest/executePostRequest directly
                 val result = httpService.postText(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
                 if (result != null) {
+                    Log.d(methodTag, "AJAX Lazy response (length: ${result.length}):\n${result.take(2000)}")
                     doc = org.jsoup.Jsoup.parse(result, ajaxUrl)
                     items = getParser().parseSearch(doc)
-                    Log.d(methodTag, "AJAX search returned ${items.size} items")
+                    Log.d(methodTag, "AJAX lazy search returned ${items.size} items")
                 } else {
                     Log.e(methodTag, "AJAX search also failed")
                 }
