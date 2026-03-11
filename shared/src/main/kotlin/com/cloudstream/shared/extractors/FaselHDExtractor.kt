@@ -12,7 +12,7 @@ import com.cloudstream.shared.logging.ProviderLogger
 
 class FaselHDExtractor : ExtractorApi() {
     override val name = "FaselHD"
-    override val mainUrl = "https://www.faselhd.center"
+    override val mainUrl = "https://web31112x.faselhdx.xyz"
     override val requiresReferer = true
 
     companion object {
