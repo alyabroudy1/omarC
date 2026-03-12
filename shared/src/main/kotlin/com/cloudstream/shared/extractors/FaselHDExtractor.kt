@@ -71,11 +71,14 @@ class FaselHDExtractor : ExtractorApi() {
      * Find the script block containing the obfuscated hlsPlaylist code.
      */
     private fun findRelevantScriptBlock(html: String): String? {
+        ProviderLogger.d(TAG, "findRelevantScriptBlock", "Searching for script block")
+        
         // Look for script with hlsPlaylist or mainPlayer.setup
         val scriptRegex = Regex("""<script[^>]*>[\s\S]*?hlsPlaylist[\s\S]*?</script>""", RegexOption.IGNORE_CASE)
         val match = scriptRegex.find(html)
         
         if (match != null) {
+            ProviderLogger.d(TAG, "findRelevantScriptBlock", "Found hlsPlaylist script")
             val script = match.value
             // Remove script tags
             return script
@@ -88,6 +91,7 @@ class FaselHDExtractor : ExtractorApi() {
         val mainPlayerMatch = mainPlayerScriptRegex.find(html)
         
         if (mainPlayerMatch != null) {
+            ProviderLogger.d(TAG, "findRelevantScriptBlock", "Found mainPlayer script")
             return mainPlayerMatch.value
                 .replace(Regex("""</?script[^>]*>"""), "")
                 .trim()
@@ -115,6 +119,8 @@ class FaselHDExtractor : ExtractorApi() {
      * Evaluate JavaScript with Rhino engine, mocking browser APIs.
      */
     private fun evaluateJsWithRhino(script: String): String? {
+        ProviderLogger.d(TAG, "evaluateJsWithRhino", "Starting JS evaluation, script length: ${script.length}")
+        
         val rhino = RhinoContext.enter()
         
         try {
@@ -348,12 +354,8 @@ class FaselHDExtractor : ExtractorApi() {
             val extractMsg = "Extraction returned " + streams.size + " streams"
             ProviderLogger.d(TAG, methodName, extractMsg)
             
-            // Build proper referer - must be base domain, not player URL
-            val streamReferer = if (effectiveReferer.contains("/video_player") || effectiveReferer.contains("/player")) {
-                mainUrl
-            } else {
-                effectiveReferer
-            }
+            // ALWAYS use mainUrl as stream referer - CDN requires base domain
+            val streamReferer = mainUrl
             ProviderLogger.d(TAG, methodName, "Stream referer: " + streamReferer)
             
             if (streams.isEmpty()) {
