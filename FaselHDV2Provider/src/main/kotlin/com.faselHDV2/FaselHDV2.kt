@@ -201,24 +201,27 @@ class FaselHDV2 : BaseProvider() {
         try {
             val doc = httpService.getDocument(data)
             if (doc != null) {
+                var targetDoc = doc
+                var targetUrl = data
+                
+                // Check for separate player page
                 val playerUrl = getParser().getPlayerPageUrl(doc)
                 if (playerUrl != null) {
-                    val fullUrl = if (playerUrl.startsWith("http")) playerUrl else "$mainUrl/$playerUrl".replace("//", "/").replace("https:/", "https://")
-                    Log.i(methodTag, "Got player URL: $fullUrl")
-                    
-                    val playerDoc = httpService.getDocument(fullUrl)
-                    if (playerDoc != null) {
-                        val urls = getParser().extractWatchServersUrls(playerDoc)
-                        Log.i(methodTag, "Player has ${urls.size} URLs")
-                        
-                        for (url in urls) {
-                            Log.i(methodTag, "Checking URL: $url")
-                            if (url.contains("video_player") || url.contains("player_token")) {
-                                Log.i(methodTag, ">>> Calling FaselHDExtractor for: $url")
-                                com.cloudstream.shared.extractors.FaselHDExtractor().getUrl(url, fullUrl, subtitleCallback, callback)
-                                extractorFoundStreams = true
-                            }
-                        }
+                    targetUrl = if (playerUrl.startsWith("http")) playerUrl else "$mainUrl/$playerUrl".replace("//", "/").replace("https:/", "https://")
+                    Log.i(methodTag, "Got player URL: $targetUrl")
+                    targetDoc = httpService.getDocument(targetUrl) ?: doc
+                }
+                
+                // Get URLs from target page (either player page or detail page)
+                val urls = getParser().extractWatchServersUrls(targetDoc)
+                Log.i(methodTag, "Found ${urls.size} URLs to check")
+                
+                for (url in urls) {
+                    Log.i(methodTag, "Checking URL: $url")
+                    if (url.contains("video_player") || url.contains("player_token")) {
+                        Log.i(methodTag, ">>> Calling FaselHDExtractor for: $url")
+                        com.cloudstream.shared.extractors.FaselHDExtractor().getUrl(url, targetUrl, subtitleCallback, callback)
+                        extractorFoundStreams = true
                     }
                 }
             }
