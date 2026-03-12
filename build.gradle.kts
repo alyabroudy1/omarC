@@ -88,6 +88,7 @@ subprojects {
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
         implementation("androidx.appcompat:appcompat:1.6.1")
         implementation("com.google.android.material:material:1.9.0")
+        implementation("org.mozilla:rhino:1.7.14") // JS Engine for extractors
     }
 }
 
