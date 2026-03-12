@@ -1,4 +1,4 @@
-version = 1 // Round 16: Fix extractor referer
+version = 2
 
 // Include shared source directory
 android {
