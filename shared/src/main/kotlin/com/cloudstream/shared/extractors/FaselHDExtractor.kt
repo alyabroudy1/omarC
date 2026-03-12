@@ -348,6 +348,14 @@ class FaselHDExtractor : ExtractorApi() {
             val extractMsg = "Extraction returned " + streams.size + " streams"
             ProviderLogger.d(TAG, methodName, extractMsg)
             
+            // Build proper referer - must be base domain, not player URL
+            val streamReferer = if (effectiveReferer.contains("/video_player") || effectiveReferer.contains("/player")) {
+                mainUrl
+            } else {
+                effectiveReferer
+            }
+            ProviderLogger.d(TAG, methodName, "Stream referer: " + streamReferer)
+            
             if (streams.isEmpty()) {
                 val emptyMsg = "No streams found for url: " + url
                 ProviderLogger.e(TAG, methodName, emptyMsg)
@@ -372,7 +380,7 @@ class FaselHDExtractor : ExtractorApi() {
                         url = stream.url,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = url
+                        this.referer = streamReferer
                         this.quality = qualityFromLabel(stream.quality)
                     }
                 )
