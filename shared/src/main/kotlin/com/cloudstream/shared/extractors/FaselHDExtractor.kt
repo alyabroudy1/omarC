@@ -106,9 +106,18 @@ class FaselHDExtractor : ExtractorApi() {
                 val isDocumentWrite = js.contains("document['write']") || js.contains("document.write")
                 val writeArg = if (isDocumentWrite) extractWriteArgument(js) else null
 
-                val arrayFunc = extractArrayFunction(js) ?: return emptyList()
-                val shufflerCode = extractShuffler(js) ?: return emptyList()
-                val lookupFunc = extractLookupFunction(js, arrayFunc.name) ?: return emptyList()
+                val arrayFunc = extractArrayFunction(js) ?: run {
+                    ProviderLogger.d(TAG, "RhinoJs", "Failed to extract array function")
+                    return emptyList()
+                }
+                val shufflerCode = extractShuffler(js) ?: run {
+                    ProviderLogger.d(TAG, "RhinoJs", "Failed to extract shuffler")
+                    return emptyList()
+                }
+                val lookupFunc = extractLookupFunction(js, arrayFunc.name) ?: run {
+                    ProviderLogger.d(TAG, "RhinoJs", "Failed to extract lookup function")
+                    return emptyList()
+                }
                 val wrappers = extractWrappers(js, lookupFunc.name)
 
                 val evalJs = buildString {
@@ -167,12 +176,12 @@ class FaselHDExtractor : ExtractorApi() {
         private data class NamedCode(val name: String, val code: String)
 
         private fun extractWriteArgument(js: String): String? {
-            val regex = Regex("document\\['write']\\(([^;]+)\\);\$")
+            val regex = Regex("""document\['write'\]\(([^;]+)\);$""")
             return regex.find(js)?.groupValues?.get(1)
         }
 
         private fun extractArrayFunction(js: String): NamedCode? {
-            val nameMatch = Regex("function (_0x[a-f0-9]+)\\(\\)\\{var _0x[a-f0-9]+=\\[").find(js)
+            val nameMatch = Regex("""function (_0x[a-f0-9]+)\(\)\{var _0x[a-f0-9]+=\[""").find(js)
                 ?: return null
             val funcName = nameMatch.groupValues[1]
             val startIdx = js.indexOf("function $funcName()")
@@ -189,13 +198,17 @@ class FaselHDExtractor : ExtractorApi() {
         }
 
         private fun extractLookupFunction(js: String, arrayFuncName: String): NamedCode? {
-            val regex = Regex("function (_0x[a-f0-9]+)\\(_0x[a-f0-9]+,_0x[a-f0-9]+\\)\\{var _0x[a-f0-9]+=$arrayFuncName")
+            val regex = Regex("""function (_0x[a-f0-9]+)\(_0x[a-f0-9]+,_0x[a-f0-9]+\)\{var _0x[a-f0-9]+=$arrayFuncName""")
             val nameMatch = regex.find(js) ?: return null
             val funcName = nameMatch.groupValues[1]
             val startIdx = js.indexOf("function $funcName(")
-            val endPattern = "${funcName}(_0x"
-            var endIdx = js.indexOf(endPattern, startIdx + 30)
-            endIdx = js.indexOf(";}", endIdx) + 2
+            // Find the end of the function by seeking the next function or the end of a block
+            var endIdx = js.indexOf(";$funcName=", startIdx + 30)
+            if (endIdx < 0) {
+                endIdx = js.indexOf(";}", startIdx + 30) + 2
+            } else {
+                endIdx = js.indexOf(";}", endIdx) + 2
+            }
             if (endIdx < 2) return null
             return NamedCode(funcName, js.substring(startIdx, endIdx))
         }

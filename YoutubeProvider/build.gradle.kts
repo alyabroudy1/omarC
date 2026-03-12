@@ -1,5 +1,9 @@
 version = 1
 
+dependencies {
+    implementation("org.mozilla:rhino:1.7.14")
+}
+
 cloudstream {
     authors = listOf("omarflex")
     language = "en"
