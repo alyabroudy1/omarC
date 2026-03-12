@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "quickjs": "^0.2.2"
+  }
+}
