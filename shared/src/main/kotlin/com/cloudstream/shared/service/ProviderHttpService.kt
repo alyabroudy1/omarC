@@ -52,6 +52,7 @@ class ProviderHttpService private constructor(
         onDomainRedirect = { oldDomain, newDomain ->
             updateDomain(newDomain)
             domainManager.updateDomain(newDomain)
+            domainManager.syncToRemote()
         }
     )
     
