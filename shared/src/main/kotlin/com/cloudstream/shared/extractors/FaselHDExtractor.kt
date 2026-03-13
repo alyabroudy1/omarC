@@ -63,7 +63,7 @@ class FaselHDExtractor : ExtractorApi() {
             ProviderLogger.d(TAG, "extractFromHtml", "Regex found ${fallbackStreams.size} streams")
             streams.addAll(fallbackStreams)
         }
-        
+        ProviderLogger.d(TAG, "html", html)
         return streams
     }
 
