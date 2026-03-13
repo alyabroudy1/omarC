@@ -335,6 +335,14 @@ class VideoSnifferEngine(
                     val nextUrl = request?.url?.toString()
                     if (nextUrl.isNullOrBlank()) return super.shouldOverrideUrlLoading(view, request)
 
+                    // Block non-HTTP schemes (intent://, market://, tg://, whatsapp://, etc.)
+                    val scheme = request?.url?.scheme?.lowercase()
+                    if (scheme != null && scheme != "http" && scheme != "https") {
+                        ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.shouldOverrideUrlLoading",
+                            "Blocked non-HTTP redirect", "scheme" to scheme, "url" to nextUrl.take(80))
+                        return true
+                    }
+
                     // Check if this redirect goes to a DIFFERENT domain than the target URL
                     try {
                         val nextHost = java.net.URI(nextUrl).host?.lowercase() ?: ""
