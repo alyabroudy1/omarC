@@ -13,7 +13,7 @@ import kotlinx.coroutines.coroutineScope
 class FaselHDV2 : BaseProvider() {
 
     override val baseDomain get() = "faselhds.biz"
-    override val providerName get() = "FaselHDV2"
+    override val providerName get() = "FaselHD"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/faselhd.json"
 
     override val mainPage = mainPageOf(

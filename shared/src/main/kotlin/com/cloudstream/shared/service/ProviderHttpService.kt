@@ -511,16 +511,10 @@ class ProviderHttpService private constructor(
     private fun rewriteUrlIfNeeded(url: String): String {
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
-        
-        // RELAXED: Only rewrite if domains are explicitly related (subdomains or aliases)
-        // This prevents breaking external players (e.g. vidstream, doodstream) 
-        // that were being forced onto the provider's main domain.
-        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && 
-            urlDomain != currentDomain && 
-            com.cloudstream.shared.session.SessionProvider.areDomainsRelated(urlDomain, currentDomain)) {
-            
+
+        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
             val rewritten = url.replace(urlDomain, currentDomain)
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote RELATED URL",
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
                 "from" to urlDomain, "to" to currentDomain)
             rewritten
         } else {
