@@ -158,6 +158,37 @@ class SnifferExtractor : ExtractorApi() {
                 "regex" to (selector.regex ?: "null"))
         }
         
+        // CRITICAL: Inject CF cookies into Android's system CookieManager BEFORE WebView loads.
+        // Without this, the sniffer WebView starts a fresh session and hits Cloudflare Turnstile.
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            val sessionCookies = SessionProvider.getCookies()
+            val sessionDomain = SessionProvider.getDomain()
+            if (sessionCookies.isNotEmpty() && sessionDomain != null) {
+                val cookieUrl = "https://$sessionDomain"
+                for ((key, value) in sessionCookies) {
+                    cookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
+                }
+                // Also set cookies for the embed URL domain (may differ from session domain)
+                val embedDomain = try { java.net.URI(embedUrl).host } catch (_: Exception) { null }
+                if (embedDomain != null && embedDomain != sessionDomain) {
+                    val embedCookieUrl = "https://$embedDomain"
+                    for ((key, value) in sessionCookies) {
+                        cookieManager.setCookie(embedCookieUrl, "$key=$value; path=/; secure")
+                    }
+                }
+                cookieManager.flush()
+                ProviderLogger.i(TAG, "getUrl", "Injected ${sessionCookies.size} CF cookies into system CookieManager",
+                    "domain" to sessionDomain, "embedDomain" to (embedDomain ?: "same"))
+            } else {
+                ProviderLogger.w(TAG, "getUrl", "No session cookies to inject",
+                    "cookieCount" to sessionCookies.size, "domain" to (sessionDomain ?: "null"))
+            }
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "getUrl", "Failed to inject cookies into CookieManager", "error" to e.message)
+        }
+        
         val startTime = System.currentTimeMillis()
         val result = engine.runSession(
             url = embedUrl,

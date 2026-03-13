@@ -114,6 +114,27 @@ class ProviderHttpService private constructor(
             cookieManager.store("https://${sessionState.domain}", cookies, 
                 if (fromWebView) "webview" else "http")
         }
+        
+        // CRITICAL: Inject CF cookies into Android's system CookieManager for WebView sharing.
+        // The sniffer WebView uses the system CookieManager, not our custom one.
+        // Without this, the sniffer hits Cloudflare Turnstile again.
+        if (fromWebView && cookies.isNotEmpty()) {
+            try {
+                val systemCookieManager = android.webkit.CookieManager.getInstance()
+                systemCookieManager.setAcceptCookie(true)
+                val cookieUrl = "https://${sessionState.domain}"
+                for ((key, value) in sessionState.cookies) {
+                    systemCookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
+                }
+                systemCookieManager.flush()
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "updateCookies", 
+                    "Injected ${sessionState.cookies.size} cookies into system CookieManager",
+                    "domain" to sessionState.domain)
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "updateCookies", 
+                    "Failed to inject into system CookieManager", "error" to e.message)
+            }
+        }
     }
 
     /**
