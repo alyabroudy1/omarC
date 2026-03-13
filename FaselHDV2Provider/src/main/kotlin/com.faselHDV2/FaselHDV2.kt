@@ -6,8 +6,6 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import org.jsoup.nodes.Document
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -185,53 +183,5 @@ class FaselHDV2 : BaseProvider() {
             e.printStackTrace()
             return emptyList()
         }
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val methodTag = "[$name] [loadLinks]"
-        Log.i(methodTag, "START data='$data'")
-
-        // Try to extract FaselHD player first BEFORE base logic
-        var extractorFoundStreams = false
-        try {
-            val doc = httpService.getDocument(data)
-            if (doc != null) {
-                var targetDoc = doc
-                var targetUrl = data
-                
-                // Check for separate player page
-                val playerUrl = getParser().getPlayerPageUrl(doc)
-                if (playerUrl != null) {
-                    targetUrl = if (playerUrl.startsWith("http")) playerUrl else "$mainUrl/$playerUrl".replace("//", "/").replace("https:/", "https://")
-                    Log.i(methodTag, "Got player URL: $targetUrl")
-                    targetDoc = httpService.getDocument(targetUrl) ?: doc
-                }
-                
-                // Get URLs from target page (either player page or detail page)
-                val urls = getParser().extractWatchServersUrls(targetDoc)
-                Log.i(methodTag, "Found ${urls.size} URLs to check")
-                
-                for (url in urls) {
-                    Log.i(methodTag, "Checking URL: $url")
-                    if (url.contains("video_player") || url.contains("player_token")) {
-                        Log.i(methodTag, ">>> Calling FaselHDExtractor for: $url")
-                        com.cloudstream.shared.extractors.FaselHDExtractor().getUrl(url, targetUrl, subtitleCallback, callback)
-                        extractorFoundStreams = true
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(methodTag, "FaselHD extractor error: ${e.message}")
-        }
-
-        // Call base logic
-        val baseResult = super.loadLinks(data, isCasting, subtitleCallback, callback)
-
-        return extractorFoundStreams || baseResult
     }
 }
