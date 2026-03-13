@@ -43,6 +43,9 @@ class ProviderHttpService private constructor(
     @Volatile
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain)
     
+    @Volatile
+    private var initialized = false
+    
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers) },
         solveCfAndRequest = { url -> solveCloudflareThenRequest(url) },
@@ -65,6 +68,8 @@ class ProviderHttpService private constructor(
         get() = videoSnifferEngine
     
     suspend fun ensureInitialized() {
+        if (initialized) return
+        
         // Only load and initialize SessionProvider if not already valid
         // This prevents repetitive disk reads and "Session initialized" logging
         if (!SessionProvider.hasValidSession()) {
@@ -79,6 +84,7 @@ class ProviderHttpService private constructor(
         if (remoteDomain != sessionState.domain) {
             updateDomain(remoteDomain)
         }
+        initialized = true
     }
     
     @Synchronized
@@ -108,7 +114,10 @@ class ProviderHttpService private constructor(
     @Synchronized
     fun updateDomain(newDomain: String) {
         if (newDomain == sessionState.domain) return
-        sessionState = sessionState.withDomain(newDomain)
+        // CRITICAL: Always preserve cookies on domain change.
+        // Domains change unpredictably (faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics)
+        // CF cookies are UA-bound, not domain-bound, so they remain valid.
+        sessionState = sessionState.withDomainKeepCookies(newDomain)
         sessionStore.save(sessionState)
     }
     
@@ -243,8 +252,14 @@ class ProviderHttpService private constructor(
         
         val doc = result.html?.let { Jsoup.parse(it, url) }
         
-        if (doc == null || result.responseCode == 403 || 
-            result.html?.contains("403 Forbidden") == true) {
+        val isDirectBlock = (result.responseCode == 403 || result.html?.contains("403 Forbidden") == true)
+        // Don't re-enqueue if the queue already attempted CF solve and failed
+        // This prevents 6× parallel CF solve thundering herd
+        val isQueueLevelFailure = result.error?.message?.contains("Cookie verification") == true ||
+                                  result.error?.message?.contains("CF solve failed") == true ||
+                                  result.error?.message?.contains("CF re-solve failed") == true
+        
+        if ((doc == null || isDirectBlock) && !isQueueLevelFailure) {
             
             if (config.webViewEnabled) {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403/null - WebView fallback queueing", "url" to url.take(80))
@@ -527,21 +542,18 @@ class ProviderHttpService private constructor(
         val requestHost = extractDomain(requestUrl)
         val finalHost = extractDomain(finalUrl)
         
+        // Already on this domain — nothing to do
+        if (finalHost == sessionState.domain) return
+        
         if (requestHost != finalHost && finalHost.isNotBlank()) {
-            // RELAXED: Only update the provider's main domain if the redirect is to a related domain
-            // or if we're on the main page. This prevents ad-redirects from hijacking the provider domain.
-            if (com.cloudstream.shared.session.SessionProvider.areDomainsRelated(requestHost, finalHost) || 
-                requestUrl.length < 40) { // Main page requests are usually short
-                
-                ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected and updated",
-                    "from" to requestHost, "to" to finalHost)
-                updateDomain(finalHost)
-                domainManager.updateDomain(finalHost)
-                domainManager.syncToRemote()
-            } else {
-                ProviderLogger.d(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Unrelated domain redirect ignored",
-                    "from" to requestHost, "to" to finalHost)
-            }
+            // Accept any trusted redirect — domains change unpredictably
+            // (e.g. faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics)
+            // OkHttp redirect policy already prevents ad-redirect hijacking
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "checkAndUpdateDomain", "Domain redirect detected and updated",
+                "from" to requestHost, "to" to finalHost)
+            updateDomain(finalHost)
+            domainManager.updateDomain(finalHost)
+            domainManager.syncToRemote()
         }
     }
     

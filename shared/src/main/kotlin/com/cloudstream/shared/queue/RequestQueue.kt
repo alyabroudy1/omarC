@@ -144,9 +144,28 @@ class RequestQueue(
                 }
             }
         } else {
-            ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "Verification FAILED", "domain" to domain)
-            followers.forEach { request ->
-                request.deferred.complete(RequestResult.failure("Cookie verification failed after CF solve"))
+            ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "Verification FAILED - retrying CF", "domain" to domain)
+            // Re-solve CF with the verifier URL instead of failing all followers
+            // This handles edge cases where cookies are invalid for the new domain
+            val cfResult = solveCfAndRequest(verifier.url)
+            if (cfResult.success) {
+                ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers", "CF re-solve SUCCESS after verify fail")
+                verifier.deferred.complete(cfResult)
+                
+                // Run remaining followers in parallel
+                coroutineScope {
+                    followers.drop(1).forEach { request ->
+                        launch {
+                            val result = request.action()
+                            request.deferred.complete(result)
+                        }
+                    }
+                }
+            } else {
+                ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "CF re-solve FAILED")
+                followers.forEach { request ->
+                    request.deferred.complete(RequestResult.failure("CF re-solve failed"))
+                }
             }
         }
     }

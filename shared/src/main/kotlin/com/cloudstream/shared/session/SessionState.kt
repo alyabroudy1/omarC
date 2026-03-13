@@ -117,6 +117,14 @@ data class SessionState(
         )
     }
     
+    /** Change domain but PRESERVE cookies — used when provider redirects to a new domain.
+     *  Cookies from CF solve are UA-bound, not domain-bound, so they remain valid.
+     *  Handles unpredictable domain changes (e.g. faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics) */
+    fun withDomainKeepCookies(newDomain: String): SessionState {
+        if (newDomain == domain) return this
+        return copy(domain = newDomain)
+    }
+    
     /** Create new state with merged cookies (useful for incremental cookie updates) */
     fun mergeCookies(additionalCookies: Map<String, String>, fromWebView: Boolean = false): SessionState {
         return copy(
