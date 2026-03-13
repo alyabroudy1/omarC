@@ -132,61 +132,39 @@ class SnifferExtractor : ExtractorApi() {
             VideoSnifferEngine { ActivityProvider.currentActivity }
         }
         
-        // CRITICAL: Use SessionProvider to get the SAME UA used for CF challenge
-        // This ensures cookies are valid for this UA
-        val snifferUserAgent = SessionProvider.getUserAgent()
-        android.util.Log.d("SnifferExtractor", "Using SessionProvider UA: ${snifferUserAgent.take(50)}...")
-        ProviderLogger.d(TAG, "getUrl", "Using SessionProvider UA",
-            "uaHash" to snifferUserAgent.hashCode(),
-            "hasSession" to SessionProvider.hasValidSession())
+        // ── UA Resolution ──
+        // Use Android's real WebView UA directly. Both the CF solve WebView and this
+        // sniffer WebView are Android WebViews on the same device — same default UA.
+        // This avoids any class-loader isolation issues with WebConfig/SessionProvider.
+        // Cookies are already in the system CookieManager (injected by ProviderHttpService.updateCookies).
+        val snifferUserAgent = try {
+            val ctx = com.lagradost.cloudstream3.AcraApplication.context
+            if (ctx != null) {
+                android.webkit.WebSettings.getDefaultUserAgent(ctx)
+                    .replace("; wv)", ")")  // Strip WebView marker, same as WebConfig
+            } else {
+                SessionProvider.getUserAgent()
+            }
+        } catch (e: Exception) {
+            SessionProvider.getUserAgent()
+        }
+        
+        ProviderLogger.d(TAG, "getUrl", "Sniffer UA resolved from WebSettings",
+            "uaHash" to snifferUserAgent.hashCode())
         
         android.util.Log.i("SnifferExtractor", "[getUrl] === STARTING WEBVIEW SNIFF ===")
         android.util.Log.i("SnifferExtractor", "[getUrl] Target URL: ${embedUrl.take(80)}")
-        android.util.Log.i("SnifferExtractor", "[getUrl] Mode: FULLSCREEN")
-        android.util.Log.i("SnifferExtractor", "[getUrl] Timeout: 3h (sniffer doubles as player)")
+        android.util.Log.i("SnifferExtractor", "[getUrl] UA hash: ${snifferUserAgent.hashCode()}")
         ProviderLogger.d(TAG, "getUrl", "Starting VideoSnifferEngine sniffing (Visible)")
         
         // Build pre-sniff JavaScript if selector is provided
         val preSniffJs = selector?.let { buildClickJavaScript(it) }
         
         if (selector != null) {
-            android.util.Log.i("SnifferExtractor", "[getUrl] === SELECTOR MODE ===")
-            android.util.Log.i("SnifferExtractor", "[getUrl] Selector query: ${selector.query}")
             ProviderLogger.i(TAG, "getUrl", "Selector mode enabled", 
                 "query" to selector.query,
                 "attr" to (selector.attr ?: "null"),
                 "regex" to (selector.regex ?: "null"))
-        }
-        
-        // CRITICAL: Inject CF cookies into Android's system CookieManager BEFORE WebView loads.
-        // Without this, the sniffer WebView starts a fresh session and hits Cloudflare Turnstile.
-        try {
-            val cookieManager = android.webkit.CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
-            val sessionCookies = SessionProvider.getCookies()
-            val sessionDomain = SessionProvider.getDomain()
-            if (sessionCookies.isNotEmpty() && sessionDomain != null) {
-                val cookieUrl = "https://$sessionDomain"
-                for ((key, value) in sessionCookies) {
-                    cookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
-                }
-                // Also set cookies for the embed URL domain (may differ from session domain)
-                val embedDomain = try { java.net.URI(embedUrl).host } catch (_: Exception) { null }
-                if (embedDomain != null && embedDomain != sessionDomain) {
-                    val embedCookieUrl = "https://$embedDomain"
-                    for ((key, value) in sessionCookies) {
-                        cookieManager.setCookie(embedCookieUrl, "$key=$value; path=/; secure")
-                    }
-                }
-                cookieManager.flush()
-                ProviderLogger.i(TAG, "getUrl", "Injected ${sessionCookies.size} CF cookies into system CookieManager",
-                    "domain" to sessionDomain, "embedDomain" to (embedDomain ?: "same"))
-            } else {
-                ProviderLogger.w(TAG, "getUrl", "No session cookies to inject",
-                    "cookieCount" to sessionCookies.size, "domain" to (sessionDomain ?: "null"))
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG, "getUrl", "Failed to inject cookies into CookieManager", "error" to e.message)
         }
         
         val startTime = System.currentTimeMillis()
