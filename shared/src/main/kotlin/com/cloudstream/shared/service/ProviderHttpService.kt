@@ -24,6 +24,8 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.net.URI
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * THE GATEWAY - Single entry point for all provider HTTP operations.
@@ -45,6 +47,7 @@ class ProviderHttpService private constructor(
     
     @Volatile
     private var initialized = false
+    private val initMutex = Mutex()
     
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers) },
@@ -71,26 +74,36 @@ class ProviderHttpService private constructor(
     suspend fun ensureInitialized() {
         if (initialized) return
         
-        // Only load and initialize SessionProvider if not already valid
-        // This prevents repetitive disk reads and "Session initialized" logging
-        if (!SessionProvider.hasValidSession()) {
-            val persisted = sessionStore.load(config.fallbackDomain)
-            sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
-            SessionProvider.initialize(sessionState)
+        initMutex.withLock {
+            if (initialized) return@withLock
+            
+            // Only load and initialize SessionProvider if not already valid
+            // This prevents repetitive disk reads and "Session initialized" logging
+            if (!SessionProvider.hasValidSession()) {
+                val persisted = sessionStore.load(config.fallbackDomain)
+                sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
+                SessionProvider.initialize(sessionState)
+            }
+            
+            // Always run these (lightweight, handles domain changes)
+            domainManager.ensureInitialized()
+            val remoteDomain = domainManager.currentDomain
+            if (remoteDomain != sessionState.domain) {
+                updateDomain(remoteDomain)
+            }
+            initialized = true
         }
-        
-        // Always run these (lightweight, handles domain changes)
-        domainManager.ensureInitialized()
-        val remoteDomain = domainManager.currentDomain
-        if (remoteDomain != sessionState.domain) {
-            updateDomain(remoteDomain)
-        }
-        initialized = true
     }
     
     @Synchronized
     private fun updateCookies(cookies: Map<String, String>, fromWebView: Boolean) {
-        sessionState = sessionState.withCookies(cookies, fromWebView)
+        // CRITICAL: WebView CF solve = full replace (fresh session)
+        // HTTP response Set-Cookie = merge into existing (don't destroy CF cookies)
+        sessionState = if (fromWebView) {
+            sessionState.withCookies(cookies, fromWebView = true)
+        } else {
+            sessionState.mergeCookies(cookies, fromWebView = false)
+        }
         sessionStore.save(sessionState)
         
         // CRITICAL: Update SessionProvider so SnifferExtractor gets same cookies
