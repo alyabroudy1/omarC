@@ -25,7 +25,8 @@ import java.net.URI
 class RequestQueue(
     private val executeRequest: suspend (String, Map<String, String>) -> RequestResult,
     private val solveCfAndRequest: suspend (String) -> RequestResult,
-    private val onDomainRedirect: suspend (String, String) -> Unit = { _, _ -> }
+    private val onDomainRedirect: suspend (String, String) -> Unit = { _, _ -> },
+    private val getCurrentDomain: () -> String = { "" }
 ) {
     private val mutex = Mutex()
     
@@ -74,6 +75,16 @@ class RequestQueue(
         
         when {
             result.success -> {
+                // Detect domain redirect from leader's response BEFORE releasing followers.
+                // This ensures followers use the updated domain, eliminating redundant redirects.
+                val leaderDomain = extractDomain(leader.url)
+                val finalDomain = result.finalUrl?.let { extractDomain(it) }
+                if (finalDomain != null && finalDomain != leaderDomain && finalDomain.isNotBlank()) {
+                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Leader detected domain redirect",
+                        "from" to leaderDomain, "to" to finalDomain)
+                    onDomainRedirect(leaderDomain, finalDomain)
+                }
+                
                 ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Leader SUCCESS", "domain" to domain)
                 leader.deferred.complete(result)
                 runFollowersParallel(domain)
@@ -124,21 +135,33 @@ class RequestQueue(
         
         if (followers.isEmpty()) return
         
+        val activeDomain = getCurrentDomain()
+        
         // First follower verifies that new cookies work
         val verifier = followers.first()
-        ProviderLogger.d(TAG_QUEUE, "verifyAndRunFollowers", "Verifying cookies", "url" to verifier.url.take(80))
+        val verifierUrl = rewriteFollowerUrl(verifier.url, activeDomain)
+        ProviderLogger.d(TAG_QUEUE, "verifyAndRunFollowers", "Verifying cookies", "url" to verifierUrl.take(80))
         
-        val verifyResult = verifier.action()
+        val verifyResult = if (verifierUrl != verifier.url) {
+            executeRequest(verifierUrl, emptyMap())
+        } else {
+            verifier.action()
+        }
         
         if (verifyResult.success) {
             ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers", "Verification SUCCESS", "domain" to domain)
             verifier.deferred.complete(verifyResult)
             
-            // Run remaining followers in parallel
+            // Run remaining followers in parallel with URL rewriting
             coroutineScope {
                 followers.drop(1).forEach { request ->
                     launch {
-                        val result = request.action()
+                        val rewrittenUrl = rewriteFollowerUrl(request.url, activeDomain)
+                        val result = if (rewrittenUrl != request.url) {
+                            executeRequest(rewrittenUrl, emptyMap())
+                        } else {
+                            request.action()
+                        }
                         request.deferred.complete(result)
                     }
                 }
@@ -147,16 +170,21 @@ class RequestQueue(
             ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "Verification FAILED - retrying CF", "domain" to domain)
             // Re-solve CF with the verifier URL instead of failing all followers
             // This handles edge cases where cookies are invalid for the new domain
-            val cfResult = solveCfAndRequest(verifier.url)
+            val cfResult = solveCfAndRequest(verifierUrl)
             if (cfResult.success) {
                 ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers", "CF re-solve SUCCESS after verify fail")
                 verifier.deferred.complete(cfResult)
                 
-                // Run remaining followers in parallel
+                // Run remaining followers in parallel with URL rewriting
                 coroutineScope {
                     followers.drop(1).forEach { request ->
                         launch {
-                            val result = request.action()
+                            val rewrittenUrl = rewriteFollowerUrl(request.url, activeDomain)
+                            val result = if (rewrittenUrl != request.url) {
+                                executeRequest(rewrittenUrl, emptyMap())
+                            } else {
+                                request.action()
+                            }
                             request.deferred.complete(result)
                         }
                     }
@@ -177,12 +205,24 @@ class RequestQueue(
         
         if (followers.isEmpty()) return
         
-        ProviderLogger.d(TAG_QUEUE, "runFollowersParallel", "Running followers", "count" to followers.size, "domain" to domain)
+        val activeDomain = getCurrentDomain()
+        ProviderLogger.d(TAG_QUEUE, "runFollowersParallel", "Running followers",
+            "count" to followers.size, "domain" to domain,
+            "activeDomain" to activeDomain)
         
         coroutineScope {
             followers.forEach { request ->
                 launch {
-                    val result = request.action()
+                    val rewrittenUrl = rewriteFollowerUrl(request.url, activeDomain)
+                    val result = if (rewrittenUrl != request.url) {
+                        ProviderLogger.d(TAG_QUEUE, "runFollowersParallel",
+                            "Rewrote follower URL",
+                            "from" to extractDomain(request.url),
+                            "to" to extractDomain(rewrittenUrl))
+                        executeRequest(rewrittenUrl, emptyMap())
+                    } else {
+                        request.action()
+                    }
                     request.deferred.complete(result)
                 }
             }
@@ -200,6 +240,18 @@ class RequestQueue(
             }
             pendingRequests.remove(domain)
         }
+    }
+    
+    /**
+     * Rewrite a follower's URL to use the current active domain.
+     * Called when the leader's response revealed a domain redirect.
+     */
+    private fun rewriteFollowerUrl(url: String, currentDomain: String): String {
+        if (currentDomain.isBlank()) return url
+        val urlDomain = extractDomain(url)
+        return if (urlDomain.isNotBlank() && urlDomain != currentDomain) {
+            url.replace(urlDomain, currentDomain)
+        } else url
     }
     
     private fun extractDomain(url: String): String {

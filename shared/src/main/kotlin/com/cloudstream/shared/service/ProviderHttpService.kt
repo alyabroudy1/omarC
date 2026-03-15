@@ -56,7 +56,8 @@ class ProviderHttpService private constructor(
             updateDomain(newDomain)
             domainManager.updateDomain(newDomain)
             domainManager.syncToRemote()
-        }
+        },
+        getCurrentDomain = { sessionState.domain }
     )
     
     val currentDomain: String
@@ -529,6 +530,19 @@ class ProviderHttpService private constructor(
         if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
         
         val targetUrl = rewriteUrlIfNeeded(url)
+        
+        // Guard: if valid CF clearance cookies already exist (from a concurrent solve),
+        // retry HTTP directly instead of spawning a redundant WebView session.
+        if (sessionState.hasClearance()) {
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                "Skipping CF solve — clearance cookies already present, retrying HTTP",
+                "domain" to sessionState.domain)
+            val retryResult = executeDirectRequest(targetUrl)
+            if (retryResult.success) return retryResult
+            // If retry still fails (cookies expired or invalid), fall through to full CF solve
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                "Retry with existing cookies failed, proceeding with full CF solve")
+        }
         
         // Invalidate current session before WebView attempt
         invalidateSession("Preparing for CF solve")
