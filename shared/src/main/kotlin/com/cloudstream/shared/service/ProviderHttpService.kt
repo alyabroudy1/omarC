@@ -291,6 +291,12 @@ class ProviderHttpService private constructor(
         
         val doc = result.html?.let { Jsoup.parse(it, url) }
         
+        // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
+        if (doc != null && result.success) {
+            val redirected = handleMetaRefreshRedirect(doc, result.finalUrl ?: url)
+            if (redirected != null) return redirected
+        }
+        
         val isDirectBlock = (result.responseCode == 403 || result.html?.contains("403 Forbidden") == true)
         // Don't re-enqueue if the queue already attempted CF solve and failed
         // This prevents 6× parallel CF solve thundering herd
@@ -346,7 +352,15 @@ class ProviderHttpService private constructor(
             throw CloudflareBlockedSearchException(config.name, sessionState.domain)
         }
         
-        return result.html?.let { Jsoup.parse(it, url) }
+        val doc = result.html?.let { Jsoup.parse(it, url) }
+        
+        // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
+        if (doc != null && result.success) {
+            val redirected = handleMetaRefreshRedirect(doc, result.finalUrl ?: url)
+            if (redirected != null) return redirected
+        }
+        
+        return doc
     }
 
     fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
@@ -611,6 +625,50 @@ class ProviderHttpService private constructor(
             domainManager.updateDomain(finalHost)
             domainManager.syncToRemote()
         }
+    }
+    
+    /**
+     * Detects meta-refresh redirects (e.g., LaRoza returns HTTP 200 + `<META HTTP-EQUIV="Refresh">`).
+     * If the meta-refresh points to a different domain, updates the domain and follows the redirect.
+     * Returns the new document if a cross-domain meta-refresh was detected, null otherwise.
+     */
+    private suspend fun handleMetaRefreshRedirect(doc: Document, currentUrl: String): Document? {
+        val metaRefreshUrl = extractMetaRefreshUrl(doc) ?: return null
+        
+        val currentHost = extractDomain(currentUrl)
+        val refreshHost = extractDomain(metaRefreshUrl)
+        
+        // Only act on cross-domain meta-refresh (same-domain refresh is just a page reload)
+        if (refreshHost.isBlank() || refreshHost == currentHost) return null
+        
+        ProviderLogger.i(TAG_PROVIDER_HTTP, "handleMetaRefreshRedirect",
+            "Meta-refresh domain redirect detected",
+            "from" to currentHost, "to" to refreshHost, "targetUrl" to metaRefreshUrl.take(100))
+        
+        // Update domain before following the redirect
+        checkAndUpdateDomain(currentUrl, metaRefreshUrl)
+        
+        // Follow the redirect — use requestQueue so leader/follower logic applies
+        val result = requestQueue.enqueue(metaRefreshUrl)
+        return if (result.success && result.html != null) {
+            Jsoup.parse(result.html, metaRefreshUrl)
+        } else {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "handleMetaRefreshRedirect",
+                "Failed to follow meta-refresh redirect", "url" to metaRefreshUrl.take(100))
+            null
+        }
+    }
+    
+    /**
+     * Extracts the target URL from a `<meta http-equiv="Refresh" content="0;URL=...">` tag.
+     * Returns null if no meta-refresh is found.
+     */
+    private fun extractMetaRefreshUrl(doc: Document): String? {
+        val refreshMeta = doc.selectFirst("meta[http-equiv=Refresh]") ?: return null
+        val content = refreshMeta.attr("content") ?: return null
+        // Format: "0;URL=https://example.com/path" or "0; URL=https://example.com/path"
+        val match = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(content)
+        return match?.groupValues?.get(1)?.trim()
     }
     
     private fun clearSystemCookies(url: String) {
