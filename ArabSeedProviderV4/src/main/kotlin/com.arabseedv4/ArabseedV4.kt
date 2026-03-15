@@ -26,7 +26,6 @@ class ArabseedV4 : BaseProvider() {
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
-        mainUrl = "https://${httpService.currentDomain}"
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         
         return coroutineScope {
@@ -54,7 +53,6 @@ class ArabseedV4 : BaseProvider() {
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         android.util.Log.d("ArabseedV4", "searchNormal: Executing parallel search for movies and series")
         httpService.ensureInitialized()
-        mainUrl = "https://${httpService.currentDomain}"
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         
         return coroutineScope {

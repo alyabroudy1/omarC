@@ -62,6 +62,9 @@ class ProviderHttpService private constructor(
     
     val currentDomain: String
         get() = sessionState.domain
+
+    val mainUrl: String
+        get() = "https://$currentDomain"
     
     val userAgent: String
         get() = sessionState.userAgent

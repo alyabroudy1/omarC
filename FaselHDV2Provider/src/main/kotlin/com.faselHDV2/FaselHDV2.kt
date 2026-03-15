@@ -80,7 +80,6 @@ class FaselHDV2 : BaseProvider() {
         val methodTag = "[$name] [searchNormal override]"
         try {
             httpService.ensureInitialized()
-            mainUrl = "https://${httpService.currentDomain}"
             
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)
@@ -133,7 +132,6 @@ class FaselHDV2 : BaseProvider() {
         val methodTag = "[$name] [searchLazy override]"
         try {
             httpService.ensureInitialized()
-            mainUrl = "https://${httpService.currentDomain}"
             
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)

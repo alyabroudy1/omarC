@@ -25,7 +25,9 @@ abstract class BaseProvider : MainAPI() {
     abstract val githubConfigUrl: String
 
     override var name: String = providerName
-    override var mainUrl: String = "https://$baseDomain"
+    override var mainUrl: String
+        get() = httpService.mainUrl
+        set(value) {}
     override var lang: String = "ar"
     override val hasMainPage: Boolean = true
     override val hasDownloadSupport: Boolean = true
@@ -70,8 +72,6 @@ abstract class BaseProvider : MainAPI() {
 
         try {
             httpService.ensureInitialized()
-            // Sync mainUrl after domain may have changed from GitHub config
-            mainUrl = "https://${httpService.currentDomain}"
             
             val items = mutableListOf<HomePageList>()
             
@@ -125,7 +125,6 @@ abstract class BaseProvider : MainAPI() {
         val methodTag = "[$name] [searchNormal]"
         try {
             httpService.ensureInitialized()
-            mainUrl = "https://${httpService.currentDomain}"
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching search URL: $url")
@@ -199,7 +198,6 @@ abstract class BaseProvider : MainAPI() {
         Log.i(methodTag, "START query='$query'")
 
         httpService.ensureInitialized()
-        mainUrl = "https://${httpService.currentDomain}"
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
         Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
