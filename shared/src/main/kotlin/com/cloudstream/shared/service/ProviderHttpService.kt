@@ -306,7 +306,11 @@ class ProviderHttpService private constructor(
                 }
                 
                 if (cfResult.success && cfResult.html != null) {
-                    if (checkDomainChange) {
+                    // CRITICAL: Disable domain change checks for WebView CF solve strategy.
+                    // CF challenges often involve intermediate URLs or temporary subdomains.
+                    // We DO NOT want these to trigger a permanent provider domain change.
+                    // The domain manager should only update on definitive main-site redirects.
+                    if (false /* disabled for webview strategy */) {
                         checkAndUpdateDomain(url, cfResult.finalUrl)
                     }
                     return Jsoup.parse(cfResult.html, cfResult.finalUrl ?: url)

@@ -139,6 +139,50 @@ class CfBypassEngine(
                     super.onPageStarted(view, url, favicon)
                 }
 
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val nextUrl = request?.url?.toString()
+                    if (nextUrl.isNullOrBlank()) return super.shouldOverrideUrlLoading(view, request)
+
+                    // Block non-HTTP schemes
+                    val scheme = request?.url?.scheme?.lowercase()
+                    if (scheme != null && scheme != "http" && scheme != "https") {
+                        ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading",
+                            "Blocked non-HTTP redirect", "scheme" to scheme, "url" to nextUrl.take(80))
+                        return true
+                    }
+
+                    // Check if this redirect goes to a DIFFERENT domain than the target URL
+                    try {
+                        val nextHost = java.net.URI(nextUrl).host?.lowercase() ?: ""
+                        val targetHost = java.net.URI(url).host?.lowercase() ?: ""
+
+                        fun baseDomain(host: String): String {
+                            val parts = host.split(".")
+                            return if (parts.size >= 2) parts.takeLast(2).joinToString(".") else host
+                        }
+
+                        val nextBase = baseDomain(nextHost)
+                        val targetBase = baseDomain(targetHost)
+
+                        if (nextBase == targetBase) {
+                            // Same domain redirect — allow silently
+                            ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
+                            return false
+                        }
+
+                        // Cross-domain redirect — BLOCK in CF bypass mode to prevent ad hijacking
+                        android.util.Log.w("CfBypassEngine", "Cross-domain redirect BLOCKED: $targetBase → $nextBase ($nextUrl)")
+                        ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Cross-domain redirect BLOCKED",
+                            "from" to targetBase, "to" to nextBase, "url" to nextUrl.take(100)
+                        )
+                        return true
+                    } catch (e: Exception) {
+                        android.util.Log.w("CfBypassEngine", "Error in redirect check: ${e.message}")
+                        ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Redirect (parse error, allowing)", "url" to nextUrl.take(80))
+                        return false
+                    }
+                }
+
                 override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                     if (resultDelivered) return
                     val currentUrl = view?.url ?: loadedUrl ?: url
