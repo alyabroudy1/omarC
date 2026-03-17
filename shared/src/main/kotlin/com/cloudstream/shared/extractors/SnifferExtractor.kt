@@ -256,6 +256,11 @@ class SnifferExtractor : ExtractorApi() {
                         else -> ExtractorLinkType.VIDEO
                     }
                     
+                    // BUGFIX: Use domain-only origin as referer, NOT the full embed URL.
+                    // CDN servers (e.g. scdns.io) validate that the Referer header is the
+                    // base domain, and reject requests with full video_player URLs (HTTP 403).
+                    val originReferer = extractOrigin(embedUrl) + "/"
+
                     var displaySourceName = name
                     if (linkType == ExtractorLinkType.DASH) {
                         displaySourceName = "$name (DRM Protected)"
@@ -308,7 +313,7 @@ class SnifferExtractor : ExtractorApi() {
                     
                     val finalHeaders = mutableMapOf<String, String>()
                     finalHeaders.putAll(filteredHeaders)
-                    finalHeaders["Referer"] = embedUrl
+                    finalHeaders["Referer"] = originReferer
                     finalHeaders["User-Agent"] = snifferUserAgent
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
@@ -328,7 +333,7 @@ class SnifferExtractor : ExtractorApi() {
                     if (linkType == ExtractorLinkType.M3U8) {
                         android.util.Log.i("SnifferExtractor", "[getUrl] Attempting M3U8 quality extraction")
                         ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
-                        qualityLinks = extractM3u8Qualities(source.url, finalHeaders, embedUrl, name)
+                        qualityLinks = extractM3u8Qualities(source.url, finalHeaders, originReferer, name)
                     }
                     
                     if (!qualityLinks.isNullOrEmpty()) {
@@ -351,7 +356,7 @@ class SnifferExtractor : ExtractorApi() {
                                 url = source.url,
                                 type = linkType
                             ) {
-                                this.referer = embedUrl
+                                this.referer = originReferer
                                 this.quality = qualityValue
                                 this.headers = finalHeaders
                             }
@@ -542,9 +547,9 @@ class SnifferExtractor : ExtractorApi() {
             // Remove referer param as it's already in headers
             val response = app.get(url, headers = headers).text
             
-            // LOGGING: Print first 500 chars of M3U8 to debug structure
-            ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content (First 500 chars)", 
-                "content" to response.take(500))
+            // LOGGING: Print first 2000 chars of M3U8 to capture all quality entries
+            ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content (First 2000 chars)", 
+                "content" to response.take(2000))
             
             if (!response.contains("#EXTM3U")) {
                  ProviderLogger.e(TAG, "extractM3u8Qualities", "Invalid M3U8: Missing #EXTM3U header")
@@ -554,6 +559,10 @@ class SnifferExtractor : ExtractorApi() {
             val links = mutableListOf<ExtractorLink>()
             // Split by lines and process
             val lines = response.lines()
+            // Log the count of stream entries for diagnostics
+            val streamInfCount = lines.count { it.trim().startsWith("#EXT-X-STREAM-INF") }
+            ProviderLogger.d(TAG, "extractM3u8Qualities", "Stream entries in manifest", 
+                "count" to streamInfCount, "totalLines" to lines.size)
             
             lines.forEachIndexed { index, rawLine ->
                 val line = rawLine.trim()

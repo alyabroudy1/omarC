@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "jsdom": "^29.0.0",
     "quickjs": "^0.2.2"
   }
 }

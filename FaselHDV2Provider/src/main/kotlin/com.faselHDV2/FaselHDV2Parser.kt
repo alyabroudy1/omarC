@@ -143,6 +143,28 @@ class FaselHDV2Parser : NewBaseParser() {
         return urls.distinct()
     }
 
+    /**
+     * Build server selectors for the sniffer to click the correct server tab.
+     * Maps each extracted URL back to its `li[data-embed-url]` element in the WatchList.
+     */
+    override fun buildServerSelectors(
+        doc: Document,
+        urls: List<String>
+    ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
+        if (watchListItems.isEmpty()) return urls.map { null }
+
+        return urls.map { url ->
+            val matchingLi = watchListItems.firstOrNull { it.attr("data-embed-url") == url }
+            if (matchingLi != null) {
+                com.cloudstream.shared.extractors.SnifferSelector(
+                    query = "ul.WatchList li[data-embed-url=\"$url\"]",
+                    attr = "data-embed-url"
+                )
+            } else null
+        }
+    }
+
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
 

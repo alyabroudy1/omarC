@@ -16,6 +16,7 @@ object VideoSnifferJs {
 
     val JS_SCRIPT = """
         (function() {
+            try {
             console.log('[VideoSniffer] Script starting...');
             var sourcesSent = false;
             var playStarted = false;
@@ -241,10 +242,10 @@ object VideoSnifferJs {
             function isSegmentUrl(url) {
                 if (url.startsWith('blob:')) return true;
                 var patterns = [
-                    /[\/_-]seg(ment)?[0-9]/i, /[\/_-]part[0-9]/i,
-                    /[\/_-]chunk[0-9]/i, /[\/_-]frag[0-9]/i,
-                    /[\/_-]init\./i, /\.m4s(\?|$)/i,
-                    /[\/&?](start|end|byte|range)=/i,
+                    /[\/\_-]seg(ment)?[0-9]/i, /[\/\_-]part[0-9]/i,
+                    /[\/\_-]chunk[0-9]/i, /[\/\_-]frag[0-9]/i,
+                    /[\/\_-]init\./i, /\.m4s(\?|$)/i,
+                    /[\/\&?](start|end|byte|range)=/i,
                     /\/[0-9]+\/[^/]+\.(ts|m4s|aac)$/
                 ];
                 return patterns.some(function(p) { return p.test(url); });
@@ -386,6 +387,12 @@ object VideoSnifferJs {
                     extractSources();
                 }
             }, 3000);
+            
+            return 'OK';
+            } catch(err) {
+                console.log('[VideoSniffer] Init error: ' + err.message);
+                return 'ERROR: ' + err.message;
+            }
         })();
     """.trimIndent()
 }

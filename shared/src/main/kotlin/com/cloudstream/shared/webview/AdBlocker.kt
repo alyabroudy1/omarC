@@ -44,7 +44,15 @@ object AdBlocker {
         "ad-maven.com", "admaven.com",
 
         // Malware / scam
-        "malware-check.top", "virus-alert.top"
+        "malware-check.top", "virus-alert.top",
+
+        // Domains identified from log analysis (FaselHD ad networks)
+        "oyo4d.com",                    // Ad tracker
+        "071kk.com",                    // Ad network
+        "browsecoherentunrefined.com",  // Ad/tracking
+        "fleraprt.com",                 // Analytics tracker
+        "tzegilo.com",                  // WebGL ad loader
+        "pyppo.com"                     // Intent redirect ads
     )
 
     /** Check if a network request URL should be blocked. */

@@ -11,3 +11,4 @@
 local.properties
 .vscode
 log.log
+.node_modules
