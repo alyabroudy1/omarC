@@ -171,15 +171,7 @@ class CfBypassEngine(
                         val targetBase = baseDomain(targetHost)
 
                         if (nextBase == targetBase) {
-                            // During CF bypass, block same-domain redirects that change the path.
-                            // e.g., ?p=261507 → /anime/medalist — the CF challenge for the original
-                            // URL was never solved, and cookies from the redirected page are useless.
-                            if (exitCondition is ExitCondition.PageLoaded) {
-                                ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading",
-                                    "Same-domain redirect BLOCKED during CF bypass", "url" to nextUrl.take(80))
-                                return true
-                            }
-                            // Non-CF mode: allow same-domain redirects
+                            // Same domain redirect — allow (legitimate redirects like canonical URLs)
                             ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
                             return false
                         }
