@@ -377,8 +377,14 @@ class YouTubePlayer(
                 Log.w(TAG, "showEpisodesOverlay: method not found on ${fragment.javaClass.simpleName}")
                 return
             }
-            method.invoke(fragment)
-            Log.d(TAG, "showEpisodesOverlay: successfully invoked")
+            try {
+                method.invoke(fragment)
+                Log.d(TAG, "showEpisodesOverlay: successfully invoked")
+            } catch (invokeE: Exception) {
+                val realException = if (invokeE is java.lang.reflect.InvocationTargetException) invokeE.targetException else invokeE
+                Log.w(TAG, "showEpisodesOverlay: method invocation threw ${realException.javaClass.simpleName}: ${realException.message}. Proceeding with manual injection...")
+                // We don't return here so that our manual injection fallback below can attempt to populate the episodes
+            }
             
             // Fix async allMeta gap by manually injecting episodes from viewModel if empty
             try {
