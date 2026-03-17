@@ -10,6 +10,6 @@ import com.cloudstream.shared.android.PluginContext
 class BristegePlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(Akwam())
+        registerMainAPI(Bristege())
     }
 }
