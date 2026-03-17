@@ -1,17 +1,20 @@
+
 package com.watanflix
 
-import com.lagradost.cloudstream3.*
-import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.ui.player.YouTubePlayer
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.lagradost.api.Log
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.api.Log
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeParser
-import com.fasterxml.jackson.annotation.JsonProperty
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -234,25 +237,28 @@ class Watanflix : BaseProvider() {
     }
 
     private suspend fun launchWebViewPlayer(url: String, callback: (ExtractorLink) -> Unit) {
-        CommonActivity.activity?.let { activity ->
-            if (activity is android.app.Activity) {
-                activity.runOnUiThread {
-                    val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
-                    dialog.show()
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+            CommonActivity.activity?.let { activity ->
+                if (activity is android.app.Activity) {
+                    activity.runOnUiThread {
+                        val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
+                        dialog.setOnDismissListener {
+                            if (cont.isActive) {
+                                cont.resume(Unit) {}
+                            }
+                        }
+                        dialog.show()
+                        
+                        cont.invokeOnCancellation {
+                            dialog.dismiss()
+                        }
+                    }
+                } else if (cont.isActive) {
+                    cont.resume(Unit) {}
                 }
+            } ?: run {
+                if (cont.isActive) cont.resume(Unit) {}
             }
         }
-        
-        // Emit a dummy link so Cloudstream's GeneratorPlayer doesn't destroy the episode list
-        callback(
-            newExtractorLink(
-                source = "YouTube WebView",
-                name = "YouTube WebView Player",
-                url = "dummy_webview_link",
-                type = ExtractorLinkType.VIDEO
-            ) {
-                this.quality = Qualities.Unknown.value
-            }
-        )
     }
 }

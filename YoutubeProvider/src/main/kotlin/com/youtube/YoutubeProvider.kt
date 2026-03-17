@@ -1,10 +1,11 @@
+
 package com.youtube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.api.Log
 import com.youtube.innertube.InnerTubeClient
@@ -12,6 +13,7 @@ import com.youtube.innertube.InnerTubeConfig
 import com.youtube.innertube.InnerTubeParser
 import com.youtube.innertube.YouTubeSearchResult
 import com.youtube.innertube.YouTubeStreamFormat
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * YouTube provider powered by InnerTube API.
@@ -312,30 +314,32 @@ class YoutubeProvider : MainAPI() {
      * (DRM, age-restricted, or when Player API fails).
      */
     private suspend fun launchWebViewPlayer(url: String, callback: (ExtractorLink) -> Unit) {
-        CommonActivity.activity?.let { activity ->
-            activity.runOnUiThread {
-                try {
-                    val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
-                    dialog.show()
-                } catch (e: Exception) {
-                    Log.e("YouTubeProvider", "Failed to launch native player, falling back to browser: ${e.message}")
-                    val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                    activity.startActivity(browserIntent)
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+            CommonActivity.activity?.let { activity ->
+                activity.runOnUiThread {
+                    try {
+                        val dialog = com.cloudstream.shared.ui.player.YouTubePlayer(activity, url)
+                        dialog.setOnDismissListener {
+                            if (cont.isActive) {
+                                cont.resume(Unit) {}
+                            }
+                        }
+                        dialog.show()
+                        
+                        cont.invokeOnCancellation {
+                            dialog.dismiss()
+                        }
+                    } catch (e: Exception) {
+                        Log.e("YouTubeProvider", "Failed to launch native player, falling back to browser: ${e.message}")
+                        val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        activity.startActivity(browserIntent)
+                        if (cont.isActive) cont.resume(Unit) {}
+                    }
                 }
+            } ?: run {
+                if (cont.isActive) cont.resume(Unit) {}
             }
         }
-        
-        // Emit a dummy link so Cloudstream's GeneratorPlayer doesn't destroy the episode list
-        callback(
-            newExtractorLink(
-                source = "YouTube WebView",
-                name = "YouTube WebView Player",
-                url = "dummy_webview_link",
-                type = ExtractorLinkType.VIDEO
-            ) {
-                this.quality = Qualities.Unknown.value
-            }
-        )
     }
 
     // ==================== MAPPING ====================

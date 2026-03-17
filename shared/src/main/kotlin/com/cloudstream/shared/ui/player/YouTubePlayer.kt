@@ -405,43 +405,84 @@ class YouTubePlayer(
                             
                             // Wait for UI to setup from native invoke
                             ui.rootView.postDelayed({
-                                try {
+                                    Log.d(TAG, "showEpisodesOverlay: Starting delayed injection")
+                                    // Broad search for any field that might be a ViewBinding
                                     val playerBindingField = fragment.javaClass.declaredFields.firstOrNull {
-                                        it.name.contains("binding", ignoreCase = true) || it.name.contains("playerBinding", ignoreCase = true)
+                                        it.isAccessible = true
+                                        val name = it.name.lowercase()
+                                        name.contains("binding") || name.contains("viewbinding") || name.contains("playerbinding")
+                                    } ?: fragment.javaClass.declaredFields.firstOrNull {
+                                        it.type.simpleName.endsWith("Binding")
                                     }
+                                    
                                     if (playerBindingField != null) {
                                         playerBindingField.isAccessible = true
                                         val playerBinding = playerBindingField.get(fragment)
+                                        Log.d(TAG, "showEpisodesOverlay: playerBinding found: ${playerBinding?.javaClass?.simpleName}")
+                                        
                                         if (playerBinding != null) {
+                                            // Exhaustively search for any RecyclerView in the binding
                                             val playerEpisodeListField = playerBinding.javaClass.declaredFields.firstOrNull {
-                                                it.name.contains("episodeList", ignoreCase = true) || it.name.contains("playlist", ignoreCase = true) || it.name.contains("playerEpisodeList", ignoreCase = true)
+                                                val name = it.name.lowercase()
+                                                name.contains("episodelist") || name.contains("playlist") || name.contains("recyclerview") || name.contains("list")
+                                            } ?: playerBinding.javaClass.declaredFields.firstOrNull {
+                                                androidx.recyclerview.widget.RecyclerView::class.java.isAssignableFrom(it.type)
                                             }
+                                            
                                             if (playerEpisodeListField != null) {
                                                 playerEpisodeListField.isAccessible = true
                                                 val recyclerView = playerEpisodeListField.get(playerBinding) as? androidx.recyclerview.widget.RecyclerView
-                                                val adapter = recyclerView?.adapter
-                                                if (adapter != null) {
-                                                    val updateListMethod = adapter.javaClass.methods.firstOrNull { 
-                                                        it.name == "updateList" || it.name == "setList" || it.name == "submitList" 
-                                                    }
-                                                    updateListMethod?.invoke(adapter, metaList)
+                                                Log.d(TAG, "showEpisodesOverlay: recyclerView found: $recyclerView")
+                                                
+                                                if (recyclerView != null) {
+                                                    val adapter = recyclerView.adapter
+                                                    Log.d(TAG, "showEpisodesOverlay: adapter found: ${adapter?.javaClass?.simpleName}")
                                                     
-                                                    // Scroll to active index
-                                                    val getCurrentIndexMethod = viewModel.javaClass.methods.firstOrNull { it.name == "getCurrentIndex" || it.name == "getActiveIndex" }
-                                                    val index = getCurrentIndexMethod?.invoke(viewModel) as? Int
-                                                    if (index != null && index >= 0) {
-                                                        recyclerView.scrollToPosition(index)
-                                                        val viewHolder = recyclerView.findViewHolderForAdapterPosition(index)
-                                                        viewHolder?.itemView?.requestFocus()
+                                                    if (adapter != null) {
+                                                        val updateListMethod = adapter.javaClass.methods.firstOrNull { 
+                                                            val name = it.name.lowercase()
+                                                            name == "updatelist" || name == "setlist" || name == "submitlist" || name.contains("list")
+                                                        }
+                                                        
+                                                        Log.d(TAG, "showEpisodesOverlay: updateListMethod found: ${updateListMethod?.name}")
+                                                        if (updateListMethod != null) {
+                                                            updateListMethod.isAccessible = true
+                                                            updateListMethod.invoke(adapter, metaList)
+                                                            Log.d(TAG, "showEpisodesOverlay: updateListMethod invoked successfully")
+                                                        } else {
+                                                            Log.w(TAG, "showEpisodesOverlay: Could not find update method on adapter. Methods: ${adapter.javaClass.methods.map { it.name }}")
+                                                        }
+                                                        
+                                                        // Scroll to active index
+                                                        val getCurrentIndexMethod = viewModel.javaClass.methods.firstOrNull { 
+                                                            val name = it.name.lowercase()
+                                                            name == "getcurrentindex" || name == "getactiveindex" || name.contains("index")
+                                                        }
+                                                        val index = getCurrentIndexMethod?.invoke(viewModel) as? Int
+                                                        Log.d(TAG, "showEpisodesOverlay: active index: $index")
+                                                        if (index != null && index >= 0) {
+                                                            recyclerView.scrollToPosition(index)
+                                                        }
                                                     }
                                                 }
+                                            } else {
+                                                Log.w(TAG, "showEpisodesOverlay: playerEpisodeList field NOT found. Binding fields: ${playerBinding.javaClass.declaredFields.map { it.name }}")
                                             }
                                         }
+                                    } else {
+                                        Log.w(TAG, "showEpisodesOverlay: playerBinding field NOT found. Fragment fields: ${fragment.javaClass.declaredFields.map { it.name }}")
+                                        // Attempt to look for a RecyclerView directly in the fragment
+                                        val directRvField = fragment.javaClass.declaredFields.firstOrNull {
+                                            androidx.recyclerview.widget.RecyclerView::class.java.isAssignableFrom(it.type)
+                                        }
+                                        if (directRvField != null) {
+                                            directRvField.isAccessible = true
+                                            val recyclerView = directRvField.get(fragment) as? androidx.recyclerview.widget.RecyclerView
+                                            Log.d(TAG, "showEpisodesOverlay: Found recycler view directly in fragment: $recyclerView")
+                                            // ... handle similarly if needed ...
+                                        }
                                     }
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "showEpisodesOverlay delayed injection failed", e)
-                                }
-                            }, 100)
+                            }, 300)
                         }
                     }
                 }
