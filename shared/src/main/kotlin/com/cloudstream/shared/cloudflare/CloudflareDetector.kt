@@ -19,8 +19,7 @@ object CloudflareDetector {
         "cf_chl_opt",
         "__cf_chl",
         "ray_id",
-        "cf-wrapper",
-        "403 Forbidden"
+        "cf-wrapper"
     )
     
     private val CF_RESPONSE_CODES = listOf(403, 503, 429)
@@ -65,9 +64,13 @@ object CloudflareDetector {
     
     /**
      * Combined check using both code and HTML.
+     * Requires BOTH a CF response code AND CF markers in HTML.
+     * This prevents non-CF 403s (like Akwam's anti-bot) from triggering CF solve.
      */
     fun isBlocked(code: Int, html: String?): Boolean {
-        return isCloudflareResponse(code) || isCloudflareChallenge(html)
+        if (!isCloudflareResponse(code)) return false
+        // Must also have CF-specific markers in the HTML
+        return isCloudflareChallenge(html)
     }
     
     /**
@@ -89,7 +92,6 @@ object CloudflareDetector {
         if (html.length < 512) return false
         // Real pages have meaningful DOM structure and don't contain block indicators
         return html.contains("<div", ignoreCase = true) &&
-               !html.contains("403 Forbidden", ignoreCase = true) &&
                !html.contains("Access Denied", ignoreCase = true)
     }
 }

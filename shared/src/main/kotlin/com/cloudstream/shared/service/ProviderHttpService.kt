@@ -297,17 +297,21 @@ class ProviderHttpService private constructor(
             if (redirected != null) return redirected
         }
         
-        val isDirectBlock = (result.responseCode == 403 || result.html?.contains("403 Forbidden") == true)
+        // Only fall back to WebView if status is 403 AND the HTML contains actual CF markers.
+        // This prevents non-CF 403s (like Akwam's anti-bot) from triggering useless CF solve loops.
+        val hasCfMarkers = result.html?.let { CloudflareDetector.isCloudflareChallenge(it) } == true
+        val isDirectCfBlock = (result.responseCode == 403 && hasCfMarkers)
         // Don't re-enqueue if the queue already attempted CF solve and failed
-        // This prevents 6× parallel CF solve thundering herd
+        // This prevents parallel CF solve thundering herd
         val isQueueLevelFailure = result.error?.message?.contains("Cookie verification") == true ||
                                   result.error?.message?.contains("CF solve failed") == true ||
-                                  result.error?.message?.contains("CF re-solve failed") == true
+                                  result.error?.message?.contains("CF re-solve failed") == true ||
+                                  result.error?.message?.contains("CF Bypass failed") == true
         
-        if ((doc == null || isDirectBlock) && !isQueueLevelFailure) {
+        if (isDirectCfBlock && !isQueueLevelFailure) {
             
             if (config.webViewEnabled) {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "403/null - WebView fallback queueing", "url" to url.take(80))
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "CF blocked - WebView fallback queueing", "url" to url.take(80))
                 
                 // CRITICAL FIX: Run the fallback solver through the RequestQueue to respect the domain mutex
                 // This prevents parallel search threads from launching simultaneous WebView sessions
@@ -575,14 +579,16 @@ class ProviderHttpService private constructor(
             mode = mode,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
-            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L,
-            delayMs = 1500L
+            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L
         )
         
         return when (result) {
             is WebViewResult.Success -> {
                 updateCookies(result.cookies, fromWebView = true)
                 checkAndUpdateDomain(targetUrl, result.finalUrl)
+                // Return the WebView HTML directly — this is critical for non-CF sites
+                // (like Akwam) where the HTTP client always gets 403 but WebView works fine.
+                // Previously we retried HTTP here, but that just 403'd again on non-CF sites.
                 RequestResult.success(result.html, 200, result.finalUrl)
             }
             else -> RequestResult.failure("CF Bypass failed")
