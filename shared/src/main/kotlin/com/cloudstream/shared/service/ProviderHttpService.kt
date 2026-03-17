@@ -182,6 +182,12 @@ class ProviderHttpService private constructor(
         return doc?.let { parser.parseSearch(it) }.orEmpty()
     }
     
+    suspend fun getText(url: String, headers: Map<String, String> = emptyMap()): String? {
+        val fullUrl = buildUrl(url)
+        val result = executeDirectRequest(fullUrl, headers)
+        return result.html
+    }
+
     suspend fun getPlayerUrls(url: String): List<String> {
         val doc = getDocument(url) ?: return emptyList()
         return parser.extractWatchServersUrls(doc)
