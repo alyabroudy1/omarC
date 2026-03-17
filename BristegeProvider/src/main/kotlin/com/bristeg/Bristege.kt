@@ -51,7 +51,7 @@ class Bristege : BaseProvider() {
                     "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
                 }
                 Log.d(methodTag, "Following redirect to player page: $absoluteWatchUrl")
-                httpService.getDocument(absoluteWatchUrl) ?: detailDoc
+                httpService.getDocument(absoluteWatchUrl, mapOf("Referer" to data)) ?: detailDoc
             } else {
                 detailDoc
             }
@@ -93,7 +93,7 @@ class Bristege : BaseProvider() {
         doc.select("div#WatchServers button.watchButton, div#WatchServers button.watchbutton").forEach { btn ->
             val url = btn.attr("data-embed-url").ifBlank { btn.attr("data-embed") }
             if (url.isNotBlank()) {
-                val absoluteUrl = if (url.startsWith("http")) url else "$mainUrl/$url".replace("//", "/").replace("https:/", "https://")
+                val absoluteUrl = buildAbsoluteUrl(url)
                 items.add(EmbedData(absoluteUrl, btn.text(), Qualities.Unknown.value))
             }
         }
@@ -102,7 +102,7 @@ class Bristege : BaseProvider() {
         doc.select("div#Playerholder iframe").forEach { iframe ->
             val url = iframe.attr("src")
             if (url.isNotBlank()) {
-                val absoluteUrl = if (url.startsWith("http")) url else "$mainUrl/$url".replace("//", "/").replace("https:/", "https://")
+                val absoluteUrl = buildAbsoluteUrl(url)
                 items.add(EmbedData(absoluteUrl, "Main Server", Qualities.Unknown.value))
             }
         }
@@ -123,7 +123,7 @@ class Bristege : BaseProvider() {
         // Bristege Logic Step 1: Download embed page
         val html = httpService.getText(embedUrl, mapOf("Referer" to referer)) ?: return
         
-        // Bristege Logic Step 2: Direct video link in text
+        // Bristege Logic Step 2: Direct video link in text (First priority in source)
         val directUrl = findVideoInText(html)
         if (directUrl != null) {
             Log.d(methodTag, "Found direct link: $directUrl")
@@ -141,10 +141,10 @@ class Bristege : BaseProvider() {
             return
         }
         
-        // Bristege Logic Step 3: JWPlayer setup
+        // Bristege Logic Step 3: JWPlayer setup (Includes key as seen in source)
         val jwSetupRegex = Regex("jwplayer\\.setup\\s*\\(\\{([\\s\\S]*?)\\}\\);")
         jwSetupRegex.find(html)?.let { match ->
-            val setupJs = match.groupValues[1]
+            val setupJs = jsUnescape(match.groupValues[1])
             val videoFromJw = findVideoInText(setupJs)
             if (videoFromJw != null) {
                 Log.d(methodTag, "Found video in JWPlayer setup: $videoFromJw")
@@ -163,16 +163,17 @@ class Bristege : BaseProvider() {
             }
         }
 
-        // Bristege Logic Step 4: Packed JS (Dean Edwards)
-        val packedRegex = Regex("eval\\(function\\(p,a,c,k,e,r\\).*?\\)")
+        // Bristege Logic Step 4: Packed JS (Matches decompiled eval pattern)
+        val packedRegex = Regex("eval\\((function\\s*\\(.*)\\)\\)", RegexOption.DOT_MATCHES_ALL)
         packedRegex.findAll(html).forEach { match ->
             try {
-                // Try standard unpacker
-                var unpacked = JsUnpacker(match.value).unpack()
+                val fullEval = "eval(${match.groupValues[1]})"
+                // Try standard unpacker first
+                var unpacked = JsUnpacker(fullEval).unpack()
                 
-                // Fallback to manual unpacker if it looks incomplete (as seen in source)
+                // Fallback to manual unpacker
                 if (unpacked == null || !unpacked.contains("http")) {
-                    unpacked = manualUnpack(match.value)
+                    unpacked = manualUnpack(fullEval)
                 }
                 
                 if (unpacked != null) {
@@ -203,17 +204,46 @@ class Bristege : BaseProvider() {
         }
     }
 
-    private fun findVideoInText(text: String): String? {
+    private fun findVideoInText(text: String?): String? {
+        if (text == null) return null
+        
+        // Unescape the text again just in case, specially slashes
+        val cleanText = text.replace("\\/", "/")
+        
         val patterns = listOf(
-            Regex("(?:file|src)\\s*:\\s*['\"](https?://[^'\"]+\\.(?:m3u8|mp4)[^'\"]*)['\"]"),
+            Regex("(?:file|src)\\s*:\\s*['\"](https?://[^'\"]+)['\"]"),
             Regex("['\"](https?://[^\\s'\"]+\\.(?:m3u8|mp4)[^\\s'\"]*)['\"]"),
             Regex("(https?://[^\\s'\"]+\\.(?:m3u8|mp4)[^\\s'\"]*)")
         )
 
         for (pattern in patterns) {
-            pattern.find(text)?.let { return it.groupValues[1] }
+            pattern.find(cleanText)?.let { return it.groupValues[1] }
         }
         return null
+    }
+
+    private fun jsUnescape(s: String): String {
+        var r = Regex("\\\\x([0-9a-fA-F]{2})").replace(s) { mr ->
+            try {
+                mr.groupValues[1].toInt(16).toChar().toString()
+            } catch (e: Exception) {
+                mr.value
+            }
+        }
+        r = Regex("\\\\u([0-9a-fA-F]{4})").replace(r) { mr ->
+            try {
+                mr.groupValues[1].toInt(16).toChar().toString()
+            } catch (e: Exception) {
+                mr.value
+            }
+        }
+        return r.replace("\\\"", "\"")
+            .replace("\\'", "'")
+            .replace("\\\\", "\\")
+            .replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\\t", "\t")
+            .replace("\\/", "/")
     }
 
     private fun manualUnpack(packedJs: String): String? {
@@ -222,11 +252,12 @@ class Bristege : BaseProvider() {
             val regex = Regex("eval\\(function\\s*\\(p,a,c,k,e,d\\)\\s*\\{[\\s\\S]*?\\}\\s*\\(\\s*(['\"])(.*?)\\1\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(['\"])(.*?)\\5\\.split\\(['\"]\\|['\"]\\)\\s*\\)\\s*\\)", RegexOption.DOT_MATCHES_ALL)
             val match = regex.find(packedJs) ?: return null
             
-            val payload = match.groupValues[2]
+            val payloadRaw = match.groupValues[2]
             val base = match.groupValues[3].toIntOrNull() ?: 10
             val count = match.groupValues[4].toIntOrNull() ?: 0
             val dictionary = match.groupValues[6].split("|")
             
+            val payload = jsUnescape(payloadRaw)
             val lookup = mutableMapOf<String, String>()
             for (i in count - 1 downTo 0) {
                 val key = i.toString(base)
@@ -240,6 +271,15 @@ class Bristege : BaseProvider() {
         } catch (e: Exception) {
             return null
         }
+    }
+
+    private fun buildAbsoluteUrl(url: String): String {
+        return when {
+            url.startsWith("http") -> url
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> "$mainUrl$url"
+            else -> "$mainUrl/$url"
+        }.replace("//", "/").replace("https:/", "https://")
     }
 
     private data class EmbedData(val url: String, val name: String, val quality: Int)
