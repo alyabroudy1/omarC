@@ -99,7 +99,7 @@ class Watanflix : BaseProvider() {
         // Extract YouTube video ID from various URL formats
         val videoId = extractVideoId(data) ?: run {
             Log.w(TAG, "loadLinks: Could not extract video ID from $data, falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
             return true
         }
         Log.d(TAG, "loadLinks: videoId=$videoId")
@@ -108,7 +108,7 @@ class Watanflix : BaseProvider() {
         val playerJson = InnerTubeClient.getPlayer(videoId)
         if (playerJson == null) {
             Log.e(TAG, "loadLinks: Player API returned null — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
             return true
         }
 
@@ -117,7 +117,7 @@ class Watanflix : BaseProvider() {
         if (status != "OK") {
             val reason = playerJson.path("playabilityStatus").path("reason").textValue() ?: "Unknown"
             Log.w(TAG, "loadLinks: Not playable: $status — $reason — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
             return true
         }
 
@@ -195,7 +195,7 @@ class Watanflix : BaseProvider() {
         // ── Tier 4: WebView last resort ──
         if (linksEmitted == 0) {
             Log.w(TAG, "loadLinks: No links emitted from any tier — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
         }
 
         Log.d(TAG, "loadLinks: Done — $linksEmitted links emitted (${result.adaptiveFormats.size} adaptive, ${result.muxedFormats.size} muxed)")
@@ -233,7 +233,7 @@ class Watanflix : BaseProvider() {
         else -> Qualities.Unknown.value
     }
 
-    private fun launchWebViewPlayer(url: String) {
+    private suspend fun launchWebViewPlayer(url: String, callback: (ExtractorLink) -> Unit) {
         CommonActivity.activity?.let { activity ->
             if (activity is android.app.Activity) {
                 activity.runOnUiThread {
@@ -242,5 +242,17 @@ class Watanflix : BaseProvider() {
                 }
             }
         }
+        
+        // Emit a dummy link so Cloudstream's GeneratorPlayer doesn't destroy the episode list
+        callback(
+            newExtractorLink(
+                source = "YouTube WebView",
+                name = "YouTube WebView Player",
+                url = "dummy_webview_link",
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.quality = Qualities.Unknown.value
+            }
+        )
     }
 }

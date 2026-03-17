@@ -194,7 +194,7 @@ class YoutubeProvider : MainAPI() {
         val playerJson = InnerTubeClient.getPlayer(videoId)
         if (playerJson == null) {
             Log.e(TAG, "loadLinks: Player API returned null — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
             return true
         }
 
@@ -203,7 +203,7 @@ class YoutubeProvider : MainAPI() {
         if (status != "OK") {
             val reason = playerJson.path("playabilityStatus").path("reason").textValue() ?: "Unknown"
             Log.w(TAG, "loadLinks: Not playable: $status — $reason — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
             return true
         }
 
@@ -279,7 +279,7 @@ class YoutubeProvider : MainAPI() {
         // ── Tier 4: WebView last resort ──
         if (linksEmitted == 0) {
             Log.w(TAG, "loadLinks: No links emitted from any tier — falling back to WebView")
-            launchWebViewPlayer(data)
+            launchWebViewPlayer(data, callback)
         }
 
         Log.d(TAG, "loadLinks: Done — $linksEmitted links emitted (${result.adaptiveFormats.size} adaptive, ${result.muxedFormats.size} muxed)")
@@ -311,7 +311,7 @@ class YoutubeProvider : MainAPI() {
      * Fallback: launch native Activity for videos that can't provide direct URLs
      * (DRM, age-restricted, or when Player API fails).
      */
-    private fun launchWebViewPlayer(url: String) {
+    private suspend fun launchWebViewPlayer(url: String, callback: (ExtractorLink) -> Unit) {
         CommonActivity.activity?.let { activity ->
             activity.runOnUiThread {
                 try {
@@ -324,6 +324,18 @@ class YoutubeProvider : MainAPI() {
                 }
             }
         }
+        
+        // Emit a dummy link so Cloudstream's GeneratorPlayer doesn't destroy the episode list
+        callback(
+            newExtractorLink(
+                source = "YouTube WebView",
+                name = "YouTube WebView Player",
+                url = "dummy_webview_link",
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.quality = Qualities.Unknown.value
+            }
+        )
     }
 
     // ==================== MAPPING ====================
