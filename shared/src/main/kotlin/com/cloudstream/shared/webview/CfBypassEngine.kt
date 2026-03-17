@@ -26,6 +26,11 @@ class CfBypassEngine(
     private var resultDelivered = false
     private var timeoutJob: Job? = null
     private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
+    private var sessionStartTime: Long = 0L
+    
+    /** Minimum time (ms) to dwell in WebView before allowing exit during CF bypass.
+     *  Gives CF Turnstile time to complete challenge and set cf_clearance cookie. */
+    private val MIN_DWELL_TIME_MS = 1000L
 
     /**
      * Run a WebView session for CF bypass.
@@ -56,6 +61,7 @@ class CfBypassEngine(
         this@CfBypassEngine.deferred = CompletableDeferred<WebViewResult>()
         val deferred = this@CfBypassEngine.deferred!!
         resultDelivered = false
+        sessionStartTime = System.currentTimeMillis()
         var dialog: android.app.Dialog? = null
         var webView: WebView? = null
 
@@ -165,7 +171,15 @@ class CfBypassEngine(
                         val targetBase = baseDomain(targetHost)
 
                         if (nextBase == targetBase) {
-                            // Same domain redirect — allow silently
+                            // During CF bypass, block same-domain redirects that change the path.
+                            // e.g., ?p=261507 → /anime/medalist — the CF challenge for the original
+                            // URL was never solved, and cookies from the redirected page are useless.
+                            if (exitCondition is ExitCondition.PageLoaded) {
+                                ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading",
+                                    "Same-domain redirect BLOCKED during CF bypass", "url" to nextUrl.take(80))
+                                return true
+                            }
+                            // Non-CF mode: allow same-domain redirects
                             ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
                             return false
                         }
@@ -200,8 +214,48 @@ class CfBypassEngine(
                             val shouldExit = when (exitCondition) {
                                 is ExitCondition.PageLoaded -> {
                                     val isCf = CloudflareDetector.isCloudflareChallenge(html)
-                                    if (isCf) ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Still in CF challenge")
-                                    !isCf
+                                    if (isCf) {
+                                        ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Still in CF challenge")
+                                        false
+                                    } else {
+                                        // Minimum dwell time: don't exit too fast, give CF Turnstile
+                                        // time to complete its challenge and set cf_clearance cookie
+                                        val elapsed = System.currentTimeMillis() - sessionStartTime
+                                        if (elapsed < MIN_DWELL_TIME_MS) {
+                                            ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished",
+                                                "Dwell time not met, waiting", "elapsed" to elapsed, "min" to MIN_DWELL_TIME_MS)
+                                            // Schedule a re-check after the remaining dwell time
+                                            CoroutineScope(Dispatchers.Main).launch {
+                                                delay(MIN_DWELL_TIME_MS - elapsed)
+                                                if (!resultDelivered) {
+                                                    // Re-evaluate with fresh cookies after dwell
+                                                    val freshHtml = getHtmlFromWebView(view!!)
+                                                    val stillCf = CloudflareDetector.isCloudflareChallenge(freshHtml)
+                                                    val isReal = CloudflareDetector.isRealContent(freshHtml)
+                                                    if (!stillCf && isReal) {
+                                                        resultDelivered = true
+                                                        timeoutJob?.cancel()
+                                                        val freshCookies = extractCookies(view, currentUrl)
+                                                        ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Exit after dwell time",
+                                                            "cookies" to freshCookies.size, "hasClearance" to freshCookies.containsKey("cf_clearance"))
+                                                        cleanup(view, dialog)
+                                                        deferred.complete(WebViewResult.Success(freshCookies, freshHtml, currentUrl))
+                                                    } else {
+                                                        ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "After dwell: still blocked or not real content")
+                                                    }
+                                                }
+                                            }
+                                            false // Don't exit yet, the delayed re-check will handle it
+                                        } else {
+                                            // Dwell time met — do secondary content validation
+                                            val isReal = CloudflareDetector.isRealContent(html)
+                                            if (!isReal) {
+                                                ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished",
+                                                    "Page passed CF check but looks like error page", "htmlLength" to html.length)
+                                            }
+                                            isReal
+                                        }
+                                    }
                                 }
                                 is ExitCondition.CookiesPresent -> {
                                     val cookies = extractCookies(view, currentUrl)

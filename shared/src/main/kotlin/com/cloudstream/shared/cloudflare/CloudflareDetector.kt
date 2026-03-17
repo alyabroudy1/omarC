@@ -19,7 +19,8 @@ object CloudflareDetector {
         "cf_chl_opt",
         "__cf_chl",
         "ray_id",
-        "cf-wrapper"
+        "cf-wrapper",
+        "403 Forbidden"
     )
     
     private val CF_RESPONSE_CODES = listOf(403, 503, 429)
@@ -77,5 +78,18 @@ object CloudflareDetector {
         
         // Check for any validation string
         return validationStrings.any { html.contains(it, ignoreCase = true) }
+    }
+    
+    /**
+     * Check if HTML looks like real provider content vs an error/blocked page.
+     * Used as secondary validation after CF challenge check passes.
+     * Short pages or pages containing block indicators are considered non-real.
+     */
+    fun isRealContent(html: String): Boolean {
+        if (html.length < 512) return false
+        // Real pages have meaningful DOM structure and don't contain block indicators
+        return html.contains("<div", ignoreCase = true) &&
+               !html.contains("403 Forbidden", ignoreCase = true) &&
+               !html.contains("Access Denied", ignoreCase = true)
     }
 }

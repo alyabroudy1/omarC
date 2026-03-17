@@ -548,11 +548,12 @@ class ProviderHttpService private constructor(
         
         val targetUrl = rewriteUrlIfNeeded(url)
         
-        // Guard: if valid CF clearance cookies already exist (from a concurrent solve),
-        // retry HTTP directly instead of spawning a redundant WebView session.
-        if (sessionState.hasClearance()) {
+        // Guard: if valid cookies already exist from a very recent solve (< 10s),
+        // skip re-invalidation — a concurrent solve likely just succeeded.
+        val cookieAge = System.currentTimeMillis() - sessionState.cookieTimestamp
+        if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
             ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
-                "Skipping CF solve — clearance cookies already present, retrying HTTP",
+                "Skipping CF solve — fresh cookies exist (${cookieAge}ms old), retrying HTTP",
                 "domain" to sessionState.domain)
             val retryResult = executeDirectRequest(targetUrl)
             if (retryResult.success) return retryResult
@@ -574,7 +575,8 @@ class ProviderHttpService private constructor(
             mode = mode,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
-            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L
+            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L,
+            delayMs = 1500L
         )
         
         return when (result) {
