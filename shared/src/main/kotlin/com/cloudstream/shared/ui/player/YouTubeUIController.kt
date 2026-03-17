@@ -47,6 +47,13 @@ class YouTubeUIController(private val context: Context) {
     lateinit var btnDescription: TextView private set
     lateinit var imgAvatar: android.widget.ImageView private set
 
+    // Episodes Overlay UI
+    lateinit var episodesContainer: FrameLayout private set
+    lateinit var episodesRecyclerView: androidx.recyclerview.widget.RecyclerView private set
+    lateinit var btnCloseEpisodes: ImageButton private set
+    var isEpisodesVisible = false
+        private set
+
     var isVisible = false
         private set
 
@@ -220,6 +227,93 @@ class YouTubeUIController(private val context: Context) {
         rootView.addView(topBar)
         rootView.addView(centerContainer)
         rootView.addView(bottomContainer)
+        
+        // ===== EPISODES OVERLAY =====
+        episodesContainer = FrameLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(Color.parseColor("#E6000000")) // 90% black
+            visibility = View.GONE
+            isClickable = true // intercept clicks
+            isFocusable = true
+        }
+
+        val episodesContent = LinearLayout(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                dp(400).coerceAtMost(context.resources.displayMetrics.widthPixels),
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ).apply { gravity = Gravity.END }
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1A1A1A")) // Dark gray surface
+        }
+
+        val episodesHeader = LinearLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(16), dp(16), dp(16), dp(16))
+            setBackgroundColor(Color.parseColor("#222222"))
+        }
+
+        val episodesTitle = TextView(context).apply {
+            text = "Episodes"
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        btnCloseEpisodes = ImageButton(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            setBackgroundColor(Color.TRANSPARENT)
+            setColorFilter(Color.WHITE)
+            setOnClickListener { hideEpisodesOverlay() }
+        }
+
+        episodesHeader.addView(episodesTitle)
+        episodesHeader.addView(btnCloseEpisodes)
+
+        episodesRecyclerView = androidx.recyclerview.widget.RecyclerView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context)
+        }
+
+        episodesContent.addView(episodesHeader)
+        episodesContent.addView(episodesRecyclerView)
+        episodesContainer.addView(episodesContent)
+        rootView.addView(episodesContainer)
+    }
+
+    fun showEpisodesOverlay() {
+        if (!isEpisodesVisible) {
+            episodesContainer.visibility = View.VISIBLE
+            episodesContainer.alpha = 0f
+            episodesContainer.animate().alpha(1f).setDuration(200).start()
+            isEpisodesVisible = true
+        }
+    }
+
+    fun hideEpisodesOverlay() {
+        if (isEpisodesVisible) {
+            episodesContainer.animate().alpha(0f).setDuration(200).withEndAction {
+                episodesContainer.visibility = View.GONE
+            }.start()
+            isEpisodesVisible = false
+        }
+    }
+
+    fun toggleEpisodesOverlay() {
+        if (isEpisodesVisible) hideEpisodesOverlay() else showEpisodesOverlay()
     }
 
     fun show() {
