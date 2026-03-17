@@ -6,11 +6,16 @@ android {
         getByName("main") {
             kotlin.srcDir("../shared/src/main/kotlin")
         }
+        getByName("test") {
+            kotlin.srcDir("../shared/src/test/kotlin")
+        }
     }
 }
 
 dependencies {
     implementation("org.mozilla:rhino:1.7.14")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
 cloudstream {

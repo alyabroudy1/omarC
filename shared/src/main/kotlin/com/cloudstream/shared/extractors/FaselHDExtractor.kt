@@ -8,6 +8,10 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.webview.ExitCondition
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.WebViewResult
 import org.mozilla.javascript.Context as RhinoContext
 
 /**
@@ -328,6 +332,86 @@ class FaselHDExtractor : ExtractorApi() {
         }
     }
 
+    /**
+     * Fallback: Use WebView-based video sniffing when Rhino JS evaluation fails.
+     * First tries headless mode, then falls back to fullscreen if needed.
+     * This handles heavily obfuscated JavaScript that Rhino cannot parse.
+     */
+    private suspend fun tryWebViewFallback(url: String, referer: String): List<FaselStream> {
+        val service = ProviderHttpServiceHolder.getInstance()
+        if (service == null) {
+            ProviderLogger.d(TAG, "tryWebViewFallback", "No ProviderHttpService available")
+            return emptyList()
+        }
+        
+        // Try headless first
+        ProviderLogger.d(TAG, "tryWebViewFallback", "Trying HEADLESS WebView for: $url")
+        var result = trySniffer(service, url, referer, Mode.HEADLESS, 30_000L)
+        
+        // If headless fails, try fullscreen
+        if (result.isEmpty()) {
+            ProviderLogger.d(TAG, "tryWebViewFallback", "Headless failed, trying FULLSCREEN WebView")
+            result = trySniffer(service, url, referer, Mode.FULLSCREEN, 60_000L)
+        }
+        
+        return result
+    }
+    
+    private suspend fun trySniffer(
+        service: com.cloudstream.shared.service.ProviderHttpService,
+        url: String,
+        referer: String,
+        mode: Mode,
+        timeout: Long
+    ): List<FaselStream> {
+        return try {
+            val result = service.snifferEngine.runSession(
+                url = url,
+                mode = mode,
+                userAgent = service.userAgent,
+                exitCondition = ExitCondition.VideoFound(minCount = 1),
+                timeout = timeout,
+                referer = referer
+            )
+            
+            when (result) {
+                is WebViewResult.Success -> {
+                    ProviderLogger.d(TAG, "tryWebViewFallback", "WebView ($mode) found ${result.foundLinks.size} links")
+                    result.foundLinks.mapNotNull { link ->
+                        val videoUrl = link.url
+                        if (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) {
+                            val quality = when {
+                                videoUrl.contains("1080") -> "1080p"
+                                videoUrl.contains("720") -> "720p"
+                                videoUrl.contains("480") -> "480p"
+                                videoUrl.contains("360") -> "360p"
+                                else -> "auto"
+                            }
+                            ProviderLogger.d(TAG, "tryWebViewFallback", "Found: $quality - ${videoUrl.take(50)}")
+                            FaselStream(videoUrl, quality)
+                        } else null
+                    }.distinctBy { it.url }
+                }
+                is WebViewResult.Timeout -> {
+                    ProviderLogger.d(TAG, "tryWebViewFallback", "WebView ($mode) timeout")
+                    emptyList()
+                }
+                is WebViewResult.PlayingInWebView -> {
+                    ProviderLogger.d(TAG, "tryWebViewFallback", "WebView ($mode) playing in WebView")
+                    // Video is playing in WebView - this would need different handling
+                    emptyList()
+                }
+                else -> {
+                    ProviderLogger.d(TAG, "tryWebViewFallback", "WebView ($mode) failed: $result")
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG, "tryWebViewFallback", "Error: ${e.message}")
+            emptyList()
+        }
+    }
+
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -361,6 +445,27 @@ class FaselHDExtractor : ExtractorApi() {
             if (streams.isEmpty()) {
                 val emptyMsg = "No streams found for url: " + url
                 ProviderLogger.e(TAG, methodName, emptyMsg)
+                
+                // Try WebView fallback when Rhino fails
+                val webViewStreams = tryWebViewFallback(url, effectiveReferer)
+                if (webViewStreams.isNotEmpty()) {
+                    ProviderLogger.d(TAG, methodName, "WebView fallback found ${webViewStreams.size} streams")
+                    for (stream in webViewStreams) {
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name ${stream.quality}",
+                                url = stream.url,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = streamReferer
+                                this.quality = qualityFromLabel(stream.quality)
+                            }
+                        )
+                    }
+                    ProviderLogger.i(TAG, methodName, "WebView fallback succeeded with ${webViewStreams.size} streams")
+                    return
+                }
                 
                 // Debug: save HTML for analysis
                 val sample = response.take(500)
