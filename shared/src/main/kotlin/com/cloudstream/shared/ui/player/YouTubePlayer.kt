@@ -421,18 +421,42 @@ class YouTubePlayer(
                                         Log.d(TAG, "showEpisodesOverlay: playerBinding found: ${playerBinding?.javaClass?.simpleName}")
                                         
                                         if (playerBinding != null) {
-                                            // Exhaustively search for any RecyclerView in the binding
-                                            val playerEpisodeListField = playerBinding.javaClass.declaredFields.firstOrNull {
-                                                val name = it.name.lowercase()
-                                                name.contains("episodelist") || name.contains("playlist") || name.contains("recyclerview") || name.contains("list")
-                                            } ?: playerBinding.javaClass.declaredFields.firstOrNull {
-                                                androidx.recyclerview.widget.RecyclerView::class.java.isAssignableFrom(it.type)
+                                            // Recursively search for a RecyclerView in the binding and its immediate children
+                                            var foundRv: androidx.recyclerview.widget.RecyclerView? = null
+                                            
+                                            // Search level 1 (direct fields of playerBinding)
+                                            for (field in playerBinding.javaClass.declaredFields) {
+                                                field.isAccessible = true
+                                                val value = field.get(playerBinding) ?: continue
+                                                
+                                                if (value is androidx.recyclerview.widget.RecyclerView) {
+                                                    // Give preference to fields sounding like our target if multiple found
+                                                    if (foundRv == null || field.name.lowercase().contains("episode") || field.name.lowercase().contains("list")) {
+                                                        foundRv = value
+                                                        Log.d(TAG, "showEpisodesOverlay: Found RV directly in binding: ${field.name}")
+                                                    }
+                                                } else if (!field.type.isPrimitive && !field.type.name.startsWith("java.") && !field.type.name.startsWith("android.")) {
+                                                    // Search level 2 (fields of child bindings like videoGoBackHolderHolder)
+                                                    try {
+                                                        for (innerField in value.javaClass.declaredFields) {
+                                                            innerField.isAccessible = true
+                                                            val innerValue = innerField.get(value) ?: continue
+                                                            if (innerValue is androidx.recyclerview.widget.RecyclerView) {
+                                                                if (foundRv == null || innerField.name.lowercase().contains("episode") || innerField.name.lowercase().contains("list")) {
+                                                                    foundRv = innerValue
+                                                                    Log.d(TAG, "showEpisodesOverlay: Found RV nested in ${field.name}.${innerField.name}")
+                                                                }
+                                                            }
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        // Ignore access exceptions on weird fields
+                                                    }
+                                                }
                                             }
                                             
-                                            if (playerEpisodeListField != null) {
-                                                playerEpisodeListField.isAccessible = true
-                                                val recyclerView = playerEpisodeListField.get(playerBinding) as? androidx.recyclerview.widget.RecyclerView
-                                                Log.d(TAG, "showEpisodesOverlay: recyclerView found: $recyclerView")
+                                            if (foundRv != null) {
+                                                val recyclerView = foundRv
+                                                Log.d(TAG, "showEpisodesOverlay: recyclerView selected: $recyclerView")
                                                 
                                                 if (recyclerView != null) {
                                                     val adapter = recyclerView.adapter
@@ -466,7 +490,7 @@ class YouTubePlayer(
                                                     }
                                                 }
                                             } else {
-                                                Log.w(TAG, "showEpisodesOverlay: playerEpisodeList field NOT found. Binding fields: ${playerBinding.javaClass.declaredFields.map { it.name }}")
+                                                Log.w(TAG, "showEpisodesOverlay: No RecyclerView found anywhere in binding or its children. Binding fields: ${playerBinding.javaClass.declaredFields.map { it.name }}")
                                             }
                                         }
                                     } else {
