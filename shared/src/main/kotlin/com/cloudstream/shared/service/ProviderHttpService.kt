@@ -611,9 +611,11 @@ class ProviderHttpService private constructor(
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
 
-        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
+        // CRITICAL FIX: Only rewrite if the URL uses the hardcoded fallback domain from code.
+        // Blindly rewriting ANY non-current domain destroys external embed URLs (e.g. vkvideo.ru).
+        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain == config.fallbackDomain && urlDomain != currentDomain) {
             val rewritten = url.replace(urlDomain, currentDomain)
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote fallback URL",
                 "from" to urlDomain, "to" to currentDomain)
             rewritten
         } else {
