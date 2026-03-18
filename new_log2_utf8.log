@@ -1,0 +1,62 @@
+﻿2026-03-18 08:30:25.239 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-18 08:30:25.244 25343-25454 [Bristege] [load]       com.lagradost.cloudstream3           I  START url='https://hd1.brstej.com/watch.php?vid=d071f3d6f'
+2026-03-18 08:30:25.244 25343-25454 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/watch.php?vid=d071f3d6f
+2026-03-18 08:30:25.244 25343-25454 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?vid=d071f3d6f, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-18 08:30:25.290 25343-25454 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
+2026-03-18 08:30:25.355 25343-25454 [Bristege] [load]       com.lagradost.cloudstream3           D  Parsed load data: title='مسلسل حكاية نرجس الحلقة 13 الثالثة عشر', type=TvSeries, episodes=14
+2026-03-18 08:30:32.348 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
+2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-03-18 08:30:32.357 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-03-18 08:30:32.357 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-03-18 08:30:32.394 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-18 08:30:32.395 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-03-18 08:30:32.395 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-03-18 08:30:32.396 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           I  START data='https://hd1.brstej.com/watch.php?vid=bc8185a30'
+2026-03-18 08:30:32.396 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-18 08:30:32.396 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-18 08:30:32.396 25343-25385 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/watch.php?vid=bc8185a30
+2026-03-18 08:30:32.397 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?vid=bc8185a30, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-18 08:30:32.456 25343-25385 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
+2026-03-18 08:30:32.462 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-18 08:30:32.462 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-18 08:30:32.463 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 08:30:32.463 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-18 08:30:32.548 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           D  Following redirect to player page: https://hd1.brstej.com/play.php?vid=bc8185a30
+2026-03-18 08:30:32.548 25343-25385 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/play.php?vid=bc8185a30
+2026-03-18 08:30:32.548 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/play.php?vid=bc8185a30, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.588 25343-25385 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
+2026-03-18 08:30:32.677 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           D  Extracted 5 embed/server targets
+2026-03-18 08:30:32.677 25343-25461 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=sh.ramadan-series.site, to=hd1.brstej.com
+2026-03-18 08:30:32.677 25343-25448 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=rty1.film77.xyz, to=hd1.brstej.com
+2026-03-18 08:30:32.677 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=vkvideo.ru, to=hd1.brstej.com
+2026-03-18 08:30:32.678 25343-25456 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=ss.hd-vk.com, to=hd1.brstej.com
+2026-03-18 08:30:32.678 25343-25448 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-91hwaiq55bnp.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.678 25343-25382 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=hd1.hdup20.com, to=hd1.brstej.com
+2026-03-18 08:30:32.678 25343-25456 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-41grh1affj6f.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.678 25343-25382 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-gb2ohvcb9dt8.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.678 25343-25461 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?id=gTLCjnndJ, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.680 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/video_ext.php?oid=800112141&id=456242177, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
+2026-03-18 08:30:32.705 25343-25385 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://vkvideo.ru/video_ext.php?oid=800112141&id=456242177
+2026-03-18 08:30:32.773 25343-25448 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://rty1.film77.xyz/embed-91hwaiq55bnp.html
+2026-03-18 08:30:32.788 25343-25461 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://sh.ramadan-series.site/watch.php?id=gTLCjnndJ
+2026-03-18 08:30:32.793 25343-25456 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://ss.hd-vk.com/embed-41grh1affj6f.html
+2026-03-18 08:30:32.839 25343-25382 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://hd1.hdup20.com/embed-gb2ohvcb9dt8.html
+2026-03-18 08:30:35.240 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-18 08:30:35.240 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-03-18 08:30:35.340 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-18 08:30:35.554 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 08:30:35.554 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)

@@ -5,6 +5,7 @@ import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.parsing.WatchServerSelector
 import org.jsoup.nodes.Document
 
@@ -47,4 +48,33 @@ class SyriaLiveParser : NewBaseParser() {
         title = CssSelector(query = ".video-serv a", attr = "text"),
         iframe = CssSelector(query = ".entry-content iframe", attr = "src")
     )
+
+    override fun parseLoadPage(doc: Document, url: String): ParserInterface.ParsedLoadData? {
+        val data = super.parseLoadPage(doc, url) ?: return null
+        
+        val tableRows = doc.select(".AY-MatchInfo table tr")
+        var plot = data.plot
+        val tags = mutableListOf<String>()
+        
+        if (tableRows.isNotEmpty()) {
+            val descBuilder = StringBuilder()
+            tableRows.forEach { row ->
+                val key = row.select("th").text()
+                val value = row.select("td").text()
+                if (key.isNotBlank() && value.isNotBlank()) {
+                    descBuilder.append("$key: $value\n")
+                }
+                if (value.isNotBlank()) tags.add(value)
+            }
+            plot = descBuilder.toString().trim()
+        }
+        
+        val isLive = url.contains("/matches/") && tableRows.isNotEmpty()
+        
+        return data.copy(
+            plot = if (plot.isNullOrBlank()) null else plot,
+            type = if (isLive) com.lagradost.cloudstream3.TvType.Live else com.lagradost.cloudstream3.TvType.Movie,
+            tags = tags
+        )
+    }
 }

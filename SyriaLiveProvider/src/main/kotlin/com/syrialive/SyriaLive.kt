@@ -25,15 +25,20 @@ class SyriaLive : BaseProvider() {
         return SyriaLiveParser()
     }
 
-    // Overriding getMainPage because .match-container requires complex string concatenation
-    // that the basic CSS selectors in NewBaseParser cannot handle automatically.
+    /**
+     * Overriding getMainPage because the root URL `https://d.syrlive.com/` returns two 
+     * entirely different structural lists ("مباريات اليوم" matches and "آخر الأخبار" news).
+     * If we relied on `mainPageOf`, `BaseProvider` would iterate and fetch the heavy 
+     * Cloudflare-protected page multiple times and NewBaseParser configs only support 
+     * one list per container configuration.
+     */
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse? {
-        val app = com.lagradost.cloudstream3.app
-        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-        val doc = service?.getDocument("https://d.syrlive.com/") ?: app.get("https://d.syrlive.com/").document
+        // Ensure HTTP service is ready
+        httpService.ensureInitialized()
+        val doc = httpService.getDocument("https://d.syrlive.com/") ?: return null
 
         val homePageList = mutableListOf<HomePageList>()
 
@@ -87,43 +92,10 @@ class SyriaLive : BaseProvider() {
         return newHomePageResponse(homePageList, false)
     }
 
-    override suspend fun load(url: String): LoadResponse? {
-        val app = com.lagradost.cloudstream3.app
-        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-        val doc = service?.getDocument(url) ?: app.get(url).document
-        
-        val title = doc.selectFirst(".EntryTitle")?.text() ?: "No Title"
-        val posterElement = doc.selectFirst("meta[property='og:image']")
-        val poster = posterElement?.attr("content") ?: doc.selectFirst(".teamlogo")?.attr("data-src") ?: ""
-        
-        // Extract plot either from match table or paragraph
-        val descBuilder = java.lang.StringBuilder()
-        val tableRows = doc.select(".AY-MatchInfo table tr")
-        
-        if (tableRows.isNotEmpty()) {
-            tableRows.forEach { row ->
-                val key = row.select("th").text()
-                val value = row.select("td").text()
-                if (key.isNotBlank() && value.isNotBlank()) {
-                    descBuilder.append("$key: $value\n")
-                }
-            }
-        } else {
-            descBuilder.append(doc.select(".entry-content p").text())
-        }
-        
-        val isLive = url.contains("/matches/") && tableRows.isNotEmpty()
-        val type = if (isLive) TvType.Live else TvType.Movie
-        
-        val tags = tableRows.mapNotNull { it.select("td").text() }.filter { it.isNotBlank() }
-
-        return newMovieLoadResponse(title, url, type, url) {
-            this.posterUrl = fixUrl(poster)
-            this.plot = descBuilder.toString()
-            this.tags = tags
-        }
-    }
-
+    /**
+     * Overridden to handle custom internal players (AlbaPlayerControl and Clappr) which
+     * cannot rely on generic `BaseProvider.loadLinks()` extractor delegations.
+     */
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -131,8 +103,7 @@ class SyriaLive : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var foundLinks = false
-        val app = com.lagradost.cloudstream3.app
-        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
+        httpService.ensureInitialized()
         val userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
         
         // 1. Fetch exact match/movie page
@@ -140,7 +111,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to "https://www.google.com/"
         )
-        val doc = service?.getDocument(data, reqHeaders) ?: app.get(data, headers = reqHeaders).document
+        val doc = httpService.getDocument(data, reqHeaders) ?: return false
         
         val iframeElement = doc.selectFirst(".entry-content iframe")
         val iframeSrc = iframeElement?.attr("src")
@@ -165,7 +136,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = service?.getText(playerUrl, pHeaders) ?: app.get(playerUrl, headers = pHeaders).text
+        val playerResponse = httpService.getText(playerUrl, pHeaders) ?: return foundLinks
         
         // Check for AlbaPlayerControl base64 packed stream
         val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")
