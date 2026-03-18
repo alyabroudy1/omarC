@@ -14,7 +14,7 @@ import android.util.Base64
 
 class SyriaLive : BaseProvider() {
 
-    override val baseDomain get() = "www.syrlive.com"
+    override val baseDomain get() = "d.syrlive.com/"
     override val providerName get() = "SyriaLive"
     override var lang = "ar"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/syrialive.json"
