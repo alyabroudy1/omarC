@@ -624,10 +624,9 @@ class ProviderHttpService private constructor(
         val currentDomain = sessionState.domain
 
         return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
-            val fullHost = try { java.net.URI(url).host } catch(e: Exception) { urlDomain } ?: urlDomain
-            val rewritten = url.replace(fullHost, currentDomain)
+            val rewritten = url.replace(urlDomain, currentDomain)
             ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
-                "from" to fullHost, "to" to currentDomain)
+                "from" to urlDomain, "to" to currentDomain)
             rewritten
         } else {
             url

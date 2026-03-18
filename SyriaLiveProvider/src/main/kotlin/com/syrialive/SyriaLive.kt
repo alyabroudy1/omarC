@@ -25,6 +25,25 @@ class SyriaLive : BaseProvider() {
         return SyriaLiveParser()
     }
 
+    private fun fixSyriaUrl(url: String): String {
+        if (url.isEmpty()) return ""
+        if (url.startsWith("data:") || url.startsWith("intent:")) return url
+        
+        return try {
+            val uri = java.net.URI(url)
+            val pathWithQuery = StringBuilder()
+            uri.path?.let { pathWithQuery.append(it) }
+            uri.query?.let { pathWithQuery.append("?").append(it) }
+            uri.fragment?.let { pathWithQuery.append("#").append(it) }
+            
+            val finalPath = pathWithQuery.toString()
+            if (finalPath.isEmpty() || finalPath == "/") mainUrl
+            else "$mainUrl/${finalPath.trimStart('/')}"
+        } catch (e: Exception) {
+            url
+        }
+    }
+
     /**
      * Overriding getMainPage because the root URL `https://d.syrlive.com/` returns two 
      * entirely different structural lists ("مباريات اليوم" matches and "آخر الأخبار" news).
@@ -53,14 +72,14 @@ class SyriaLive : BaseProvider() {
                 val matchTime = element.selectFirst(".match-time")?.text() ?: ""
                 val title = "$rightTeam $result $leftTeam"
                 
-                val url = element.selectFirst("a")?.attr("href")?.let { fixUrl(it) }
+                val url = element.selectFirst("a")?.attr("href")?.let { fixSyriaUrl(it) }
                 
                 val posterImg = element.selectFirst(".right-team img")
                 val poster = posterImg?.attr("data-src")?.ifBlank { posterImg.attr("src") } ?: ""
                 
                 if (url != null) {
                     matches.add(newMovieSearchResponse(title, url, TvType.Live) {
-                        this.posterUrl = fixUrl(poster)
+                        this.posterUrl = fixSyriaUrl(poster)
                     })
                 }
             }
@@ -75,13 +94,13 @@ class SyriaLive : BaseProvider() {
         doc.select(".AY-PItem").forEach { element ->
             val titleNode = element.selectFirst(".AY-PostTitle a")
             val title = titleNode?.text() ?: return@forEach
-            val url = titleNode.attr("href")?.let { fixUrl(it) } ?: return@forEach
+            val url = titleNode.attr("href")?.let { fixSyriaUrl(it) } ?: return@forEach
             
             val imgNode = element.selectFirst("img")
             val poster = imgNode?.attr("data-src")?.ifBlank { imgNode.attr("src") } ?: ""
             
             news.add(newMovieSearchResponse(title, url, TvType.Movie) {
-                this.posterUrl = fixUrl(poster)
+                this.posterUrl = fixSyriaUrl(poster)
             })
         }
         
@@ -120,7 +139,7 @@ class SyriaLive : BaseProvider() {
         for (btn in doc.select(".video-serv a")) {
             val href = btn.attr("href")
             if (href.isNotBlank()) {
-                val fixedUrl = fixUrl(href)
+                val fixedUrl = fixSyriaUrl(href)
                 loadExtractor(fixedUrl, data, subtitleCallback, callback)
                 foundLinks = true
             }
@@ -131,7 +150,7 @@ class SyriaLive : BaseProvider() {
             return foundLinks
         }
         
-        val playerUrl = fixUrl(iframeSrc)
+        val playerUrl = fixSyriaUrl(iframeSrc)
         val pHeaders = mapOf(
             "User-Agent" to userAgent,
             "Referer" to data
