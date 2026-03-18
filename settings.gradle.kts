@@ -19,3 +19,4 @@ fun File.eachDir(block: (File) -> Unit) {
 include("SyriaLiveProvider")
 include("TukTukcimaProvider")
 include("CimawbasProvider")
+include("WecimaProvider")
