@@ -149,34 +149,37 @@ class Cimanow : BaseProvider() {
     }
 
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        // Match reference: check doc.toString() for hide_my_HTML_ first
+        // Match reference: check if doc contains the obfuscator string
         val docString = doc.toString()
-        if (!docString.contains("hide_my_HTML_")) {
+        if (!docString.contains("_my_HTML_")) {
             Log.d("Cimanow", "decodeObfuscatedHtml: No decoding needed")
             return doc
         }
         
-        // Search ALL script elements for the one containing hide_my_HTML_
-        // (reference uses doc.select("script").first() but the obfuscated script 
-        // might not always be the first one)
+        // Search ALL script elements for the one containing _my_HTML_
         var scriptData: String? = null
+        var matchedPrefix = "var hide_my_HTML_"
         for (script in doc.select("script")) {
             val data = script.data()
-            if (data.contains("hide_my_HTML_")) {
+            if (data.contains("_my_HTML_")) {
                 scriptData = data
+                // Determine the exact variable name used
+                if (data.contains("var cimanow_my_HTML_")) {
+                    matchedPrefix = "var cimanow_my_HTML_"
+                }
                 break
             }
         }
         
         if (scriptData == null) {
-            Log.d("Cimanow", "decodeObfuscatedHtml: hide_my_HTML_ in doc but not in any script data")
+            Log.d("Cimanow", "decodeObfuscatedHtml: _my_HTML_ in doc but not in any script data")
             return doc
         }
         
-        Log.d("Cimanow", "decodeObfuscatedHtml: Found hide_my_HTML_ script, length=${scriptData.length}")
+        Log.d("Cimanow", "decodeObfuscatedHtml: Found _my_HTML_ script, length=${scriptData.length}")
 
         try {
-            val hideMyHtmlContent = scriptData.substringAfter("var hide_my_HTML_", "")
+            val hideMyHtmlContent = scriptData.substringAfter(matchedPrefix, "")
             if (hideMyHtmlContent.isBlank()) return doc
 
             val hideMyHtmlContent2 = hideMyHtmlContent.substringAfter("=", "")
