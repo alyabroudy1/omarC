@@ -1,175 +1,49 @@
-﻿2026-03-18 09:21:52.608 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
-2026-03-18 09:21:52.615 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-03-18 09:21:52.615 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-03-18 09:21:52.615 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
-2026-03-18 09:21:52.617 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-03-18 09:21:52.617 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-03-18 09:21:52.658 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-03-18 09:21:52.660 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-03-18 09:21:52.660 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-03-18 09:21:52.661 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  loadLinks: watchUrl=https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%84%d9%86%d8%b3%d9%88%d8%a9-%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9-1-%d8%a7%d9%84%d8%a7%d9%88%d9%84%d9%8a/watching/
-2026-03-18 09:21:52.661 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 09:21:52.661 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 09:21:52.661 11411-11452 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=cimanow.cc, url=https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%8
-2026-03-18 09:21:52.662 11411-11452 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%8, urlDomain=cimanow.cc, sessionDomain=cimanow.cc, isAlias=false, hasCookie=false, cookieCount=0
-2026-03-18 09:21:52.702 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-03-18 09:21:52.702 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 09:21:52.702 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 09:21:52.725 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 09:21:52.725 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 09:21:52.726 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 09:21:52.726 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 09:21:53.165 11411-11452 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=cimanow.cc
-2026-03-18 09:21:53.378 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  decodeObfuscatedHtml: No decoding needed
-2026-03-18 09:21:53.378 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  Decoded watching doc
-2026-03-18 09:21:53.378 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  DEBUG: Found 0 <ul> elements
-2026-03-18 09:21:53.378 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  DEBUG: Found 0 <li> with data-index/data-id
-2026-03-18 09:21:53.378 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  DEBUG: Found 0 iframes
-2026-03-18 09:21:53.381 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  DEBUG: HTML snippet: <html>
-                                                                                                     <head>
-                                                                                                      <script type="text/javascript" language="Javascript">
-                                                                                                    var cimanow_HTML_encoder_ ='';
-                                                                                                    var cimanow_my_HTML_ =
-
-                                                                                                    'ODc3MTM.ODc2ODY.ODc3MjE.ODc3MzI.ODc3MjA.ODc3Mzc.ODc3NDI.ODc3MzM.ODc3MjI.ODc2ODU.ODc3NTc.ODc3Njk.ODc3NjI.ODc3NjE.ODc3MTU.ODc2NjM.ODc3MTM.ODc3NTc.ODc3Njk.ODc3NjI.ODc3NjE.ODc2ODU.ODc3NTM.ODc3NTg.ODc3Njc.ODc3MTQ.ODc2ODc.ODc3Njc.ODc3Njk.ODc3NjE.ODc2ODc.ODc2ODU.ODc3NjE.ODc3NTA.ODc3NjM.ODc3NTY.ODc3MTQ.ODc2ODc.ODc3NTA.ODc3Njc.ODc2ODc.ODc3MTU.ODc2NjM.ODc3MTM.ODc3NTc.ODc3NTQ.ODc3N
-2026-03-18 09:21:53.381 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  Found 0 server elements (ul.tabcontent li)
-2026-03-18 09:21:53.381 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  Trying li[data-index][data-id]: found 0
-2026-03-18 09:21:53.381 11411-11452 Cimanow                 com.lagradost.cloudstream3           D  No ul.tabcontent li found, trying direct extraction
-2026-03-18 09:21:53.381 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           I  START data='https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%84%d9%86%d8%b3%d9%88%d8%a9-%d8%a7%d9%84%d8%ad%d9%84%d9%82%d8%a9-1-%d8%a7%d9%84%d8%a7%d9%88%d9%84%d9%8a/'
-2026-03-18 09:21:53.381 11411-11452 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=cimanow.cc, url=https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%8
-2026-03-18 09:21:53.382 11411-11452 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://cimanow.cc/%d9%85%d8%b3%d9%84%d8%b3%d9%84-%d9%86%d9%88%d9%86-%d8%a7%d9%8, urlDomain=cimanow.cc, sessionDomain=cimanow.cc, isAlias=false, hasCookie=false, cookieCount=0
-2026-03-18 09:21:53.468 11411-11452 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=cimanow.cc
-2026-03-18 09:21:53.497 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           D  No watch page found, using detail page
-2026-03-18 09:21:53.500 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           D  Extracted 1 player URLs
-2026-03-18 09:21:53.500 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           D  Extracted 0/1 server selectors from parser
-2026-03-18 09:21:53.500 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           D  Using referer: https://cimanow.cc/
-2026-03-18 09:21:53.500 11411-11452 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           I  PHASE 1: Resolving 1 URLs in parallel...
-2026-03-18 09:21:53.501 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           I  PHASE 1 complete: 1/1 URLs resolved
-2026-03-18 09:21:53.501 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           I  PHASE 2: Trying standard extractors on 1 URLs in parallel...
-2026-03-18 09:21:54.023 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           W  PHASE 2-3: No standard extractors succeeded for any URL
-2026-03-18 09:21:54.023 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           I  PHASE 4: Sniffer fallback — trying 1 servers sequentially...
-2026-03-18 09:21:54.023 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           D  PHASE 4: Sniffing [0]: https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.023 11411-11710 [Cimanow] ...ferResult] com.lagradost.cloudstream3           D  === START === target=https://www.youtube.com/embed/T9OB2bxFYJQ, hasSelector=false
-2026-03-18 09:21:54.023 11411-11710 [Cimanow] ...ferResult] com.lagradost.cloudstream3           D  Sniffer URL: sniff://https%3A%2F%2Fwww.youtube.com%2Fembed%2FT9OB2bxFYJQ?referer=https%3A%2F%2Fcimanow.cc%2F
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  getUrl called with url: sniff://https%3A%2F%2Fwww.youtube.com%2Fembed%2FT9OB2bxFYJQ?referer=https%3A%2F%2Fcimanow.cc%2F
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Processing sniffer URL | url=sniff://https%3A%2F%2Fwww.youtube.com%2Fembed%2FT9OB2bxFYJQ?referer=https%3A%2F%
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  Parsed embed URL: https://www.youtube.com/embed/T9OB2bxFYJQ, referer: https://cimanow.cc/, hasSelector: false
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Parsed embed URL | embedUrl=https://www.youtube.com/embed/T9OB2bxFYJQ, embedReferer=https://cimanow.cc/, hasSelector=false
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Sniffer UA resolved from WebSettings | uaHash=42420065
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === STARTING WEBVIEW SNIFF ===
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] Target URL: https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] UA hash: 42420065
-2026-03-18 09:21:54.024 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           D  [getUrl] Starting VideoSnifferEngine sniffing (Visible)
-2026-03-18 09:21:54.025 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  currentActivity requested: MainActivity
-2026-03-18 09:21:54.025 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.runSession] Session started, capturedLinks cleared
-2026-03-18 09:21:54.025 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] Creating WebView | url=https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.058 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] WebView UA | ua=Mozilla/5.0 (Linux; Android 16; SM-S918B Build/BP2A.250605.031.A3) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.159 Mobile Safari/537.36
-2026-03-18 09:21:54.061 11411-11411 Dialog                  com.lagradost.cloudstream3           I  mIsDeviceDefault = false, mIsSamsungBasicInteraction = false, isMetaDataInActivity = false
-2026-03-18 09:21:54.068 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.runSession] FULLSCREEN mode | url=https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.071 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] Loading URL | url=https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.071 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] Added Referer + Sec-Fetch headers | referer=https://cimanow.cc/
-2026-03-18 09:21:54.071 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] Loading URL with headers | url=https://www.youtube.com/embed/T9OB2bxFYJQ, headers=X-Requested-With,Referer,sec-fetch-dest,sec-fetch-mode,sec-fetch-site
-2026-03-18 09:21:54.087 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.runSession] URL loaded, waiting for callbacks
-2026-03-18 09:21:54.093 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.runSession] Video monitor started | requiredCount=1
-2026-03-18 09:21:54.300 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageStarted] Page started | url=https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.469 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Ad blocked | url=https://googleads.g.doubleclick.net/pagead/id
-2026-03-18 09:21:54.476 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Ad blocked | url=https://static.doubleclick.net/instream/ad_status.js
-2026-03-18 09:21:54.570 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #10 | url=https://i.ytimg.com/vi/T9OB2bxFYJQ/maxresdefault.jpg, method=GET, isMainFrame=false
-2026-03-18 09:21:54.664 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine] Loading progress | percent=100
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine] Loading progress | percent=100
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Page finished | url=https://www.youtube.com/embed/T9OB2bxFYJQ
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Injected fullscreen iframe CSS
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.onPageFinished] Injected ad blocker CSS+JS
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Pre-sniff JavaScript phase
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Injecting Video Sniffer
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Starting DOM extraction
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.startDomVideoExtraction] Starting DOM video extraction polling
-2026-03-18 09:21:54.695 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.startDomVideoExtraction] Polling started | maxAttempts=30
-2026-03-18 09:21:54.698 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.onPageFinished] Video sniffer injection result | result="OK"
-2026-03-18 09:21:54.705 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.0001, y=720.00006
-2026-03-18 09:21:54.755 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.756 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.758 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.762 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.765 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.770 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.795 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.796 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.800 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.805 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.810 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.815 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.819 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.823 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.824 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.831 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.834 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.836 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.840 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.843 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.848 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.853 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.856 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.860 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.866 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.869 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.873 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.879 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.882 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.SnifferBridge] Native click dispatched | x=1494.3751, y=720.00006
-2026-03-18 09:21:54.925 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #17 | url=https://www.youtube.com/api/stats/qoe?fmt=137&cpn=8sSxBnjWJDwEcgS8&el=embedded&ns=yt&fexp=v1%2C24004, method=POST, isMainFrame=false
-2026-03-18 09:21:54.925 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://www.youtube.com/api/stats/qoe?fmt=137&cpn=8sSxBnjWJDwEcgS8&el=embedded&ns=yt&fexp=v1%2C24004, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:54.930 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #18 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:54.930 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:54.932 11411-11560 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #19 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:54.932 11411-11560 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:54.941 11411-11560 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #20 | url=https://www.youtube.com/youtubei/v1/account/get_setting_values?prettyPrint=false, method=POST, isMainFrame=false
-2026-03-18 09:21:55.238 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #30 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:55.238 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.347 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #32 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:55.347 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.369 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #33 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:55.369 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.491 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #35 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:55.491 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.519 11411-11560 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #37 | url=https://www.youtube.com/ptracking?html5=1&video_id=T9OB2bxFYJQ&cpn=8sSxBnjWJDwEcgS8&ei=omC6acjEOPLMi, method=GET, isMainFrame=false
-2026-03-18 09:21:55.519 11411-11560 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://www.youtube.com/ptracking?html5=1&video_id=T9OB2bxFYJQ&cpn=8sSxBnjWJDwEcgS8&ei=omC6acjEOPLMi, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.532 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #39 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:55.533 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:55.572 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Ad blocked | url=https://googleads.g.doubleclick.net/pagead/viewthroughconversion/962985656/?back
-2026-03-18 09:21:56.696 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.startDomVideoExtraction] Polling attempt | attempt=1
-2026-03-18 09:21:56.705 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.DOM Extraction] Raw result received | result="{\"videoCount\":1,\"sourceCount\":0,\"sources\":[],\"invalidPageDetected\":false}"
-2026-03-18 09:21:56.705 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.DOM Extraction] Page analysis | videos=1, sources=0, foundUrls=0, invalidPage=false
-2026-03-18 09:21:56.705 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.DOM Extraction] No video sources found in this poll
-2026-03-18 09:21:57.479 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.intercept] Request #50 | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, method=POST, isMainFrame=false
-2026-03-18 09:21:57.479 11411-11558 WebViewStrategy         com.lagradost.cloudstream3           W  [VideoSnifferEngine.intercept] URL rejected | url=https://rr3---sn-8xgn5uxa-quhz.googlevideo.com/videoplayback?expire=1773843714&ei=omC6acjEOPLMi9oPlq, reason=Failed video pattern check, isBlacklisted=false
-2026-03-18 09:21:57.810 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.runSession] Dialog dismissed by user
-2026-03-18 09:21:57.828 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] === WEBVIEW COMPLETE === elapsed=3804ms
-2026-03-18 09:21:57.828 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           I  [getUrl] VideoSnifferEngine returned: Error
-2026-03-18 09:21:57.828 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           E  [getUrl] ERROR: User cancelled sniffing
-2026-03-18 09:21:57.828 11411-11710 SnifferExtractor        com.lagradost.cloudstream3           E  [getUrl] VideoSnifferEngine error: User cancelled sniffing
-2026-03-18 09:21:57.829 11411-11710 [Cimanow] ...ferResult] com.lagradost.cloudstream3           E  EXCEPTION: CancellationException: User cancelled sniffing
-2026-03-18 09:21:57.829 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           W  PHASE 4: Sniffer failed for [0]
-2026-03-18 09:21:57.829 11411-11710 [Cimanow] [loadLinks]   com.lagradost.cloudstream3           W  END - No videos found from 1 URLs (all 4 phases exhausted)
-2026-03-18 09:21:57.840 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 09:21:57.840 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 09:21:57.874 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-03-18 09:21:57.874 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-03-18 09:21:57.874 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
-2026-03-18 09:21:57.948 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-03-18 09:21:58.017 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-03-18 09:21:58.017 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 09:21:58.017 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 09:21:58.176 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 09:21:58.176 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 09:21:58.696 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           D  [VideoSnifferEngine.startDomVideoExtraction] WebView changed or destroyed, stopping polling
-2026-03-18 09:21:58.696 11411-11411 WebViewStrategy         com.lagradost.cloudstream3           I  [VideoSnifferEngine.startDomVideoExtraction] Polling ended (result delivered) | totalAttempts=2
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.586 11411-11411 ActivityProvider        com.lagradost.cloudstream3           D  Activity stopped, clearing ref: MainActivity
-2026-03-18 09:21:59.589 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-03-18 09:21:59.589 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-03-18 09:21:59.589 11411-11411 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+﻿2026-03-18 11:35:05.724 18626-18626 Dialog                  com.lagradost.cloudstream3           I  mIsDeviceDefault = false, mIsSamsungBasicInteraction = false, isMetaDataInActivity = false
+2026-03-18 11:35:07.108 18626-18830 ProviderSession         com.lagradost.cloudstream3           D  [load] No cookies, treating as null
+2026-03-18 11:35:07.108 18626-18830 SessionProvider         com.lagradost.cloudstream3           D  [initialize] Session initialized | domain=d.syrlive.com/, hasCookies=false, uaHash=42420065
+2026-03-18 11:35:07.330 18626-18830 DomainManager           com.lagradost.cloudstream3           D  [ensureInitialized] Raw GitHub config received | body={
+                                                                                                      "domain": "https://m.syrlive.com",
+                                                                                                      "version": 2,
+                                                                                                      "lastUpdated": "2026-03-18T10:13:37.862Z"
+                                                                                                    }
+2026-03-18 11:35:07.330 18626-18830 DomainManager           com.lagradost.cloudstream3           I  [ensureInitialized] Remote domain update | old=d.syrlive.com/, new=m.syrlive.com
+2026-03-18 11:35:07.330 18626-18830 DomainManager           com.lagradost.cloudstream3           I  [updateDomain] Updated | domain=m.syrlive.com
+2026-03-18 11:35:07.331 18626-18830 ProviderSession         com.lagradost.cloudstream3           D  [save] Saved session | domain=m.syrlive.com, cookies=0
+2026-03-18 11:35:07.331 18626-18830 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=m.syrlive.com, url=https://m.syrlive.com
+2026-03-18 11:35:07.332 18626-18830 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://m.syrlive.com, urlDomain=m.syrlive.com, sessionDomain=m.syrlive.com, isAlias=false, hasCookie=false, cookieCount=0
+2026-03-18 11:35:07.749 18626-18830 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=m.syrlive.com
+2026-03-18 11:35:07.778 18626-18666 [SyriaLive] [load]      com.lagradost.cloudstream3           I  START url='https://www.syrlive.com/chelsea-comeback-westham/'
+2026-03-18 11:35:07.778 18626-18826 [SyriaLive] [load]      com.lagradost.cloudstream3           I  START url='https://www.syrlive.com/manutd-vs-fulham-preview/'
+2026-03-18 11:35:07.778 18626-18826 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=syrlive.com, url=https://www.syrlive.com/manutd-vs-fulham-preview/
+2026-03-18 11:35:07.779 18626-18826 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=syrlive.com, to=m.syrlive.com
+2026-03-18 11:35:07.779 18626-18826 SessionProvider         com.lagradost.cloudstream3           D  [areDomainsRelated] Domain comparison | domain1=www.m.syrlive.com, domain2=d.syrlive.com/, base1=syrlive, base2=syrlive, related=true
+2026-03-18 11:35:07.779 18626-18666 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is FOLLOWER | domain=syrlive.com, url=https://www.syrlive.com/chelsea-comeback-westham/
+2026-03-18 11:35:07.779 18626-18830 [SyriaLive] [load]      com.lagradost.cloudstream3           I  START url='https://www.syrlive.com/matches/barcelona-vs-newcastle/'
+2026-03-18 11:35:07.779 18626-18826 SessionProvider         com.lagradost.cloudstream3           D  [areDomainsRelated] Domain comparison | domain1=www.m.syrlive.com, domain2=d.syrlive.com/, base1=syrlive, base2=syrlive, related=true
+2026-03-18 11:35:07.779 18626-18830 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is FOLLOWER | domain=syrlive.com, url=https://www.syrlive.com/matches/barcelona-vs-newcastle/
+2026-03-18 11:35:07.779 18626-18826 SessionProvider         com.lagradost.cloudstream3           I  [addDomainAlias] Added domain alias | alias=www.m.syrlive.com, main=d.syrlive.com/, totalAliases=1
+2026-03-18 11:35:07.779 18626-18826 SessionProvider         com.lagradost.cloudstream3           D  [getCookiesForDomain] Returning cookies | requestDomain=www.m.syrlive.com, mainDomain=d.syrlive.com/, isAlias=true, cookieCount=0
+2026-03-18 11:35:07.779 18626-18826 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://www.m.syrlive.com/manutd-vs-fulham-preview/, urlDomain=www.m.syrlive.com, sessionDomain=m.syrlive.com, isAlias=true, hasCookie=false, cookieCount=0
+2026-03-18 11:35:07.793 18626-18826 ProviderHttp            com.lagradost.cloudstream3           E  [executeDirectRequest] Failed | url=https://www.syrlive.com/manutd-vs-fulham-preview/ | error=Unable to resolve host "www.m.syrlive.com": No address associated with hostname
+2026-03-18 11:35:07.793 18626-18826 RequestQueue            com.lagradost.cloudstream3           W  [executeAsLeader] Leader FAILED | domain=syrlive.com, error=Unable to resolve host "www.m.syrlive.com": No address associated with hostname
+2026-03-18 11:35:07.793 18626-18826 RequestQueue            com.lagradost.cloudstream3           W  [failAllFollowers] Failing followers | count=2, reason=Unable to resolve host "www.m.syrlive.com": No address associated with hostname
+2026-03-18 11:35:07.793 18626-18826 [SyriaLive] [load]      com.lagradost.cloudstream3           E  Failed to fetch load document
+2026-03-18 11:35:07.793 18626-18830 [SyriaLive] [load]      com.lagradost.cloudstream3           E  Failed to fetch load document
+2026-03-18 11:35:07.793 18626-18681 [SyriaLive] [load]      com.lagradost.cloudstream3           E  Failed to fetch load document
+2026-03-18 11:35:21.303 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-18 11:35:21.308 18626-18673 [SyriaLive] [load]      com.lagradost.cloudstream3           I  START url='https://www.syrlive.com/zamalek-vs-al-masry/'
+2026-03-18 11:35:21.308 18626-18673 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=syrlive.com, url=https://www.syrlive.com/zamalek-vs-al-masry/
+2026-03-18 11:35:21.308 18626-18673 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=syrlive.com, to=m.syrlive.com
+2026-03-18 11:35:21.308 18626-18673 SessionProvider         com.lagradost.cloudstream3           D  [getCookiesForDomain] Returning cookies | requestDomain=www.m.syrlive.com, mainDomain=d.syrlive.com/, isAlias=true, cookieCount=0
+2026-03-18 11:35:21.308 18626-18673 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://www.m.syrlive.com/zamalek-vs-al-masry/, urlDomain=www.m.syrlive.com, sessionDomain=m.syrlive.com, isAlias=true, hasCookie=false, cookieCount=0
+2026-03-18 11:35:21.319 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-18 11:35:21.319 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 11:35:21.319 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-18 11:35:21.344 18626-18673 ProviderHttp            com.lagradost.cloudstream3           E  [executeDirectRequest] Failed | url=https://www.syrlive.com/zamalek-vs-al-masry/ | error=Unable to resolve host "www.m.syrlive.com": No address associated with hostname
+2026-03-18 11:35:21.344 18626-18673 RequestQueue            com.lagradost.cloudstream3           W  [executeAsLeader] Leader FAILED | domain=syrlive.com, error=Unable to resolve host "www.m.syrlive.com": No address associated with hostname
+2026-03-18 11:35:21.344 18626-18673 [SyriaLive] [load]      com.lagradost.cloudstream3           E  Failed to fetch load document
+2026-03-18 11:35:22.420 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-18 11:35:22.420 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-18 11:35:22.421 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-03-18 11:35:22.608 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-18 11:35:22.608 18626-18626 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
