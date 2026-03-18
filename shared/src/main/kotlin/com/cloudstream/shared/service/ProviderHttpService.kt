@@ -193,6 +193,18 @@ class ProviderHttpService private constructor(
         return parser.extractWatchServersUrls(doc)
     }
 
+    suspend fun getRaw(url: String, headers: Map<String, String> = emptyMap()): okhttp3.Response {
+        val fullUrl = buildUrl(url)
+        val request = okhttp3.Request.Builder()
+            .url(fullUrl)
+            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+            .build()
+        val directClient = app.baseClient.newBuilder()
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .build()
+        return directClient.newCall(request).execute()
+    }
+
     suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): Document? {
         val fullUrl = buildUrl(url)
         val result = executePostRequest(fullUrl, data, referer, headers)
