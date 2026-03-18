@@ -34,10 +34,11 @@ class TukTukcima : BaseProvider() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
     override val mainPage = mainPageOf(
-        "/recent/page/" to "المضاف حديثاً",
-        "/category/movies-2/page/" to "أحدث الأفلام",
-        "/category/series-1/page/" to "أحدث الحلقات",
-        "/category/movies-2/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d9%85%d8%af%d8%a8%d9%84%d8%ac%d8%a9/page/" to "أفلام مدبلجة"
+        "/recent/" to "المضاف حديثاً",
+        "/category/movies-2/" to "أحدث الأفلام",
+        "/sercat/مسلسلات-اجنبي/" to "مسلسلات اجنبي",
+        "/channel/series-netflix-2/" to "مسلسلات نتفليكس",
+        "/category/movies-2/افلام-مدبلجة/" to "أفلام مدبلجة"
     )
 
 
