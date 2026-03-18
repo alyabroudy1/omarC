@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data android:name="CloudstreamPluginName" android:value="MyCimaCloneProvider" />
+        <meta-data android:name="CloudstreamPluginAuthor" android:value="omarC" />
+        <meta-data android:name="CloudstreamPluginDescription" android:value="MyCima clone mapped to mycima.horse" />
+        <meta-data android:name="CloudstreamPluginTypes" android:value="TvSeries,Movie,Anime,AsianDrama" />
+        <meta-data android:name="CloudstreamPluginVersion" android:value="1.0.0" />
+        <meta-data android:name="CloudstreamPluginClass" android:value="com.mycimaclone.MyCimaClonePlugin" />
+        <meta-data android:name="CloudstreamPluginLanguage" android:value="ar" />
+        <meta-data android:name="CloudstreamPluginIcon" android:value="https://www.google.com/s2/favicons?domain=mycima.horse" />
+    </application>
+</manifest>
