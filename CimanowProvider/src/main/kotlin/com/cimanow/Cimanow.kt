@@ -176,19 +176,20 @@ class Cimanow : BaseProvider() {
         Log.d("Cimanow", "decodeObfuscatedHtml: Found hide_my_HTML_ script, length=${scriptData.length}")
 
         try {
-            val hideMyHtmlContent = Regex("['+\\n\" ]")
-                .replace(
-                    scriptData.substringAfter("var hide_my_HTML_").substring(3)
-                        .substringAfter(" =").substringBeforeLast("';").trim(),
-                    ""
-                )
+            val hideMyHtmlContent = scriptData.substringAfter("var hide_my_HTML_", "")
+            if (hideMyHtmlContent.isBlank()) return doc
+
+            val hideMyHtmlContent2 = hideMyHtmlContent.substringAfter("=", "")
+            val hideMyHtmlContent3 = Regex("['+\\n\" ]").replace(
+                hideMyHtmlContent2.substringBeforeLast("';"), ""
+            )
 
             val lastNumber = Regex("-\\d+").findAll(scriptData)
                 .lastOrNull()?.value?.toIntOrNull() ?: 0
             
-            Log.d("Cimanow", "decodeObfuscatedHtml: contentLength=${hideMyHtmlContent.length}, lastNumber=$lastNumber")
+            Log.d("Cimanow", "decodeObfuscatedHtml: contentLength=${hideMyHtmlContent3.length}, lastNumber=$lastNumber")
 
-            val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
+            val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent3, lastNumber)
             val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
             val result = Jsoup.parse(encodedHtml)
             Log.d("Cimanow", "decodeObfuscatedHtml: Decoded HTML length=${encodedHtml.length}")
