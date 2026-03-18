@@ -38,7 +38,7 @@ class SyriaLive : BaseProvider() {
     ): HomePageResponse? {
         // Ensure HTTP service is ready
         httpService.ensureInitialized()
-        val doc = httpService.getDocument("https://d.syrlive.com/") ?: return null
+        val doc = httpService.getDocument(mainUrl) ?: return null
 
         val homePageList = mutableListOf<HomePageList>()
 
