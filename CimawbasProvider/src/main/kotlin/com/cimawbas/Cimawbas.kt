@@ -10,15 +10,15 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 class Cimawbas : BaseProvider() {
     override val baseDomain get() = "cimawbas.org"
     override val providerName get() = "Cimawbas"
-    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/refs/heads/main/CimawbasProvider/cimawbasConfig.json"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimawbas.json"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.AsianDrama, TvType.Anime)
 
     override val mainPage = mainPageOf(
-        "/movies/page/" to "أفلام",
-        "/series/page/" to "مسلسلات",
-        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/page/" to "أفلام أنمي",
-        "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/page/" to "مسلسلات أنمي",
-        "/last/page/" to "أضيف حديثاً"
+        "/movies/" to "أفلام",
+        "/category/افلام-netfilx/" to "Netfilx أفلام",
+        "https://cimawbas.org/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%b9%d8%b1%d8%a8%d9%8a/" to "عربي أفلام",
+        "/series/" to "مسلسلات",
+        "/imdb/" to "الاعلي تقييما",
     )
 
     override fun getParser(): NewBaseParser = CimawbasParser()
