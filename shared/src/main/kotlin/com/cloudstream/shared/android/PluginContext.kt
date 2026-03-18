@@ -9,12 +9,11 @@ import java.lang.ref.WeakReference
  * Initialize once when the plugin loads via `init(context)`.
  */
 object PluginContext {
-    private var contextRef: WeakReference<Context>? = null
+    var context: Context? = null
+        private set
 
-    fun init(context: Context) {
-        contextRef = WeakReference(context)
+    fun init(ctx: Context) {
+        // Holding applicationContext strongly prevents GC without leaking Activity instances
+        context = ctx.applicationContext ?: ctx
     }
-
-    val context: Context?
-        get() = contextRef?.get()
 }
