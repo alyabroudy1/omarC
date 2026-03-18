@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.syrialive">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application>
+        <!-- This meta-data allows Cloudstream to discover the plugin correctly -->
+        <meta-data
+            android:name="CloudstreamPlugin"
+            android:value="com.syrialive.SyriaLivePlugin" />
+    </application>
+</manifest>
