@@ -15,11 +15,9 @@ class Bristege : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/bristege.json"
 
     override val mainPage = mainPageOf(
-        "index.php" to "الرئيسية",
-        "category818.php?cat=prss7-2025" to "مسلسلات برستيج",
-        "category.php?cat=movies2-2224" to "افلام",
-        "category.php?cat=ramdan1-2024" to "مسلسلات رمضان 2024",
-        "newvideo.php" to "أخر الاضافات"
+        "/newvideos.php" to "مسلسلات برستيج",
+        "/cat44.php?cat=movies2-2224" to "افلام",
+        "/cat44.php?cat=ramdan2026" to "مسلسلات رمضان 2026",
     )
 
     override fun getParser(): NewBaseParser {
