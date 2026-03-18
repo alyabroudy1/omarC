@@ -104,8 +104,8 @@ class SyriaLive : BaseProvider() {
     ): Boolean {
         var foundLinks = false
         httpService.ensureInitialized()
-        val userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        
+        val userAgent = httpService.userAgent
+
         // 1. Fetch exact match/movie page
         val reqHeaders = mapOf(
             "User-Agent" to userAgent,
