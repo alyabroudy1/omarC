@@ -1,0 +1,14 @@
+package com.cimawbas
+
+import android.content.Context
+import com.cloudstream.shared.android.PluginContext
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
+
+@CloudstreamPlugin
+class CimawbasPlugin : Plugin() {
+    override fun load(context: Context) {
+        PluginContext.init(context)
+        registerMainAPI(Cimawbas())
+    }
+}
