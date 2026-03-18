@@ -13,14 +13,14 @@ class WecimaParser : NewBaseParser() {
         container = "div.Grid--WecimaPosts div.GridItem",
         title = CssSelector("h2, strong", "text"),
         url = CssSelector("a", "href"),
-        poster = CssSelector("span.BG--GridItem", "data-src, style", regex = "url\\\\((.*?)\\\\)")
+        poster = CssSelector("span.BG--GridItem", "data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
     )
 
     override val searchConfig = mainPageConfig
 
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector("div.Title--Content--Single-begin h1", "text"),
-        poster = CssSelector("wecima.separated--top", "data-lazy-style, style", regex = "url\\\\((.*?)\\\\)|--img:url\\\\((.*?)\\\\)"),
+        poster = CssSelector("wecima.separated--top", "data-lazy-style, style", regex = """url\(['"]?(.*?)['"]?\)"""),
         plot = CssSelector("div.StoryMovieContent", "text"),
         year = CssSelector("ul.Terms--Content--Single-begin li:contains(السنة) p", "text"),
         rating = CssSelector("", "text"),
