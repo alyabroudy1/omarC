@@ -182,9 +182,9 @@ class ProviderHttpService private constructor(
         return doc?.let { parser.parseSearch(it) }.orEmpty()
     }
     
-    suspend fun getText(url: String, headers: Map<String, String> = emptyMap()): String? {
+    suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): String? {
         val fullUrl = buildUrl(url)
-        val result = executeDirectRequest(fullUrl, headers)
+        val result = executeDirectRequest(fullUrl, headers, skipRewrite)
         return result.html
     }
 
@@ -405,9 +405,9 @@ class ProviderHttpService private constructor(
 
     // ==================== INTERNAL ====================
 
-    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap()): RequestResult {
+    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): RequestResult {
         return try {
-            val targetUrl = rewriteUrlIfNeeded(url)
+            val targetUrl = if (skipRewrite) url else rewriteUrlIfNeeded(url)
             
             // Check if URL domain is an alias and get appropriate cookies
             val urlDomain = try {
@@ -480,9 +480,9 @@ class ProviderHttpService private constructor(
         }
     }
 
-    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap()): RequestResult {
+    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): RequestResult {
         return try {
-            val targetUrl = rewriteUrlIfNeeded(url)
+            val targetUrl = if (skipRewrite) url else rewriteUrlIfNeeded(url)
             val headers = sessionState.buildHeaders().toMutableMap()
             if (referer != null) headers["Referer"] = referer
             for ((k, v) in customHeaders) {
@@ -611,11 +611,9 @@ class ProviderHttpService private constructor(
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
 
-        // CRITICAL FIX: Only rewrite if the URL uses the hardcoded fallback domain from code.
-        // Blindly rewriting ANY non-current domain destroys external embed URLs (e.g. vkvideo.ru).
-        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain == config.fallbackDomain && urlDomain != currentDomain) {
+        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
             val rewritten = url.replace(urlDomain, currentDomain)
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote fallback URL",
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
                 "from" to urlDomain, "to" to currentDomain)
             rewritten
         } else {

@@ -120,8 +120,8 @@ class Bristege : BaseProvider() {
     ) {
         val methodTag = "[$providerName] [processEmbed]"
         
-        // Bristege Logic Step 1: Download embed page
-        val html = httpService.getText(embedUrl, mapOf("Referer" to referer)) ?: return
+        // Bristege Logic Step 1: Download embed page natively (bypass aggressive URL rewriting)
+        val html = httpService.getText(embedUrl, mapOf("Referer" to referer), skipRewrite = true) ?: return
         
         // Bristege Logic Step 2: Direct video link in text (First priority in source)
         val directUrl = findVideoInText(html)
