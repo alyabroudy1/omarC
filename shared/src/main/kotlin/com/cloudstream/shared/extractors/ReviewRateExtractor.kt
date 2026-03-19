@@ -75,7 +75,7 @@ class ReviewRateExtractor : ExtractorApi() {
                     
                     if (m3u8Qualities.isNotEmpty()) {
                         ProviderLogger.i(TAG, "getUrl", "Extracted ${m3u8Qualities.size} qualities from M3U8")
-                        m3u8Qualities.forEach { qualityLink ->
+                        for (qualityLink in m3u8Qualities) {
                             callback(qualityLink)
                         }
                     } else {

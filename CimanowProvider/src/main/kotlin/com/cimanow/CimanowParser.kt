@@ -5,7 +5,6 @@ import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
-import java.util.Base64
 import kotlin.text.Regex
 import kotlin.text.contains
 import kotlin.text.substringAfter
@@ -53,71 +52,20 @@ class CimanowParser : NewBaseParser() {
         episode = CssSelector(query = "a, span", attr = "text", regex = "(\\d+)")
     )
 
+    private val obfuscationStrategies = listOf(
+        Base64TildeObfuscationStrategy(),
+        LegacyObfuscationStrategy()
+    )
+
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        val docString = doc.toString()
-        if (!docString.contains("hide_my_HTML_")) {
-            return doc
-        }
-        
-        // Search ALL script elements for the one containing hide_my_HTML_
-        var scriptData: String? = null
-        for (script in doc.select("script")) {
-            val data = script.data()
-            if (data.contains("hide_my_HTML_")) {
-                scriptData = data
-                break
+        for (strategy in obfuscationStrategies) {
+            val result = strategy.decode(doc)
+            if (result != null) {
+                Log.d("CimanowParser", "decodeObfuscatedHtml: successfully decoded using ${strategy.javaClass.simpleName}")
+                return result
             }
         }
-        
-        if (scriptData == null) return doc
-
-        try {
-            val hideMyHtmlContent = Regex("['+\\n\" ]")
-                .replace(
-                    scriptData.substringAfter("var hide_my_HTML_").substring(3)
-                        .substringAfter(" =").substringBeforeLast("';").trim(),
-                    ""
-                )
-
-            val lastNumber = Regex("-\\d+").findAll(scriptData)
-                .lastOrNull()?.value?.toIntOrNull() ?: 0
-
-            val decodedHtml1 = decodeObfuscatedString(hideMyHtmlContent, lastNumber)
-            val encodedHtml = String(decodedHtml1.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
-            return Jsoup.parse(encodedHtml)
-        } catch (e: Exception) {
-            Log.e("CimanowParser", "decodeObfuscatedHtml error: ${e.message}")
-            return doc
-        }
-    }
-
-    private fun decodeObfuscatedString(concatenated: String, lastNumber: Int): String {
-        val output = StringBuilder()
-        var start = 0
-        val length = concatenated.length
-
-        for (i in 0 until length) {
-            if (concatenated[i] == '.') {
-                val segment = concatenated.substring(start, i)
-                decodeAndAppend(output, lastNumber, segment)
-                start = i + 1
-            }
-        }
-        val lastSegment = concatenated.substring(start)
-        decodeAndAppend(output, lastNumber, lastSegment)
-        return output.toString()
-    }
-
-    private fun decodeAndAppend(output: StringBuilder, lastNumber: Int, segment: String) {
-        try {
-            val decoded = String(Base64.getDecoder().decode(segment), Charsets.UTF_8)
-            val digits = decoded.filter { it.isDigit() }
-            if (digits.isNotEmpty()) {
-                output.append((digits.toInt() + lastNumber).toChar())
-            }
-        } catch (e: Exception) {
-            Log.e("CimanowParser", "Error decoding segment: ${e.message}")
-        }
+        return doc
     }
 
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
@@ -136,7 +84,7 @@ class CimanowParser : NewBaseParser() {
                     val actualSeason = Regex("""(\d+)""").find(tabTitle)?.groupValues?.get(1)?.toIntOrNull() 
                         ?: seasonNum ?: 1
                         
-                    tab.select("a[href*='episode'], a[href*='/selary/']").forEach { link ->
+                    for (link in tab.select("a[href*='episode'], a[href*='/selary/']")) {
                         val epUrl = link.attr("href").trim()
                         val epTitle = link.text().trim()
                         
@@ -162,7 +110,7 @@ class CimanowParser : NewBaseParser() {
         
         // Method 1: Direct episode links
         if (episodeLinks.isNotEmpty()) {
-            episodeLinks.forEach { link ->
+            for (link in episodeLinks) {
                 val epUrl = link.attr("href").trim()
                 val epTitle = link.text().trim()
                 
@@ -200,7 +148,7 @@ class CimanowParser : NewBaseParser() {
         val urls = mutableListOf<String>()
         
         // Method 1: From server list links (data-src)
-        decodedDoc.select("a[data-src]").forEach { link ->
+        for (link in decodedDoc.select("a[data-src]")) {
             val dataSrc = link.attr("data-src")
             if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
                 urls.add(dataSrc)
@@ -208,7 +156,7 @@ class CimanowParser : NewBaseParser() {
         }
         
         // Method 2: From iframes (data-src)
-        decodedDoc.select("iframe[data-src]").forEach { iframe ->
+        for (iframe in decodedDoc.select("iframe[data-src]")) {
             val dataSrc = iframe.attr("data-src")
             if (dataSrc.isNotBlank()) {
                 urls.add(dataSrc)
@@ -216,7 +164,7 @@ class CimanowParser : NewBaseParser() {
         }
         
         // Method 3: From inline iframes
-        decodedDoc.select("iframe[src]").forEach { iframe ->
+        for (iframe in decodedDoc.select("iframe[src]")) {
             val src = iframe.attr("src")
             if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
                 urls.add(src)
@@ -224,7 +172,7 @@ class CimanowParser : NewBaseParser() {
         }
         
         // Method 4: From data-id (sometimes URLs are there)
-        decodedDoc.select("a[data-id]").forEach { link ->
+        for (link in decodedDoc.select("a[data-id]")) {
             val dataId = link.attr("data-id")
             if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
                 urls.add(dataId)

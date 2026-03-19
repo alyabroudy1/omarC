@@ -92,7 +92,7 @@ abstract class NewBaseParser : ParserInterface {
 
     protected open fun parseItems(doc: Document, config: MainPageConfig): List<ParserInterface.ParsedItem> {
         val items = mutableListOf<ParserInterface.ParsedItem>()
-        doc.select(config.container).forEach { element ->
+        for (element in doc.select(config.container)) {
              // If 'item' is specified, select it inside container, otherwise use container element itself
              val itemElement = if (config.item != null) element.selectFirst(config.item) else element
              if (itemElement != null) {
@@ -175,13 +175,13 @@ abstract class NewBaseParser : ParserInterface {
         val config = watchServersSelectors
         
         config.url?.let { selector ->
-             doc.select(selector.query).forEach { element ->
+             for (element in doc.select(selector.query)) {
                  element.extract(selector.copy(query = ""))?.let { if (it.isNotBlank()) urls.add(it) }
              }
         }
         
         config.iframe?.let { selector ->
-             doc.select(selector.query).forEach { element ->
+             for (element in doc.select(selector.query)) {
                  element.extract(selector.copy(query = ""))?.let { if (it.isNotBlank()) urls.add(it) }
              }
         }

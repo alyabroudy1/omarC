@@ -49,6 +49,11 @@ class ProviderHttpService private constructor(
     private var initialized = false
     private val initMutex = Mutex()
     
+    /** Timestamp of the last successful CF WebView solve — used for cooldown */
+    @Volatile
+    private var lastCfSolveTimestamp: Long = 0L
+    private val CF_SOLVE_COOLDOWN_MS = 30_000L
+    
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers) },
         solveCfAndRequest = { url, allowedDomains -> solveCloudflareThenRequest(url, allowedDomains) },
@@ -197,7 +202,7 @@ class ProviderHttpService private constructor(
         val fullUrl = buildUrl(url)
         val request = okhttp3.Request.Builder()
             .url(fullUrl)
-            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+            .apply { for ((k, v) in headers) { addHeader(k, v) } }
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
@@ -573,32 +578,52 @@ class ProviderHttpService private constructor(
     internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): RequestResult {
         if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
         
-        val targetUrl = rewriteUrlIfNeeded(url)
+        val deepUrl = rewriteUrlIfNeeded(url)
         
-        // Guard: if valid cookies already exist from a very recent solve (< 10s),
+        // Guard 1: if valid CF clearance cookies exist from a very recent solve (<10s),
         // skip re-invalidation — a concurrent solve likely just succeeded.
+        // CRITICAL: check hasClearance(), not just isNotEmpty() — __cf_bm alone is NOT clearance.
         val cookieAge = System.currentTimeMillis() - sessionState.cookieTimestamp
-        if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
+        if (sessionState.hasClearance() && cookieAge < 10_000L) {
             ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
-                "Skipping CF solve — fresh cookies exist (${cookieAge}ms old), retrying HTTP",
+                "Skipping CF solve — fresh cf_clearance exists (${cookieAge}ms old), retrying HTTP",
                 "domain" to sessionState.domain)
-            val retryResult = executeDirectRequest(targetUrl)
+            val retryResult = executeDirectRequest(deepUrl)
             if (retryResult.success) return retryResult
             // If retry still fails (cookies expired or invalid), fall through to full CF solve
             ProviderLogger.d(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
                 "Retry with existing cookies failed, proceeding with full CF solve")
         }
         
+        // Guard 2: cooldown — if a CF solve completed recently and we have clearance,
+        // retry the request instead of launching another WebView popup.
+        val timeSinceLastSolve = System.currentTimeMillis() - lastCfSolveTimestamp
+        if (sessionState.hasClearance() && timeSinceLastSolve < CF_SOLVE_COOLDOWN_MS) {
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                "CF solve cooldown active — retrying with current cookies",
+                "timeSinceLastSolve" to timeSinceLastSolve, "domain" to sessionState.domain)
+            val retryResult = executeDirectRequest(deepUrl)
+            if (retryResult.success) return retryResult
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                "Retry during cooldown failed, proceeding with full solve")
+        }
+        
+        // Solve CF on domain root — cf_clearance is domain-wide, and deep URLs
+        // cause the WebView to navigate away to content pages after challenge clears,
+        // potentially scoping the clearance to the wrong path.
+        val domain = extractDomain(deepUrl)
+        val rootUrl = "https://$domain/"
+        
         // Invalidate current session before WebView attempt
         invalidateSession("Preparing for CF solve")
         
         // Clear system cookies too
-        clearSystemCookies(targetUrl)
+        clearSystemCookies(rootUrl)
         
         val mode = if (config.skipHeadless) Mode.FULLSCREEN else Mode.HEADLESS
         
         val result = cfBypassEngine.runSession(
-            url = targetUrl,
+            url = rootUrl,
             mode = mode,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
@@ -609,11 +634,20 @@ class ProviderHttpService private constructor(
         return when (result) {
             is WebViewResult.Success -> {
                 updateCookies(result.cookies, fromWebView = true)
-                checkAndUpdateDomain(targetUrl, result.finalUrl)
-                // Return the WebView HTML directly — this is critical for non-CF sites
-                // (like Akwam) where the HTTP client always gets 403 but WebView works fine.
-                // Previously we retried HTTP here, but that just 403'd again on non-CF sites.
-                RequestResult.success(result.html, 200, result.finalUrl)
+                lastCfSolveTimestamp = System.currentTimeMillis()
+                checkAndUpdateDomain(deepUrl, result.finalUrl)
+                
+                // Now fetch the original deep URL with the freshly obtained cookies.
+                // The WebView solved CF on the domain root, so we need to HTTP-fetch
+                // the actual requested page.
+                val deepResult = executeDirectRequest(deepUrl)
+                if (deepResult.success) {
+                    deepResult
+                } else {
+                    // Fallback: return the root page HTML from WebView
+                    // (handles non-CF sites like Akwam where HTTP always 403s)
+                    RequestResult.success(result.html, 200, result.finalUrl)
+                }
             }
             else -> RequestResult.failure("CF Bypass failed")
         }
