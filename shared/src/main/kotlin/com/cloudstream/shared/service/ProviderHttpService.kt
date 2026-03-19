@@ -51,7 +51,7 @@ class ProviderHttpService private constructor(
     
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers) },
-        solveCfAndRequest = { url -> solveCloudflareThenRequest(url) },
+        solveCfAndRequest = { url, allowedDomains -> solveCloudflareThenRequest(url, allowedDomains) },
         onDomainRedirect = { oldDomain, newDomain ->
             updateDomain(newDomain)
             domainManager.updateDomain(newDomain)
@@ -334,7 +334,9 @@ class ProviderHttpService private constructor(
                 // CRITICAL FIX: Run the fallback solver through the RequestQueue to respect the domain mutex
                 // This prevents parallel search threads from launching simultaneous WebView sessions
                 val cfResult = requestQueue.enqueueAction(url) {
-                    solveCloudflareThenRequest(url)
+                    solveCloudflareThenRequest(url, setOf(
+                        extractDomain(url).let { d -> d.split(".").takeLast(2).joinToString(".") }
+                    ))
                 }
                 
                 if (cfResult.success && cfResult.html != null) {
@@ -362,7 +364,10 @@ class ProviderHttpService private constructor(
         // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
         val result = executeDirectRequest(url, headers)
         
-        if (result.success && checkDomainChange) {
+        // Detect domain redirects from ALL responses (including CF-blocked ones).
+        // Previously, redirects from CF-blocked responses were discarded, losing
+        // the redirect info (e.g., faselhdx.xyz → fasel-hd.cam) before the bypass search.
+        if (checkDomainChange) {
             checkAndUpdateDomain(url, result.finalUrl)
         }
         
@@ -565,7 +570,7 @@ class ProviderHttpService private constructor(
         }
     }
     
-    internal suspend fun solveCloudflareThenRequest(url: String): RequestResult {
+    internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): RequestResult {
         if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
         
         val targetUrl = rewriteUrlIfNeeded(url)
@@ -597,7 +602,8 @@ class ProviderHttpService private constructor(
             mode = mode,
             userAgent = sessionState.userAgent,
             exitCondition = ExitCondition.PageLoaded,
-            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L
+            timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L,
+            allowedDomains = allowedDomains
         )
         
         return when (result) {

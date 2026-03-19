@@ -24,7 +24,7 @@ import java.net.URI
  */
 class RequestQueue(
     private val executeRequest: suspend (String, Map<String, String>) -> RequestResult,
-    private val solveCfAndRequest: suspend (String) -> RequestResult,
+    private val solveCfAndRequest: suspend (String, Set<String>) -> RequestResult,
     private val onDomainRedirect: suspend (String, String) -> Unit = { _, _ -> },
     private val getCurrentDomain: () -> String = { "" }
 ) {
@@ -96,19 +96,42 @@ class RequestQueue(
                 // This prevents solving for the old domain when we've been redirected to a new one
                 val solveUrl = result.finalUrl?.takeIf { it.isNotBlank() } ?: leader.url
                 
-                // Check if we need to update domain before solving
                 val requestDomain = extractDomain(leader.url)
                 val finalDomain = extractDomain(solveUrl)
                 
+                // DON'T update domain here — the redirect target may be a CF proxy domain
+                // (e.g., fasel-hd.cam), NOT the actual content domain. Domain will be updated
+                // AFTER CF solve using the actual content URL from cfResult.finalUrl.
                 if (requestDomain != finalDomain && finalDomain.isNotBlank()) {
-                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Domain redirect before CF",
+                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Domain redirect detected (deferred until CF solve)",
                         "from" to requestDomain, "to" to finalDomain)
-                    onDomainRedirect(requestDomain, finalDomain)
                 }
                 
-                val cfResult = solveCfAndRequest(solveUrl)
+                // Compute allowed domains: include both the original request domain AND
+                // the CF proxy domain so CfBypassEngine allows redirects between them
+                val allowedDomains = buildSet {
+                    if (requestDomain.isNotBlank()) {
+                        val parts = requestDomain.split(".")
+                        add(if (parts.size >= 2) parts.takeLast(2).joinToString(".") else requestDomain)
+                    }
+                    if (finalDomain.isNotBlank()) {
+                        val parts = finalDomain.split(".")
+                        add(if (parts.size >= 2) parts.takeLast(2).joinToString(".") else finalDomain)
+                    }
+                }
+                
+                val cfResult = solveCfAndRequest(solveUrl, allowedDomains)
                 
                 if (cfResult.success) {
+                    // NOW update domain from the CF result's finalUrl — this is the actual
+                    // content domain (e.g., web3196x.faselhdx.xyz), not the CF proxy
+                    val contentDomain = cfResult.finalUrl?.let { extractDomain(it) }
+                    if (!contentDomain.isNullOrBlank() && contentDomain != requestDomain) {
+                        ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "Post-CF domain update",
+                            "from" to requestDomain, "to" to contentDomain)
+                        onDomainRedirect(requestDomain, contentDomain)
+                    }
+                    
                     ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "CF solved, retrying leader")
                     // Retry original action now that cookies are fresh
                     val retryResult = leader.action()
@@ -170,7 +193,7 @@ class RequestQueue(
             ProviderLogger.w(TAG_QUEUE, "verifyAndRunFollowers", "Verification FAILED - retrying CF", "domain" to domain)
             // Re-solve CF with the verifier URL instead of failing all followers
             // This handles edge cases where cookies are invalid for the new domain
-            val cfResult = solveCfAndRequest(verifierUrl)
+            val cfResult = solveCfAndRequest(verifierUrl, emptySet())
             if (cfResult.success) {
                 ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers", "CF re-solve SUCCESS after verify fail")
                 verifier.deferred.complete(cfResult)

@@ -49,7 +49,8 @@ class CfBypassEngine(
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
-        delayMs: Long = 0L
+        delayMs: Long = 0L,
+        allowedDomains: Set<String> = emptySet()
     ): WebViewResult = withContext(Dispatchers.Main) {
 
         val activity = activityProvider()
@@ -173,6 +174,15 @@ class CfBypassEngine(
                         if (nextBase == targetBase) {
                             // Same domain redirect — allow (legitimate redirects like canonical URLs)
                             ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
+                            return false
+                        }
+
+                        // Allow redirects back to the original provider domain after CF solve
+                        // (e.g., fasel-hd.cam → faselhdx.xyz when CF proxy redirects back to content domain)
+                        if (allowedDomains.any { nextBase.contains(it) || it.contains(nextBase) }) {
+                            ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading",
+                                "Cross-domain redirect ALLOWED (known provider domain)",
+                                "from" to targetBase, "to" to nextBase, "url" to nextUrl.take(100))
                             return false
                         }
 
