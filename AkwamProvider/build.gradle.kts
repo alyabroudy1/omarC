@@ -1,4 +1,4 @@
-version = 3
+version = 5
  
  // Include shared source directory
  android {

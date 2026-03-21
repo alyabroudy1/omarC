@@ -1,4 +1,4 @@
-version = 2
+version = 4
 
 dependencies {
     implementation("org.mozilla:rhino:1.7.14")
