@@ -236,7 +236,7 @@ class CfBypassEngine(
                                                     if (!stillCf && isReal) {
                                                         resultDelivered = true
                                                         timeoutJob?.cancel()
-                                                        val freshCookies = extractCookies(view, currentUrl)
+                                                        val freshCookies = extractCookiesWithOrigin(view, currentUrl, url)
                                                         ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Exit after dwell time",
                                                             "cookies" to freshCookies.size, "hasClearance" to freshCookies.containsKey("cf_clearance"))
                                                         cleanup(view, dialog)
@@ -272,7 +272,7 @@ class CfBypassEngine(
                                 resultDelivered = true
                                 timeoutJob?.cancel()
 
-                                val cookies = extractCookies(view, currentUrl)
+                                val cookies = extractCookiesWithOrigin(view, currentUrl, url)
                                 ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Exit condition met",
                                     "cookies" to cookies.size, "hasClearance" to cookies.containsKey("cf_clearance"))
 
@@ -437,6 +437,43 @@ class CfBypassEngine(
         }
     }
 
+    /**
+     * Extract cookies from both the current page and the original CF solve URL.
+     * When a cross-domain redirect occurs (e.g., fasel-hd.cam → web3216x.faselhdx.xyz),
+     * cf_clearance lives in the CookieManager for the original domain while session
+     * cookies come from the current domain. Merging both ensures complete coverage.
+     */
+    private suspend fun extractCookiesWithOrigin(
+        webView: WebView, currentUrl: String, originalUrl: String
+    ): Map<String, String> {
+        val currentCookies = extractCookies(webView, currentUrl)
+        
+        // If the page navigated cross-domain, also pull cookies from the original CF domain
+        val currentHost = try { java.net.URI(currentUrl).host } catch (_: Exception) { null }
+        val originalHost = try { java.net.URI(originalUrl).host } catch (_: Exception) { null }
+        
+        if (currentHost != null && originalHost != null && currentHost != originalHost) {
+            val originalCmCookies = try {
+                val raw = CookieManager.getInstance().getCookie(originalUrl)
+                if (!raw.isNullOrBlank()) parseCookieString(raw) else emptyMap()
+            } catch (_: Exception) { emptyMap() }
+            
+            if (originalCmCookies.isNotEmpty()) {
+                ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.extractCookiesWithOrigin",
+                    "Merged cookies from original CF domain",
+                    "originalDomain" to originalHost,
+                    "currentDomain" to currentHost,
+                    "originalCount" to originalCmCookies.size,
+                    "currentCount" to currentCookies.size,
+                    "hasClearance" to originalCmCookies.containsKey("cf_clearance"))
+                // Original domain cookies first, current domain overrides on conflict
+                return HashMap(originalCmCookies).apply { putAll(currentCookies) }
+            }
+        }
+        
+        return currentCookies
+    }
+    
     /**
      * Extracts cookies using JavaScript to get exactly what the page sees.
      * This is critical for Cloudflare which binds cookies to the specific JS context.

@@ -119,15 +119,11 @@ class ProviderHttpService private constructor(
                 if (fromWebView) "webview" else "http")
         }
         
-        // CRITICAL: Inject CF cookies into Android's system CookieManager for WebView sharing.
-        // The sniffer WebView uses the system CookieManager, not our custom one.
-        // Without this, the sniffer hits Cloudflare Turnstile again.
-        // Sync to BOTH the current domain AND all known aliases (old domains).
-        if (fromWebView && cookies.isNotEmpty()) {
-            // Sync to current domain
+        // CRITICAL: Inject cookies into Android's system CookieManager for WebView/Glide sharing.
+        // Sync to the current domain and ALL known aliases to ensure cross-domain requests
+        // (like images or old-domain links) have the required cookies.
+        if (cookies.isNotEmpty()) {
             syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
-            
-            // Sync to all alias domains (old domains that may still appear in HTML links)
             for (alias in SessionProvider.getDomainAliases()) {
                 syncCookiesToSystemCookieManager(alias, sessionState.cookies)
             }
@@ -160,9 +156,10 @@ class ProviderHttpService private constructor(
         // Adding as alias ensures cookies are shared for requests to the old domain.
         SessionProvider.addDomainAlias(oldDomain)
         
-        // Sync current cookies to the old domain in the system CookieManager.
-        // WebView/Glide sub-requests to old-domain URLs need cf_clearance too.
+        // CRITICAL: Sync current cookies to BOTH the new domain and the old domain (alias).
+        // WebView/Glide sub-requests to new-domain URLs need cookies immediately.
         if (sessionState.cookies.isNotEmpty()) {
+            syncCookiesToSystemCookieManager(newDomain, sessionState.cookies)
             syncCookiesToSystemCookieManager(oldDomain, sessionState.cookies)
         }
         

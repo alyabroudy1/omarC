@@ -132,10 +132,21 @@ class RequestQueue(
                         onDomainRedirect(requestDomain, contentDomain)
                     }
                     
-                    ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "CF solved, retrying leader")
-                    // Retry original action now that cookies are fresh
-                    val retryResult = leader.action()
-                    leader.deferred.complete(retryResult)
+                    // CRITICAL: Use the CF solve result directly as the leader result.
+                    // The WebView already loaded the real content page (e.g., search results).
+                    // Retrying via OkHttp would often get 403 because:
+                    // 1. cf_clearance may be domain-bound to the CF proxy (fasel-hd.cam), not content domain
+                    // 2. OkHttp has a different TLS fingerprint than WebView
+                    // 3. The extracted cookies may be session cookies without cf_clearance
+                    if (cfResult.html != null) {
+                        ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "CF solved, using WebView HTML directly")
+                        leader.deferred.complete(cfResult)
+                    } else {
+                        // Fallback: if CF solve returned no HTML, retry via OkHttp
+                        ProviderLogger.i(TAG_QUEUE, "executeAsLeader", "CF solved but no HTML, retrying via HTTP")
+                        val retryResult = leader.action()
+                        leader.deferred.complete(retryResult)
+                    }
                     verifyAndRunFollowers(domain)
                 } else {
                     ProviderLogger.w(TAG_QUEUE, "executeAsLeader", "CF solve failed")
