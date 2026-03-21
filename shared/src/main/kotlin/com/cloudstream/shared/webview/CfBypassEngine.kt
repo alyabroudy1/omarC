@@ -186,12 +186,11 @@ class CfBypassEngine(
                             return false
                         }
 
-                        // Cross-domain redirect — BLOCK in CF bypass mode to prevent ad hijacking
-                        android.util.Log.w("CfBypassEngine", "Cross-domain redirect BLOCKED: $targetBase → $nextBase ($nextUrl)")
-                        ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Cross-domain redirect BLOCKED",
+                        // Cross-domain redirect — ALLOW (Blindly) per user request
+                        ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Cross-domain redirect ALLOWED (Blindly)",
                             "from" to targetBase, "to" to nextBase, "url" to nextUrl.take(100)
                         )
-                        return true
+                        return false
                     } catch (e: Exception) {
                         android.util.Log.w("CfBypassEngine", "Error in redirect check: ${e.message}")
                         ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.shouldOverrideUrlLoading", "Redirect (parse error, allowing)", "url" to nextUrl.take(80))
