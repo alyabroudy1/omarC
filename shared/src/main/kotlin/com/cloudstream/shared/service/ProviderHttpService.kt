@@ -122,21 +122,14 @@ class ProviderHttpService private constructor(
         // CRITICAL: Inject CF cookies into Android's system CookieManager for WebView sharing.
         // The sniffer WebView uses the system CookieManager, not our custom one.
         // Without this, the sniffer hits Cloudflare Turnstile again.
+        // Sync to BOTH the current domain AND all known aliases (old domains).
         if (fromWebView && cookies.isNotEmpty()) {
-            try {
-                val systemCookieManager = android.webkit.CookieManager.getInstance()
-                systemCookieManager.setAcceptCookie(true)
-                val cookieUrl = "https://${sessionState.domain}"
-                for ((key, value) in sessionState.cookies) {
-                    systemCookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
-                }
-                systemCookieManager.flush()
-                ProviderLogger.d(TAG_PROVIDER_HTTP, "updateCookies", 
-                    "Injected ${sessionState.cookies.size} cookies into system CookieManager",
-                    "domain" to sessionState.domain)
-            } catch (e: Exception) {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "updateCookies", 
-                    "Failed to inject into system CookieManager", "error" to e.message)
+            // Sync to current domain
+            syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
+            
+            // Sync to all alias domains (old domains that may still appear in HTML links)
+            for (alias in SessionProvider.getDomainAliases()) {
+                syncCookiesToSystemCookieManager(alias, sessionState.cookies)
             }
         }
     }
@@ -153,11 +146,28 @@ class ProviderHttpService private constructor(
     @Synchronized
     fun updateDomain(newDomain: String) {
         if (newDomain == sessionState.domain) return
+        val oldDomain = sessionState.domain
+        
         // CRITICAL: Always preserve cookies on domain change.
         // Domains change unpredictably (faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics)
         // CF cookies are UA-bound, not domain-bound, so they remain valid.
         sessionState = sessionState.withDomainKeepCookies(newDomain)
         sessionStore.save(sessionState)
+        
+        // CRITICAL: Register the old domain as an alias.
+        // HTML content from the new domain may still reference old-domain URLs
+        // (e.g., season/episode links: w312x.faselhdx.xyz when current is w318x).
+        // Adding as alias ensures cookies are shared for requests to the old domain.
+        SessionProvider.addDomainAlias(oldDomain)
+        
+        // Sync current cookies to the old domain in the system CookieManager.
+        // WebView/Glide sub-requests to old-domain URLs need cf_clearance too.
+        if (sessionState.cookies.isNotEmpty()) {
+            syncCookiesToSystemCookieManager(oldDomain, sessionState.cookies)
+        }
+        
+        ProviderLogger.i(TAG_PROVIDER_HTTP, "updateDomain", "Domain changed, old domain added as alias",
+            "old" to oldDomain, "new" to newDomain, "aliases" to SessionProvider.getDomainAliases().size)
     }
     
     @Synchronized
@@ -718,6 +728,30 @@ class ProviderHttpService private constructor(
             }
         } catch (e: Exception) {
             ProviderLogger.w(TAG_PROVIDER_HTTP, "clearSystemCookies", "Failed to clear system cookies: ${e.message}")
+        }
+    }
+    
+    /**
+     * Sync cookies to Android's system CookieManager for a specific domain.
+     * This ensures WebView/Glide sub-requests to this domain have the cf_clearance cookie.
+     *
+     * Called for both the current domain and all alias domains (old domains that
+     * may still appear in HTML links, e.g. w312x.faselhdx.xyz after migrating to w318x).
+     */
+    private fun syncCookiesToSystemCookieManager(domain: String, cookies: Map<String, String>) {
+        try {
+            val systemCookieManager = android.webkit.CookieManager.getInstance()
+            systemCookieManager.setAcceptCookie(true)
+            val cookieUrl = "https://$domain"
+            for ((key, value) in cookies) {
+                systemCookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
+            }
+            systemCookieManager.flush()
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager", 
+                "Injected ${cookies.size} cookies", "domain" to domain)
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager", 
+                "Failed to inject cookies", "domain" to domain, "error" to e.message)
         }
     }
     
