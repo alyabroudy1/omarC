@@ -62,4 +62,40 @@ class MyCimaCloneParser : NewBaseParser() {
         if (url.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase=true)) return true
         return false
     }
+
+    private fun decodeWatchUrl(encodedStr: String): String? {
+        try {
+            if (encodedStr.isBlank()) return null
+            val match = Regex("""(?:/play/|/embed/|\?slp_watch=)([^/&]+)""").find(encodedStr)
+            val base64Str = match?.groupValues?.get(1) ?: encodedStr
+            val cleanedStr = base64Str.replace("+", "").trim()
+            if (cleanedStr.startsWith("http")) return cleanedStr
+            val finalB64Str = if (!cleanedStr.startsWith("aHR0c")) "aHR0c$cleanedStr" else cleanedStr
+            return String(android.util.Base64.decode(finalB64Str, 0), java.nio.charset.StandardCharsets.UTF_8)
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    override fun extractWatchServersUrls(doc: org.jsoup.nodes.Document): List<String> {
+        val urls = mutableListOf<String>()
+        
+        doc.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], ul.WatchServersList li btn, .WatchServersList li, .Links--Content ul li").forEach { serverBtn ->
+            val dataWatch = serverBtn.attr("data-watch").ifEmpty { serverBtn.attr("data-url") }.ifEmpty { serverBtn.selectFirst("a")?.attr("data-url") ?: "" }
+            val decodedUrl = decodeWatchUrl(dataWatch)
+            if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
+                urls.add(decodedUrl)
+            }
+        }
+        
+        doc.select(".openLinkDown").forEach { downloadBtn ->
+            val dataHref = downloadBtn.attr("data-href")
+            val decodedUrl = decodeWatchUrl(dataHref)
+            if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
+                urls.add(decodedUrl)
+            }
+        }
+        
+        return urls.distinct()
+    }
 }
