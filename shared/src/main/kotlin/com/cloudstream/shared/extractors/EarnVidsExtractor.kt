@@ -152,7 +152,7 @@ class EarnVidsExtractor(
                 Log.d("EarnVidsExtractor", "🌐 [fdewsdc.sbs Match] Hijacking Referer to https://shhahid4u.cam")
                 "https://shhahid4u.cam"
             } else {
-                Log.d("EarnVidsExtractor", "🌐 Using explicit embed Referer: $finalUrl")
+                Log.d("EarnVidsExtractor", "🌐 Using explicit embed finalUrl as Referer: $finalUrl")
                 finalUrl
             }
             
@@ -172,14 +172,30 @@ class EarnVidsExtractor(
                 .findAll(response)
                 .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
                 .distinct()
-                .joinToString("; ")
+                .toList()
+                
+            // Natively extract Cloudflare clearance & session cookies from Android WebView
+            val webViewCookieString = android.webkit.CookieManager.getInstance().getCookie(finalUrl) ?: ""
+            val webViewCookies = webViewCookieString.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+            
+            // Merge JS Cookies and WebView Cookies securely without duplicating keys!
+            val mergedCookieMap = mutableMapOf<String, String>()
+            for (cookie in jsCookies + webViewCookies) {
+                if (cookie.contains("=")) {
+                    val split = cookie.split("=", limit = 2)
+                    mergedCookieMap[split[0]] = split[1]
+                }
+            }
+            
+            val finalCookieHeader = mergedCookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
+
             
             val customHeaders = mutableMapOf<String, String>()
-            if (jsCookies.isNotEmpty()) {
-                Log.d("EarnVidsExtractor", "🍪 Intercepted Proprietary JS Cookies! Attaching to headers: $jsCookies")
-                customHeaders["Cookie"] = jsCookies
+            if (finalCookieHeader.isNotEmpty()) {
+                Log.d("EarnVidsExtractor", "🍪 Assembled Master Cookies! Attaching to headers: $finalCookieHeader")
+                customHeaders["Cookie"] = finalCookieHeader
             } else {
-                Log.w("EarnVidsExtractor", "⚠️ No $.cookie tags intercepted from HTML.")
+                Log.w("EarnVidsExtractor", "⚠️ No cookies intercepted from WebView or HTML.")
             }
             
             customHeaders["Accept"] = "*/*"
