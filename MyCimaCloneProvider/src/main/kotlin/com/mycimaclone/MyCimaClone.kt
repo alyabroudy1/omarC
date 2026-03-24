@@ -50,59 +50,7 @@ class MyCimaClone : BaseProvider() {
         return response.copy(items = newItems)
     }
 
-    data class MyCimaSearchResponseJson(
-        val status: Boolean? = null,
-        val results: List<MyCimaSearchItem>? = null
-    )
 
-    data class MyCimaSearchItem(
-        val title: String? = null,
-        val slug: String? = null,
-        val image: String? = null,
-        val year: String? = null,
-        val istv: Int? = null
-    )
-
-    private fun parseSearchResponse(responseText: String): List<SearchResponse> {
-        try {
-            val parsed = AppUtils.parseJson<MyCimaSearchResponseJson>(responseText)
-            return parsed.results?.mapNotNull { item ->
-                val title = item.title ?: return@mapNotNull null
-                val slug = item.slug ?: return@mapNotNull null
-                val type = if (item.istv == 0) TvType.Movie else TvType.TvSeries
-                val prefix = if (item.istv == 0) "/watch/" else "/series/"
-                
-                val encodedSlug = URLEncoder.encode(slug, "UTF-8").replace("+", "%20")
-                val itemUrl = if (slug.startsWith("http")) slug else "$mainUrl$prefix$encodedSlug"
-                
-                newMovieSearchResponse(title, itemUrl, type) {
-                    this.posterUrl = item.image
-                    this.year = item.year?.toIntOrNull()
-                    this.posterHeaders = httpService.getImageHeaders()
-                }
-            } ?: emptyList()
-        } catch (e: Exception) {
-            return emptyList()
-        }
-    }
-
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search"
-        val responseText = httpService.postText(url, mapOf("q" to query), mainUrl) ?: return emptyList()
-        return parseSearchResponse(responseText)
-    }
-
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search"
-        val result = httpService.postDebug(url, mapOf("q" to query), mainUrl)
-        
-        if (result.isCloudflareBlocked || result.responseCode == 403 || result.html?.contains("403 Forbidden") == true) {
-            throw com.cloudstream.shared.service.CloudflareBlockedSearchException(providerName, httpService.currentDomain)
-        }
-        
-        val responseText = result.html ?: return emptyList()
-        return parseSearchResponse(responseText)
-    }
 
     override suspend fun fetchExtraEpisodes(
         doc: org.jsoup.nodes.Document,
