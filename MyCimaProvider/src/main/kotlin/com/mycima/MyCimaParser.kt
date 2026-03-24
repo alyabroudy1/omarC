@@ -10,7 +10,7 @@ import com.cloudstream.shared.parsing.WatchServerSelector
 class MyCimaParser : NewBaseParser() {
 
     override val mainPageConfig = MainPageConfig(
-        container = "div.Grid--WecimaPosts div.GridItem",
+        container = "div.GridItem",
         title = CssSelector("h2, strong", "text"),
         url = CssSelector("a", "href"),
         poster = CssSelector("span.BG--GridItem", "data-lazy-style, data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
@@ -43,7 +43,7 @@ class MyCimaParser : NewBaseParser() {
     )
 
     override fun getSearchUrl(domain: String, query: String): String {
-        return "$domain/search"
+        return "$domain/filtering/?keywords=$query"
     }
 
     override fun isSeries(title: String, url: String, element: org.jsoup.nodes.Element?): Boolean {

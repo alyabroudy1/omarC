@@ -10,7 +10,7 @@ import com.cloudstream.shared.parsing.WatchServerSelector
 class MyCimaCloneParser : NewBaseParser() {
 
     override val mainPageConfig = MainPageConfig(
-        container = "div.Grid--WecimaPosts div.GridItem",
+        container = "div.GridItem",
         title = CssSelector("h2, strong", "text"),
         url = CssSelector("a", "href"),
         poster = CssSelector("span.BG--GridItem", "data-lazy-style, data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
