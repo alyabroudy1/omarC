@@ -24,6 +24,32 @@ class MyCima : BaseProvider() {
 
     override fun getParser(): NewBaseParser = MyCimaParser()
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        val response = super.getMainPage(page, request) ?: return null
+        val newItems = response.items.map { homePageList ->
+            val modifiedList = homePageList.list.map { item ->
+                // MyCima URL structure now contains مسلسل for TV series and فيلم for movies
+                val isSeries = item.url.contains("مسلسل") || item.url.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase = true)
+                
+                if (isSeries && item is MovieSearchResponse) {
+                    newTvSeriesSearchResponse(item.name, item.url, TvType.TvSeries) {
+                        this.posterUrl = item.posterUrl
+                        this.year = item.year
+                        this.posterHeaders = item.posterHeaders
+                    }
+                } else if (!isSeries && item is TvSeriesSearchResponse) {
+                    newMovieSearchResponse(item.name, item.url, TvType.Movie) {
+                        this.posterUrl = item.posterUrl
+                        this.year = item.year
+                        this.posterHeaders = item.posterHeaders
+                    }
+                } else item
+            }
+            homePageList.copy(list = modifiedList)
+        }
+        return response.copy(items = newItems)
+    }
+
     data class MyCimaSearchResponseJson(
         val status: Boolean? = null,
         val results: List<MyCimaSearchItem>? = null
@@ -113,10 +139,13 @@ class MyCima : BaseProvider() {
         return episodes
     }
 
-    private fun decodeMyCimaUrl(encodedStr: String): String? {
+    private fun decodeWatchUrl(encodedStr: String): String? {
         try {
             if (encodedStr.isBlank()) return null
-            val cleanedStr = encodedStr.replace("+", "").trim()
+            val match = Regex("""(?:/play/|/embed/)([^/]+)""").find(encodedStr)
+            val base64Str = match?.groupValues?.get(1) ?: encodedStr
+            val cleanedStr = base64Str.replace("+", "").trim()
+            if (cleanedStr.startsWith("http")) return cleanedStr
             val finalB64Str = if (!cleanedStr.startsWith("aHR0c")) "aHR0c$cleanedStr" else cleanedStr
             return String(android.util.Base64.decode(finalB64Str, 0), java.nio.charset.StandardCharsets.UTF_8)
         } catch (e: Exception) {
@@ -133,8 +162,9 @@ class MyCima : BaseProvider() {
         var linksFound = false
         val document = httpService.getDocument(data) ?: return false
         
-        document.select("ul.WatchServersList li btn").forEach { serverBtn ->
-            val decodedUrl = decodeMyCimaUrl(serverBtn.attr("data-url"))
+        document.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], ul.WatchServersList li btn").forEach { serverBtn ->
+            val dataWatch = serverBtn.attr("data-watch").ifEmpty { serverBtn.attr("data-url") }
+            val decodedUrl = decodeWatchUrl(dataWatch)
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 linksFound = true
                 if (decodedUrl.contains("dood", ignoreCase = true)) {
@@ -147,7 +177,7 @@ class MyCima : BaseProvider() {
         }
         
         document.select(".openLinkDown").forEach { downloadBtn ->
-            val decodedUrl = decodeMyCimaUrl(downloadBtn.attr("data-href"))
+            val decodedUrl = decodeWatchUrl(downloadBtn.attr("data-href"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 linksFound = true
                 if (decodedUrl.contains("dood", ignoreCase = true)) {
