@@ -8,9 +8,11 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import kotlinx.coroutines.delay
 
-class EarnVidsExtractor : ExtractorApi() {
-    override val name = "EarnVids"
-    override val mainUrl = "earnvids.com"
+class EarnVidsExtractor(
+    override val mainUrl: String = "earnvids.com",
+    private val displayName: String = "EarnVids"
+) : ExtractorApi() {
+    override val name = displayName
     override val requiresReferer = true
 
     override suspend fun getUrl(

@@ -12,7 +12,14 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(OkPrimeExtractor())
     registerExtractorAPI(Up4FunExtractor())
     registerExtractorAPI(FaselHDExtractor())
+    
+    // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
+    registerExtractorAPI(EarnVidsExtractor("dingtezuni.com"))
+    registerExtractorAPI(EarnVidsExtractor("fsdcmo.sbs", "StreamGH"))
+    registerExtractorAPI(EarnVidsExtractor("govid.live", "GoVid"))
+    registerExtractorAPI(EarnVidsExtractor("1vid1shar.space", "Vid1Shar"))
+    registerExtractorAPI(EarnVidsExtractor("mycima.page", "MyCima"))
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }
