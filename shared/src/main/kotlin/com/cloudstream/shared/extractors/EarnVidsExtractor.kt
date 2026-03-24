@@ -152,8 +152,8 @@ class EarnVidsExtractor(
                 Log.d("EarnVidsExtractor", "🌐 [fdewsdc.sbs Match] Hijacking Referer to https://shhahid4u.cam")
                 "https://shhahid4u.cam"
             } else {
-                Log.d("EarnVidsExtractor", "🌐 Using explicit embed Referer: $referer")
-                referer
+                Log.d("EarnVidsExtractor", "🌐 Using explicit embed Referer: $finalUrl")
+                finalUrl
             }
             
             val headers = mapOf(
@@ -171,6 +171,7 @@ class EarnVidsExtractor(
             val jsCookies = Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
                 .findAll(response)
                 .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
+                .distinct()
                 .joinToString("; ")
             
             val customHeaders = mutableMapOf<String, String>()
