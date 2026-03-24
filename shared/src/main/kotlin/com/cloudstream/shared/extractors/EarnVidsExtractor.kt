@@ -87,6 +87,16 @@ class EarnVidsExtractor(
         try {
             val response = app.get(finalUrl, referer = referer).text
             
+            // Extract proprietary Javascript cookies (e.g. $.cookie('file_id', ...))
+            val jsCookies = Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
+                .findAll(response)
+                .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
+                .joinToString("; ")
+            
+            val customHeaders = mutableMapOf<String, String>()
+            if (jsCookies.isNotEmpty()) customHeaders["Cookie"] = jsCookies
+            customHeaders["Accept"] = "*/*"
+            
             for (strategy in strategies) {
                 val videoUrl = strategy.decode(response)
                 if (!videoUrl.isNullOrBlank() && videoUrl.startsWith("http")) {
@@ -99,6 +109,7 @@ class EarnVidsExtractor(
                         ) {
                             this.referer = finalUrl
                             this.quality = Qualities.Unknown.value
+                            this.headers = customHeaders
                         }
                     )
                     return // Stop after first successful decode
