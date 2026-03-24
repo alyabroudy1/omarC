@@ -24,14 +24,15 @@ class MyCimaParser : NewBaseParser() {
         plot = CssSelector("div.StoryMovieContent", "text"),
         year = CssSelector("ul.Terms--Content--Single-begin li:contains(السنة) p", "text"),
         rating = CssSelector("", "text"),
-        tags = CssSelector("", "text")
+        tags = CssSelector("", "text"),
+        parentSeriesUrl = CssSelector(".Series--Section a", "href")
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = ".EpisodesList.Full--Width a",
+        container = ".EpisodesList a",
         title = CssSelector("episodetitle", "text"),
-        url = CssSelector("a", "href"),
-        episode = CssSelector("", "text")
+        url = CssSelector("", "href"),
+        episode = CssSelector("episodetitle", "text", regex = "(\\d+)")
     )
 
     override val watchServersSelectors = WatchServerSelector(
@@ -43,5 +44,22 @@ class MyCimaParser : NewBaseParser() {
 
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/search"
+    }
+
+    override fun isSeries(title: String, url: String, element: org.jsoup.nodes.Element?): Boolean {
+        if (title.contains("فيلم") || title.contains("film", true) || title.contains("movie", true)) return false
+        if (element != null) {
+            if (element is org.jsoup.nodes.Document) {
+                if (element.select(episodeConfig.container).isNotEmpty()) return true
+                if (element.extract(loadPageConfig.seriesIndicator) != null) return true
+                if (element.select(".Series--Section").isNotEmpty()) return true
+                if (element.select(".SeasonsList").isNotEmpty()) return true
+            }
+        }
+        if (title.contains("مسلسل") || title.contains("حلقة") || title.contains("موسم")) return true
+        if (url.contains("series")) return true
+        if (url.contains("مسلسل")) return true
+        if (url.contains("%d9%85%d8%b3%d9%84%d8%b3%d9%84", ignoreCase=true)) return true
+        return false
     }
 }

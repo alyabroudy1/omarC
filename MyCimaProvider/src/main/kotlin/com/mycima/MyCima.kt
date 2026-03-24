@@ -109,25 +109,42 @@ class MyCima : BaseProvider() {
         url: String,
         data: ParserInterface.ParsedLoadData
     ): List<ParserInterface.ParsedEpisode> {
-        val seasonsEl = doc.select("div.List--Seasons--Episodes a.SeasonsEpisodes")
+        val seasonsEl = doc.select(".SeasonsList ul li a")
         if (seasonsEl.isEmpty()) return data.episodes ?: emptyList()
         
+        val postId = doc.selectFirst("input[name=post_id], meta[name=post_id]")?.attr("value")?.ifEmpty {
+            doc.selectFirst("meta[name=post_id]")?.attr("content")
+        }?.ifEmpty {
+            doc.selectFirst("[data-postid]")?.attr("data-postid")
+        } ?: Regex("""post_id\s*[:=]\s*['"]?(\d+)""").find(doc.html())?.groupValues?.get(1)
+
+        if (postId == null) return data.episodes ?: emptyList()
+
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
-        seasonsEl.forEach { seasonEl ->
-            val seasonNum = Regex("الموسم (\\\\d+)").find(seasonEl.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val dataId = seasonEl.attr("data-id")
-            val dataSeason = seasonEl.attr("data-season")
+        seasonsEl.forEach { seasonAnchor ->
+            val seasonLabel = seasonAnchor.text()
+            val seasonNum = Regex("الموسم (\\d+)").find(seasonLabel)?.groupValues?.get(1)?.toIntOrNull() 
+                            ?: Regex("(\\d+)").find(seasonLabel)?.groupValues?.get(1)?.toIntOrNull() 
+                            ?: 1
+                            
+            val dataSeason = seasonAnchor.attr("data-season")
+            if (dataSeason.isBlank()) return@forEach
+
             try {
-                val seasonHtml = httpService.postText("$mainUrl/ajax/Episode", mapOf("post_id" to dataId, "season" to dataSeason), url)
+                val ajaxUrl = "$mainUrl/wp-content/themes/mycima/Ajaxt/Single/Episodes.php"
+                val seasonHtml = httpService.postText(ajaxUrl, mapOf("season" to dataSeason, "post_id" to postId), referer = url)
+                
                 if (seasonHtml != null) {
-                    val seasonDocParsed = Jsoup.parse(seasonHtml)
-                    seasonDocParsed.select("a.hoverable.activable").forEach { epEl ->
-                        val epName = epEl.selectFirst("episodetitle")?.text() ?: "Episode"
-                        val epNum = Regex("الحلقة (\\\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    val seasonDoc = Jsoup.parse(seasonHtml)
+                    seasonDoc.select("a").forEach { epEl ->
+                        val epUrl = epEl.attr("href")
+                        val epTitle = epEl.selectFirst("episodetitle")?.text()?.trim() ?: "Episode"
+                        val epNum = Regex("الحلقة (\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        
                         episodes.add(
                             ParserInterface.ParsedEpisode(
-                                url = epEl.attr("href"),
-                                name = epName,
+                                url = epUrl,
+                                name = epTitle,
                                 season = seasonNum,
                                 episode = epNum
                             )
@@ -136,7 +153,8 @@ class MyCima : BaseProvider() {
                 }
             } catch (e: Exception) {}
         }
-        return episodes
+        
+        return if (episodes.isNotEmpty()) episodes else (data.episodes ?: emptyList())
     }
 
     private fun decodeWatchUrl(encodedStr: String): String? {
