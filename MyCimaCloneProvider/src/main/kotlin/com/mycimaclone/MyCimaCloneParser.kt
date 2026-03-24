@@ -13,7 +13,7 @@ class MyCimaCloneParser : NewBaseParser() {
         container = "div.Grid--WecimaPosts div.GridItem",
         title = CssSelector("h2, strong", "text"),
         url = CssSelector("a", "href"),
-        poster = CssSelector("span.BG--GridItem", "data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
+        poster = CssSelector("span.BG--GridItem", "data-lazy-style, data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
     )
 
     override val searchConfig = mainPageConfig
