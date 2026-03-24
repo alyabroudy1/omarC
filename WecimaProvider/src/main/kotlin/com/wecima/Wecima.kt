@@ -66,15 +66,7 @@ class Wecima : BaseProvider() {
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search"
-        val result = httpService.postDebug(url, mapOf("q" to query), mainUrl)
-        
-        if (result.isCloudflareBlocked || result.responseCode == 403 || result.html?.contains("403 Forbidden") == true) {
-            throw com.cloudstream.shared.service.CloudflareBlockedSearchException(providerName, httpService.currentDomain)
-        }
-        
-        val responseText = result.html ?: return emptyList()
-        return parseSearchResponse(responseText)
+        return searchNormal(query)
     }
 
     override suspend fun fetchExtraEpisodes(
