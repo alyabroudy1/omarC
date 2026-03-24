@@ -204,7 +204,7 @@ class ProviderHttpService private constructor(
         val fullUrl = buildUrl(url)
         val request = okhttp3.Request.Builder()
             .url(fullUrl)
-            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+            .apply { for ((k, v) in headers) { addHeader(k, v) } }
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))

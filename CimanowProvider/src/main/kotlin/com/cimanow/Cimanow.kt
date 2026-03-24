@@ -117,24 +117,45 @@ class Base64TildeObfuscationStrategy : CimanowObfuscationStrategy {
             
             if (parts.isEmpty()) return null
             
-            val firstDecoded = String(Base64.decode(parts[0], Base64.DEFAULT), Charsets.UTF_8)
-            val firstNum = firstDecoded.filter { it.isDigit() }.toIntOrNull() ?: return null
-            val offset = firstNum - 60 // Assuming first decoded character is '<' (ASCII 60)
+            val nums = parts.mapNotNull { p ->
+                try {
+                    val decoded = String(android.util.Base64.decode(p, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                    val digits = decoded.filter { it.isDigit() }
+                    if (digits.isNotEmpty()) digits.toInt() else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (nums.isEmpty()) return null
+
+            val firstNum = nums[0]
+            var bestOffset: Int? = null
+            val testTags = listOf("class=", "href=", "<div", "<ul", "<li", "id=", "<html", "<body", "<script")
+            
+            for (offset in (firstNum - 150)..(firstNum + 150)) {
+                val sb = java.lang.StringBuilder()
+                // Only test against the first 1000 characters for speed
+                for (num in nums.take(1000)) {
+                    sb.append((num - offset).toChar())
+                }
+                val testStr = sb.toString()
+                if (testTags.any { testStr.contains(it, ignoreCase = true) }) {
+                    bestOffset = offset
+                    Log.d("Cimanow", "Bruteforce shift matched with offset: $offset")
+                    break
+                }
+            }
+
+            // Fallback to arbitrary `<` mapping if nothing matched
+            val finalOffset = bestOffset ?: (firstNum - 60)
             
             val output = java.lang.StringBuilder()
-            for (p in parts) {
-                try {
-                    val decoded = String(Base64.decode(p, Base64.DEFAULT), Charsets.UTF_8)
-                    val digits = decoded.filter { it.isDigit() }
-                    if (digits.isNotEmpty()) {
-                        output.append((digits.toInt() - offset).toChar())
-                    }
-                } catch (e: Exception) {
-                    // Ignore malformed parts
-                }
+            for (num in nums) {
+                output.append((num - finalOffset).toChar())
             }
             
             val encodedHtml = String(output.toString().toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
+            Log.d("Cimanow", "Decoded Bruteforce snippet: ${encodedHtml.take(200)}")
             return Jsoup.parse(encodedHtml)
         } catch (e: Exception) {
             Log.e("Cimanow", "Base64TildeObfuscationStrategy decode error: ${e.message}")
