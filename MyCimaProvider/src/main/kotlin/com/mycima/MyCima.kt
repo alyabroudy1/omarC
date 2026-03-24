@@ -177,12 +177,51 @@ class MyCima : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        com.lagradost.api.Log.d("MyCima", "loadLinks START | data: $data")
         var linksFound = false
-        val document = httpService.getDocument(data) ?: return false
+        val document = httpService.getDocument(data)
         
-        document.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], ul.WatchServersList li btn").forEach { serverBtn ->
-            val dataWatch = serverBtn.attr("data-watch").ifEmpty { serverBtn.attr("data-url") }
+        if (document == null) {
+            com.lagradost.api.Log.d("MyCima", "loadLinks Error: Failed to fetch document for data: $data")
+            return false
+        }
+        
+        com.lagradost.api.Log.d("MyCima", "loadLinks: Document fetched successfully. HTML Dump:\n${document.html()}")
+        
+        val servers = document.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], ul.WatchServersList li btn, .WatchServersList li, .Links--Content ul li")
+        com.lagradost.api.Log.d("MyCima", "loadLinks: Found ${servers.size} watch servers elements")
+        
+        servers.forEach { serverBtn ->
+            com.lagradost.api.Log.d("MyCima", "loadLinks: Processing server element: ${serverBtn.outerHtml()}")
+            val dataWatch = serverBtn.attr("data-watch").ifEmpty { serverBtn.attr("data-url") }.ifEmpty { serverBtn.selectFirst("a")?.attr("data-url") ?: "" }
+            com.lagradost.api.Log.d("MyCima", "loadLinks: Extracted raw dataWatch/data-url: '$dataWatch'")
+            
             val decodedUrl = decodeWatchUrl(dataWatch)
+            com.lagradost.api.Log.d("MyCima", "loadLinks: Decoded URL: '$decodedUrl'")
+            
+            if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
+                linksFound = true
+                com.lagradost.api.Log.d("MyCima", "loadLinks: Valid link found, sending to extractor: $decodedUrl")
+                if (decodedUrl.contains("dood", ignoreCase = true)) {
+                    val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(decodedUrl, mainUrl)
+                    com.cloudstream.shared.extractors.SnifferExtractor().getUrl(snifferUrl, mainUrl, subtitleCallback, callback)
+                } else {
+                    loadExtractor(decodedUrl, subtitleCallback, callback)
+                }
+            } else {
+                com.lagradost.api.Log.d("MyCima", "loadLinks: Decoded URL is invalid, empty, or missing http prefix")
+            }
+        }
+        
+        val downloads = document.select(".openLinkDown")
+        com.lagradost.api.Log.d("MyCima", "loadLinks: Found ${downloads.size} download buttons")
+        
+        downloads.forEach { downloadBtn ->
+            com.lagradost.api.Log.d("MyCima", "loadLinks: Processing downloadBtn: ${downloadBtn.outerHtml()}")
+            val dataHref = downloadBtn.attr("data-href")
+            val decodedUrl = decodeWatchUrl(dataHref)
+            com.lagradost.api.Log.d("MyCima", "loadLinks: Download Extracted data-href: '$dataHref' -> Decoded: '$decodedUrl'")
+            
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 linksFound = true
                 if (decodedUrl.contains("dood", ignoreCase = true)) {
@@ -194,21 +233,7 @@ class MyCima : BaseProvider() {
             }
         }
         
-        document.select(".openLinkDown").forEach { downloadBtn ->
-            val decodedUrl = decodeWatchUrl(downloadBtn.attr("data-href"))
-            if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
-                linksFound = true
-                if (decodedUrl.contains("dood", ignoreCase = true)) {
-                    val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(decodedUrl, mainUrl)
-                    com.cloudstream.shared.extractors.SnifferExtractor().getUrl(snifferUrl, mainUrl, subtitleCallback, callback)
-                } else {
-                    loadExtractor(decodedUrl, subtitleCallback, callback)
-                }
-            }
-        }
-        if (!linksFound) {
-            com.lagradost.api.Log.d("MyCima", "No links found on $data. HTML Dump:\n${document.html()}")
-        }
+        com.lagradost.api.Log.d("MyCima", "loadLinks FINISHED | Total links found: $linksFound")
         return linksFound
     }
 }
