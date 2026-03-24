@@ -206,7 +206,9 @@ class MyCimaClone : BaseProvider() {
                 }
             }
         }
-        
+        if (!linksFound) {
+            com.lagradost.api.Log.d("MyCimaClone", "No links found on $data. HTML Dump:\n${document.html()}")
+        }
         return linksFound
     }
 }
