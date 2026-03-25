@@ -24,4 +24,15 @@ fun Plugin.registerSharedExtractors() {
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }
     registerExtractorAPI(sniffer)
+    // Vidmoly Proxies
+    registerExtractorAPI(VidmolyNet())
+    registerExtractorAPI(VidmolyBiz())
+}
+
+class VidmolyNet : com.lagradost.cloudstream3.extractors.Vidmoly() {
+    override val mainUrl = "https://vidmoly.net"
+}
+
+class VidmolyBiz : com.lagradost.cloudstream3.extractors.Vidmoly() {
+    override val mainUrl = "https://vidmoly.biz"
 }
