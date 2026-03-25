@@ -31,8 +31,40 @@ fun Plugin.registerSharedExtractors() {
 
 class VidmolyNet : com.lagradost.cloudstream3.extractors.Vidmoly() {
     override val mainUrl = "https://vidmoly.net"
+    override val name = "VidmolyNet"
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (com.lagradost.cloudstream3.SubtitleFile) -> Unit,
+        callback: (com.lagradost.cloudstream3.utils.ExtractorLink) -> Unit
+    ) {
+        android.util.Log.d("VidmolyNet", "getUrl: Processing $url")
+        try {
+            super.getUrl(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            android.util.Log.e("VidmolyNet", "getUrl: Error processing $url: ${e.message}")
+            throw e
+        }
+    }
 }
 
 class VidmolyBiz : com.lagradost.cloudstream3.extractors.Vidmoly() {
     override val mainUrl = "https://vidmoly.biz"
+    override val name = "VidmolyBiz"
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (com.lagradost.cloudstream3.SubtitleFile) -> Unit,
+        callback: (com.lagradost.cloudstream3.utils.ExtractorLink) -> Unit
+    ) {
+        android.util.Log.d("VidmolyBiz", "getUrl: Processing $url")
+        try {
+            super.getUrl(url, referer, subtitleCallback, callback)
+        } catch (e: Exception) {
+            android.util.Log.e("VidmolyBiz", "getUrl: Error processing $url: ${e.message}")
+            throw e
+        }
+    }
 }
