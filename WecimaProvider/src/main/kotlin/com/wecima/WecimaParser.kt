@@ -17,7 +17,7 @@ class WecimaParser : NewBaseParser() {
         container = "div.GridItem",
         title = CssSelector("h2, strong", "text"),
         url = CssSelector("a", "href"),
-        poster = CssSelector("meta[itemprop=thumbnailUrl], span.BG--GridItem", "content, data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
+        poster = CssSelector("meta[itemprop=thumbnailUrl], span.BG--GridItem", "content, data-src, data-lazy-style, style", regex = """url\(['"]?(.*?)['"]?\)""")
     )
 
     override fun parseItem(element: Element, config: com.cloudstream.shared.parsing.MainPageConfig): ParserInterface.ParsedItem? {
