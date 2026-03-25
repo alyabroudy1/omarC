@@ -1,62 +1,122 @@
-﻿2026-03-18 08:30:25.239 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-03-18 08:30:25.244 25343-25454 [Bristege] [load]       com.lagradost.cloudstream3           I  START url='https://hd1.brstej.com/watch.php?vid=d071f3d6f'
-2026-03-18 08:30:25.244 25343-25454 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/watch.php?vid=d071f3d6f
-2026-03-18 08:30:25.244 25343-25454 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?vid=d071f3d6f, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 08:30:25.253 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 08:30:25.290 25343-25454 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
-2026-03-18 08:30:25.355 25343-25454 [Bristege] [load]       com.lagradost.cloudstream3           D  Parsed load data: title='مسلسل حكاية نرجس الحلقة 13 الثالثة عشر', type=TvSeries, episodes=14
-2026-03-18 08:30:32.348 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
-2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-03-18 08:30:32.354 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
-2026-03-18 08:30:32.357 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-03-18 08:30:32.357 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-03-18 08:30:32.394 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-03-18 08:30:32.395 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
-2026-03-18 08:30:32.395 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
-2026-03-18 08:30:32.396 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           I  START data='https://hd1.brstej.com/watch.php?vid=bc8185a30'
-2026-03-18 08:30:32.396 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 08:30:32.396 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 08:30:32.396 25343-25385 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/watch.php?vid=bc8185a30
-2026-03-18 08:30:32.397 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?vid=bc8185a30, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 08:30:32.447 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 08:30:32.456 25343-25385 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
-2026-03-18 08:30:32.462 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 08:30:32.462 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 08:30:32.463 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 08:30:32.463 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 08:30:32.548 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           D  Following redirect to player page: https://hd1.brstej.com/play.php?vid=bc8185a30
-2026-03-18 08:30:32.548 25343-25385 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=hd1.brstej.com, url=https://hd1.brstej.com/play.php?vid=bc8185a30
-2026-03-18 08:30:32.548 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/play.php?vid=bc8185a30, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.588 25343-25385 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=hd1.brstej.com
-2026-03-18 08:30:32.677 25343-25385 [Bristege] [loadLinks]  com.lagradost.cloudstream3           D  Extracted 5 embed/server targets
-2026-03-18 08:30:32.677 25343-25461 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=sh.ramadan-series.site, to=hd1.brstej.com
-2026-03-18 08:30:32.677 25343-25448 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=rty1.film77.xyz, to=hd1.brstej.com
-2026-03-18 08:30:32.677 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=vkvideo.ru, to=hd1.brstej.com
-2026-03-18 08:30:32.678 25343-25456 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=ss.hd-vk.com, to=hd1.brstej.com
-2026-03-18 08:30:32.678 25343-25448 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-91hwaiq55bnp.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.678 25343-25382 ProviderHttp            com.lagradost.cloudstream3           D  [rewriteUrlIfNeeded] Rewrote URL | from=hd1.hdup20.com, to=hd1.brstej.com
-2026-03-18 08:30:32.678 25343-25456 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-41grh1affj6f.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.678 25343-25382 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/embed-gb2ohvcb9dt8.html, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.678 25343-25461 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/watch.php?id=gTLCjnndJ, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.680 25343-25385 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://hd1.brstej.com/video_ext.php?oid=800112141&id=456242177, urlDomain=hd1.brstej.com, sessionDomain=hd1.brstej.com, isAlias=false, hasCookie=true, cookieCount=1
-2026-03-18 08:30:32.705 25343-25385 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://vkvideo.ru/video_ext.php?oid=800112141&id=456242177
-2026-03-18 08:30:32.773 25343-25448 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://rty1.film77.xyz/embed-91hwaiq55bnp.html
-2026-03-18 08:30:32.788 25343-25461 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://sh.ramadan-series.site/watch.php?id=gTLCjnndJ
-2026-03-18 08:30:32.793 25343-25456 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://ss.hd-vk.com/embed-41grh1affj6f.html
-2026-03-18 08:30:32.839 25343-25382 [Bristege]...cessEmbed] com.lagradost.cloudstream3           D  Falling back to standard extractors for https://hd1.hdup20.com/embed-gb2ohvcb9dt8.html
-2026-03-18 08:30:35.240 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
-2026-03-18 08:30:35.240 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
-2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
-2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
-2026-03-18 08:30:35.269 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
-2026-03-18 08:30:35.340 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
-2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
-2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 08:30:35.387 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
-2026-03-18 08:30:35.554 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
-2026-03-18 08:30:35.554 25343-25343 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+﻿2026-03-25 12:26:57.872 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-25 12:26:57.876 29453-29541 [FaselHD] [load]        com.lagradost.cloudstream3           I  START url='https://web3256x.faselhdx.xyz/movies/%d9%81%d9%8a%d9%84%d9%85-hannah-montana-20th-anniversary-special-2026-%d9%85%d8%aa%d8%b1%d8%ac%d9%85'
+2026-03-25 12:26:57.876 29453-29541 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=web3256x.faselhdx.xyz, url=https://web3256x.faselhdx.xyz/movies/%d9%81%d9%8a%d9%84%d9%85-hannah-montana-20t
+2026-03-25 12:26:57.877 29453-29541 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://web3256x.faselhdx.xyz/movies/%d9%81%d9%8a%d9%84%d9%85-hannah-montana-20t, urlDomain=web3256x.faselhdx.xyz, sessionDomain=web3256x.faselhdx.xyz, isAlias=false, hasCookie=true, cookieCount=7
+2026-03-25 12:26:57.886 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-25 12:26:57.886 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:26:57.886 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:26:58.055 29453-29541 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=web3256x.faselhdx.xyz
+2026-03-25 12:26:58.084 29453-29541 [FaselHDV2]             com.lagradost.cloudstream3           D  fetchExtraEpisodes: no extra season tabs found
+2026-03-25 12:26:58.084 29453-29541 [FaselHD] [load]        com.lagradost.cloudstream3           D  Parsed load data: title='Hannah Montana 20th Anniversary Special 2026', type=Movie, episodes=0
+2026-03-25 12:27:01.614 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  newInstance = {}
+2026-03-25 12:27:01.621 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-25 12:27:01.621 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-25 12:27:01.621 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-03-25 12:27:01.623 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-03-25 12:27:01.624 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-03-25 12:27:01.661 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-25 12:27:01.663 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = null
+2026-03-25 12:27:01.663 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  unwrapBundle = Bundle[{resumePosition=0, syncData={}}]
+2026-03-25 12:27:01.664 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-25 12:27:01.664 29453-29962 [FaselHDV2] [loadLinks] com.lagradost.cloudstream3           I  Explicitly intercepting loadLinks to force FaselHDExtractor execution natively!
+2026-03-25 12:27:01.664 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-25 12:27:01.664 29453-29962 RequestQueue            com.lagradost.cloudstream3           D  [enqueue] Request is LEADER | domain=web3256x.faselhdx.xyz, url=https://web3256x.faselhdx.xyz/movies/%d9%81%d9%8a%d9%84%d9%85-hannah-montana-20t
+2026-03-25 12:27:01.664 29453-29962 ProviderHttp            com.lagradost.cloudstream3           D  [executeDirectRequest] Executing HTTP request | url=https://web3256x.faselhdx.xyz/movies/%d9%81%d9%8a%d9%84%d9%85-hannah-montana-20t, urlDomain=web3256x.faselhdx.xyz, sessionDomain=web3256x.faselhdx.xyz, isAlias=false, hasCookie=true, cookieCount=7
+2026-03-25 12:27:01.719 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-25 12:27:01.719 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:27:01.719 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:27:01.732 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-25 12:27:01.732 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-25 12:27:01.732 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:27:01.732 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:27:01.848 29453-29962 RequestQueue            com.lagradost.cloudstream3           I  [executeAsLeader] Leader SUCCESS | domain=web3256x.faselhdx.xyz
+2026-03-25 12:27:01.867 29453-29962 [FaselHDV2Parser]       com.lagradost.cloudstream3           D  extractWatchServersUrls: found 2 URLs
+2026-03-25 12:27:01.867 29453-29962 [FaselHDV2] [loadLinks] com.lagradost.cloudstream3           D  Explicit Extraction intercepted 2 URLs: [https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdmSXhRU2VPWnVmSVA0UlpTbkdoMDI2V090d2owMUpnM2xkRHQ0dFBDQVJFNjBMbDRoZC9wUzhJM01aR3pneHlRRFVkdkFGWUhZQUZlTmNkVk4vSktnc0VndW90OUROaVFmY0xVRUU4RUREUyt4QzlqcDFseDBGU2lYTnQ3UmorYXYwUUJTeDNVdHlwYzRmUFc2elBqSHJrT05KdmFhemtORGt1UzdjSVo4ZTVPY28yNUlOZWRYcFlzWDRyZnhMVk5kekRmRjRmbkpVeFZUYmI3bjFUT2xmT3RPaz06Oihbgi8kpdHA2tOLPv7r7fA%3D, https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00vWGRPQ3hIcGpnN29sVDFrZENsazMrbkp2a3dEa0ZCRTgvWDVhTmZKcHBxRDVJV3lDNlNZSG4vQXVKWDlaL0dYWk5ZNTQ3Q0YxRENIWlhaS0dtRXBEdXdUQ1hKNWN4cU1HTDk0M3BFVzFjTnduNTJtWXlyMmtnV3ZmRjdiamQxRUhwWjhGbm1KQlFVaTJiNWxzUGtjbWpYVjQ5OTc2bkhNaHZoZzd0YVdWQ0c3Rm0vQ1hiMlBhcWluZGlOdzg2T0dhbWhqcmp0VzFLYlBYWDQ1Ym41N0xoZC9YR3ZuWmJ0KzNhL3ZTcmRybFZMSUdnbDo6InxdoZCSPQzohqD7s5NE6A%3D%3D]
+2026-03-25 12:27:01.867 29453-29962 FaselHDExtractor        com.lagradost.cloudstream3           I  [getUrl] Starting cleanly isolated CF Bypass extraction for: https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00vWGRPQ3hIcGpnN29sVDFrZENsazMrbkp2a3dEa0ZCRTgvWDVhTmZKcHBxRDVJV3lDNlNZSG4vQXVKWDlaL0dYWk5ZNTQ3Q0YxRENIWlhaS0dtRXBEdXdUQ1hKNWN4cU1HTDk0M3BFVzFjTnduNTJtWXlyMmtnV3ZmRjdiamQxRUhwWjhGbm1KQlFVaTJiNWxzUGtjbWpYVjQ5OTc2bkhNaHZoZzd0YVdWQ0c3Rm0vQ1hiMlBhcWluZGlOdzg2T0dhbWhqcmp0VzFLYlBYWDQ1Ym41N0xoZC9YR3ZuWmJ0KzNhL3ZTcmRybFZMSUdnbDo6InxdoZCSPQzohqD7s5NE6A%3D%3D
+2026-03-25 12:27:01.867 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           I  [getUrl] Starting cleanly isolated CF Bypass extraction for: https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdmSXhRU2VPWnVmSVA0UlpTbkdoMDI2V090d2owMUpnM2xkRHQ0dFBDQVJFNjBMbDRoZC9wUzhJM01aR3pneHlRRFVkdkFGWUhZQUZlTmNkVk4vSktnc0VndW90OUROaVFmY0xVRUU4RUREUyt4QzlqcDFseDBGU2lYTnQ3UmorYXYwUUJTeDNVdHlwYzRmUFc2elBqSHJrT05KdmFhemtORGt1UzdjSVo4ZTVPY28yNUlOZWRYcFlzWDRyZnhMVk5kekRmRjRmbkpVeFZUYmI3bjFUT2xmT3RPaz06Oihbgi8kpdHA2tOLPv7r7fA%3D
+2026-03-25 12:27:01.867 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] Creating WebView | url=https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00v
+2026-03-25 12:27:01.878 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] WebView UA | ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+2026-03-25 12:27:01.878 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine.runSession] HEADLESS mode | url=https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00v
+2026-03-25 12:27:01.879 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] Loading URL | url=https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00v
+2026-03-25 12:27:01.882 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] Creating WebView | url=https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdm
+2026-03-25 12:27:01.886 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] WebView UA | ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+2026-03-25 12:27:01.886 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine.runSession] HEADLESS mode | url=https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdm
+2026-03-25 12:27:01.886 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.runSession] Loading URL | url=https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdm
+2026-03-25 12:27:02.291 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageStarted] Page started | url=https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00v
+2026-03-25 12:27:02.514 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=80
+2026-03-25 12:27:02.525 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageStarted] Page started | url=https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdm
+2026-03-25 12:27:02.678 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=80
+2026-03-25 12:27:02.843 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=100
+2026-03-25 12:27:02.843 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=100
+2026-03-25 12:27:02.843 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageFinished] Page finished | url=https://web3256x.faselhdx.xyz/video_player?player_token=bkdYVk5ONXo0RGxYVEhYaHdm
+2026-03-25 12:27:02.872 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine.onPageFinished] Dwell time not met, waiting | elapsed=990, min=1000
+2026-03-25 12:27:02.916 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine.extractCookies] Cookie extraction complete | cmCount=7, jsCount=7, total=7, hasClearance=true
+2026-03-25 12:27:02.917 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageFinished] Exit after dwell time | cookies=7, hasClearance=true
+2026-03-25 12:27:02.921 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] CF Bypass natively successful. Captured 7 CF cookies and valid fully decrypted HTML payload.
+2026-03-25 12:27:02.929 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Found script block, length: 212928
+2026-03-25 12:27:02.943 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           E  [evaluateJsWithRhino] JS evaluation failed | error=syntax error (FaselHD#27)
+2026-03-25 12:27:02.943 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Rhino yielded 0 streams. Trying strict M3U8 regex fallback...
+2026-03-25 12:27:02.944 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Successfully Dispatching: auto -> https://master.c.scdns.io/stream/v2/m81bvTQ7hwaa81h9DxkCzg/1774459620/normal/0/8
+2026-03-25 12:27:02.945 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Successfully Dispatching: 1080p -> https://r466--5z6nc80t.c.scdns.io/stream/v1/hls/HK6EHwG9l7X7lSkQbpU9HQ/177445962
+2026-03-25 12:27:02.945 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Successfully Dispatching: 720p -> https://r466--5z6nc80t.c.scdns.io/stream/v1/hls/FAJqb12lf-AOSC-p5Yk09g/177445962
+2026-03-25 12:27:02.945 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Successfully Dispatching: 360p -> https://r466--5z6nc80t.c.scdns.io/stream/v1/hls/SH6c9na8_7bIYo7q6iAUVA/177445962
+2026-03-25 12:27:02.945 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           I  [getUrl] Successfully returned 4 streams flawlessly wrapped via Cloudstream Core JWPlayer CF bypass architecture!
+2026-03-25 12:27:02.987 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=100
+2026-03-25 12:27:02.987 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine] Loading progress | percent=100
+2026-03-25 12:27:02.987 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageFinished] Page finished | url=https://web3256x.faselhdx.xyz/video_player?player_token=enZtdTZ4bHRESDhrcVR3Y00v
+2026-03-25 12:27:03.003 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           D  [CfBypassEngine.extractCookies] Cookie extraction complete | cmCount=7, jsCount=7, total=7, hasClearance=true
+2026-03-25 12:27:03.003 29453-29453 WebViewStrategy         com.lagradost.cloudstream3           I  [CfBypassEngine.onPageFinished] Exit condition met | cookies=7, hasClearance=true
+2026-03-25 12:27:03.010 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] CF Bypass natively successful. Captured 7 CF cookies and valid fully decrypted HTML payload.
+2026-03-25 12:27:03.029 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Found script block, length: 66957
+2026-03-25 12:27:03.045 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           E  [evaluateJsWithRhino] JS evaluation failed | error=syntax error (FaselHD#20)
+2026-03-25 12:27:03.045 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Rhino yielded 0 streams. Trying strict M3U8 regex fallback...
+2026-03-25 12:27:03.046 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           D  [getUrl] Successfully Dispatching: 1080p -> https://r466--5z6nc80t.c.scdns.io/stream/v1/hls/HK6EHwG9l7X7lSkQbpU9HQ/177445962
+2026-03-25 12:27:03.046 29453-29541 FaselHDExtractor        com.lagradost.cloudstream3           I  [getUrl] Successfully returned 1 streams flawlessly wrapped via Cloudstream Core JWPlayer CF bypass architecture!
+2026-03-25 12:27:03.046 29453-29541 [FaselHDV2] [loadLinks] com.lagradost.cloudstream3           I  Explicit FaselHD Headless Extraction achieved successfully! Bypassing VideoSniffer natively.
+2026-03-25 12:27:03.049 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  loadPlayer
+2026-03-25 12:27:03.049 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:27:03.049 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:27:03.049 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  loadOnlinePlayer ExtractorLink(name=FaselHD 1080p, url=https://r466--5z6nc80t.c.scdns.io/stream/v1/hls/HK6EHwG9l7X7lSkQbpU9HQ/1774459620/web3256x.faselhdx.xyz/all/89.245.8.154/yes/DE/0/05-02/1/639f1bbfe244c6cd5db7ed5865b52bb7/160_hd1080b_playlist.m3u8, referer=https://faselhdx.xyz, type=M3U8)
+2026-03-25 12:27:03.053 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  loadExo
+2026-03-25 12:27:03.057 29453-29453 ExoPlayerImpl           com.lagradost.cloudstream3           I  Init 78265e6 [AndroidXMedia3/1.8.0] [dm3q, SM-S918B, samsung, 36]
+2026-03-25 12:27:03.065 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=androidx.media3.exoplayer.ExoPlayerImpl@78265e6, source=Player)
+2026-03-25 12:27:03.088 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: StatusEvent(wasPlaying=IsBuffering, isPlaying=IsBuffering, source=Player)
+2026-03-25 12:27:03.090 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=0, toMs=0, durationMs=-9223372036854775807)
+2026-03-25 12:27:03.092 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  setActiveSubtitles 0
+2026-03-25 12:27:03.092 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  autoSelectFromSettings = null
+2026-03-25 12:27:03.329 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: EmbeddedSubtitlesFetchedEvent(tracks=[], source=Player)
+2026-03-25 12:27:03.329 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: TracksChangedEvent(source=Player)
+2026-03-25 12:27:03.330 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: SubtitlesUpdatedEvent(source=Player)
+2026-03-25 12:27:03.691 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: ResizedEvent(height=1080, width=1920, source=Player)
+2026-03-25 12:27:03.692 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Rendered first frame
+2026-03-25 12:27:03.692 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  setPreferredSubtitles init null
+2026-03-25 12:27:03.693 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: ResizedEvent(height=1080, width=1920, source=Player)
+2026-03-25 12:27:03.693 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=0, toMs=0, durationMs=3527017)
+2026-03-25 12:27:03.704 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=0, toMs=0, durationMs=3527017)
+2026-03-25 12:27:03.707 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=0, toMs=0, durationMs=3527017)
+2026-03-25 12:27:03.777 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: StatusEvent(wasPlaying=IsPaused, isPlaying=IsPlaying, source=Player)
+2026-03-25 12:27:03.784 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: RequestAudioFocusEvent(source=Player)
+2026-03-25 12:27:05.619 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-25 12:27:05.619 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-25 12:27:05.620 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=1658, toMs=1658, durationMs=3527017)
+2026-03-25 12:27:05.620 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
+2026-03-25 12:27:05.620 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PauseEvent(source=Player)
+2026-03-25 12:27:05.621 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: StatusEvent(wasPlaying=IsPlaying, isPlaying=IsPaused, source=Player)
+2026-03-25 12:27:05.705 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  SET STYLE = SaveCaptionStyle(foregroundColor=-1, backgroundColor=0, windowColor=0, edgeType=1, edgeColor=-16777216, typeface=null, typefaceFilePath=null, elevation=20, fixedTextSize=null, edgeSize=null, removeCaptions=false, removeBloat=true, upperCase=false, bold=false, italic=false, backgroundRadius=null)
+2026-03-25 12:27:05.773 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  reloadPlayer
+2026-03-25 12:27:05.773 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:27:05.773 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:27:05.949 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  releasePlayer
+2026-03-25 12:27:05.949 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PositionEvent(source=Player, fromMs=1670, toMs=1670, durationMs=3527017)
+2026-03-25 12:27:05.950 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: StatusEvent(wasPlaying=IsPaused, isPlaying=IsPaused, source=Player)
+2026-03-25 12:27:05.952 29453-29453 ExoPlayerImpl           com.lagradost.cloudstream3           I  Release 78265e6 [AndroidXMedia3/1.8.0] [dm3q, SM-S918B, samsung, 36] [media3.common, media3.ui, media3.exoplayer.hls, media3.exoplayer, media3.decoder, media3.session, media3.datasource, media3.database, media3.extractor, media3.decoder.ffmpeg]
+2026-03-25 12:27:05.973 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  Handle event: PlayerAttachedEvent(player=null, source=Player)
+2026-03-25 12:27:05.974 29453-29453 ExoPlayerImplInternal   com.lagradost.cloudstream3           W  Ignoring messages sent after release.
+2026-03-25 12:27:06.247 29453-29969 ApiError                com.lagradost.cloudstream3           D  -------------------------------------------------------------------
+2026-03-25 12:27:06.247 29453-29969 ApiError                com.lagradost.cloudstream3           D  safeApiCall: StandaloneCoroutine was cancelled
+2026-03-25 12:27:06.247 29453-29969 ApiError                com.lagradost.cloudstream3           D  safeApiCall: StandaloneCoroutine was cancelled
+2026-03-25 12:27:06.247 29453-29969 System.err              com.lagradost.cloudstream3           W  kotlinx.coroutines.JobCancellationException: StandaloneCoroutine was cancelled; job=StandaloneCoroutine{Cancelling}@1cdcc58
+2026-03-25 12:27:06.247 29453-29969 ApiError                com.lagradost.cloudstream3           D  -------------------------------------------------------------------
+2026-03-25 12:27:07.999 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  onStop
+2026-03-25 12:27:07.999 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  saveData
+2026-03-25 12:27:07.999 29453-29453 CS3ExoPlayer            com.lagradost.cloudstream3           I  handleEvent Pause
