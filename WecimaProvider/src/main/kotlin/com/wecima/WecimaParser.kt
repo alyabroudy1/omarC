@@ -9,7 +9,7 @@ import com.cloudstream.shared.parsing.WatchServerSelector
 
 import org.jsoup.nodes.Element
 import com.cloudstream.shared.parsing.ParserInterface
-import com.lagradost.cloudstream3.utils.ProviderLogger
+import com.cloudstream.shared.logging.ProviderLogger
 
 class WecimaParser : NewBaseParser() {
 
