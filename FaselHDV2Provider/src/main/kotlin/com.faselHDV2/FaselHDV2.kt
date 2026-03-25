@@ -9,6 +9,7 @@ import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import com.lagradost.cloudstream3.utils.ExtractorLink
 
 class FaselHDV2 : BaseProvider() {
 
@@ -181,5 +182,59 @@ class FaselHDV2 : BaseProvider() {
             e.printStackTrace()
             return emptyList()
         }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[FaselHDV2] [loadLinks]"
+        Log.i(methodTag, "Explicitly intercepting loadLinks to force FaselHDExtractor execution natively!")
+
+        try {
+            // Fetch detail page identically to BaseProvider
+            val doc = httpService.getDocument(data)
+            if (doc != null) {
+                // Parse URLs dynamically
+                val watchUrls = getParser().extractWatchServersUrls(doc)
+                Log.d(methodTag, "Explicit Extraction intercepted ${watchUrls.size} URLs: $watchUrls")
+
+                if (watchUrls.isNotEmpty()) {
+                    val extractor = com.cloudstream.shared.extractors.FaselHDExtractor()
+                    
+                    // Parallel extraction explicitly leveraging CfBypassEngine natively!
+                    val success = coroutineScope {
+                        watchUrls.map { watchUrl ->
+                            async {
+                                var found = false
+                                try {
+                                    extractor.getUrl(watchUrl, data, subtitleCallback) { link ->
+                                        callback(link)
+                                        found = true
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(methodTag, "FaselHD Explicit Extraction error: ${e.message}")
+                                }
+                                found
+                            }
+                        }.awaitAll().any { it }
+                    }
+
+                    if (success) {
+                        Log.i(methodTag, "Explicit FaselHD Headless Extraction achieved successfully! Bypassing VideoSniffer natively.")
+                        return true
+                    } else {
+                        Log.w(methodTag, "Explicit FaselHD Extractor yielded 0 links. Falling back natively to VideoSniffer.")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Explicit loadLinks extraction crashed: ${e.message}. Triggering fallback natively.")
+        }
+
+        // 100% Native BaseProvider VideoSniffer Fallback Architecture
+        return super.loadLinks(data, isCasting, subtitleCallback, callback)
     }
 }
