@@ -7,6 +7,8 @@ import com.cloudstream.shared.android.PluginContext
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.extractors.SnifferExtractor
 
+import com.cloudstream.shared.extractors.registerSharedExtractors
+
 @CloudstreamPlugin
 class ArabseedV4Plugin: Plugin() {
     override fun load(context: Context) {
@@ -18,15 +20,8 @@ class ArabseedV4Plugin: Plugin() {
             ActivityProvider.setActivity(context)
         }
 
-        // Register extractors
-        registerExtractorAPI(com.cloudstream.shared.extractors.ReviewRateExtractor())    
-        registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) 
-        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor()) 
-        registerExtractorAPI(com.cloudstream.shared.extractors.Up4FunExtractor())
-
-        val sniffer = SnifferExtractor()
-        sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
-        registerExtractorAPI(sniffer)       
+        // Dynamically register all shared extractors (Vidmoly, EarnVids, ReviewRate, Sniffer, etc)
+        registerSharedExtractors()
 
         // Register provider
         registerMainAPI(ArabseedV4())
