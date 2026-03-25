@@ -7,6 +7,10 @@ import com.cloudstream.shared.parsing.MainPageConfig
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.WatchServerSelector
 
+import org.jsoup.nodes.Element
+import com.cloudstream.shared.parsing.ParserInterface
+import com.lagradost.cloudstream3.utils.ProviderLogger
+
 class WecimaParser : NewBaseParser() {
 
     override val mainPageConfig = MainPageConfig(
@@ -15,6 +19,17 @@ class WecimaParser : NewBaseParser() {
         url = CssSelector("a", "href"),
         poster = CssSelector("meta[itemprop=thumbnailUrl], span.BG--GridItem", "content, data-src, style", regex = """url\(['"]?(.*?)['"]?\)""")
     )
+
+    override fun parseItem(element: Element, config: com.cloudstream.shared.parsing.MainPageConfig): ParserInterface.ParsedItem? {
+        val item = super.parseItem(element, config)
+        if (item != null) {
+            val pUrl = item.posterUrl ?: ""
+            if (pUrl.isBlank() || pUrl.contains("wecima.webp") || pUrl.contains("placeholder")) {
+                ProviderLogger.e("WecimaParser", "parseItem", "Failed to extract valid poster. Parsed URL: '$pUrl' | Container HTML Dump:\n${element.outerHtml()}")
+            }
+        }
+        return item
+    }
 
     override val searchConfig = mainPageConfig
 
