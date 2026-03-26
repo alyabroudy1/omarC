@@ -3,12 +3,11 @@ package com.cloudstream.shared.extractors
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.WebViewResult
 import com.cloudstream.shared.webview.ExitCondition
-import com.cloudstream.shared.android.ActivityProvider
-import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
@@ -31,11 +30,22 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
         val embedId = url.substringAfterLast("/")
         val apiUrl = "https://$host/api/videos/$embedId/embed/details"
         
-        android.util.Log.d(name, "Fetching internal Byse API: $apiUrl")
+        val service = ProviderHttpServiceHolder.getInstance()
+        if (service == null) {
+            android.util.Log.e(name, "ProviderHttpService is not initialized")
+            return
+        }
+        
+        android.util.Log.d(name, "Fetching internal Byse API: $apiUrl using ProviderHttpService")
         
         try {
-            // 1. Bypass broken SPA wrapper by fetching real iframe URL dynamically via REST
-            val response = app.get(apiUrl, referer = url).text
+            // 1. Bypass broken SPA wrapper by fetching real iframe URL securely via central HTTP Service
+            val response = service.getText(apiUrl, mapOf("Referer" to url))
+            if (response.isNullOrEmpty()) {
+                android.util.Log.e(name, "Empty response from API")
+                return
+            }
+            
             var iframeUrl = Regex("\"embed_frame_url\"\\s*:\\s*\"([^\"]+)\"").find(response)?.groupValues?.get(1)
             
             if (iframeUrl.isNullOrEmpty()) {
@@ -45,26 +55,27 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                 iframeUrl = iframeUrl.replace("\\/", "/") 
             }
             
-            android.util.Log.d(name, "Launching Headless Sniffer for raw iframe -> $iframeUrl")
+            android.util.Log.d(name, "Launching Service Headless Sniffer for raw iframe -> $iframeUrl")
             
-            // 2. Launch Sniffer in strict HEADLESS mode
-            val engine = VideoSnifferEngine { ActivityProvider.currentActivity }
-            val sessionResult = engine.runSession(
+            // 2. Launch Sniffer securely relying on ProviderHttpService's engine infrastructure
+            val sessionResult = service.snifferEngine.runSession(
                 url = iframeUrl,
                 mode = Mode.HEADLESS,
-                userAgent = com.cloudstream.shared.session.SessionProvider.getUserAgent(), // Use Cloudstream's shared user agent
+                userAgent = service.userAgent,
                 exitCondition = ExitCondition.VideoFound(minCount = 1),
-                timeout = 15000,
+                timeout = 20000,
                 delayMs = 1500,
                 referer = url
             )
             
             android.util.Log.d(name, "Sniffer completed with result type: ${sessionResult.javaClass.simpleName}")
             
-            // 3. Process Extractor Matches
+            // 3. Process Extractor Matches Gracefully
             if (sessionResult is WebViewResult.Success) {
+                // Expose cookies from headless sniffer run to the HTTP service seamlessly
+                service.storeCdnCookies(iframeUrl, sessionResult.cookies)
+                
                 sessionResult.foundLinks.forEach { source ->
-                    // Make sure we only grab valid media formats
                     if (source.url.contains(".m3u8", ignoreCase = true) || source.url.contains(".mp4", ignoreCase = true)) {
                         android.util.Log.d(name, "Extracted HEADLESS link -> ${source.url.take(100)}")
                         
@@ -92,13 +103,12 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                         )
                     }
                 }
-            } else if (sessionResult is WebViewResult.Error) {
-                android.util.Log.e(name, "Headless sniffer error: ${sessionResult.reason}")
-            } else if (sessionResult is WebViewResult.Timeout) {
-                android.util.Log.e(name, "Headless sniffer timed out while scanning $iframeUrl")
+            } else if (sessionResult is WebViewResult.Timeout || sessionResult is WebViewResult.Error) {
+                // Exit gracefully, no fallback.
+                android.util.Log.w(name, "No video found or timed out scanning $iframeUrl - exiting gracefully.")
             }
         } catch (e: Exception) {
-            android.util.Log.e(name, "Exception during Byse HEADLESS extraction: ${e.message}", e)
+            android.util.Log.w(name, "Graceful failure during HEADLESS extraction: ${e.message}")
         }
     }
 }
