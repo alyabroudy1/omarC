@@ -185,4 +185,93 @@ class FaselHDV2 : BaseProvider() {
         }
     }
 
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[$name] [loadLinks]"
+        Log.i(methodTag, "START data='$data' - Using EXCLUSIVE VideoSniffer session natively!")
+
+        try {
+            httpService.ensureInitialized()
+            
+            // 1. Fetch detail page
+            val detailDoc = httpService.getDocument(data)
+            if (detailDoc == null) {
+                Log.e(methodTag, "Failed to fetch detail document")
+                return false
+            }
+            
+            // 2. Extract watch URLs (servers)
+            val watchUrls = getParser().extractWatchServersUrls(detailDoc)
+            Log.d(methodTag, "Found ${watchUrls.size} watch URLs: $watchUrls")
+            
+            if (watchUrls.isEmpty()) {
+                Log.w(methodTag, "No watch URLs found")
+                return false
+            }
+
+            // 3. Build server selectors for the sniffer (handles server clicks)
+            val serverSelectors = getParser().buildServerSelectors(detailDoc, watchUrls)
+            
+            val referer = try {
+                val uri = java.net.URI(data)
+                "${uri.scheme}://${uri.host}/"
+            } catch (e: Exception) {
+                mainUrl
+            }
+
+            var anyFound = false
+
+            // 4. Sniff EACH URL one by one (Exclusive VideoSniffer mode)
+            for (index in watchUrls.indices) {
+                val watchUrl = watchUrls[index]
+                val selector = serverSelectors.getOrNull(index)
+                
+                Log.d(methodTag, "Sniffing server [$index]: $watchUrl (hasSelector=${selector != null})")
+                
+                val result = httpService.snifferEngine.runSession(
+                    url = watchUrl,
+                    mode = com.cloudstream.shared.webview.Mode.FULLSCREEN,
+                    userAgent = httpService.userAgent,
+                    exitCondition = com.cloudstream.shared.webview.ExitCondition.VideoFound(minCount = 1),
+                    timeout = 45_000L,
+                    referer = referer,
+                    selector = selector
+                )
+
+                if (result is com.cloudstream.shared.webview.WebViewResult.Success) {
+                    val capturedLinks = result.foundLinks.map { 
+                        newExtractorLink(
+                            source = name,
+                            name = "$name ${it.qualityLabel}",
+                            url = it.url,
+                            type = if (it.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.headers = it.headers
+                            this.referer = referer
+                        }
+                    }
+
+                    if (capturedLinks.isNotEmpty()) {
+                        capturedLinks.forEach { callback(it) }
+                        anyFound = true
+                        Log.i(methodTag, "Captured ${capturedLinks.size} links from server [$index]")
+                        // Continue to other servers? Or return true? 
+                        // Typically, if one server works, we might still want others for more qualities.
+                    }
+                } else if (result is com.cloudstream.shared.webview.WebViewResult.Timeout) {
+                    Log.w(methodTag, "Timeout sniffing server [$index]")
+                }
+            }
+
+            return anyFound
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in loadLinks (exclusive sniffer): ${e.message}")
+            e.printStackTrace()
+            return false
+        }
+    }
 }
