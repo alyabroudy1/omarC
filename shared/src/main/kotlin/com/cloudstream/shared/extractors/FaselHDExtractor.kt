@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.cloudstream.shared.util.WebConfig
 import org.mozilla.javascript.Context as RhinoContext
 
 /**
@@ -44,11 +45,13 @@ class FaselHDExtractor : ExtractorApi() {
     ) {
         val methodName = "getUrl"
         val effectiveReferer = referer ?: "$mainUrl/"
-        ProviderLogger.i(TAG, methodName, "Starting cleanly isolated CF Bypass extraction for: $url")
+        val activity = ActivityProvider.currentActivity
+        val unifiedUa = if (activity != null) WebConfig.getUserAgent(activity) else WebConfig.getCachedUserAgent()
+        
+        ProviderLogger.i(TAG, methodName, "Starting cleanly isolated CF Bypass extraction for: $url (UA=${unifiedUa.take(60)})")
 
         // 1. Initialize CfBypassEngine
         val engine = cfEngine ?: run {
-            val activity = ActivityProvider.currentActivity
             if (activity == null) {
                 ProviderLogger.e(TAG, methodName, "No Activity available for CfBypassEngine")
                 return
@@ -60,7 +63,7 @@ class FaselHDExtractor : ExtractorApi() {
         var result = engine.runSession(
             url = url,
             mode = Mode.HEADLESS,
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            userAgent = unifiedUa,
             exitCondition = ExitCondition.PageLoaded,
             timeout = 18_000L
         )
@@ -115,8 +118,12 @@ class FaselHDExtractor : ExtractorApi() {
                             this.referer = effectiveReferer
                             this.quality = qualityFromLabel(stream.quality)
                             
-                            // Always send Referer as an HTTP header — the CDN requires it
-                            val headerMap = mutableMapOf("Referer" to effectiveReferer)
+                            // Always send Referer + Origin as HTTP headers — the CDN requires both
+                            val headerMap = mutableMapOf(
+                                "Referer" to effectiveReferer,
+                                "Origin" to effectiveReferer.trimEnd('/'),
+                                "User-Agent" to unifiedUa
+                            )
                             
                             // Only inject cookies when the stream HOST is a fasel domain
                             // (CDN URLs like scdns.io embed faselhdx.xyz in the PATH, not the host)
