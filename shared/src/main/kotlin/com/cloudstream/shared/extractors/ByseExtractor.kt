@@ -20,8 +20,12 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        android.util.Log.d(name, "getUrl: Starting extraction for Bysezejataos (SPA) -> $url")
+        android.util.Log.d(name, "getUrl: Incoming referer -> $referer")
+
         // Build the sniffer protocol URL
         val snifferUrl = SnifferExtractor.createSnifferUrl(url, referer ?: "")
+        android.util.Log.d(name, "getUrl: Generated Sniffer URL -> $snifferUrl")
         
         // Delegate to the shared SnifferExtractor which launches a headless-like Android Webview, 
         // fully bypassing Cloudflare and extracting the raw m3u8/mp4 smoothly.
@@ -30,6 +34,19 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
             com.cloudstream.shared.android.ActivityProvider.currentActivity 
         }
         
-        sniffer.getUrl(snifferUrl, referer, subtitleCallback, callback)
+        android.util.Log.d(name, "getUrl: Delegating to SnifferExtractor...")
+        
+        // Wrap the callback to log the exact extracted targets
+        val wrappedCallback: (ExtractorLink) -> Unit = { link ->
+            android.util.Log.d(name, "getUrl: [SUCCESS] Sniffer returned link -> name=${link.name}, quality=${link.quality}, url=${link.url.take(100)}")
+            callback(link)
+        }
+
+        try {
+            sniffer.getUrl(snifferUrl, referer, subtitleCallback, wrappedCallback)
+            android.util.Log.d(name, "getUrl: Sniffer extractor delegation completed.")
+        } catch (e: Exception) {
+            android.util.Log.e(name, "getUrl: Sniffer extractor failed with exception: ${e.message}", e)
+        }
     }
 }
