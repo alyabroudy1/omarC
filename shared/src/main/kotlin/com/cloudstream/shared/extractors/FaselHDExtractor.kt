@@ -115,8 +115,10 @@ class FaselHDExtractor : ExtractorApi() {
                             this.referer = effectiveReferer
                             this.quality = qualityFromLabel(stream.quality)
                             
-                            // Natively securely override stream buffer CF HTTP Cookies only for same-domain
-                            if (cookieHeader.isNotBlank() && stream.url.contains("fasel", ignoreCase = true)) {
+                            // Only inject cookies when the stream HOST is a fasel domain
+                            // (CDN URLs like scdns.io embed faselhdx.xyz in the PATH, not the host)
+                            val streamHost = try { java.net.URI(stream.url).host ?: "" } catch (_: Exception) { "" }
+                            if (cookieHeader.isNotBlank() && streamHost.contains("fasel", ignoreCase = true)) {
                                 this.headers = mapOf("Cookie" to cookieHeader)
                             }
                         }
@@ -175,10 +177,17 @@ class FaselHDExtractor : ExtractorApi() {
                 appendLine("""
                     var console = { log: function(){}, error: function(){}, warn: function(){} };
                     var window = {};
+                    var _mockEl = {setAttribute:function(){},getAttribute:function(){return null;},style:{},classList:{add:function(){},remove:function(){}},innerHTML:'',textContent:'',appendChild:function(){},removeChild:function(){},addEventListener:function(){}};
                     var document = { 
                         write: function(){}, 
-                        createElement: function(){return {setAttribute: function(){}};}, 
-                        head: {}, body: {}, querySelectorAll: function(){return [];}
+                        createElement: function(){return _mockEl;}, 
+                        getElementById: function(){return _mockEl;},
+                        getElementsByClassName: function(){return [];},
+                        getElementsByTagName: function(){return [];},
+                        querySelector: function(){return _mockEl;},
+                        querySelectorAll: function(){return [];},
+                        head: _mockEl, body: _mockEl,
+                        addEventListener: function(){}
                     };
                     var $ = function(selector) {
                         if (typeof selector === 'function') { setTimeout(selector, 0); return; }
