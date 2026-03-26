@@ -158,7 +158,12 @@ class ByseExtractor(
         ProviderLogger.d(TAG, "decrypt", "Starting decryption with AES-256-GCM")
         
         val ivBytes = try {
-            Base64.decode(playback.iv, Base64.NO_WRAP)
+            try {
+                Base64.decode(playback.iv, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ProviderLogger.d(TAG, "decrypt", "IV NO_WRAP failed, trying URL_SAFE")
+                Base64.decode(playback.iv, Base64.URL_SAFE)
+            }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode IV", e)
             return null
@@ -171,14 +176,30 @@ class ByseExtractor(
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
         
         val keyBytes = try {
-            val part1 = Base64.decode(playback.keyParts[0], Base64.NO_WRAP)
-            val part2 = Base64.decode(playback.keyParts[1], Base64.NO_WRAP)
+            val part1Base64 = playback.keyParts[0]
+            val part2Base64 = playback.keyParts[1]
+            ProviderLogger.d(TAG, "decrypt", "key_part0 length: ${part1Base64.length}, key_part1 length: ${part2Base64.length}")
+            
+            // Try standard Base64 first, then URL-safe
+            val part1 = try {
+                Base64.decode(part1Base64, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ProviderLogger.d(TAG, "decrypt", "NO_WRAP failed for part1, trying URL_SAFE")
+                Base64.decode(part1Base64, Base64.URL_SAFE)
+            }
+            val part2 = try {
+                Base64.decode(part2Base64, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ProviderLogger.d(TAG, "decrypt", "NO_WRAP failed for part2, trying URL_SAFE")
+                Base64.decode(part2Base64, Base64.URL_SAFE)
+            }
+            ProviderLogger.d(TAG, "decrypt", "Key parts decoded: part1=${part1.size}, part2=${part2.size}")
             ByteBuffer.allocate(part1.size + part2.size).apply {
                 put(part1)
                 put(part2)
             }.array()
         } catch (e: Exception) {
-            ProviderLogger.e(TAG, "decrypt", "Failed to build key from key_parts", e)
+            ProviderLogger.e(TAG, "decrypt", "Failed to build key from key_parts: ${e.message}", e)
             return null
         }
         
@@ -189,7 +210,12 @@ class ByseExtractor(
         ProviderLogger.d(TAG, "decrypt", "Key constructed, size: ${keyBytes.size}")
         
         val payloadBytes = try {
-            Base64.decode(playback.payload, Base64.NO_WRAP)
+            try {
+                Base64.decode(playback.payload, Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ProviderLogger.d(TAG, "decrypt", "Payload NO_WRAP failed, trying URL_SAFE")
+                Base64.decode(playback.payload, Base64.URL_SAFE)
+            }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode payload", e)
             return null
