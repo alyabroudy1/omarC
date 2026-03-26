@@ -385,15 +385,11 @@ class ByseExtractor(
             val apiUrl = buildApiUrl(host, videoId, "playback")
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
-            val httpService = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-            val response = if (httpService != null) {
-                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using ProviderHttpService with skipRewrite=true")
-                // Use skipRewrite=true to prevent domain rewriting (bysezejataos.com -> asd.pics)
-                httpService.executeDirectRequest(apiUrl, skipRewrite = true).html
-            } else {
-                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using standard app.get request")
-                com.lagradost.cloudstream3.app.get(apiUrl).text
-            }
+            // Use app.get() directly — NOT ProviderHttpService.
+            // The Byse CDN token is tied to the client's ASN (network identifier).
+            // ProviderHttpService routes through a CF session proxy with a different ASN,
+            // causing a token mismatch → 404 when ExoPlayer tries to play from the phone's network.
+            val response = com.lagradost.cloudstream3.app.get(apiUrl).text
             
             val responseStr = response ?: ""
             
@@ -473,6 +469,7 @@ class ByseExtractor(
             ) {
                 this.referer = referer
                 this.quality = qualityValue
+                this.headers = mapOf("Referer" to referer)
             }
         )
         
