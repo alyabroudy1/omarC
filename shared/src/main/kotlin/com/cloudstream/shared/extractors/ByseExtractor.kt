@@ -9,7 +9,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.app
-import java.nio.ByteBuffer
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -170,46 +169,61 @@ class ByseExtractor(
         }
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
         
-        val keyBytes = try {
-            val part1Base64 = playback.keyParts[0]
-            val part2Base64 = playback.keyParts[1]
-            ProviderLogger.d(TAG, "decrypt", "key_part0 length: ${part1Base64.length}, key_part1 length: ${part2Base64.length}")
-            
-            // Try standard Base64 first, then URL-safe
-            val part1 = try {
-                Base64.decode(part1Base64, Base64.NO_WRAP)
-            } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "NO_WRAP failed for part1, trying URL_SAFE")
-                Base64.decode(part1Base64, Base64.URL_SAFE)
-            }
-            val part2 = try {
-                Base64.decode(part2Base64, Base64.NO_WRAP)
-            } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "NO_WRAP failed for part2, trying URL_SAFE")
-                Base64.decode(part2Base64, Base64.URL_SAFE)
-            }
-            ProviderLogger.d(TAG, "decrypt", "Key parts decoded: part1=${part1.size}, part2=${part2.size}")
-            val combined = ByteBuffer.allocate(part1.size + part2.size).apply {
-                put(part1)
-                put(part2)
-            }.array()
-            
-            // Ensure exactly 32 bytes - pad with zeros if needed
-            val keyBytes = if (combined.size < 32) {
-                val padded = ByteArray(32)
-                System.arraycopy(combined, 0, padded, 0, combined.size)
-                ProviderLogger.d(TAG, "decrypt", "Key padded from ${combined.size} to 32 bytes")
-                padded
-            } else if (combined.size > 32) {
-                combined.copyOf(32).also {
-                    ProviderLogger.d(TAG, "decrypt", "Key truncated from ${combined.size} to 32 bytes")
-                }
-            } else {
-                combined
-            }
+        val part1Base64 = playback.keyParts[0]
+        val part2Base64 = playback.keyParts[1]
+        ProviderLogger.d(TAG, "decrypt", "key_part0 length: ${part1Base64.length}, key_part1 length: ${part2Base64.length}")
+        
+        // Decode key parts
+        var part1: ByteArray? = null
+        var part2: ByteArray? = null
+        
+        try {
+            part1 = Base64.decode(part1Base64, Base64.NO_WRAP)
         } catch (e: Exception) {
-            ProviderLogger.e(TAG, "decrypt", "Failed to build key from key_parts: ${e.message}", e)
+            try {
+                part1 = Base64.decode(part1Base64, Base64.URL_SAFE)
+            } catch (e2: Exception) {
+                ProviderLogger.e(TAG, "decrypt", "Failed to decode key_part0", e2)
+                return null
+            }
+        }
+        try {
+            part2 = Base64.decode(part2Base64, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            try {
+                part2 = Base64.decode(part2Base64, Base64.URL_SAFE)
+            } catch (e2: Exception) {
+                ProviderLogger.e(TAG, "decrypt", "Failed to decode key_part1", e2)
+                return null
+            }
+        }
+        
+        if (part1 == null || part2 == null) {
+            ProviderLogger.e(TAG, "decrypt", "Failed to decode key parts")
             return null
+        }
+        
+        val part1Arr = part1!!
+        val part2Arr = part2!!
+        
+        ProviderLogger.d(TAG, "decrypt", "Key parts decoded: part1=${part1Arr.size}, part2=${part2Arr.size}")
+        
+        // Combine key parts into 32-byte key
+        val combinedSize = part1Arr.size + part2Arr.size
+        val combined = ByteArray(combinedSize)
+        var idx = 0
+        for (b in part1Arr) { combined[idx] = b; idx++ }
+        for (b in part2Arr) { combined[idx] = b; idx++ }
+        
+        // Ensure exactly 32 bytes
+        val keyBytes: ByteArray
+        if (combinedSize < 32) {
+            keyBytes = ByteArray(32)
+            for (i in combined.indices) keyBytes[i] = combined[i]
+        } else if (combinedSize > 32) {
+            keyBytes = combined.copyOf(32)
+        } else {
+            keyBytes = combined
         }
         
         ProviderLogger.d(TAG, "decrypt", "Key constructed, size: ${keyBytes.size}")
@@ -232,14 +246,18 @@ class ByseExtractor(
         }
         ProviderLogger.d(TAG, "decrypt", "Payload decoded, size: ${payloadBytes.size}")
         
-        val ciphertext = payloadBytes.dropLast(16).toByteArray()
-        val authTag = payloadBytes.takeLast(16).toByteArray()
-        ProviderLogger.d(TAG, "decrypt", "Ciphertext: ${ciphertext.size}, AuthTag: ${authTag.size}")
+        val ciphertext = payloadBytes.copyOf(payloadBytes.size - 16)
+        val authTag = payloadBytes.copyOfRange(payloadBytes.size - 16, payloadBytes.size)
+        
+        // Combine ciphertext and authTag properly
+        val ciphertextWithTag = ByteArray(ciphertext.size + authTag.size)
+        for (i in ciphertext.indices) ciphertextWithTag[i] = ciphertext[i]
+        for (i in authTag.indices) ciphertextWithTag[ciphertext.size + i] = authTag[i]
         
         // Try decryption with main key (built from key_parts) - no need for decryptKeys
         ProviderLogger.d(TAG, "decrypt", "Trying decryption with main key")
         try {
-            val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertext, authTag, null)
+            val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertextWithTag, null)
             if (result != null) {
                 ProviderLogger.i(TAG, "decrypt", "SUCCESS with main key, decrypted length: ${result.length}")
                 return parseDecryptedJson(result)
@@ -252,7 +270,7 @@ class ByseExtractor(
         for ((keyName, keyBase64) in playback.decryptKeys) {
             ProviderLogger.d(TAG, "decrypt", "Trying decrypt key fallback: $keyName")
             try {
-                val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertext, authTag, keyBase64)
+                val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertextWithTag, keyBase64)
                 if (result != null) {
                     ProviderLogger.i(TAG, "decrypt", "SUCCESS with key: $keyName, decrypted length: ${result.length}")
                     return parseDecryptedJson(result)
@@ -269,8 +287,7 @@ class ByseExtractor(
     private fun tryDecryptWithKey(
         mainKeyBytes: ByteArray,
         ivBytes: ByteArray,
-        ciphertext: ByteArray,
-        authTag: ByteArray,
+        ciphertextWithTag: ByteArray,
         extraKeyBase64: String?
     ): String? {
         // Use mainKeyBytes directly - the decrypt_keys are not needed
@@ -282,7 +299,6 @@ class ByseExtractor(
         
         cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
         
-        val ciphertextWithTag = ciphertext + authTag
         val decrypted = cipher.doFinal(ciphertextWithTag)
         
         return String(decrypted, Charsets.UTF_8)
@@ -384,7 +400,16 @@ class ByseExtractor(
             val apiUrl = buildApiUrl(host, videoId, "playback")
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
-            val response = app.get(apiUrl).text
+            val httpService = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
+            val responseRaw = if (httpService != null) {
+                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using ProviderHttpService for authenticated request")
+                httpService.executeDirectRequest(apiUrl).html
+            } else {
+                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using standard app.get request")
+                com.lagradost.cloudstream3.app.get(apiUrl).text
+            }
+            
+            val response = responseRaw ?: ""
             
             if (response.isBlank()) {
                 ProviderLogger.w(EXTRACTOR_TAG, methodName, "Empty API response")
