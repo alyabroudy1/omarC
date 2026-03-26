@@ -43,7 +43,7 @@ class FaselHDExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val methodName = "getUrl"
-        val effectiveReferer = referer ?: mainUrl
+        val effectiveReferer = referer ?: "$mainUrl/"
         ProviderLogger.i(TAG, methodName, "Starting cleanly isolated CF Bypass extraction for: $url")
 
         // 1. Initialize CfBypassEngine

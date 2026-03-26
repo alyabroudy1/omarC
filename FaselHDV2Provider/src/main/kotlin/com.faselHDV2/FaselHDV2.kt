@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import java.net.URL
 
 class FaselHDV2 : BaseProvider() {
 
@@ -210,7 +211,8 @@ class FaselHDV2 : BaseProvider() {
                             async {
                                 var found = false
                                 try {
-                                    extractor.getUrl(watchUrl, httpService.mainUrl, subtitleCallback) { link ->
+                                    val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
+                                    extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
                                         callback(link)
                                         found = true
                                     }
