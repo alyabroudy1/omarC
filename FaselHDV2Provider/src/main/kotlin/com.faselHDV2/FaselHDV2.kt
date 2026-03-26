@@ -9,7 +9,8 @@ import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.extractors.SnifferSelector
 import java.net.URL
 
 class FaselHDV2 : BaseProvider() {
@@ -239,14 +240,14 @@ class FaselHDV2 : BaseProvider() {
                     exitCondition = com.cloudstream.shared.webview.ExitCondition.VideoFound(minCount = 1),
                     timeout = 45_000L,
                     referer = referer,
-                    selector = selector
+                    preSniffJavaScript = selector?.let { buildClickJavaScript(it) }
                 )
 
                 if (result is com.cloudstream.shared.webview.WebViewResult.Success) {
                     val capturedLinks = result.foundLinks.map { 
                         newExtractorLink(
-                            source = name,
                             name = "$name ${it.qualityLabel}",
+                            source = name,
                             url = it.url,
                             type = if (it.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         ) {
@@ -259,8 +260,6 @@ class FaselHDV2 : BaseProvider() {
                         capturedLinks.forEach { callback(it) }
                         anyFound = true
                         Log.i(methodTag, "Captured ${capturedLinks.size} links from server [$index]")
-                        // Continue to other servers? Or return true? 
-                        // Typically, if one server works, we might still want others for more qualities.
                     }
                 } else if (result is com.cloudstream.shared.webview.WebViewResult.Timeout) {
                     Log.w(methodTag, "Timeout sniffing server [$index]")
@@ -273,5 +272,32 @@ class FaselHDV2 : BaseProvider() {
             e.printStackTrace()
             return false
         }
+    }
+
+    private fun buildClickJavaScript(selector: SnifferSelector): String {
+        val escapedQuery = selector.query.replace("'", "\\'")
+        val sb = StringBuilder()
+        sb.append("(function() {")
+        sb.append("  var element = document.querySelector('$escapedQuery');")
+        sb.append("  if (!element) return 'ERROR: Element not found';")
+        
+        if (selector.attr != null) {
+            val escapedAttr = selector.attr.replace("'", "\\'")
+            sb.append("  var attrValue = element.getAttribute('$escapedAttr');")
+            sb.append("  if (!attrValue) return 'ERROR: Attribute not found';")
+            
+            if (selector.regex != null) {
+                val escapedRegex = selector.regex.replace("'", "\\'")
+                sb.append("  var regex = new RegExp('$escapedRegex');")
+                sb.append("  if (!regex.test(attrValue)) return 'ERROR: Regex mismatch';")
+            }
+        }
+        
+        sb.append("  var clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });")
+        sb.append("  element.dispatchEvent(clickEvent);")
+        sb.append("  return 'SUCCESS: Clicked element';")
+        sb.append("})();")
+        
+        return sb.toString()
     }
 }
