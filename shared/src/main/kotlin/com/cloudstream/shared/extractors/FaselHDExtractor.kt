@@ -112,7 +112,7 @@ class FaselHDExtractor : ExtractorApi() {
                             url = stream.url,
                             type = if (stream.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         ) {
-                            this.referer = mainUrl
+                            this.referer = effectiveReferer
                             this.quality = qualityFromLabel(stream.quality)
                             
                             // Natively securely override stream buffer CF HTTP Cookies!
