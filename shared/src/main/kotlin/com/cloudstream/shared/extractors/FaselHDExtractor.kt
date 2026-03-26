@@ -115,12 +115,17 @@ class FaselHDExtractor : ExtractorApi() {
                             this.referer = effectiveReferer
                             this.quality = qualityFromLabel(stream.quality)
                             
+                            // Always send Referer as an HTTP header — the CDN requires it
+                            val headerMap = mutableMapOf("Referer" to effectiveReferer)
+                            
                             // Only inject cookies when the stream HOST is a fasel domain
                             // (CDN URLs like scdns.io embed faselhdx.xyz in the PATH, not the host)
                             val streamHost = try { java.net.URI(stream.url).host ?: "" } catch (_: Exception) { "" }
                             if (cookieHeader.isNotBlank() && streamHost.contains("fasel", ignoreCase = true)) {
-                                this.headers = mapOf("Cookie" to cookieHeader)
+                                headerMap["Cookie"] = cookieHeader
                             }
+                            
+                            this.headers = headerMap
                         }
                     )
                 }
