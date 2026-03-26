@@ -175,19 +175,42 @@ class FaselHDExtractor : ExtractorApi() {
             val scope = rhino.initSafeStandardObjects()
             val mocks = buildString {
                 appendLine("""
-                    var console = { log: function(){}, error: function(){}, warn: function(){} };
-                    var window = {};
-                    var _mockEl = {setAttribute:function(){},getAttribute:function(){return null;},style:{},classList:{add:function(){},remove:function(){}},innerHTML:'',textContent:'',appendChild:function(){},removeChild:function(){},addEventListener:function(){}};
+                    var console = { log: function(){}, error: function(){}, warn: function(){}, info: function(){}, debug: function(){} };
+                    var window = { navigator: { userAgent: '' }, location: { href: '', hostname: '' }, addEventListener: function(){}, removeEventListener: function(){}, innerWidth: 1920, innerHeight: 1080, screen: { width: 1920, height: 1080 } };
+                    var _noop = function(){ return _mockEl; };
+                    var _mockEl = {
+                        setAttribute:_noop, getAttribute:function(){return null;}, removeAttribute:_noop,
+                        style:{}, classList:{add:_noop, remove:_noop, contains:function(){return false;}, toggle:_noop},
+                        innerHTML:'', textContent:'', outerHTML:'', className:'', id:'', tagName:'DIV',
+                        appendChild:_noop, removeChild:_noop, insertBefore:_noop, replaceChild:_noop, cloneNode:function(){return _mockEl;},
+                        addEventListener:_noop, removeEventListener:_noop, dispatchEvent:_noop,
+                        parentNode:null, parentElement:null, children:[], childNodes:[], firstChild:null, lastChild:null,
+                        nextSibling:null, previousSibling:null, querySelector:function(){return _mockEl;}, querySelectorAll:function(){return [];},
+                        getBoundingClientRect:function(){return {top:0,left:0,right:0,bottom:0,width:0,height:0};},
+                        offsetWidth:0, offsetHeight:0, clientWidth:0, clientHeight:0, scrollWidth:0, scrollHeight:0,
+                        // HTMLMediaElement methods (video/audio)
+                        canPlayType:function(){return 'maybe';}, play:_noop, pause:_noop, load:_noop,
+                        src:'', currentSrc:'', currentTime:0, duration:0, paused:true, ended:false, volume:1, muted:false,
+                        // HTMLInputElement
+                        value:'', checked:false, focus:_noop, blur:_noop, click:_noop, select:_noop,
+                        // Dataset
+                        dataset:{}
+                    };
                     var document = { 
-                        write: function(){}, 
-                        createElement: function(){return _mockEl;}, 
+                        write: _noop, writeln: _noop,
+                        createElement: function(tag){ var el = {}; for(var k in _mockEl) el[k]=_mockEl[k]; el.tagName=tag.toUpperCase(); return el; },
+                        createElementNS: function(ns,tag){ return document.createElement(tag); },
+                        createTextNode: function(){ return _mockEl; },
+                        createDocumentFragment: function(){ return _mockEl; },
                         getElementById: function(){return _mockEl;},
                         getElementsByClassName: function(){return [];},
                         getElementsByTagName: function(){return [];},
                         querySelector: function(){return _mockEl;},
                         querySelectorAll: function(){return [];},
-                        head: _mockEl, body: _mockEl,
-                        addEventListener: function(){}
+                        head: _mockEl, body: _mockEl, documentElement: _mockEl,
+                        addEventListener: _noop, removeEventListener: _noop,
+                        cookie: '', title: '', readyState: 'complete',
+                        location: window.location
                     };
                     var $ = function(selector) {
                         if (typeof selector === 'function') { setTimeout(selector, 0); return; }

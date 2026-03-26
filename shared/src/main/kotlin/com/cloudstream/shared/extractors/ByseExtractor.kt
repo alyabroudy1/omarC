@@ -147,6 +147,15 @@ class ByseExtractor(
             null
         }
     }
+
+    private fun decodeBase64Safe(str: String): ByteArray {
+        var cleanStr = str.replace('-', '+').replace('_', '/')
+        val pad = cleanStr.length % 4
+        if (pad > 0) {
+            cleanStr += "=".repeat(4 - pad)
+        }
+        return Base64.decode(cleanStr, Base64.DEFAULT)
+    }
     
     private fun decryptPlayback(playback: PlaybackResponse): DecryptionResult? {
         if (playback.algorithm != "AES-256-GCM") {
@@ -155,8 +164,7 @@ class ByseExtractor(
         }
         
         val ivBytes = try {
-            // IV is standard base64 encoded
-            Base64.decode(playback.iv, Base64.NO_WRAP)
+            decodeBase64Safe(playback.iv)
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode IV", e)
             return null
@@ -173,29 +181,15 @@ class ByseExtractor(
         val part2Base64 = playback.keyParts[1]
         ProviderLogger.d(TAG, "decrypt", "key_part0 length: ${part1Base64.length}, key_part1 length: ${part2Base64.length}")
         
-        // Decode key parts
         var part1: ByteArray? = null
         var part2: ByteArray? = null
         
         try {
-            part1 = Base64.decode(part1Base64, Base64.NO_WRAP)
+            part1 = decodeBase64Safe(part1Base64)
+            part2 = decodeBase64Safe(part2Base64)
         } catch (e: Exception) {
-            try {
-                part1 = Base64.decode(part1Base64, Base64.URL_SAFE)
-            } catch (e2: Exception) {
-                ProviderLogger.e(TAG, "decrypt", "Failed to decode key_part0", e2)
-                return null
-            }
-        }
-        try {
-            part2 = Base64.decode(part2Base64, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            try {
-                part2 = Base64.decode(part2Base64, Base64.URL_SAFE)
-            } catch (e2: Exception) {
-                ProviderLogger.e(TAG, "decrypt", "Failed to decode key_part1", e2)
-                return null
-            }
+            ProviderLogger.e(TAG, "decrypt", "Failed to decode key parts", e)
+            return null
         }
         
         if (part1 == null || part2 == null) {
@@ -229,12 +223,7 @@ class ByseExtractor(
         ProviderLogger.d(TAG, "decrypt", "Key constructed, size: ${keyBytes.size}")
         
         val payloadBytes = try {
-            try {
-                Base64.decode(playback.payload, Base64.NO_WRAP)
-            } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "Payload NO_WRAP failed, trying URL_SAFE")
-                Base64.decode(playback.payload, Base64.URL_SAFE)
-            }
+            decodeBase64Safe(playback.payload)
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode payload", e)
             return null
@@ -246,13 +235,9 @@ class ByseExtractor(
         }
         ProviderLogger.d(TAG, "decrypt", "Payload decoded, size: ${payloadBytes.size}")
         
-        val ciphertext = payloadBytes.copyOf(payloadBytes.size - 16)
-        val authTag = payloadBytes.copyOfRange(payloadBytes.size - 16, payloadBytes.size)
-        
-        // Combine ciphertext and authTag properly
-        val ciphertextWithTag = ByteArray(ciphertext.size + authTag.size)
-        for (i in ciphertext.indices) ciphertextWithTag[i] = ciphertext[i]
-        for (i in authTag.indices) ciphertextWithTag[ciphertext.size + i] = authTag[i]
+        // Android's AES/GCM/NoPadding Cipher.doFinal requires the ciphertext and authTag merged.
+        // The payload string encoded in base64 is already exactly ciphertext + authTag!
+        val ciphertextWithTag = payloadBytes
         
         // Try decryption with main key (built from key_parts) - no need for decryptKeys
         ProviderLogger.d(TAG, "decrypt", "Trying decryption with main key")
@@ -401,17 +386,18 @@ class ByseExtractor(
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
             val httpService = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-            val responseRaw = if (httpService != null) {
-                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using ProviderHttpService for authenticated request")
-                httpService.executeDirectRequest(apiUrl).html
+            val response = if (httpService != null) {
+                ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using ProviderHttpService with skipRewrite=true")
+                // Use skipRewrite=true to prevent domain rewriting (bysezejataos.com -> asd.pics)
+                httpService.executeDirectRequest(apiUrl, skipRewrite = true).html
             } else {
                 ProviderLogger.d(EXTRACTOR_TAG, methodName, "Using standard app.get request")
                 com.lagradost.cloudstream3.app.get(apiUrl).text
             }
             
-            val response = responseRaw ?: ""
+            val responseStr = response ?: ""
             
-            if (response.isBlank()) {
+            if (responseStr.isBlank()) {
                 ProviderLogger.w(EXTRACTOR_TAG, methodName, "Empty API response")
                 return null
             }
