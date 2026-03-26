@@ -158,19 +158,29 @@ class ByseExtractor(
         ProviderLogger.d(TAG, "decrypt", "Starting decryption with AES-256-GCM")
         
         val ivBytes = try {
+            // Try base64 first
             try {
                 Base64.decode(playback.iv, Base64.NO_WRAP)
             } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "IV NO_WRAP failed, trying URL_SAFE")
-                Base64.decode(playback.iv, Base64.URL_SAFE)
+                ProviderLogger.d(TAG, "decrypt", "IV NO_WRAP failed: ${e.message}")
+                try {
+                    Base64.decode(playback.iv, Base64.URL_SAFE)
+                } catch (e2: Exception) {
+                    ProviderLogger.d(TAG, "decrypt", "IV URL_SAFE failed: ${e2.message}, using raw string bytes")
+                    // Fallback: treat as raw string (ISO-8859-1)
+                    playback.iv.toByteArray(Charsets.ISO_8859_1)
+                }
             }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode IV", e)
             return null
         }
         
-        if (ivBytes.size != GCM_IV_LENGTH) {
-            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected $GCM_IV_LENGTH")
+        // Allow both 11 and 12 bytes (some APIs return 11)
+        if (ivBytes.size < 11 || ivBytes.size > 12) {
+            ProviderLogger.d(TAG, "decrypt", "Raw IV string: '${playback.iv}' (len=${playback.iv.length})")
+            ProviderLogger.d(TAG, "decrypt", "Raw IV bytes: ${ivBytes.toList()}")
+            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected 11-12")
             return null
         }
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
