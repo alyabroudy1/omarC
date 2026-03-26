@@ -40,7 +40,8 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
         
         try {
             // 1. Bypass broken SPA wrapper by fetching real iframe URL securely via central HTTP Service
-            val response = service.getText(apiUrl, mapOf("Referer" to url))
+            // MUST use skipRewrite = true so the HTTP service doesn't rewrite bysezejataos.com to the provider's domain
+            val response = service.getText(apiUrl, mapOf("Referer" to url), skipRewrite = true)
             if (response.isNullOrEmpty()) {
                 android.util.Log.e(name, "Empty response from API")
                 return
