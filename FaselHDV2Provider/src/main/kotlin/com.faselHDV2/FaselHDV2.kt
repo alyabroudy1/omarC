@@ -207,11 +207,12 @@ class FaselHDV2 : BaseProvider() {
 
                     // Parallel extraction explicitly leveraging CfBypassEngine natively!
                     val success = coroutineScope {
-                        watchUrls.reversed().map { watchUrl ->
+                        watchUrls.map { watchUrl ->
                             async {
                                 var found = false
                                 try {
-                                    extractor.getUrl(watchUrl, data, subtitleCallback) { link ->
+                                    val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
+                                    extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
                                         callback(link)
                                         found = true
                                     }
