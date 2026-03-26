@@ -1,4 +1,4 @@
-version = 4 // Round 15: Search Logic Refactor
+version = 5 // Round 15: Search Logic Refactor
 
 // Include shared source directory
 android {
