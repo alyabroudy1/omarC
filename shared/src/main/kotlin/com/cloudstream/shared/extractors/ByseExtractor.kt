@@ -58,6 +58,18 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
             
             android.util.Log.d(name, "Launching Service Headless Sniffer for raw iframe -> $iframeUrl")
             
+            val preSniffJs = """
+                (function() {
+                    try {
+                        var buttons = document.querySelectorAll('.jw-video, .plyr__control--overlaid, .play-btn, #vplayer, .video-js, button');
+                        buttons.forEach(function(b) { b.click(); });
+                        var centerEl = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
+                        if(centerEl) centerEl.click();
+                        document.querySelectorAll('video').forEach(function(v) { v.muted = true; v.play(); });
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            
             // 2. Launch Sniffer securely relying on ProviderHttpService's engine infrastructure
             val sessionResult = service.snifferEngine.runSession(
                 url = iframeUrl,
@@ -66,10 +78,13 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                 exitCondition = ExitCondition.VideoFound(minCount = 1),
                 timeout = 20000,
                 delayMs = 1500,
-                referer = url
+                referer = url,
+                preSniffJavaScript = preSniffJs
             )
             
             android.util.Log.d(name, "Sniffer completed with result type: ${sessionResult.javaClass.simpleName}")
+            
+            var hasFoundLinks = false
             
             // 3. Process Extractor Matches Gracefully
             if (sessionResult is WebViewResult.Success) {
@@ -79,6 +94,7 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                 sessionResult.foundLinks.forEach { source ->
                     if (source.url.contains(".m3u8", ignoreCase = true) || source.url.contains(".mp4", ignoreCase = true)) {
                         android.util.Log.d(name, "Extracted HEADLESS link -> ${source.url.take(100)}")
+                        hasFoundLinks = true
                         
                         val qualityValue = when {
                             source.qualityLabel.contains("1080") -> Qualities.P1080.value
@@ -104,9 +120,40 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                         )
                     }
                 }
-            } else if (sessionResult is WebViewResult.Timeout || sessionResult is WebViewResult.Error) {
-                // Exit gracefully, no fallback.
-                android.util.Log.w(name, "No video found or timed out scanning $iframeUrl - exiting gracefully.")
+            }
+            
+            // 4. Fallback HTML Scraping (Crucial for Streamwish)
+            if (!hasFoundLinks) {
+                val html = when (sessionResult) {
+                    is WebViewResult.Success -> sessionResult.html
+                    is WebViewResult.Timeout -> sessionResult.partialHtml
+                    else -> null
+                }
+                
+                if (!html.isNullOrEmpty()) {
+                    val fallbackUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                        ?: Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                        
+                    if (!fallbackUrl.isNullOrEmpty()) {
+                        android.util.Log.d(name, "Extracted HTML Regex Fallback -> ${fallbackUrl.take(100)}")
+                        val isM3u8 = fallbackUrl.contains(".m3u8", ignoreCase = true)
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = "$name Auto",
+                                url = fallbackUrl,
+                                type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = iframeUrl
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                    } else if (sessionResult is WebViewResult.Timeout || sessionResult is WebViewResult.Error) {
+                        android.util.Log.w(name, "No video found via network or fallback for $iframeUrl")
+                    }
+                } else if (sessionResult is WebViewResult.Timeout || sessionResult is WebViewResult.Error) {
+                    android.util.Log.w(name, "No video found or timed out scanning $iframeUrl - exiting gracefully.")
+                }
             }
         } catch (e: Exception) {
             android.util.Log.w(name, "Graceful failure during HEADLESS extraction: ${e.message}")
