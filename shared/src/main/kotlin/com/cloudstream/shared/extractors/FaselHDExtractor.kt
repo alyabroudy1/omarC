@@ -115,8 +115,8 @@ class FaselHDExtractor : ExtractorApi() {
                             this.referer = effectiveReferer
                             this.quality = qualityFromLabel(stream.quality)
                             
-                            // Natively securely override stream buffer CF HTTP Cookies!
-                            if (cookieHeader.isNotBlank()) {
+                            // Natively securely override stream buffer CF HTTP Cookies only for same-domain
+                            if (cookieHeader.isNotBlank() && stream.url.contains("fasel", ignoreCase = true)) {
                                 this.headers = mapOf("Cookie" to cookieHeader)
                             }
                         }

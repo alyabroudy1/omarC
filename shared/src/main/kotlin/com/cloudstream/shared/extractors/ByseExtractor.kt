@@ -163,9 +163,9 @@ class ByseExtractor(
             return null
         }
         
-        // Allow 11 or 12 bytes - some IVs decode to 11 bytes
-        if (ivBytes.size < 11 || ivBytes.size > 12) {
-            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected 11-12")
+        // Allow 8-16 bytes for IV (flexible)
+        if (ivBytes.size < 8 || ivBytes.size > 16) {
+            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected 8-16")
             return null
         }
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
