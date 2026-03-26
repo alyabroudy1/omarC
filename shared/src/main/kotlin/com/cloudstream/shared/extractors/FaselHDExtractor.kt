@@ -57,12 +57,12 @@ class FaselHDExtractor : ExtractorApi() {
         }
 
         // 2. Headless execution waiting for PageLoaded
-        val result = engine.runSession(
+        var result = engine.runSession(
             url = url,
             mode = Mode.HEADLESS,
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             exitCondition = ExitCondition.PageLoaded,
-            timeout = 15_000L
+            timeout = 18_000L
         )
 
         when (result) {
@@ -138,25 +138,31 @@ class FaselHDExtractor : ExtractorApi() {
     }
 
     private fun findRelevantScriptBlock(html: String): String? {
-        val scriptRegex = Regex("""<script[^>]*>[\s\S]*?hlsPlaylist[\s\S]*?</script>""", RegexOption.IGNORE_CASE)
-        val match = scriptRegex.find(html)
-        if (match != null) {
-            return match.value.replace(Regex("""</?script[^>]*>"""), "").trim()
+        // Extract content inside every script tag
+        val allScripts = Regex("""<script[^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
+            .findAll(html)
+            .map { it.groupValues[1] }
+            .toList()
+
+        // 1. Look for hlsPlaylist
+        val playlistScript = allScripts.firstOrNull { it.contains("hlsPlaylist", ignoreCase = true) }
+        if (playlistScript != null) {
+            return playlistScript.trim()
         }
-        
-        val mainPlayerScriptRegex = Regex("""<script[^>]*>[\s\S]*?mainPlayer\.setup[\s\S]*?</script>""", RegexOption.IGNORE_CASE)
-        val mainPlayerMatch = mainPlayerScriptRegex.find(html)
-        if (mainPlayerMatch != null) {
-            return mainPlayerMatch.value.replace(Regex("""</?script[^>]*>"""), "").trim()
+
+        // 2. Look for mainPlayer.setup
+        val mainPlayerScript = allScripts.firstOrNull { it.contains("mainPlayer.setup", ignoreCase = true) }
+        if (mainPlayerScript != null) {
+            return mainPlayerScript.trim()
         }
-        
-        val obfuscatedScripts = Regex("""<script[^>]*>[\s\S]*?_0x[a-f0-9]{4,}[\s\S]*?</script>""", RegexOption.IGNORE_CASE)
-            .findAll(html).toList()
-        
+
+        // 3. Look for obfuscated arrays (_0x...)
+        val obfuscatedScripts = allScripts.filter { Regex("""_0x[a-f0-9]{4,}""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
         if (obfuscatedScripts.isNotEmpty()) {
-            return obfuscatedScripts.maxByOrNull { it.value.length }?.value
-                ?.replace(Regex("""</?script[^>]*>"""), "")?.trim()
+            // Find the longest obfuscated script (likely the decryptor + payload)
+            return obfuscatedScripts.maxByOrNull { it.length }?.trim()
         }
+        
         return null
     }
 
