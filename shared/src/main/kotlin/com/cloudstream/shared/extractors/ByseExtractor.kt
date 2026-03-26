@@ -62,11 +62,17 @@ class ByseExtractor(val host: String, override val name: String = "Byse") : Extr
                 (function() {
                     try {
                         var buttons = document.querySelectorAll('.jw-video, .plyr__control--overlaid, .play-btn, #vplayer, .video-js, button');
-                        buttons.forEach(function(b) { b.click(); });
+                        buttons.forEach(function(b) { 
+                            try { b.click(); } catch(e) {} 
+                        });
                         var centerEl = document.elementFromPoint(window.innerWidth/2, window.innerHeight/2);
-                        if(centerEl) centerEl.click();
-                        document.querySelectorAll('video').forEach(function(v) { v.muted = true; v.play(); });
-                    } catch(e) {}
+                        if(centerEl) {
+                            try { centerEl.click(); } catch(e) {}
+                        }
+                        document.querySelectorAll('video').forEach(function(v) { 
+                            try { v.muted = true; v.play(); } catch(e) {} 
+                        });
+                    } catch(e) { console.log('Pre-sniff error:', e); }
                 })();
             """.trimIndent()
             
