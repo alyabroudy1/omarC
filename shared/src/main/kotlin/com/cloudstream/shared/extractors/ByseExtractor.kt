@@ -155,32 +155,16 @@ class ByseExtractor(
             return null
         }
         
-        ProviderLogger.d(TAG, "decrypt", "Starting decryption with AES-256-GCM")
-        
         val ivBytes = try {
-            // Try base64 first
-            try {
-                Base64.decode(playback.iv, Base64.NO_WRAP)
-            } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "IV NO_WRAP failed: ${e.message}")
-                try {
-                    Base64.decode(playback.iv, Base64.URL_SAFE)
-                } catch (e2: Exception) {
-                    ProviderLogger.d(TAG, "decrypt", "IV URL_SAFE failed: ${e2.message}, using raw string bytes")
-                    // Fallback: treat as raw string (ISO-8859-1)
-                    playback.iv.toByteArray(Charsets.ISO_8859_1)
-                }
-            }
+            // IV is standard base64 encoded
+            Base64.decode(playback.iv, Base64.NO_WRAP)
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to decode IV", e)
             return null
         }
         
-        // Allow both 11 and 12 bytes (some APIs return 11)
-        if (ivBytes.size < 11 || ivBytes.size > 12) {
-            ProviderLogger.d(TAG, "decrypt", "Raw IV string: '${playback.iv}' (len=${playback.iv.length})")
-            ProviderLogger.d(TAG, "decrypt", "Raw IV bytes: ${ivBytes.toList()}")
-            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected 11-12")
+        if (ivBytes.size != 12) {
+            ProviderLogger.e(TAG, "decrypt", "Invalid IV length: ${ivBytes.size}, expected 12")
             return null
         }
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
@@ -241,8 +225,21 @@ class ByseExtractor(
         val authTag = payloadBytes.takeLast(16).toByteArray()
         ProviderLogger.d(TAG, "decrypt", "Ciphertext: ${ciphertext.size}, AuthTag: ${authTag.size}")
         
+        // Try decryption with main key (built from key_parts) - no need for decryptKeys
+        ProviderLogger.d(TAG, "decrypt", "Trying decryption with main key")
+        try {
+            val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertext, authTag, null)
+            if (result != null) {
+                ProviderLogger.i(TAG, "decrypt", "SUCCESS with main key, decrypted length: ${result.length}")
+                return parseDecryptedJson(result)
+            }
+        } catch (e: Exception) {
+            ProviderLogger.d(TAG, "decrypt", "Main key failed: ${e.message}")
+        }
+        
+        // Fallback: try decryptKeys if main key fails (for edge cases)
         for ((keyName, keyBase64) in playback.decryptKeys) {
-            ProviderLogger.d(TAG, "decrypt", "Trying decrypt key: $keyName")
+            ProviderLogger.d(TAG, "decrypt", "Trying decrypt key fallback: $keyName")
             try {
                 val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertext, authTag, keyBase64)
                 if (result != null) {
@@ -254,17 +251,20 @@ class ByseExtractor(
             }
         }
         
-        ProviderLogger.e(TAG, "decrypt", "All decryption keys failed")
+        ProviderLogger.e(TAG, "decrypt", "All decryption attempts failed")
         return null
     }
     
     private fun tryDecryptWithKey(
-        keyBytes: ByteArray,
+        mainKeyBytes: ByteArray,
         ivBytes: ByteArray,
         ciphertext: ByteArray,
         authTag: ByteArray,
-        keyBase64: String
+        extraKeyBase64: String?
     ): String? {
+        // Use mainKeyBytes directly - the decrypt_keys are not needed
+        val keyBytes = mainKeyBytes
+        
         val cipher = Cipher.getInstance(AES_GCM_ALGORITHM)
         val keySpec = SecretKeySpec(keyBytes, "AES")
         val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH, ivBytes)
