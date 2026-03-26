@@ -217,20 +217,28 @@ class FaselHDExtractor : ExtractorApi() {
                         return { on: function(){}, fadeIn: function(){}, fadeOut: function(){}, addClass: function(){}, removeClass: function(){}, attr: function(){ return null; }, click: function(){} };
                     };
                     $.ajax = function(){};
+                    var _capturedConfig = null;
                     var jwplayer = function(name) {
-                        return { setup: function(){ return this; }, on: function(){ return this; }, getPosition: function(){ return 0; }, load: function(){}, play: function(){}, seek: function(){} };
+                        return {
+                            setup: function(cfg){ _capturedConfig = cfg; return this; },
+                            on: function(){ return this; }, getPosition: function(){ return 0; },
+                            load: function(){}, play: function(){}, seek: function(){}
+                        };
                     };
-                    var mainPlayer = { setup: function(){ return this; }, on: function(){ return this; }, getPosition: function(){ return 0; }, load: function(){}, play: function(){}, seek: function(){} };
-                    var setTimeout = function(){}; var clearTimeout = function(){};
+                    var mainPlayer = {
+                        setup: function(cfg){ _capturedConfig = cfg; return this; },
+                        on: function(){ return this; }, getPosition: function(){ return 0; },
+                        load: function(){}, play: function(){}, seek: function(){}
+                    };
+                    var setTimeout = function(fn){ if(typeof fn === 'function') try{fn();}catch(e){} };
+                    var clearTimeout = function(){};
                     var hlsPlaylist = undefined;
                 """.trimIndent())
             }
             val fullScript = mocks + "\n" + script + "\n" + """
                 var result = null;
-                if (typeof hlsPlaylist !== 'undefined' && hlsPlaylist !== null) { result = JSON.stringify(hlsPlaylist); }
-                else if (typeof _0x4f1abc !== 'undefined') { result = JSON.stringify(_0x4f1abc); }
-                else if (typeof _0x5e3ffb !== 'undefined') { result = JSON.stringify(_0x5e3ffb); }
-                else if (typeof _0x3a8b2c !== 'undefined') { result = JSON.stringify(_0x3a8b2c); }
+                if (typeof _capturedConfig !== 'undefined' && _capturedConfig !== null) { result = JSON.stringify(_capturedConfig); }
+                else if (typeof hlsPlaylist !== 'undefined' && hlsPlaylist !== null) { result = JSON.stringify(hlsPlaylist); }
                 result;
             """.trimIndent()
             
@@ -276,18 +284,13 @@ class FaselHDExtractor : ExtractorApi() {
 
     private fun extractM3u8Regex(html: String): List<FaselStream> {
         val streams = mutableListOf<FaselStream>()
-        val matches = Regex("""https?://[^\s"'`<>]+\.m3u8[^\s"'`<>]*""").findAll(html)
+        // Only extract master.m3u8 URLs - variant playlist URLs (e.g. 160_hd1080b_playlist.m3u8)
+        // always get 403'd by the scdns.io CDN when played directly
+        val matches = Regex("""https?://[^\s"'`<>]+master\.m3u8[^\s"'`<>]*""").findAll(html)
         for (match in matches) {
             val url = match.value
             if (url.contains("stream") || url.contains("scdns")) {
-                val quality = when {
-                    url.contains("1080") || url.contains("hd1080") -> "1080p"
-                    url.contains("720") || url.contains("hd720") -> "720p"
-                    url.contains("480") -> "480p"
-                    url.contains("360") || url.contains("sd") -> "360p"
-                    else -> "auto"
-                }
-                streams.add(FaselStream(url, quality))
+                streams.add(FaselStream(url, "Auto"))
             }
         }
         return streams.distinctBy { it.url }
