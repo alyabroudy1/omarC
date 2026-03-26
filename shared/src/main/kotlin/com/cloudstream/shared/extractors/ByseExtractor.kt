@@ -189,19 +189,29 @@ class ByseExtractor(
                 Base64.decode(part2Base64, Base64.URL_SAFE)
             }
             ProviderLogger.d(TAG, "decrypt", "Key parts decoded: part1=${part1.size}, part2=${part2.size}")
-            ByteBuffer.allocate(part1.size + part2.size).apply {
+            val combined = ByteBuffer.allocate(part1.size + part2.size).apply {
                 put(part1)
                 put(part2)
             }.array()
+            
+            // Ensure exactly 32 bytes - pad with zeros if needed
+            val keyBytes = if (combined.size < 32) {
+                val padded = ByteArray(32)
+                System.arraycopy(combined, 0, padded, 0, combined.size)
+                ProviderLogger.d(TAG, "decrypt", "Key padded from ${combined.size} to 32 bytes")
+                padded
+            } else if (combined.size > 32) {
+                combined.copyOf(32).also {
+                    ProviderLogger.d(TAG, "decrypt", "Key truncated from ${combined.size} to 32 bytes")
+                }
+            } else {
+                combined
+            }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "decrypt", "Failed to build key from key_parts: ${e.message}", e)
             return null
         }
         
-        if (keyBytes.size != 32) {
-            ProviderLogger.e(TAG, "decrypt", "Invalid key length: ${keyBytes.size}, expected 32")
-            return null
-        }
         ProviderLogger.d(TAG, "decrypt", "Key constructed, size: ${keyBytes.size}")
         
         val payloadBytes = try {
