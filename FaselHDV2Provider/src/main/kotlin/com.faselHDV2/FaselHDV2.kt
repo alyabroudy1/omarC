@@ -211,8 +211,7 @@ class FaselHDV2 : BaseProvider() {
                             async {
                                 var found = false
                                 try {
-                                    val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
-                                    extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
+                                    extractor.getUrl(watchUrl, data, subtitleCallback) { link ->
                                         callback(link)
                                         found = true
                                     }
