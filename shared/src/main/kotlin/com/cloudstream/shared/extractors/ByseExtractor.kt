@@ -402,12 +402,12 @@ class ByseExtractor(
                 return null
             }
             
-            ProviderLogger.d(EXTRACTOR_TAG, methodName, "Raw API response length: ${response.length}")
+            ProviderLogger.d(EXTRACTOR_TAG, methodName, "Raw API response length: ${responseStr.length}")
             
-            val result = decryptFromJson(response)
+            val result = decryptFromJson(responseStr)
             
             if (result == null) {
-                ProviderLogger.w(EXTRACTOR_TAG, methodName, "Decryption failed - raw response: ${response.take(200)}")
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "Decryption failed - raw response: ${responseStr.take(200)}")
                 return null
             }
             
