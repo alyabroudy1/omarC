@@ -27,4 +27,7 @@ fun Plugin.registerSharedExtractors() {
     // Vidmoly Proxies
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
+
+    // Bysezejataos (SPA) Extractor
+    registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
 }
