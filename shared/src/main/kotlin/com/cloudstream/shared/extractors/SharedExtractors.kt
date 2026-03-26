@@ -13,6 +13,14 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(Up4FunExtractor())
     registerExtractorAPI(FaselHDExtractor())
     
+    // Bysezejataos (API-based extraction with AES decryption)
+    registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
+    registerExtractorAPI(ByseExtractor("bysezezj.com", "Bysezezj"))
+    registerExtractorAPI(ByseExtractor("bysejetz.com", "Bysejetz"))
+    registerExtractorAPI(ByseExtractor("bysezataos.com", "Bysezataos"))
+    registerExtractorAPI(ByseExtractor("byseztajaos.com", "Byseztajaos"))
+    registerExtractorAPI(ByseExtractor("byseztajos.com", "Byseztajos"))
+    
     // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
     registerExtractorAPI(EarnVidsExtractor("dingtezuni.com"))
@@ -27,7 +35,4 @@ fun Plugin.registerSharedExtractors() {
     // Vidmoly Proxies
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
-
-    // Bysezejataos (SPA) Extractor
-    registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
 }
