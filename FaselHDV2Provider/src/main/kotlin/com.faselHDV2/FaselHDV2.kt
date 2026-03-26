@@ -210,7 +210,7 @@ class FaselHDV2 : BaseProvider() {
                             async {
                                 var found = false
                                 try {
-                                    extractor.getUrl(watchUrl, data, subtitleCallback) { link ->
+                                    extractor.getUrl(watchUrl, httpService.mainUrl, subtitleCallback) { link ->
                                         callback(link)
                                         found = true
                                     }
