@@ -9,8 +9,7 @@ import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import com.lagradost.cloudstream3.utils.*
-import com.cloudstream.shared.extractors.SnifferSelector
+import com.lagradost.cloudstream3.utils.ExtractorLink
 import java.net.URL
 
 class FaselHDV2 : BaseProvider() {
@@ -186,118 +185,58 @@ class FaselHDV2 : BaseProvider() {
         }
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val methodTag = "[$name] [loadLinks]"
-        Log.i(methodTag, "START data='$data' - Using EXCLUSIVE VideoSniffer session natively!")
-
-        try {
-            httpService.ensureInitialized()
-            
-            // 1. Fetch detail page
-            val detailDoc = httpService.getDocument(data)
-            if (detailDoc == null) {
-                Log.e(methodTag, "Failed to fetch detail document")
-                return false
-            }
-            
-            // 2. Extract watch URLs (servers)
-            val watchUrls = getParser().extractWatchServersUrls(detailDoc)
-            Log.d(methodTag, "Found ${watchUrls.size} watch URLs: $watchUrls")
-            
-            if (watchUrls.isEmpty()) {
-                Log.w(methodTag, "No watch URLs found")
-                return false
-            }
-
-            // 3. Build server selectors for the sniffer (handles server clicks)
-            val serverSelectors = getParser().buildServerSelectors(detailDoc, watchUrls)
-            
-            val referer = try {
-                val uri = java.net.URI(data)
-                "${uri.scheme}://${uri.host}/"
-            } catch (e: Exception) {
-                mainUrl
-            }
-
-            var anyFound = false
-
-            // 4. Sniff EACH URL one by one (Exclusive VideoSniffer mode)
-            for (index in watchUrls.indices) {
-                val watchUrl = watchUrls[index]
-                val selector = serverSelectors.getOrNull(index)
-                
-                Log.d(methodTag, "Sniffing server [$index]: $watchUrl (hasSelector=${selector != null})")
-                
-                val result = httpService.snifferEngine.runSession(
-                    url = watchUrl,
-                    mode = com.cloudstream.shared.webview.Mode.FULLSCREEN,
-                    userAgent = httpService.userAgent,
-                    exitCondition = com.cloudstream.shared.webview.ExitCondition.VideoFound(minCount = 1),
-                    timeout = 45_000L,
-                    referer = referer,
-                    preSniffJavaScript = selector?.let { buildClickJavaScript(it) }
-                )
-
-                if (result is com.cloudstream.shared.webview.WebViewResult.Success) {
-                    val capturedLinks = result.foundLinks.map { 
-                        newExtractorLink(
-                            name = "$name ${it.qualityLabel}",
-                            source = name,
-                            url = it.url,
-                            type = if (it.url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.headers = it.headers
-                            this.referer = referer
-                        }
-                    }
-
-                    if (capturedLinks.isNotEmpty()) {
-                        capturedLinks.forEach { callback(it) }
-                        anyFound = true
-                        Log.i(methodTag, "Captured ${capturedLinks.size} links from server [$index]")
-                    }
-                } else if (result is com.cloudstream.shared.webview.WebViewResult.Timeout) {
-                    Log.w(methodTag, "Timeout sniffing server [$index]")
-                }
-            }
-
-            return anyFound
-        } catch (e: Exception) {
-            Log.e(methodTag, "Error in loadLinks (exclusive sniffer): ${e.message}")
-            e.printStackTrace()
-            return false
-        }
-    }
-
-    private fun buildClickJavaScript(selector: SnifferSelector): String {
-        val escapedQuery = selector.query.replace("'", "\\'")
-        val sb = StringBuilder()
-        sb.append("(function() {")
-        sb.append("  var element = document.querySelector('$escapedQuery');")
-        sb.append("  if (!element) return 'ERROR: Element not found';")
-        
-        if (selector.attr != null) {
-            val escapedAttr = selector.attr.replace("'", "\\'")
-            sb.append("  var attrValue = element.getAttribute('$escapedAttr');")
-            sb.append("  if (!attrValue) return 'ERROR: Attribute not found';")
-            
-            if (selector.regex != null) {
-                val escapedRegex = selector.regex.replace("'", "\\'")
-                sb.append("  var regex = new RegExp('$escapedRegex');")
-                sb.append("  if (!regex.test(attrValue)) return 'ERROR: Regex mismatch';")
-            }
-        }
-        
-        sb.append("  var clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });")
-        sb.append("  element.dispatchEvent(clickEvent);")
-        sb.append("  return 'SUCCESS: Clicked element';")
-        sb.append("})();")
-        
-        return sb.toString()
-    }
+//    override suspend fun loadLinks(
+//        data: String,
+//        isCasting: Boolean,
+//        subtitleCallback: (SubtitleFile) -> Unit,
+//        callback: (ExtractorLink) -> Unit
+//    ): Boolean {
+//        val methodTag = "[FaselHDV2] [loadLinks]"
+//        Log.i(methodTag, "Explicitly intercepting loadLinks to force FaselHDExtractor execution natively!")
+//
+//        try {
+//            // Fetch detail page identically to BaseProvider
+//            val doc = httpService.getDocument(data)
+//            if (doc != null) {
+//                // Parse URLs dynamically
+//                val watchUrls = getParser().extractWatchServersUrls(doc)
+//                Log.d(methodTag, "Explicit Extraction intercepted ${watchUrls.size} URLs: $watchUrls")
+//
+//                if (watchUrls.isNotEmpty()) {
+//                    val extractor = com.cloudstream.shared.extractors.FaselHDExtractor()
+//
+//                    // Parallel extraction explicitly leveraging CfBypassEngine natively!
+//                    val success = coroutineScope {
+//                        watchUrls.map { watchUrl ->
+//                            async {
+//                                var found = false
+//                                try {
+//                                    val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
+//                                    extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
+//                                        callback(link)
+//                                        found = true
+//                                    }
+//                                } catch (e: Exception) {
+//                                    Log.e(methodTag, "FaselHD Explicit Extraction error: ${e.message}")
+//                                }
+//                                found
+//                            }
+//                        }.awaitAll().any { it }
+//                    }
+//
+//                    if (success) {
+//                        Log.i(methodTag, "Explicit FaselHD Headless Extraction achieved successfully! Bypassing VideoSniffer natively.")
+//                        return true
+//                    } else {
+//                        Log.w(methodTag, "Explicit FaselHD Extractor yielded 0 links. Falling back natively to VideoSniffer.")
+//                    }
+//                }
+//            }
+//        } catch (e: Exception) {
+//            Log.e(methodTag, "Explicit loadLinks extraction crashed: ${e.message}. Triggering fallback natively.")
+//        }
+//
+//        // 100% Native BaseProvider VideoSniffer Fallback Architecture
+//        return super.loadLinks(data, isCasting, subtitleCallback, callback)
+//    }
 }
