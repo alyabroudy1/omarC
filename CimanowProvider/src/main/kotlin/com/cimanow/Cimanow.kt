@@ -25,144 +25,7 @@ import android.util.Base64
 import kotlin.text.Regex
 import com.cloudstream.shared.service.ProviderHttpService
 
-interface CimanowObfuscationStrategy {
-    fun decode(doc: Document): Document?
-}
 
-class LegacyObfuscationStrategy : CimanowObfuscationStrategy {
-    override fun decode(doc: Document): Document? {
-        val docString = doc.toString()
-        if (!docString.contains("_my_HTML_")) return null
-        
-        var scriptData: String? = null
-        var matchedPrefix = "var hide_my_HTML_"
-        for (script in doc.select("script")) {
-            val data = script.data()
-            if (data.contains("_my_HTML_")) {
-                scriptData = data
-                if (data.contains("var cimanow_my_HTML_")) {
-                    matchedPrefix = "var cimanow_my_HTML_"
-                }
-                break
-            }
-        }
-        
-        if (scriptData == null) return null
-
-        try {
-            val hideMyHtmlContent = scriptData.substringAfter(matchedPrefix, "")
-            if (hideMyHtmlContent.isBlank()) return null
-
-            val hideMyHtmlContent2 = hideMyHtmlContent.substringAfter("=", "")
-            val hideMyHtmlContent3 = Regex("['+\\n\" ]").replace(
-                hideMyHtmlContent2.substringBeforeLast("';"), ""
-            )
-
-            val lastNumber = Regex("-\\d+").findAll(scriptData)
-                .lastOrNull()?.value?.toIntOrNull() ?: 0
-            
-            val output = StringBuilder()
-            var start = 0
-            val length = hideMyHtmlContent3.length
-
-            for (i in 0 until length) {
-                if (hideMyHtmlContent3[i] == '.') {
-                    val segment = hideMyHtmlContent3.substring(start, i)
-                    decodeAndAppend(output, lastNumber, segment)
-                    start = i + 1
-                }
-            }
-            val lastSegment = hideMyHtmlContent3.substring(start)
-            decodeAndAppend(output, lastNumber, lastSegment)
-            
-            val encodedHtml = String(output.toString().toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
-            return Jsoup.parse(encodedHtml)
-        } catch (e: Exception) {
-            Log.e("Cimanow", "LegacyObfuscationStrategy decodeObfuscatedHtml error: ${e.message}")
-            return null
-        }
-    }
-    
-    private fun decodeAndAppend(output: StringBuilder, lastNumber: Int, segment: String) {
-        try {
-            if (segment.isBlank()) return
-            val decoded = String(Base64.decode(segment, Base64.DEFAULT), Charsets.UTF_8)
-            val digits = decoded.filter { it.isDigit() }
-            if (digits.isNotEmpty()) {
-                output.append((digits.toInt() + lastNumber).toChar())
-            }
-        } catch (e: Exception) {
-            Log.e("Cimanow", "Error decoding legacy: ${e.message}")
-        }
-    }
-}
-
-class Base64TildeObfuscationStrategy : CimanowObfuscationStrategy {
-    override fun decode(doc: Document): Document? {
-        var scriptData: String? = null
-        for (script in doc.select("script")) {
-            val data = script.data()
-            if (data.contains("~") && data.length > 10000 && data.contains("ODc")) {
-                scriptData = data
-                break
-            }
-        }
-        
-        if (scriptData == null) return null
-        
-        try {
-            // Extract everything between single quotes and concatenate
-            val extractedString = Regex("'(.*?)'").findAll(scriptData).joinToString("") { it.groupValues[1] }
-            val parts = extractedString.split("~").filter { it.isNotBlank() }
-            
-            if (parts.isEmpty()) return null
-            
-            val nums = parts.mapNotNull { p ->
-                try {
-                    val decoded = String(android.util.Base64.decode(p, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                    val digits = decoded.filter { it.isDigit() }
-                    if (digits.isNotEmpty()) digits.toInt() else null
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            if (nums.isEmpty()) return null
-
-            val firstNum = nums[0]
-            var bestOffset: Int? = null
-            val testTags = listOf("class=", "href=", "<div", "<ul", "<li", "id=", "<html", "<body", "<script")
-            
-            for (offset in (firstNum - 150)..(firstNum + 150)) {
-                val sb = java.lang.StringBuilder()
-                // Only test against the first 1000 characters for speed
-                for (num in nums.take(1000)) {
-                    sb.append((num - offset).toChar())
-                }
-                val testStr = sb.toString()
-                if (testTags.any { testStr.contains(it, ignoreCase = true) }) {
-                    bestOffset = offset
-                    Log.d("Cimanow", "Bruteforce shift matched with offset: $offset")
-                    break
-                }
-            }
-
-            // Fallback to arbitrary `<` mapping if nothing matched
-            val finalOffset = bestOffset ?: (firstNum - 60)
-            
-            val output = java.lang.StringBuilder()
-            for (num in nums) {
-                output.append((num - finalOffset).toChar())
-            }
-            
-            val encodedHtml = String(output.toString().toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
-            Log.d("Cimanow", "Decoded Bruteforce snippet: ${encodedHtml.take(200)}")
-            return Jsoup.parse(encodedHtml)
-        } catch (e: Exception) {
-            Log.e("Cimanow", "Base64TildeObfuscationStrategy decode error: ${e.message}")
-            return null
-        }
-    }
-}
 
 class Cimanow : BaseProvider() {
 
@@ -288,20 +151,55 @@ class Cimanow : BaseProvider() {
         return episodes
     }
 
-    private val obfuscationStrategies = listOf(
-        Base64TildeObfuscationStrategy(),
-        LegacyObfuscationStrategy()
-    )
-
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        for (strategy in obfuscationStrategies) {
-            val result = strategy.decode(doc)
-            if (result != null) {
-                Log.d("Cimanow", "decodeObfuscatedHtml: successfully decoded using ${strategy.javaClass.simpleName}")
-                return result
+        try {
+            val html = doc.outerHtml()
+            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
+                ?: return doc
+            
+            val jsCode = scriptMatch.groupValues[1]
+            if (!jsCode.contains("_0x")) return doc
+
+            val atobPolyfill = """
+                var document = {
+                    written: "",
+                    open: function() {},
+                    write: function(str) { this.written += str; },
+                    close: function() {}
+                };
+                var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                function atob(input) {
+                    var str = String(input).replace(/=+${'$'}/, '');
+                    var output = '';
+                    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                        buffer = chars.indexOf(buffer);
+                    }
+                    return output;
+                }
+            """.trimIndent()
+
+            val scriptToRun = atobPolyfill + "\n" + jsCode
+            
+            val rhino = Context.enter()
+            val result = try {
+                rhino.optimizationLevel = -1
+                val scope = rhino.initSafeStandardObjects()
+                scope.put("window", scope, scope)
+                rhino.evaluateString(scope, scriptToRun, "JavaScript", 1, null)
+                val documentObj = scope.get("document", scope) as NativeObject
+                documentObj.get("written", documentObj).toString()
+            } finally {
+                Context.exit()
             }
+
+            if (result.isNotBlank() && (result.contains("<ul") || result.contains("<li") || result.contains("<div"))) {
+                Log.d("Cimanow", "Successfully decoded HTML using Rhino JS evaluator.")
+                return Jsoup.parse(result)
+            }
+        } catch (e: Exception) {
+            Log.e("Cimanow", "JS decode format error: ${e.message}")
         }
-        Log.d("Cimanow", "decodeObfuscatedHtml: No specific obfuscation matched, returning original doc")
+        
         return doc
     }
 

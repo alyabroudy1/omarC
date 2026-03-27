@@ -8,6 +8,8 @@ import org.jsoup.Jsoup
 import kotlin.text.Regex
 import kotlin.text.contains
 import kotlin.text.substringAfter
+import org.mozilla.javascript.Context
+import org.mozilla.javascript.NativeObject
 import kotlin.text.substringBeforeLast
 
 
@@ -52,19 +54,55 @@ class CimanowParser : NewBaseParser() {
         episode = CssSelector(query = "a, span", attr = "text", regex = "(\\d+)")
     )
 
-    private val obfuscationStrategies = listOf(
-        Base64TildeObfuscationStrategy(),
-        LegacyObfuscationStrategy()
-    )
-
     private fun decodeObfuscatedHtml(doc: Document): Document {
-        for (strategy in obfuscationStrategies) {
-            val result = strategy.decode(doc)
-            if (result != null) {
-                Log.d("CimanowParser", "decodeObfuscatedHtml: successfully decoded using ${strategy.javaClass.simpleName}")
-                return result
+        try {
+            val html = doc.outerHtml()
+            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
+                ?: return doc
+            
+            val jsCode = scriptMatch.groupValues[1]
+            if (!jsCode.contains("_0x")) return doc
+
+            val atobPolyfill = """
+                var document = {
+                    written: "",
+                    open: function() {},
+                    write: function(str) { this.written += str; },
+                    close: function() {}
+                };
+                var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                function atob(input) {
+                    var str = String(input).replace(/=+${'$'}/, '');
+                    var output = '';
+                    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                        buffer = chars.indexOf(buffer);
+                    }
+                    return output;
+                }
+            """.trimIndent()
+
+            val scriptToRun = atobPolyfill + "\n" + jsCode
+            
+            val rhino = Context.enter()
+            val result = try {
+                rhino.optimizationLevel = -1
+                val scope = rhino.initSafeStandardObjects()
+                scope.put("window", scope, scope)
+                rhino.evaluateString(scope, scriptToRun, "JavaScript", 1, null)
+                val documentObj = scope.get("document", scope) as NativeObject
+                documentObj.get("written", documentObj).toString()
+            } finally {
+                Context.exit()
             }
+
+            if (result.isNotBlank() && (result.contains("<ul") || result.contains("<li") || result.contains("<div"))) {
+                Log.d("CimanowParser", "Successfully decoded HTML using Rhino JS evaluator.")
+                return Jsoup.parse(result)
+            }
+        } catch (e: Exception) {
+            Log.e("CimanowParser", "JS decode format error: ${e.message}")
         }
+        
         return doc
     }
 
