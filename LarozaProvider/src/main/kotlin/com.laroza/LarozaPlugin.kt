@@ -7,6 +7,7 @@ import com.cloudstream.shared.android.PluginContext
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.extractors.ReviewRateExtractor
 import com.cloudstream.shared.extractors.SnifferExtractor
+import com.cloudstream.shared.extractors.registerSharedExtractors
 
 @CloudstreamPlugin
 class LarozaPlugin: Plugin() {
@@ -30,5 +31,7 @@ class LarozaPlugin: Plugin() {
 
         // Register provider
         registerMainAPI(Laroza())
+
+        registerSharedExtractors()
     }
 }
