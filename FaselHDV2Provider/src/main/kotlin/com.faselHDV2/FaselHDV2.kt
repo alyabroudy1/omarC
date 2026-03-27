@@ -205,23 +205,32 @@ class FaselHDV2 : BaseProvider() {
                 if (watchUrls.isNotEmpty()) {
                     val extractor = com.cloudstream.shared.extractors.FaselHDExtractor()
 
-                    // Parallel extraction explicitly leveraging CfBypassEngine natively!
-                    val success = coroutineScope {
-                        watchUrls.map { watchUrl ->
-                            async {
-                                var found = false
-                                try {
-                                    val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
-                                    extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
-                                        callback(link)
-                                        found = true
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(methodTag, "FaselHD Explicit Extraction error: ${e.message}")
+                    // Sequential extraction: try each URL one at a time.
+                    // - 10s timeout per URL to avoid getting stuck on WebView hangs
+                    // - Break immediately on first successful extraction (skip remaining URLs)
+                    // - Graceful timeout: log and move to next URL cleanly
+                    var success = false
+                    for ((index, watchUrl) in watchUrls.withIndex()) {
+                        Log.d(methodTag, "Trying watch URL ${index + 1}/${watchUrls.size}: $watchUrl")
+                        try {
+                            val found = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                                var result = false
+                                val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
+                                extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
+                                    callback(link)
+                                    result = true
                                 }
-                                found
+                                result
                             }
-                        }.awaitAll().any { it }
+                            if (found == true) {
+                                Log.i(methodTag, "Got result from URL ${index + 1}, breaking loop")
+                                success = true
+                                break
+                            }
+                            Log.w(methodTag, "URL ${index + 1} ${if (found == null) "timed out (10s)" else "returned no links"}")
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "URL ${index + 1} error: ${e.message}")
+                        }
                     }
 
                     if (success) {

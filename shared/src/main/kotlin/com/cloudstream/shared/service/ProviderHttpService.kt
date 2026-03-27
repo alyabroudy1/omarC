@@ -616,11 +616,17 @@ class ProviderHttpService private constructor(
         return when (result) {
             is WebViewResult.Success -> {
                 updateCookies(result.cookies, fromWebView = true)
-                checkAndUpdateDomain(targetUrl, result.finalUrl)
-                // Return the WebView HTML directly — this is critical for non-CF sites
-                // (like Akwam) where the HTTP client always gets 403 but WebView works fine.
-                // Previously we retried HTTP here, but that just 403'd again on non-CF sites.
+                // CRITICAL: Do NOT call checkAndUpdateDomain here.
+                // CF bypass WebView may navigate to cloudflare.com / challenges.cloudflare.com
+                // during the challenge. If we detect a domain change from the CF solve's finalUrl,
+                // we'd incorrectly save "cloudflare.com" as the provider domain.
+                // Domain detection should only happen on normal HTTP redirects.
                 RequestResult.success(result.html, 200, result.finalUrl)
+            }
+            is WebViewResult.Cancelled -> {
+                // User pressed back on CF dialog — return failure cleanly, no side effects
+                ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest", "User cancelled CF bypass")
+                RequestResult.failure("User cancelled CF bypass")
             }
             else -> RequestResult.failure("CF Bypass failed")
         }

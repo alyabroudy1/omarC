@@ -413,7 +413,7 @@ class CfBypassEngine(
                     resultDelivered = true
                     timeoutJob?.cancel()
                     cleanup(webView, null)
-                    deferred?.complete(WebViewResult.Error("User cancelled CF bypass"))
+                    deferred?.complete(WebViewResult.Cancelled("User cancelled CF bypass"))
                 }
             }
         }

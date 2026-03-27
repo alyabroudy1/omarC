@@ -51,6 +51,9 @@ sealed class WebViewResult {
     ) : WebViewResult()
 
     data class Error(val reason: String) : WebViewResult()
+
+    /** User explicitly cancelled the operation (e.g., pressed back on CF dialog). */
+    data class Cancelled(val reason: String) : WebViewResult()
 }
 
 data class CapturedLinkData(
