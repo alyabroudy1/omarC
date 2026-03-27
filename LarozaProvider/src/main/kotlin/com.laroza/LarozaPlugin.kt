@@ -21,9 +21,7 @@ class LarozaPlugin: Plugin() {
         }
 
         // Register extractors
-        registerExtractorAPI(com.cloudstream.shared.extractors.ReviewRateExtractor())    // Handles reviewrate.net URLs
-        registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) // Handles savefiles.com URLs
-        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor()) // Handles okprime.site URLs
+        registerSharedExtractors()
 
         val sniffer = SnifferExtractor()
         sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
@@ -31,7 +29,5 @@ class LarozaPlugin: Plugin() {
 
         // Register provider
         registerMainAPI(Laroza())
-
-        registerSharedExtractors()
     }
 }
