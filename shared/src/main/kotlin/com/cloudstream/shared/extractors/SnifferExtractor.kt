@@ -393,6 +393,11 @@ class SnifferExtractor : ExtractorApi() {
                     throw kotlinx.coroutines.CancellationException("User cancelled sniffing")
                 }
             }
+            is WebViewResult.Cancelled -> {
+                android.util.Log.i("SnifferExtractor", "[getUrl] CANCELLED: ${result.reason}")
+                ProviderLogger.i(TAG, "getUrl", "VideoSnifferEngine cancelled: ${result.reason}")
+                throw kotlinx.coroutines.CancellationException("User cancelled sniffing")
+            }
         }
         
         android.util.Log.i("SnifferExtractor", "[getUrl] === END === totalFound=$totalFound callbacks=$callbackCount")
