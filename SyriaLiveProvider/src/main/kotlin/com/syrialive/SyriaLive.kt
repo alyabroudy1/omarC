@@ -111,6 +111,24 @@ class SyriaLive : BaseProvider() {
         return newHomePageResponse(homePageList, false)
     }
 
+    override suspend fun load(url: String): LoadResponse? {
+        val data = super.load(url)
+        
+        // BaseProvider incorrectly maps TvType.Live to an empty TvSeriesLoadResponse
+        // which triggers the "Coming soon" UI without a play button in Cloudstream.
+        // We intercept this specific to SyriaLive and convert it back to a LiveStreamLoadResponse.
+        if (data is TvSeriesLoadResponse && url.contains("/matches/")) {
+            return newLiveStreamLoadResponse(data.name, data.url, data.url) {
+                this.posterUrl = data.posterUrl
+                this.plot = data.plot
+                this.tags = data.tags
+                this.year = data.year
+            }
+        }
+        
+        return data
+    }
+
     /**
      * Overridden to handle custom internal players (AlbaPlayerControl and Clappr) which
      * cannot rely on generic `BaseProvider.loadLinks()` extractor delegations.
