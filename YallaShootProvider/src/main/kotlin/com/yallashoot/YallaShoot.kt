@@ -158,6 +158,10 @@ class YallaShoot : BaseProvider() {
         val iframeElement = doc.selectFirst(".entry-content iframe, .posts-body iframe, iframe.cf, iframe")
         val iframeSrc = iframeElement?.attr("src")?.trim()
         
+        Log.d("YallaShoot", "Extracting from Data URL: $data")
+        Log.d("YallaShoot", "Base iframe element HTML: ${iframeElement?.outerHtml()}")
+        Log.d("YallaShoot", "Base iframe src: $iframeSrc")
+        
         // Extract external players
         for (btn in doc.select(".video-serv a")) {
             val href = btn.attr("href")
@@ -173,61 +177,114 @@ class YallaShoot : BaseProvider() {
         }
         
         val playerUrl = fixYallaUrl(iframeSrc)
+        Log.d("YallaShoot", "Fetching actual player URL: $playerUrl")
+        
         val pHeaders = mapOf(
             "User-Agent" to userAgent,
             "Referer" to data
         )
         val playerResponse = httpService.getText(playerUrl, pHeaders, skipRewrite = true) ?: return foundLinks
+        Log.d("YallaShoot", "Fetched base player HTML snippet: ${playerResponse}")
         
+        // 1. Process default page directly
+        val (foundAlba, foundGeneric) = processMultiIframe(playerResponse, playerUrl, userAgent, subtitleCallback, callback)
+        if (foundAlba || foundGeneric) foundLinks = true
+        
+        // 2. Fetch all other servers from the menu natively
+        val playerDoc = org.jsoup.Jsoup.parse(playerResponse, playerUrl)
+        val menuLinks = playerDoc.select(".aplr-menu a.aplr-link").mapNotNull { it.attr("href") }.filter { it.isNotBlank() && it != playerUrl }
+        
+        Log.d("YallaShoot", "Identified concurrent server menu links: $menuLinks")
+        
+        // Use apmap if possible, or sequential robust loop
+        menuLinks.forEach { serverUrl ->
+            val fixedServer = fixYallaUrl(serverUrl)
+            val serverHtml = httpService.getText(fixedServer, pHeaders, skipRewrite = true)
+            if (serverHtml != null) {
+                Log.d("YallaShoot", "Fetched secondary server payload HTML from \$fixedServer: \${serverHtml}")
+                val (fA, fG) = processMultiIframe(serverHtml, fixedServer, userAgent, subtitleCallback, callback)
+                if (fA || fG) foundLinks = true
+            }
+        }
+        
+        return foundLinks
+    }
+    
+    private suspend fun processMultiIframe(
+        html: String,
+        referer: String,
+        userAgent: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Pair<Boolean, Boolean> {
+        var foundAlba = false
+        var foundGeneric = false
+        
+        // 1. Alba/Clappr Script Check
         val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")
-        val albaMatch = albaRegex.find(playerResponse)
+        val albaMatch = albaRegex.find(html)
         if (albaMatch != null) {
             val encodedString = albaMatch.groupValues[1]
             try {
                 val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
                 val m3u8Url = String(decodedBytes, Charsets.UTF_8)
+                val origin = try { "https://${java.net.URI(referer).host}" } catch(e: Exception) { referer }
                 
                 val m3u8Links = M3u8Helper.generateM3u8(
                     source = this.name,
                     streamUrl = m3u8Url,
-                    referer = playerUrl,
+                    referer = referer,
                     headers = mapOf(
                         "User-Agent" to userAgent,
-                        "Referer" to playerUrl,
-                        "Origin" to "https://${java.net.URI(playerUrl).host}",
+                        "Referer" to referer,
+                        "Origin" to origin,
                         "Accept" to "*/*"
                     )
                 )
                 
                 m3u8Links.forEach { link ->
+                    Log.d("YallaShoot", "Extracted Alba M3u8 link: ${link.url}")
                     callback(link)
-                    foundLinks = true
+                    foundAlba = true
                 }
             } catch (e: Exception) {
                 Log.e("YallaShoot", "Failed to decode AlbaPlayerControl: ${e.message}")
             }
-        } else if (playerResponse.contains("Clappr.Player")) {
+        } else if (html.contains("Clappr.Player")) {
             val clapprRegex = Regex("source\\s*:\\s*\"([^\"]+)\"")
-            val clapprMatch = clapprRegex.find(playerResponse)
+            val clapprMatch = clapprRegex.find(html)
             if (clapprMatch != null) {
                 val m3u8Url = clapprMatch.groupValues[1]
                 
                 val m3u8Links = M3u8Helper.generateM3u8(
                     source = this.name,
                     streamUrl = m3u8Url,
-                    referer = playerUrl,
+                    referer = referer,
                     headers = mapOf(
                         "User-Agent" to userAgent
                     )
                 )
                 
                 m3u8Links.forEach { link ->
+                    Log.d("YallaShoot", "Extracted Clappr M3u8 link: ${link.url}")
                     callback(link)
-                    foundLinks = true
+                    foundAlba = true
                 }
             }
         }
         
-        return foundLinks
+        // 2. Generic Iframes embedded inside the server payload (like popcdn.day)
+        val innerDoc = org.jsoup.Jsoup.parse(html, referer)
+        innerDoc.select("iframe").forEach { iframe ->
+            val src = iframe.attr("src")
+            // Prevent recursive loop if it extracts an iframe containing its own default embed
+            if (src.isNotBlank() && !src.contains("?serv=0")) { 
+                Log.d("YallaShoot", "Forwarding generic embedded iframe to loadExtractor: $src")
+                loadExtractor(src, referer, subtitleCallback, callback)
+                foundGeneric = true
+            }
+        }
+        
+        return Pair(foundAlba, foundGeneric)
     }
 }
