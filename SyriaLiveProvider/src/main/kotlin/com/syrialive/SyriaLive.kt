@@ -178,7 +178,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = httpService.getText(playerUrl, pHeaders) ?: return foundLinks
+        val playerResponse = httpService.getText(playerUrl, pHeaders, skipRewrite = true) ?: return foundLinks
         
         // Check for AlbaPlayerControl base64 packed stream
         val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")
