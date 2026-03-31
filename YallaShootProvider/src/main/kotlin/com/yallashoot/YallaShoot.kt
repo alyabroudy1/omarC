@@ -155,8 +155,8 @@ class YallaShoot : BaseProvider() {
         val html = httpService.getText(data, skipRewrite = true) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
-        val iframeElement = doc.selectFirst(".entry-content iframe")
-        val iframeSrc = iframeElement?.attr("src")
+        val iframeElement = doc.selectFirst(".entry-content iframe, .posts-body iframe, iframe.cf, iframe")
+        val iframeSrc = iframeElement?.attr("src")?.trim()
         
         // Extract external players
         for (btn in doc.select(".video-serv a")) {
