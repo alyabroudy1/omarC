@@ -31,6 +31,11 @@ class SyriaLive : BaseProvider() {
         
         return try {
             val uri = java.net.URI(url)
+            // Preserve external domains (like player.syria-player.live)
+            if (uri.isAbsolute && uri.host?.contains("syrlive") == false) {
+                return url
+            }
+
             val pathWithQuery = StringBuilder()
             uri.path?.let { pathWithQuery.append(it) }
             uri.query?.let { pathWithQuery.append("?").append(it) }
