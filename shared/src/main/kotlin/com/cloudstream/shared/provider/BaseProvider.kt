@@ -567,7 +567,7 @@ abstract class BaseProvider : MainAPI() {
      * 
      * @param selector Optional selector to click a server button before sniffing
      */
-    private suspend fun awaitSnifferResult(
+    protected suspend fun awaitSnifferResult(
         targetUrl: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,

@@ -232,6 +232,19 @@ class SyriaLive : BaseProvider() {
             }
         }
         
+        if (!foundLinks) {
+            val sniffUrls = mutableListOf<String>()
+            if (playerUrl.isNotBlank()) sniffUrls.add(playerUrl)
+            
+            for (sniffUrl in sniffUrls) {
+                Log.d("SyriaLive", "Executing Sniffer fallback on: \$sniffUrl")
+                if (awaitSnifferResult(sniffUrl, data, subtitleCallback, callback, 15000L)) {
+                    foundLinks = true
+                    break
+                }
+            }
+        }
+        
         return foundLinks
     }
 }

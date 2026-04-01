@@ -241,6 +241,20 @@ class YallaShoot : BaseProvider() {
             }
         }
         
+        if (!foundLinks) {
+            val sniffUrls = mutableListOf<String>()
+            if (playerUrl.isNotBlank()) sniffUrls.add(playerUrl)
+            sniffUrls.addAll(menuLinks.map { fixYallaUrl(it) })
+            
+            for (sniffUrl in sniffUrls) {
+                Log.d("YallaShoot", "Executing Sniffer fallback on: \$sniffUrl")
+                if (awaitSnifferResult(sniffUrl, data, subtitleCallback, callback, 15000L)) {
+                    foundLinks = true
+                    break
+                }
+            }
+        }
+        
         return foundLinks
     }
     
