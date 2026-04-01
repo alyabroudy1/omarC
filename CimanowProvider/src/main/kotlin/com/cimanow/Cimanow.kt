@@ -525,8 +525,8 @@ class Cimanow : BaseProvider() {
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
             Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
             
-            // Step 2: Fetch and decode the watching page
-            val watchDoc = httpService.getDocument(watchUrl)
+            // Step 2: Fetch and decode the watching page. The Referer is strictly required to prevent a 302 redirection.
+            val watchDoc = httpService.getDocument(watchUrl, headers = mapOf("Referer" to data))
             if (watchDoc == null) {
                 Log.e(methodTag, "Failed to fetch watching page")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
