@@ -161,28 +161,26 @@ class Cimanow : BaseProvider() {
             if (!jsCode.contains("_0x")) return doc
 
             val scriptToRun = """
-                (function() {
-                    var document = {
-                        written: "",
-                        open: function() {},
-                        write: function(str) { this.written += str; },
-                        close: function() {}
-                    };
-                    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-                    function atob(input) {
-                        var str = String(input).replace(/=+${'$'}/, '');
-                        var output = '';
-                        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
-                            buffer = chars.indexOf(buffer);
-                        }
-                        return output;
+                var __cimanow_written = "";
+                document.write = function(str) { __cimanow_written += str; };
+                document.open = function() {};
+                document.close = function() {};
+                
+                var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                window.atob = function(input) {
+                    var str = String(input).replace(/=+${'$'}/, '');
+                    var output = '';
+                    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                        buffer = chars.indexOf(buffer);
                     }
-                    var window = { atob: atob };
-                    try {
-                        $jsCode
-                    } catch(e) {}
-                    return document.written;
-                })();
+                    return output;
+                };
+                
+                try {
+                    $jsCode
+                } catch(e) {}
+                
+                __cimanow_written;
             """.trimIndent()
             
             var evaluatedResult = ""
