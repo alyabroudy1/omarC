@@ -14,7 +14,8 @@ import android.util.Base64
 
 class YallaShoot : BaseProvider() {
 
-    override val baseDomain get() = "www.shoot-one.com" 
+    override val baseDomain get() = "shoot-one.com" 
+    override var mainUrl = "https://www.shoot-one.com"
     override val providerName get() = "YallaShoot"
     override var lang = "ar"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/yallashoot.json"
