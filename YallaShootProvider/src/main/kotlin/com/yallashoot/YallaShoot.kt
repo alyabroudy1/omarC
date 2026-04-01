@@ -60,17 +60,34 @@ class YallaShoot : BaseProvider() {
         val homePageList = mutableListOf<HomePageList>()
 
         val matches = mutableListOf<SearchResponse>()
-        doc.select(".AY_Match").forEach { element ->
-            val teams = element.select(".TM_Logo img")
-            if (teams.size >= 2) {
-                val rightTeam = teams[0].attr("alt")
-                val leftTeam = teams[1].attr("alt")
+        doc.select("a[href*=/matches/]").forEach { aTag ->
+            val urlRaw = aTag.attr("href")
+            val url = urlRaw.let { fixYallaUrl(it) }
+            if (url.isBlank()) return@forEach
+            
+            // Heuristic fallback: Traverse upward from the anchor tag to find the match wrapper holding 2 team logos
+            var container = aTag.parent()
+            var depth = 0
+            while (container != null && container.select("img").size < 2 && depth < 5) {
+                container = container.parent()
+                depth++
+            }
+            
+            val teams = container?.select("img")
+            if (teams != null && teams.size >= 2) {
+                val rightTeam = teams[0].attr("alt").trim().ifBlank { "Team 1" }
+                val leftTeam = teams[1].attr("alt").trim().ifBlank { "Team 2" }
                 
-                val resultContainer = element.selectFirst(".MT_Result")
-                val resultText = resultContainer?.text()?.trim() ?: "VS"
+                val containerText = container.text()
                 
-                val status = element.selectFirst(".MT_Stat")?.text()?.trim() ?: ""
-                val matchTime = element.selectFirst(".MT_Time")?.text()?.trim() ?: ""
+                // Pure heuristic pattern extraction preventing reliance on heavily obfuscated or rotating CSS class designations
+                val statusRegex = Regex("(جارية الان|لم تبدأ|انتهت|شوط|استراحة|تأجلت|جارية الأن)")
+                val timeRegex = Regex("(\\d{1,2}:\\d{2}\\s*(?:AM|PM|ص|م)?)", RegexOption.IGNORE_CASE)
+                val resultRegex = Regex("(\\d+\\s*-\\s*\\d+)")
+                
+                val resultText = resultRegex.find(containerText)?.groupValues?.get(1) ?: "VS"
+                val status = statusRegex.find(containerText)?.groupValues?.get(1) ?: ""
+                val matchTime = timeRegex.find(containerText)?.groupValues?.get(1) ?: ""
                 
                 val title = buildString {
                     append("$rightTeam $resultText $leftTeam")
@@ -84,16 +101,18 @@ class YallaShoot : BaseProvider() {
                     }
                 }
                 
-                val urlNode = element.selectFirst("a")
-                val url = urlNode?.attr("href")?.let { fixYallaUrl(it) }
+                Log.d("YallaShoot", "Match explicitly identified using DOM heuristics:")
+                Log.d("YallaShoot", "-> Title: $title")
+                Log.d("YallaShoot", "-> URL: $url")
                 
-                val poster = teams[0].attr("data-src").ifBlank { teams[0].attr("src") }
+                val posterRaw = teams[0].attr("data-src").ifBlank { teams[0].attr("src") }
+                val poster = fixYallaUrl(posterRaw)
                 
-                if (url != null) {
-                    matches.add(newMovieSearchResponse(title, url, TvType.Live) {
-                        this.posterUrl = fixYallaUrl(poster)
-                    })
-                }
+                matches.add(newMovieSearchResponse(title, url, TvType.Live) {
+                    this.posterUrl = poster
+                })
+            } else {
+                Log.w("YallaShoot", "Failed to resolve 2 image logos resolving match container upwards from link: $urlRaw")
             }
         }
         
