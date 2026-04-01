@@ -61,10 +61,11 @@ class YallaShoot : BaseProvider() {
         val homePageList = mutableListOf<HomePageList>()
 
         val matches = mutableListOf<SearchResponse>()
-        doc.select("a[href*=/matches/]").forEach { aTag ->
+        val processedUrls = mutableSetOf<String>()
+        doc.select("a[href*=/matches/], a[href*=.html], a[href*=/sport], a[href*=/https]").forEach { aTag ->
             val urlRaw = aTag.attr("href")
             val url = urlRaw.let { fixYallaUrl(it) }
-            if (url.isBlank()) return@forEach
+            if (url.isBlank() || !processedUrls.add(url)) return@forEach
             
             // Heuristic fallback: Traverse upward from the anchor tag to find the match wrapper holding 2 team logos
             var container = aTag.parent()
@@ -147,7 +148,7 @@ class YallaShoot : BaseProvider() {
      * redirecting "yallashoooty.com" cross-domain pages into "shoot-one.com". 
      */
     override suspend fun load(url: String): LoadResponse? {
-        val isMatch = url.contains("yallashoooty") || url.contains("/sport") || url.contains("/https") || url.contains(".html")
+        val isMatch = url.contains("yallashoooty") || url.contains("/sport") || url.contains("/https") || url.contains(".html") || url.contains("/matches/")
         
         if (isMatch) {
             val html = httpService.getText(url, skipRewrite = true) ?: return null
