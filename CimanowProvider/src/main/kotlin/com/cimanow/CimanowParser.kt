@@ -52,12 +52,147 @@ class CimanowParser : NewBaseParser() {
         episode = CssSelector(query = "a, span", attr = "text", regex = "(\\d+)")
     )
 
-    override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
-        // Cimanow evaluates obfuscated episodes asynchronously via WebView in Cimanow.kt fetchExtraEpisodes.
-        // We return empty here to bypass synchronous extraction limits.
-        return emptyList()
+    private fun decodeObfuscatedHtml(doc: Document): Document {
+        try {
+            val html = doc.outerHtml()
+            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
+                ?: return doc
+            
+            val jsCode = scriptMatch.groupValues[1]
+            if (!jsCode.contains("_0x")) return doc
+
+            val scriptToRun = """
+                (function() {
+                    var document = {
+                        written: "",
+                        open: function() {},
+                        write: function(str) { this.written += str; },
+                        close: function() {}
+                    };
+                    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                    function atob(input) {
+                        var str = String(input).replace(/=+${'$'}/, '');
+                        var output = '';
+                        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                            buffer = chars.indexOf(buffer);
+                        }
+                        return output;
+                    }
+                    var window = { atob: atob };
+                    try {
+                        $jsCode
+                    } catch(e) {}
+                    return document.written;
+                })();
+            """.trimIndent()
+            
+            var evaluatedResult = ""
+            val latch = java.util.concurrent.CountDownLatch(1)
+            
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val activity = com.cloudstream.shared.android.ActivityProvider.currentActivity
+                    if (activity != null) {
+                        val webView = android.webkit.WebView(activity)
+                        webView.settings.javaScriptEnabled = true
+                        webView.evaluateJavascript(scriptToRun) { result ->
+                            try {
+                                evaluatedResult = if (result == null || result == "null") "" 
+                                                  else org.json.JSONTokener(result).nextValue().toString()
+                            } catch (e: Exception) {
+                                Log.e("CimanowParser", "JSON parse error: ${e.message}")
+                            }
+                            webView.destroy()
+                            latch.countDown()
+                        }
+                    } else {
+                        latch.countDown()
+                    }
+                } catch (e: Exception) {
+                    latch.countDown()
+                }
+            }
+            
+            latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
+
+            if (evaluatedResult.isNotBlank() && (evaluatedResult.contains("<ul") || evaluatedResult.contains("<li") || evaluatedResult.contains("<div"))) {
+                Log.d("CimanowParser", "Successfully decoded HTML using sandboxed WebView JS evaluator.")
+                return Jsoup.parse(evaluatedResult)
+            }
+        } catch (e: Exception) {
+            Log.e("CimanowParser", "JS decode format error: ${e.message}")
+        }
+        
+        return doc
     }
 
+    override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
+        val decodedDoc = decodeObfuscatedHtml(doc)
+        val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
+
+        // Method 1: Episodes List
+        var episodeLinks = decodedDoc.select("div.embed-list a, ul.embeds li a, .episodes-list a, .episode-list a")
+        
+        if (episodeLinks.isEmpty()) {
+            // Method 2: Check for season/episode tabs
+            val seasonTabs = decodedDoc.select(".seasons-list .season-tab, .season-item, .seasons .season")
+            if (seasonTabs.isNotEmpty()) {
+                for (tab in seasonTabs) {
+                    val tabTitle = tab.selectFirst(".season-title, h4, .season-name")?.text() ?: ""
+                    val actualSeason = Regex("""(\d+)""").find(tabTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                        ?: seasonNum ?: 1
+                        
+                    for (link in tab.select("a[href*='episode'], a[href*='/selary/']")) {
+                        val epUrl = link.attr("href").trim()
+                        val epTitle = link.text().trim()
+                        
+                        if (epUrl.isNotBlank()) {
+                            val epNum = Regex("""(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                                ?: Regex("""(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
+                                ?: 0
+
+                            episodes.add(
+                                ParserInterface.ParsedEpisode(
+                                    name = epTitle.ifBlank { "الحلة $epNum" },
+                                    url = epUrl,
+                                    season = actualSeason,
+                                    episode = epNum
+                                )
+                            )
+                        }
+                    }
+                }
+                return episodes.sortedWith(compareBy({ it.season }, { it.episode }))
+            }
+        }
+        
+        // Method 1: Direct episode links
+        if (episodeLinks.isNotEmpty()) {
+            for (link in episodeLinks) {
+                val epUrl = link.attr("href").trim()
+                val epTitle = link.text().trim()
+                
+                if (epUrl.isNotBlank()) {
+                    val epNum = Regex("""(\d+)""").find(epTitle)?.groupValues?.get(1)?.toIntOrNull() 
+                        ?: Regex("""(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: 0
+
+                    episodes.add(
+                        ParserInterface.ParsedEpisode(
+                            name = epTitle,
+                            url = epUrl,
+                            season = seasonNum ?: 1,
+                            episode = epNum
+                        )
+                    )
+                }
+            }
+            return episodes.sortedBy { it.episode }
+        }
+        
+        // Fallback to parent
+        return super.parseEpisodes(decodedDoc, seasonNum)
+    }
 
     override val watchServersSelectors = WatchServerSelector(
         url = CssSelector(query = "div.embed-list a[data-src], ul.embeds li[data-src], .server-link[data-src], a[data-id]", attr = "data-src"),
@@ -67,8 +202,42 @@ class CimanowParser : NewBaseParser() {
     )
 
     override fun extractWatchServersUrls(doc: Document): List<String> {
-        // Cimanow evaluates obfuscated server tags completely asynchronously inside Cimanow.kt loadLinks.
-        return emptyList()
+        val decodedDoc = decodeObfuscatedHtml(doc)
+        val urls = mutableListOf<String>()
+        
+        // Method 1: From server list links (data-src)
+        for (link in decodedDoc.select("a[data-src]")) {
+            val dataSrc = link.attr("data-src")
+            if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
+                urls.add(dataSrc)
+            }
+        }
+        
+        // Method 2: From iframes (data-src)
+        for (iframe in decodedDoc.select("iframe[data-src]")) {
+            val dataSrc = iframe.attr("data-src")
+            if (dataSrc.isNotBlank()) {
+                urls.add(dataSrc)
+            }
+        }
+        
+        // Method 3: From inline iframes
+        for (iframe in decodedDoc.select("iframe[src]")) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
+                urls.add(src)
+            }
+        }
+        
+        // Method 4: From data-id (sometimes URLs are there)
+        for (link in decodedDoc.select("a[data-id]")) {
+            val dataId = link.attr("data-id")
+            if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
+                urls.add(dataId)
+            }
+        }
+        
+        return urls.distinct()
     }
 
     override fun isSeries(title: String, url: String, element: Element?): Boolean {

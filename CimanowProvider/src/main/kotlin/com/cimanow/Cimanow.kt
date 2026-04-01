@@ -67,8 +67,8 @@ class Cimanow : BaseProvider() {
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
         
         try {
-            // Decode the main series page via headless WebView
-            val decodedDoc = getDecodedDocumentWithWebView(url) ?: doc
+            // Decode the main series page
+            val decodedDoc = decodeObfuscatedHtml(doc)
             
             // Get first season URL to start navigating seasons
             val firstSeasonUrl = decodedDoc.select("section[aria-label=seasons] ul li a").attr("href")
@@ -92,7 +92,14 @@ class Cimanow : BaseProvider() {
                 return episodes
             }
             
-            val decodedFirstSeason = getDecodedDocumentWithWebView(firstSeasonUrl) ?: return episodes
+            // Fetch the first season page to get the season list
+            val firstSeasonDoc = httpService.getDocument(firstSeasonUrl)
+            if (firstSeasonDoc == null) {
+                Log.e(methodTag, "fetchExtraEpisodes: Failed to fetch first season page")
+                return episodes
+            }
+            
+            val decodedFirstSeason = decodeObfuscatedHtml(firstSeasonDoc)
             val seasonElements = decodedFirstSeason.select("section[aria-label=seasons] ul li")
             Log.d(methodTag, "fetchExtraEpisodes: Found ${seasonElements.size} seasons")
             
@@ -107,7 +114,8 @@ class Cimanow : BaseProvider() {
                     val seasonDoc = if (seasonIndex == 0) {
                         decodedFirstSeason
                     } else {
-                        getDecodedDocumentWithWebView(seasonUrl)
+                        val fetchedDoc = httpService.getDocument(seasonUrl)
+                        if (fetchedDoc != null) decodeObfuscatedHtml(fetchedDoc) else null
                     }
                     
                     if (seasonDoc == null) {
@@ -143,21 +151,78 @@ class Cimanow : BaseProvider() {
         return episodes
     }
 
-    private suspend fun getDecodedDocumentWithWebView(url: String): Document? {
-        val cfEngine = com.cloudstream.shared.webview.CfBypassEngine(activityProvider = { ActivityProvider.currentActivity })
-        val result = cfEngine.runSession(
-            url = url,
-            mode = com.cloudstream.shared.webview.Mode.HEADLESS,
-            userAgent = httpService.userAgent,
-            exitCondition = com.cloudstream.shared.webview.ExitCondition.PageLoaded,
-            delayMs = 1500L
-        )
-        val html = (result as? com.cloudstream.shared.webview.WebViewResult.Success)?.html
-        if (html != null) {
-            Log.d("Cimanow", "Successfully decoded HTML using CfBypassEngine WebView.")
-            return Jsoup.parse(html, url)
+    private fun decodeObfuscatedHtml(doc: Document): Document {
+        try {
+            val html = doc.outerHtml()
+            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
+                ?: return doc
+            
+            val jsCode = scriptMatch.groupValues[1]
+            if (!jsCode.contains("_0x")) return doc
+
+            val scriptToRun = """
+                (function() {
+                    var document = {
+                        written: "",
+                        open: function() {},
+                        write: function(str) { this.written += str; },
+                        close: function() {}
+                    };
+                    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                    function atob(input) {
+                        var str = String(input).replace(/=+${'$'}/, '');
+                        var output = '';
+                        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                            buffer = chars.indexOf(buffer);
+                        }
+                        return output;
+                    }
+                    var window = { atob: atob };
+                    try {
+                        $jsCode
+                    } catch(e) {}
+                    return document.written;
+                })();
+            """.trimIndent()
+            
+            var evaluatedResult = ""
+            val latch = java.util.concurrent.CountDownLatch(1)
+            
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val activity = com.cloudstream.shared.android.ActivityProvider.currentActivity
+                    if (activity != null) {
+                        val webView = android.webkit.WebView(activity)
+                        webView.settings.javaScriptEnabled = true
+                        webView.evaluateJavascript(scriptToRun) { result ->
+                            try {
+                                evaluatedResult = if (result == null || result == "null") "" 
+                                                  else org.json.JSONTokener(result).nextValue().toString()
+                            } catch (e: Exception) {
+                                Log.e("Cimanow", "JSON parse error: ${e.message}")
+                            }
+                            webView.destroy()
+                            latch.countDown()
+                        }
+                    } else {
+                        latch.countDown()
+                    }
+                } catch (e: Exception) {
+                    latch.countDown()
+                }
+            }
+            
+            latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
+
+            if (evaluatedResult.isNotBlank() && (evaluatedResult.contains("<ul") || evaluatedResult.contains("<li") || evaluatedResult.contains("<div"))) {
+                Log.d("Cimanow", "Successfully decoded HTML using sandboxed WebView JS evaluator.")
+                return Jsoup.parse(evaluatedResult)
+            }
+        } catch (e: Exception) {
+            Log.e("Cimanow", "JS decode format error: ${e.message}")
         }
-        return null
+        
+        return doc
     }
 
     private fun runJS(script: String): String {
@@ -455,13 +520,15 @@ class Cimanow : BaseProvider() {
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
             Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
             
-            // Step 2: Fetch and decode the watching page via WebView headless orchestrator
-            val doc = getDecodedDocumentWithWebView(watchUrl)
-            if (doc == null) {
-                Log.e(methodTag, "Failed to decode watching page via WebView")
+            // Step 2: Fetch and decode the watching page
+            val watchDoc = httpService.getDocument(watchUrl)
+            if (watchDoc == null) {
+                Log.e(methodTag, "Failed to fetch watching page")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
-            Log.d(methodTag, "Decoded watching page via WebView successfully")
+            
+            val doc = decodeObfuscatedHtml(watchDoc)
+            Log.d(methodTag, "Decoded watching doc")
             
             // Debug: log what's in the decoded page
             val allUls = doc.select("ul")
@@ -494,57 +561,8 @@ class Cimanow : BaseProvider() {
             }
             
             if (serverElements.isEmpty()) {
-                // If the watchUrl redirected to homepage or didn't have servers, try the original data url (Episodes)
-                Log.d(methodTag, "No servers on watchUrl, decoding original data url for direct iframes...")
-                val detailDoc = getDecodedDocumentWithWebView(data)
-                
-                if (detailDoc != null) {
-                    val iframeUrls = mutableListOf<String>()
-                    detailDoc.select("a[data-src]").forEach { iframeUrls.add(it.attr("data-src")) }
-                    detailDoc.select("iframe[data-src]").forEach { iframeUrls.add(it.attr("data-src")) }
-                    detailDoc.select("iframe[src]").forEach { iframeUrls.add(it.attr("src")) }
-                    detailDoc.select("a[data-id]").forEach { iframeUrls.add(it.attr("data-id")) }
-                    
-                    val distinctUrls = iframeUrls.filter { it.isNotBlank() && (it.startsWith("http") || it.startsWith("//")) }.distinct()
-                    
-                    if (distinctUrls.isNotEmpty()) {
-                        Log.d(methodTag, "Found ${distinctUrls.size} direct iframes on data page")
-                        var handled = false
-                        for (url in distinctUrls) {
-                            val actualUrl = if (url.startsWith("//")) "https:$url" else url
-                            Log.d(methodTag, "Direct iframe URL: $actualUrl")
-                            
-                            val isVidGuard = vidGuardDomains.any { actualUrl.contains(it, ignoreCase = true) }
-                            if (isVidGuard) {
-                                try { handleNet(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("ok", ignoreCase = true)) {
-                                try { loadExtractor(actualUrl, data, subtitleCallback, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("vidpro", ignoreCase = true)) {
-                                try { handleVidPro(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("govid", ignoreCase = true) || actualUrl.contains("goovid", ignoreCase = true)) {
-                                try { handleGovid(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("vidlook", ignoreCase = true)) {
-                                try { handleVidlook(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("streamwish", ignoreCase = true)) {
-                                try { handleStreamwish(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("streamfile", ignoreCase = true) || actualUrl.contains("luluvid", ignoreCase = true)) {
-                                try { handleStreamfile(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            } else if (actualUrl.contains("vadbam", ignoreCase = true) || actualUrl.contains("viidshare", ignoreCase = true)) {
-                                try { handleVadbam(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
-                            }
-                            
-                            // Default fallback
-                            try {
-                                loadExtractor(actualUrl, data, subtitleCallback, callback)
-                                handled = true
-                            } catch (e: Exception) {}
-                        }
-                        if (handled) return true
-                    }
-                }
-
                 // Fallback: try extracting servers directly from the page
-                Log.d(methodTag, "No iframes found on data page, returning fallbackLoadLinks")
+                Log.d(methodTag, "No ul.tabcontent li found, trying direct extraction")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
             
