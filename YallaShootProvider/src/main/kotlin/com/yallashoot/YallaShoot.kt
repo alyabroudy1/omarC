@@ -67,11 +67,22 @@ class YallaShoot : BaseProvider() {
                 val leftTeam = teams[1].attr("alt")
                 
                 val resultContainer = element.selectFirst(".MT_Result")
-                val result = if (resultContainer != null && resultContainer.children().size >= 3) {
-                    "${resultContainer.child(0).text()} - ${resultContainer.child(2).text()}"
-                } else "VS"
+                val resultText = resultContainer?.text()?.trim() ?: "VS"
                 
-                val title = "$rightTeam $result $leftTeam"
+                val status = element.selectFirst(".MT_Stat")?.text()?.trim() ?: ""
+                val matchTime = element.selectFirst(".MT_Time")?.text()?.trim() ?: ""
+                
+                val title = buildString {
+                    append("$rightTeam $resultText $leftTeam")
+                    if (status.isNotBlank() || matchTime.isNotBlank()) {
+                        append("\n")
+                        if (matchTime.isNotBlank()) append("⏱ $matchTime")
+                        if (status.isNotBlank()) {
+                            if (matchTime.isNotBlank()) append(" | ")
+                            append("📌 $status")
+                        }
+                    }
+                }
                 
                 val urlNode = element.selectFirst("a")
                 val url = urlNode?.attr("href")?.let { fixYallaUrl(it) }
