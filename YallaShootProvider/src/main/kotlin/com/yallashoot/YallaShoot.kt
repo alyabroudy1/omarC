@@ -11,6 +11,8 @@ import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newLiveStreamLoadResponse
 import org.jsoup.nodes.Document
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 class YallaShoot : BaseProvider() {
 
@@ -285,6 +287,7 @@ class YallaShoot : BaseProvider() {
                 Log.e("YallaShoot", "Failed to decode AlbaPlayerControl: ${e.message}")
             }
         } else if (html.contains("Clappr.Player") || html.contains(".m3u8")) {
+            Log.d("YallaShoot", "Clappr or .m3u8 text identified in payload! Extracting...")
             val clapprRegex = Regex("source\\s*:\\s*[\"']([^\"']+)[\"']")
             val srcVarRegex = Regex("src\\s*=\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']")
             val fallbackRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
@@ -292,27 +295,51 @@ class YallaShoot : BaseProvider() {
             val m3u8Url = clapprRegex.find(html)?.groupValues?.get(1) 
                 ?: srcVarRegex.find(html)?.groupValues?.get(1)
                 ?: fallbackRegex.find(html)?.groupValues?.get(1)
+            
+            Log.d("YallaShoot", "Regex matched Master M3U8 URL: \$m3u8Url")
                 
             if (m3u8Url != null) {
-                val origin = try { "https://${java.net.URI(referer).host}" } catch(e: Exception) { referer }
+                val origin = try { "https://\${java.net.URI(referer).host}" } catch(e: Exception) { referer }
+                val headers = mapOf(
+                    "User-Agent" to userAgent,
+                    "Referer" to referer,
+                    "Origin" to origin,
+                    "Accept" to "*/*"
+                )
                 
                 val m3u8Links = M3u8Helper.generateM3u8(
                     source = this.name,
                     streamUrl = m3u8Url,
                     referer = referer,
-                    headers = mapOf(
-                        "User-Agent" to userAgent,
-                        "Referer" to referer,
-                        "Origin" to origin,
-                        "Accept" to "*/*"
-                    )
+                    headers = headers
                 )
                 
-                m3u8Links.forEach { link ->
-                    Log.d("YallaShoot", "Extracted Clappr M3u8 link: ${link.url}")
-                    callback(link)
+                Log.d("YallaShoot", "M3u8Helper returned \${m3u8Links.size} links.")
+                
+                if (m3u8Links.isEmpty()) {
+                    Log.w("YallaShoot", "M3u8Helper failed to parse playlist (possible chunklist)! Emitting raw fallback ExtractorLink.")
+                    callback(
+                        newExtractorLink(
+                            source = this.name,
+                            name = this.name,
+                            url = m3u8Url,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = referer
+                            this.headers = headers
+                            this.quality = 1
+                        }
+                    )
                     foundAlba = true
+                } else {
+                    m3u8Links.forEach { link ->
+                        Log.d("YallaShoot", "Extracted Clappr M3u8 link: \${link.url}")
+                        callback(link)
+                        foundAlba = true
+                    }
                 }
+            } else {
+                Log.e("YallaShoot", "Failed to extract M3u8 string from regexes!")
             }
         }
         
