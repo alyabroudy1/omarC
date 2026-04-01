@@ -67,8 +67,8 @@ class Cimanow : BaseProvider() {
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
         
         try {
-            // Decode the main series page
-            val decodedDoc = decodeObfuscatedHtml(doc)
+            // Decode the main series page via headless WebView
+            val decodedDoc = getDecodedDocumentWithWebView(url) ?: doc
             
             // Get first season URL to start navigating seasons
             val firstSeasonUrl = decodedDoc.select("section[aria-label=seasons] ul li a").attr("href")
@@ -92,14 +92,7 @@ class Cimanow : BaseProvider() {
                 return episodes
             }
             
-            // Fetch the first season page to get the season list
-            val firstSeasonDoc = httpService.getDocument(firstSeasonUrl)
-            if (firstSeasonDoc == null) {
-                Log.e(methodTag, "fetchExtraEpisodes: Failed to fetch first season page")
-                return episodes
-            }
-            
-            val decodedFirstSeason = decodeObfuscatedHtml(firstSeasonDoc)
+            val decodedFirstSeason = getDecodedDocumentWithWebView(firstSeasonUrl) ?: return episodes
             val seasonElements = decodedFirstSeason.select("section[aria-label=seasons] ul li")
             Log.d(methodTag, "fetchExtraEpisodes: Found ${seasonElements.size} seasons")
             
@@ -114,8 +107,7 @@ class Cimanow : BaseProvider() {
                     val seasonDoc = if (seasonIndex == 0) {
                         decodedFirstSeason
                     } else {
-                        val fetchedDoc = httpService.getDocument(seasonUrl)
-                        if (fetchedDoc != null) decodeObfuscatedHtml(fetchedDoc) else null
+                        getDecodedDocumentWithWebView(seasonUrl)
                     }
                     
                     if (seasonDoc == null) {
@@ -151,56 +143,21 @@ class Cimanow : BaseProvider() {
         return episodes
     }
 
-    private fun decodeObfuscatedHtml(doc: Document): Document {
-        try {
-            val html = doc.outerHtml()
-            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-                ?: return doc
-            
-            val jsCode = scriptMatch.groupValues[1]
-            if (!jsCode.contains("_0x")) return doc
-
-            val atobPolyfill = """
-                var document = {
-                    written: "",
-                    open: function() {},
-                    write: function(str) { this.written += str; },
-                    close: function() {}
-                };
-                var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-                function atob(input) {
-                    var str = String(input).replace(/=+${'$'}/, '');
-                    var output = '';
-                    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
-                        buffer = chars.indexOf(buffer);
-                    }
-                    return output;
-                }
-            """.trimIndent()
-
-            val scriptToRun = atobPolyfill + "\n" + jsCode
-            
-            val rhino = Context.enter()
-            val result = try {
-                rhino.optimizationLevel = -1
-                val scope = rhino.initSafeStandardObjects()
-                scope.put("window", scope, scope)
-                rhino.evaluateString(scope, scriptToRun, "JavaScript", 1, null)
-                val documentObj = scope.get("document", scope) as NativeObject
-                documentObj.get("written", documentObj).toString()
-            } finally {
-                Context.exit()
-            }
-
-            if (result.isNotBlank() && (result.contains("<ul") || result.contains("<li") || result.contains("<div"))) {
-                Log.d("Cimanow", "Successfully decoded HTML using Rhino JS evaluator.")
-                return Jsoup.parse(result)
-            }
-        } catch (e: Exception) {
-            Log.e("Cimanow", "JS decode format error: ${e.message}")
+    private suspend fun getDecodedDocumentWithWebView(url: String): Document? {
+        val cfEngine = com.cloudstream.shared.webview.CfBypassEngine(activityProvider = { ActivityProvider.currentActivity })
+        val result = cfEngine.runSession(
+            url = url,
+            mode = com.cloudstream.shared.webview.Mode.HEADLESS,
+            userAgent = httpService.userAgent,
+            exitCondition = com.cloudstream.shared.webview.ExitCondition.PageLoaded,
+            delayMs = 1500L
+        )
+        val html = (result as? com.cloudstream.shared.webview.WebViewResult.Success)?.html
+        if (html != null) {
+            Log.d("Cimanow", "Successfully decoded HTML using CfBypassEngine WebView.")
+            return Jsoup.parse(html, url)
         }
-        
-        return doc
+        return null
     }
 
     private fun runJS(script: String): String {
@@ -498,15 +455,13 @@ class Cimanow : BaseProvider() {
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
             Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
             
-            // Step 2: Fetch and decode the watching page
-            val watchDoc = httpService.getDocument(watchUrl)
-            if (watchDoc == null) {
-                Log.e(methodTag, "Failed to fetch watching page")
+            // Step 2: Fetch and decode the watching page via WebView headless orchestrator
+            val doc = getDecodedDocumentWithWebView(watchUrl)
+            if (doc == null) {
+                Log.e(methodTag, "Failed to decode watching page via WebView")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
-            
-            val doc = decodeObfuscatedHtml(watchDoc)
-            Log.d(methodTag, "Decoded watching doc")
+            Log.d(methodTag, "Decoded watching page via WebView successfully")
             
             // Debug: log what's in the decoded page
             val allUls = doc.select("ul")
