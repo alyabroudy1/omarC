@@ -284,11 +284,16 @@ class YallaShoot : BaseProvider() {
             } catch (e: Exception) {
                 Log.e("YallaShoot", "Failed to decode AlbaPlayerControl: ${e.message}")
             }
-        } else if (html.contains("Clappr.Player")) {
-            val clapprRegex = Regex("source\\s*:\\s*\"([^\"]+)\"")
-            val clapprMatch = clapprRegex.find(html)
-            if (clapprMatch != null) {
-                val m3u8Url = clapprMatch.groupValues[1]
+        } else if (html.contains("Clappr.Player") || html.contains(".m3u8")) {
+            val clapprRegex = Regex("source\\s*:\\s*[\"']([^\"']+)[\"']")
+            val srcVarRegex = Regex("src\\s*=\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']")
+            val fallbackRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
+            
+            val m3u8Url = clapprRegex.find(html)?.groupValues?.get(1) 
+                ?: srcVarRegex.find(html)?.groupValues?.get(1)
+                ?: fallbackRegex.find(html)?.groupValues?.get(1)
+                
+            if (m3u8Url != null) {
                 val origin = try { "https://${java.net.URI(referer).host}" } catch(e: Exception) { referer }
                 
                 val m3u8Links = M3u8Helper.generateM3u8(
