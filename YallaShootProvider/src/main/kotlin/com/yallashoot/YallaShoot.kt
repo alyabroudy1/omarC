@@ -247,8 +247,10 @@ class YallaShoot : BaseProvider() {
         referer: String,
         userAgent: String,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
+        depth: Int = 0
     ): Pair<Boolean, Boolean> {
+        if (depth > 2) return Pair(false, false)
         var foundAlba = false
         var foundGeneric = false
         
@@ -287,13 +289,17 @@ class YallaShoot : BaseProvider() {
             val clapprMatch = clapprRegex.find(html)
             if (clapprMatch != null) {
                 val m3u8Url = clapprMatch.groupValues[1]
+                val origin = try { "https://${java.net.URI(referer).host}" } catch(e: Exception) { referer }
                 
                 val m3u8Links = M3u8Helper.generateM3u8(
                     source = this.name,
                     streamUrl = m3u8Url,
                     referer = referer,
                     headers = mapOf(
-                        "User-Agent" to userAgent
+                        "User-Agent" to userAgent,
+                        "Referer" to referer,
+                        "Origin" to origin,
+                        "Accept" to "*/*"
                     )
                 )
                 
@@ -309,11 +315,26 @@ class YallaShoot : BaseProvider() {
         val innerDoc = org.jsoup.Jsoup.parse(html, referer)
         innerDoc.select("iframe").forEach { iframe ->
             val src = iframe.attr("src")
-            // Prevent recursive loop if it extracts an iframe containing its own default embed
-            if (src.isNotBlank() && !src.contains("?serv=0")) { 
+            // Prevent recursive loop if it extracts an iframe containing its own default embed or matches referer perfectly
+            if (src.isNotBlank() && !src.contains("?serv=0") && src != referer) { 
                 Log.d("YallaShoot", "Forwarding generic embedded iframe to loadExtractor: $src")
                 loadExtractor(src, referer, subtitleCallback, callback)
                 foundGeneric = true
+                
+                // Heavily obfuscated streams often nest player scripts inside multiple generic iframes (e.g., tv7.koora.com)
+                // Cloudstream's loadExtractor will FAIL to parse them if there is no built-in Extractor plugin for that domain.
+                // We recursively fetch them here to manually intercept AlbaPlayer/Clappr payloads natively!
+                try {
+                    val pHeaders = mapOf("Referer" to referer, "User-Agent" to userAgent)
+                    val innerHtml = httpService.getText(src, pHeaders, skipRewrite = true)
+                    if (innerHtml != null) {
+                        Log.d("YallaShoot", "Nested iframe successfully fetched from $src, recursively attempting manual extraction...")
+                        val (nestedAlba, nestedGeneric) = processMultiIframe(innerHtml, src, userAgent, subtitleCallback, callback, depth + 1)
+                        if (nestedAlba || nestedGeneric) foundGeneric = true
+                    }
+                } catch (e: Exception) {
+                    Log.w("YallaShoot", "Failed to fetch nested generic iframe payload: ${e.message}")
+                }
             }
         }
         
