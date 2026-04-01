@@ -54,12 +54,17 @@ class CimanowParser : NewBaseParser() {
 
     private fun decodeObfuscatedHtml(doc: Document): Document {
         try {
-            val html = doc.outerHtml()
-            val scriptMatch = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL).find(html)
-                ?: return doc
+            // Extract all inline script bodies to avoid breaking when obfuscation keys change every day
+            val inlineScripts = doc.select("script:not([src])")
+                .map { it.data() } // Jsoup `.data()` perfectly extracts the text content inside `<script>`
+                .filter { it.isNotBlank() }
             
-            val jsCode = scriptMatch.groupValues[1]
-            if (!jsCode.contains("_0x")) return doc
+            if (inlineScripts.isEmpty()) return doc
+            
+            // Try/Catch each script block independently so one failing script doesn't crash the decoder
+            val combinedJsCode = inlineScripts.joinToString("\n") { 
+                "try { \n$it\n } catch(e) {}" 
+            }
 
             val scriptToRun = """
                 var __cimanow_written = "";
@@ -77,9 +82,11 @@ class CimanowParser : NewBaseParser() {
                     return output;
                 };
                 
-                try {
-                    $jsCode
-                } catch(e) {}
+                // Prevent anti-bot redirects
+                window.location.replace = function() {};
+                window.location.assign = function() {};
+                
+                $combinedJsCode
                 
                 __cimanow_written;
             """.trimIndent()
