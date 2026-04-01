@@ -494,8 +494,57 @@ class Cimanow : BaseProvider() {
             }
             
             if (serverElements.isEmpty()) {
+                // If the watchUrl redirected to homepage or didn't have servers, try the original data url (Episodes)
+                Log.d(methodTag, "No servers on watchUrl, decoding original data url for direct iframes...")
+                val detailDoc = getDecodedDocumentWithWebView(data)
+                
+                if (detailDoc != null) {
+                    val iframeUrls = mutableListOf<String>()
+                    detailDoc.select("a[data-src]").forEach { iframeUrls.add(it.attr("data-src")) }
+                    detailDoc.select("iframe[data-src]").forEach { iframeUrls.add(it.attr("data-src")) }
+                    detailDoc.select("iframe[src]").forEach { iframeUrls.add(it.attr("src")) }
+                    detailDoc.select("a[data-id]").forEach { iframeUrls.add(it.attr("data-id")) }
+                    
+                    val distinctUrls = iframeUrls.filter { it.isNotBlank() && (it.startsWith("http") || it.startsWith("//")) }.distinct()
+                    
+                    if (distinctUrls.isNotEmpty()) {
+                        Log.d(methodTag, "Found ${distinctUrls.size} direct iframes on data page")
+                        var handled = false
+                        for (url in distinctUrls) {
+                            val actualUrl = if (url.startsWith("//")) "https:$url" else url
+                            Log.d(methodTag, "Direct iframe URL: $actualUrl")
+                            
+                            val isVidGuard = vidGuardDomains.any { actualUrl.contains(it, ignoreCase = true) }
+                            if (isVidGuard) {
+                                try { handleNet(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("ok", ignoreCase = true)) {
+                                try { loadExtractor(actualUrl, data, subtitleCallback, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("vidpro", ignoreCase = true)) {
+                                try { handleVidPro(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("govid", ignoreCase = true) || actualUrl.contains("goovid", ignoreCase = true)) {
+                                try { handleGovid(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("vidlook", ignoreCase = true)) {
+                                try { handleVidlook(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("streamwish", ignoreCase = true)) {
+                                try { handleStreamwish(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("streamfile", ignoreCase = true) || actualUrl.contains("luluvid", ignoreCase = true)) {
+                                try { handleStreamfile(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            } else if (actualUrl.contains("vadbam", ignoreCase = true) || actualUrl.contains("viidshare", ignoreCase = true)) {
+                                try { handleVadbam(actualUrl, data, callback); handled = true; continue } catch (e: Exception) {}
+                            }
+                            
+                            // Default fallback
+                            try {
+                                loadExtractor(actualUrl, data, subtitleCallback, callback)
+                                handled = true
+                            } catch (e: Exception) {}
+                        }
+                        if (handled) return true
+                    }
+                }
+
                 // Fallback: try extracting servers directly from the page
-                Log.d(methodTag, "No ul.tabcontent li found, trying direct extraction")
+                Log.d(methodTag, "No iframes found on data page, returning fallbackLoadLinks")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
             
