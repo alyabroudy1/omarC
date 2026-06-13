@@ -85,55 +85,58 @@ class VidobaExtractor : ExtractorApi() {
             ProviderLogger.d(TAG, "getUrl", "Successfully extracted M3U8", "m3u8Url" to m3u8Url.take(80))
 
             // 5. Build the ExtractorLink and pass to ExoPlayer using M3u8Helper
+            val requestHeaders = mapOf(
+                "User-Agent" to userAgent,
+                "Referer" to url,
+                "Origin" to "https://vidoba.org",
+                "Accept" to "*/*",
+                "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
+                "sec-ch-ua-mobile" to "?1",
+                "sec-ch-ua-platform" to "\"Android\"",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "cross-site"
+            )
+
+            android.util.Log.d(TAG, "[getUrl] Requesting M3U8 with User-Agent: $userAgent")
+            android.util.Log.d(TAG, "[getUrl] Requesting M3U8 headers: $requestHeaders")
+
             val m3u8Links = try {
                 M3u8Helper.generateM3u8(
                     source = name,
                     streamUrl = m3u8Url,
                     referer = url,
-                    headers = mapOf(
-                        "User-Agent" to userAgent,
-                        "Referer" to url,
-                        "Origin" to "https://vidoba.org",
-                        "Accept" to "*/*",
-                        "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
-                        "sec-ch-ua-mobile" to "?1",
-                        "sec-ch-ua-platform" to "\"Android\"",
-                        "Sec-Fetch-Dest" to "empty",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "cross-site"
-                    )
+                    headers = requestHeaders
                 )
             } catch (e: Exception) {
+                android.util.Log.e(TAG, "[getUrl] M3u8Helper parsing failed", e)
                 ProviderLogger.e(TAG, "getUrl", "M3u8Helper parsing failed", e)
                 emptyList()
             }
 
+            android.util.Log.d(TAG, "[getUrl] M3u8Helper returned ${m3u8Links.size} links")
+
             if (m3u8Links.isNotEmpty()) {
-                m3u8Links.forEach { callback(it) }
+                m3u8Links.forEach { link ->
+                    android.util.Log.d(TAG, "[getUrl] Generated Link Quality: ${link.quality}, Name: ${link.name}")
+                    android.util.Log.d(TAG, "[getUrl] Generated Link URL: ${link.url}")
+                    android.util.Log.d(TAG, "[getUrl] Generated Link Headers: ${link.headers}")
+                    callback(link)
+                }
             } else {
-                callback(
-                    newExtractorLink(
-                        source = name,
-                        name = "Vidoba Server",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = Qualities.Unknown.value
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "Origin" to "https://vidoba.org",
-                            "User-Agent" to userAgent,
-                            "Accept" to "*/*",
-                            "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
-                            "sec-ch-ua-mobile" to "?1",
-                            "sec-ch-ua-platform" to "\"Android\"",
-                            "Sec-Fetch-Dest" to "empty",
-                            "Sec-Fetch-Mode" to "cors",
-                            "Sec-Fetch-Site" to "cross-site"
-                        )
-                    }
-                )
+                android.util.Log.w(TAG, "[getUrl] Falling back to master playlist link directly")
+                val fallbackLink = newExtractorLink(
+                    source = name,
+                    name = "Vidoba Server",
+                    url = m3u8Url,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = url
+                    this.quality = Qualities.Unknown.value
+                    this.headers = requestHeaders
+                }
+                android.util.Log.d(TAG, "[getUrl] Fallback Link Headers: ${fallbackLink.headers}")
+                callback(fallbackLink)
             }
 
         } catch (e: Exception) {
