@@ -52,7 +52,7 @@ class VidobaExtractor : ExtractorApi() {
 
             // 2. Find the packed P.A.C.K.E.R JS script
             val documentHtml = response.text
-            val packedRegex = Regex("""eval\((function\(p,a,c,k,e,d\).+?)\)""")
+            val packedRegex = Regex("""eval\((function\(p,a,c,k,e,d\).+?split\(\s*['"]\|['"]\s*\)\s*\)\s*\)""", RegexOption.DOT_MATCHES_ALL)
             val match = packedRegex.find(documentHtml)
             
             if (match == null) {

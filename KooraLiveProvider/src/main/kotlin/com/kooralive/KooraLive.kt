@@ -12,6 +12,8 @@ import com.lagradost.cloudstream3.newLiveStreamLoadResponse
 import org.jsoup.nodes.Document
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 class KooraLive : BaseProvider() {
 
@@ -184,19 +186,42 @@ class KooraLive : BaseProvider() {
             }
             Log.d("KooraLive", "Found alternative servers in menu: $menuLinks")
 
-            // Attempt static extraction for primary stream (Stream 1)
-            val innerIframe = playerDoc.selectFirst("iframe[src*='vertyuz.xyz'], iframe")
-            val innerIframeSrc = innerIframe?.attr("src")
-            if (!innerIframeSrc.isNullOrBlank()) {
-                val vertyuzUrl = fixUrl(innerIframeSrc)
-                Log.d("KooraLive", "Loading VertyuzExtractor for: $vertyuzUrl")
-                if (loadExtractor(vertyuzUrl, playerUrl, subtitleCallback, callback)) {
-                    foundLinks = true
-                }
+            // Statically extract all players in parallel using coroutineScope and async
+            val allUrls = (if (playerUrl.isNotBlank()) listOf(playerUrl) else emptyList()) + menuLinks
+            val results = kotlinx.coroutines.coroutineScope {
+                allUrls.map { targetPlayerUrl ->
+                    async {
+                        try {
+                            val pResponse = if (targetPlayerUrl == playerUrl) {
+                                playerResponse
+                            } else {
+                                httpService.getText(targetPlayerUrl, pHeaders, skipRewrite = true)
+                            }
+                            
+                            if (pResponse != null) {
+                                val pDoc = org.jsoup.Jsoup.parse(pResponse, targetPlayerUrl)
+                                val innerIframe = pDoc.selectFirst("iframe[src*='vertyuz.xyz'], iframe")
+                                val innerIframeSrc = innerIframe?.attr("src")
+                                if (!innerIframeSrc.isNullOrBlank()) {
+                                    val vertyuzUrl = fixUrl(innerIframeSrc)
+                                    Log.d("KooraLive", "Loading VertyuzExtractor for: $vertyuzUrl")
+                                    if (loadExtractor(vertyuzUrl, targetPlayerUrl, subtitleCallback, callback)) {
+                                        return@async true
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("KooraLive", "Error during static extraction for $targetPlayerUrl: ${e.message}")
+                        }
+                        false
+                    }
+                }.awaitAll()
             }
+            
+            foundLinks = results.any { it }
         }
         
-        // Execute WebView Sniffer fallback if we couldn't statically extract Stream 1
+        // Execute WebView Sniffer fallback if we couldn't statically extract any streams
         if (!foundLinks) {
             val sniffUrls = mutableListOf<String>()
             if (playerUrl.isNotBlank()) {
