@@ -88,10 +88,11 @@ class VidobaExtractor : ExtractorApi() {
                     url = m3u8Url,
                     type = ExtractorLinkType.M3U8
                 ) {
-                    this.referer = "https://vidoba.org/"
+                    this.referer = url
                     this.quality = Qualities.Unknown.value
                     this.headers = mapOf(
-                        "Referer" to "https://vidoba.org/",
+                        "Referer" to url,
+                        "Origin" to "https://vidoba.org",
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 }
