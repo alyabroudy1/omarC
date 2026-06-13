@@ -12,6 +12,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(OkPrimeExtractor())
     registerExtractorAPI(Up4FunExtractor())
     registerExtractorAPI(FaselHDExtractor())
+    registerExtractorAPI(VidobaExtractor())
     
     // Bysezejataos (API-based extraction with AES decryption)
     registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
