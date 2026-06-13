@@ -313,19 +313,30 @@ class SnifferExtractor : ExtractorApi() {
                     
                     val finalHeaders = mutableMapOf<String, String>()
                     finalHeaders.putAll(filteredHeaders)
-                    finalHeaders["Referer"] = originReferer
-                    finalHeaders["User-Agent"] = snifferUserAgent
+                    
+                    val defaultHeaders = mapOf(
+                        "Referer" to originReferer,
+                        "User-Agent" to snifferUserAgent,
+                        "Accept" to "*/*",
+                        "Origin" to extractOrigin(embedUrl),
+                        "sec-ch-ua" to """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"""",
+                        "sec-ch-ua-mobile" to "?1",
+                        "sec-ch-ua-platform" to "Android",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "cross-site"
+                    )
+                    
+                    for ((key, value) in defaultHeaders) {
+                        val existingKey = finalHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }
+                        if (existingKey == null) {
+                            finalHeaders[key] = value
+                        }
+                    }
+                    
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
                     }
-                    finalHeaders["Accept"] = "*/*"
-                    finalHeaders["Origin"] = extractOrigin(embedUrl)
-                    finalHeaders["sec-ch-ua"] = """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120""""
-                    finalHeaders["sec-ch-ua-mobile"] = "?1"
-                    finalHeaders["sec-ch-ua-platform"] = "Android"
-                    finalHeaders["Sec-Fetch-Dest"] = "empty"
-                    finalHeaders["Sec-Fetch-Mode"] = "cors"
-                    finalHeaders["Sec-Fetch-Site"] = "cross-site"
 
                     // === ERROR HANDLING / M3U8 EXTRACTION ===
                     // If it's an M3U8, try to extract qualities
