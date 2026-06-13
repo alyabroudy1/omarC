@@ -52,39 +52,52 @@ class YallaShoot : BaseProvider() {
         }
     }
 
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse? {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl) ?: return null
-
-        val homePageList = mutableListOf<HomePageList>()
-
+    private fun parseMatchesFromDocument(doc: Document): List<SearchResponse> {
         val matches = mutableListOf<SearchResponse>()
         val processedUrls = mutableSetOf<String>()
-        doc.select("a[href*=/matches/], a[href*=.html], a[href*=/sport], a[href*=/https]").forEach { aTag ->
-            val urlRaw = aTag.attr("href")
-            val url = urlRaw.let { fixYallaUrl(it) }
-            if (url.isBlank() || !processedUrls.add(url)) return@forEach
+        
+        // Find all elements containing exactly 2 image tags in their subtree, and containing at least 1 a tag
+        val allElements = doc.getAllElements()
+        val candidates = allElements.filter { element ->
+            val imgs = element.select("img")
+            if (imgs.size != 2) return@filter false
             
-            // Heuristic fallback: Traverse upward from the anchor tag to find the match wrapper holding 2 team logos
-            var container = aTag.parent()
-            var depth = 0
-            while (container != null && container.select("img").size < 2 && depth < 5) {
-                container = container.parent()
-                depth++
+            // Check if it has an anchor tag
+            val hasLink = element.select("a").isNotEmpty()
+            if (!hasLink) return@filter false
+            
+            // Heuristic check: does the text contain score, time, or match-related keywords?
+            val text = element.text()
+            val hasScore = text.contains("-") || text.contains("VS") || text.contains("vs")
+            val hasTime = text.contains(":")
+            val hasStatus = text.contains("تبدأ") || text.contains("جارية") || text.contains("انتهت") || text.contains("بث") || text.contains("مباشر") || text.contains("شوط") || text.contains("استراحة")
+            
+            hasScore || hasTime || hasStatus
+        }
+        
+        // Filter out candidates that are parents of other candidates
+        val matchContainers = candidates.filter { parent ->
+            candidates.none { child ->
+                child != parent && parent.getAllElements().contains(child)
             }
+        }
+        
+        matchContainers.forEach { container ->
+            val aTag = container.selectFirst("a") ?: return@forEach
+            val urlRaw = aTag.attr("href")
             
-            val teams = container?.select("img")
-            if (teams != null && teams.size >= 2) {
-                val rightTeam = teams[0].attr("alt").trim().ifBlank { "Team 1" }
-                val leftTeam = teams[1].attr("alt").trim().ifBlank { "Team 2" }
+            val teams = container.select("img")
+            if (teams.size >= 2) {
+                val rightTeam = teams[0].attr("alt").trim().ifBlank { 
+                    teams[0].attr("title").trim().ifBlank { "Team 1" } 
+                }
+                val leftTeam = teams[1].attr("alt").trim().ifBlank { 
+                    teams[1].attr("title").trim().ifBlank { "Team 2" } 
+                }
                 
                 val containerText = container.text()
                 
-                // Pure heuristic pattern extraction preventing reliance on heavily obfuscated or rotating CSS class designations
-                val statusRegex = Regex("(جارية الان|لم تبدأ|انتهت|شوط|استراحة|تأجلت|جارية الأن)")
+                val statusRegex = Regex("(جارية الان|لم تبدأ|انتهت|شوط|استراحة|تأجلت|مباشر|جارية الأن|بث مباشر)")
                 val timeRegex = Regex("(\\d{1,2}:\\d{2}\\s*(?:AM|PM|ص|م)?)", RegexOption.IGNORE_CASE)
                 val resultRegex = Regex("(\\d+\\s*-\\s*\\d+)")
                 
@@ -104,51 +117,78 @@ class YallaShoot : BaseProvider() {
                     }
                 }
                 
-                Log.d("YallaShoot", "Match explicitly identified using DOM heuristics:")
-                Log.d("YallaShoot", "-> Title: $title")
-                Log.d("YallaShoot", "-> URL: $url")
-                
                 val posterRaw = teams[0].attr("data-src").ifBlank { teams[0].attr("src") }
                 val poster = fixYallaUrl(posterRaw)
+                
+                val url = if (urlRaw.isBlank() || urlRaw == "/") {
+                    val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+                    val encodedPoster = java.net.URLEncoder.encode(poster, "UTF-8")
+                    "$mainUrl/matches/dummy?title=$encodedTitle&poster=$encodedPoster"
+                } else {
+                    fixYallaUrl(urlRaw)
+                }
+                
+                if (url.isBlank() || !processedUrls.add(url)) return@forEach
+                
+                Log.d("YallaShoot", "Match identified dynamically:")
+                Log.d("YallaShoot", "-> Title: $title")
+                Log.d("YallaShoot", "-> URL: $url")
                 
                 matches.add(newMovieSearchResponse(title, url, TvType.Live) {
                     this.posterUrl = poster
                 })
-            } else {
-                Log.w("YallaShoot", "Failed to resolve 2 image logos resolving match container upwards from link: $urlRaw")
             }
         }
-        
-        if (matches.isNotEmpty()) {
-            homePageList.add(HomePageList("مباريات اليوم", matches, isHorizontalImages = true))
-        }
+        return matches
+    }
 
-        val news = mutableListOf<SearchResponse>()
-        doc.select(".AY-PItem").forEach { element ->
-            val titleNode = element.selectFirst(".AY-PostTitle a")
-            val title = titleNode?.text() ?: return@forEach
-            val url = titleNode.attr("href")?.let { fixYallaUrl(it) } ?: return@forEach
-            
-            val imgNode = element.selectFirst("img")
-            val poster = imgNode?.attr("data-src")?.ifBlank { imgNode.attr("src") } ?: ""
-            
-            news.add(newMovieSearchResponse(title, url, TvType.Movie) {
-                this.posterUrl = fixYallaUrl(poster)
-            })
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse? {
+        httpService.ensureInitialized()
+        val doc = httpService.getDocument(mainUrl) ?: return null
+        val homePageList = mutableListOf<HomePageList>()
+        
+        val todayMatches = parseMatchesFromDocument(doc)
+        if (todayMatches.isNotEmpty()) {
+            homePageList.add(HomePageList("مباريات اليوم", todayMatches, isHorizontalImages = true))
         }
         
-        if (news.isNotEmpty()) {
-            homePageList.add(HomePageList("آخر الأخبار", news, isHorizontalImages = false))
-        }
-
         return newHomePageResponse(homePageList, false)
     }
 
-    /**
-     * Replaces the native BaseProvider load() to prevent ProviderHttpService from forcefully
-     * redirecting "yallashoooty.com" cross-domain pages into "shoot-one.com". 
-     */
+    override suspend fun search(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
+        val url = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        val html = httpService.getText(url, skipRewrite = true) ?: return emptyList()
+        val doc = org.jsoup.Jsoup.parse(html, url)
+        
+        val allMatches = parseMatchesFromDocument(doc)
+        return allMatches.filter { match ->
+            match.name.contains(query, ignoreCase = true)
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse? {
+        if (url.contains("/matches/dummy")) {
+            val title = try {
+                url.substringAfter("title=").substringBefore("&").let { java.net.URLDecoder.decode(it, "UTF-8") }
+            } catch (e: Exception) {
+                "YallaShoot Match"
+            }
+            val poster = try {
+                url.substringAfter("poster=").substringBefore("&").let { java.net.URLDecoder.decode(it, "UTF-8") }
+            } catch (e: Exception) {
+                ""
+            }
+            
+            return newLiveStreamLoadResponse(title, url, url) {
+                this.posterUrl = poster
+                this.plot = "لم تبدأ المباراة بعد. يرجى العودة لاحقاً عند بدء البث المباشر."
+            }
+        }
+        
         val isMatch = url.contains("yallashoooty") || url.contains("/sport") || url.contains("/https") || url.contains(".html") || url.contains("/matches/")
         
         if (isMatch) {
@@ -180,6 +220,10 @@ class YallaShoot : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        if (data.contains("/matches/dummy")) {
+            Log.d("YallaShoot", "Matches dummy link clicked, stream is not active yet.")
+            return false
+        }
         var foundLinks = false
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent

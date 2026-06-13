@@ -312,70 +312,50 @@ class SnifferExtractor : ExtractorApi() {
                     } else null
                     
                     val finalHeaders = mutableMapOf<String, String>()
+                    // WebView-captured headers take priority (correct Referer, sec-ch-ua matching Chrome version)
                     finalHeaders.putAll(filteredHeaders)
+                    if (!cookieHeader.isNullOrBlank()) {
+                        finalHeaders["Cookie"] = cookieHeader
+                    }
                     
+                    // Only fill in defaults for headers NOT already captured from WebView
                     val defaultHeaders = mapOf(
                         "Referer" to originReferer,
                         "User-Agent" to snifferUserAgent,
                         "Accept" to "*/*",
                         "Origin" to extractOrigin(embedUrl),
-                        "sec-ch-ua" to """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"""",
-                        "sec-ch-ua-mobile" to "?1",
-                        "sec-ch-ua-platform" to "Android",
                         "Sec-Fetch-Dest" to "empty",
                         "Sec-Fetch-Mode" to "cors",
                         "Sec-Fetch-Site" to "cross-site"
                     )
-                    
                     for ((key, value) in defaultHeaders) {
-                        val existingKey = finalHeaders.keys.firstOrNull { it.equals(key, ignoreCase = true) }
-                        if (existingKey == null) {
+                        if (finalHeaders.keys.none { it.equals(key, ignoreCase = true) }) {
                             finalHeaders[key] = value
                         }
                     }
-                    
-                    if (!cookieHeader.isNullOrBlank()) {
-                        finalHeaders["Cookie"] = cookieHeader
-                    }
 
-                    // === ERROR HANDLING / M3U8 EXTRACTION ===
-                    // If it's an M3U8, try to extract qualities
-                    var qualityLinks: List<ExtractorLink>? = null
-                    if (linkType == ExtractorLinkType.M3U8) {
-                        android.util.Log.i("SnifferExtractor", "[getUrl] Attempting M3U8 quality extraction")
-                        ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
-                        qualityLinks = extractM3u8Qualities(source.url, finalHeaders, originReferer, name)
-                    }
+                    // Skip extractM3u8Qualities entirely:
+                    // OkHttp's TLS fingerprint (JA3) differs from Chrome's, causing CDNs 
+                    // (e.g. cdnz.quest/nginx) to return 403 on server-side pre-fetch.
+                    // ExoPlayer handles master M3U8 playlists with multi-quality natively.
                     
-                    if (!qualityLinks.isNullOrEmpty()) {
-                         android.util.Log.i("SnifferExtractor", "[getUrl] Extracted ${qualityLinks.size} qualities from M3U8")
-                         ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
-                          for (qLink in qualityLinks) {
-                               android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
-                               callback(qLink)
-                               callbackCount++
-                               android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
-                          }
-                    } else {
-                        // Fallback: Return original link
-                        android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")
-                        android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
-                         callback(
-                            newExtractorLink(
-                                source = displaySourceName,
-                                name = "$displaySourceName ${source.qualityLabel}",
-                                url = source.url,
-                                type = linkType
-                            ) {
-                                this.referer = originReferer
-                                this.quality = qualityValue
-                                this.headers = finalHeaders
-                            }
-                        )
-                        
-                        callbackCount++
-                        android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK INVOKED - count=$callbackCount")
-                    }
+                    android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")
+                    android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
+                    callback(
+                        newExtractorLink(
+                            source = displaySourceName,
+                            name = "$displaySourceName ${source.qualityLabel}",
+                            url = source.url,
+                            type = linkType
+                        ) {
+                            this.referer = originReferer
+                            this.quality = qualityValue
+                            this.headers = finalHeaders
+                        }
+                    )
+                    
+                    callbackCount++
+                    android.util.Log.i("SnifferExtractor", "[getUrl] CALLBACK INVOKED - count=$callbackCount")
                     
                     android.util.Log.i("SnifferExtractor", "[getUrl] === LINK PROCESSING COMPLETE === callbacks=$callbackCount")
                 }
