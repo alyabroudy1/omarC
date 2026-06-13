@@ -10,6 +10,8 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
+import com.cloudstream.shared.util.WebConfig
+
 /**
  * Custom extractor for Vidoba.org embeds.
  * 
@@ -41,11 +43,12 @@ class VidobaExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing Vidoba URL", "url" to url)
 
         try {
+            val userAgent = WebConfig.getCachedUserAgent()
             // 1. Fetch the embed page using OkHttp (so the token binds to OkHttp JA3)
             val response = app.get(
                 url,
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent" to userAgent,
                     "Referer" to (referer ?: "https://larozza.casa/")
                 )
             )
@@ -93,7 +96,7 @@ class VidobaExtractor : ExtractorApi() {
                     this.headers = mapOf(
                         "Referer" to url,
                         "Origin" to "https://vidoba.org",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to userAgent
                     )
                 }
             )
