@@ -16,8 +16,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 class YallaShoot : BaseProvider() {
 
-    override val baseDomain get() = "shoot-one.com" 
-    override var mainUrl = "https://www.shoot-one.com"
+    override val baseDomain get() = "yalla-team.com" 
     override val providerName get() = "YallaShoot"
     override var lang = "ar"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/yallashoot.json"
@@ -36,7 +35,7 @@ class YallaShoot : BaseProvider() {
         return try {
             val uri = java.net.URI(url)
             // Preserve external domains like yallashoooty
-            if (uri.isAbsolute && uri.host?.contains("shoot") == false) {
+            if (uri.isAbsolute && uri.host?.contains("yalla") == false && uri.host?.contains("shoot") == false) {
                 return url
             }
 
