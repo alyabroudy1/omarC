@@ -35,6 +35,36 @@ class VidobaExtractor : ExtractorApi() {
         private const val TAG = "VidobaExtractor"
     }
 
+    private suspend fun fetchEmbedWithHttpURLConnection(
+        urlUrl: String,
+        headers: Map<String, String>
+    ): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val connection = java.net.URI(urlUrl).toURL().openConnection() as java.net.HttpURLConnection
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            for ((key, value) in headers) {
+                connection.setRequestProperty(key, value)
+            }
+            val responseCode = connection.responseCode
+            if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(connection.inputStream))
+                val response = java.lang.StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    response.append(line).append("\n")
+                }
+                reader.close()
+                response.toString()
+            } else {
+                throw java.io.IOException("HTTP error code: $responseCode")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -45,17 +75,16 @@ class VidobaExtractor : ExtractorApi() {
 
         try {
             val userAgent = WebConfig.getCachedUserAgent()
-            // 1. Fetch the embed page using OkHttp (so the token binds to OkHttp JA3)
-            val response = app.get(
-                url,
-                headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Referer" to (referer ?: "https://larozza.casa/")
-                )
+            val embedHeaders = mapOf(
+                "User-Agent" to userAgent,
+                "Referer" to (referer ?: "https://larozza.casa/"),
+                "Accept-Language" to "en-GB,en;q=0.7"
             )
 
+            // 1. Fetch the embed page using HttpURLConnection (so the token binds to native Java TLS handshake signature)
+            val documentHtml = fetchEmbedWithHttpURLConnection(url, embedHeaders)
+
             // 2. Find the packed P.A.C.K.E.R JS script
-            val documentHtml = response.text
             val packedRegex = Regex("""eval\(function\(p,a,c,k,e,d\).+?split\(\s*['"]\|['"]\s*\)\s*\)\s*\)""", RegexOption.DOT_MATCHES_ALL)
             val match = packedRegex.find(documentHtml)
             
@@ -72,7 +101,6 @@ class VidobaExtractor : ExtractorApi() {
             }
 
             // 4. Extract the M3U8 URL from the unpacked script
-            // The script typically contains: file:"https://vroba-store1...master.m3u8?t=..."
             val urlRegex = Regex("""file:\s*["'](https:\/\/[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
             val urlMatch = urlRegex.find(unpacked)
             
@@ -84,12 +112,15 @@ class VidobaExtractor : ExtractorApi() {
             val m3u8Url = urlMatch.groupValues[1]
             ProviderLogger.d(TAG, "getUrl", "Successfully extracted M3U8", "m3u8Url" to m3u8Url.take(80))
 
-            // 5. Build the ExtractorLink and pass to ExoPlayer using M3u8Helper
+            // 5. Build the ExtractorLink pointing directly to the master playlist
+            // Referer is set to the base domain "https://vidoba.org/" (trailing slash) to prevent mismatches
+            val baseReferer = "https://vidoba.org/"
             val requestHeaders = mapOf(
                 "User-Agent" to userAgent,
-                "Referer" to url,
+                "Referer" to baseReferer,
                 "Origin" to "https://vidoba.org",
                 "Accept" to "*/*",
+                "Accept-Language" to "en-GB,en;q=0.7",
                 "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
                 "sec-ch-ua-mobile" to "?1",
                 "sec-ch-ua-platform" to "\"Android\"",
@@ -98,46 +129,21 @@ class VidobaExtractor : ExtractorApi() {
                 "Sec-Fetch-Site" to "cross-site"
             )
 
-            android.util.Log.d(TAG, "[getUrl] Requesting M3U8 with User-Agent: $userAgent")
+            android.util.Log.d(TAG, "[getUrl] Emitting master playlist directly: $m3u8Url")
             android.util.Log.d(TAG, "[getUrl] Requesting M3U8 headers: $requestHeaders")
 
-            val m3u8Links = try {
-                M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = m3u8Url,
-                    referer = url,
-                    headers = requestHeaders
-                )
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "[getUrl] M3u8Helper parsing failed", e)
-                ProviderLogger.e(TAG, "getUrl", "M3u8Helper parsing failed", e)
-                emptyList()
-            }
-
-            android.util.Log.d(TAG, "[getUrl] M3u8Helper returned ${m3u8Links.size} links")
-
-            if (m3u8Links.isNotEmpty()) {
-                m3u8Links.forEach { link ->
-                    android.util.Log.d(TAG, "[getUrl] Generated Link Quality: ${link.quality}, Name: ${link.name}")
-                    android.util.Log.d(TAG, "[getUrl] Generated Link URL: ${link.url}")
-                    android.util.Log.d(TAG, "[getUrl] Generated Link Headers: ${link.headers}")
-                    callback(link)
-                }
-            } else {
-                android.util.Log.w(TAG, "[getUrl] Falling back to master playlist link directly")
-                val fallbackLink = newExtractorLink(
+            callback(
+                newExtractorLink(
                     source = name,
                     name = "Vidoba Server",
                     url = m3u8Url,
                     type = ExtractorLinkType.M3U8
                 ) {
-                    this.referer = url
+                    this.referer = baseReferer
                     this.quality = Qualities.Unknown.value
                     this.headers = requestHeaders
                 }
-                android.util.Log.d(TAG, "[getUrl] Fallback Link Headers: ${fallbackLink.headers}")
-                callback(fallbackLink)
-            }
+            )
 
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "getUrl", "Error extracting Vidoba", e)
