@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.M3u8Helper
 
 import com.cloudstream.shared.util.WebConfig
 
@@ -83,23 +84,43 @@ class VidobaExtractor : ExtractorApi() {
             val m3u8Url = urlMatch.groupValues[1]
             ProviderLogger.d(TAG, "getUrl", "Successfully extracted M3U8", "m3u8Url" to m3u8Url.take(80))
 
-            // 5. Build the ExtractorLink and pass to ExoPlayer
-            callback(
-                newExtractorLink(
+            // 5. Build the ExtractorLink and pass to ExoPlayer using M3u8Helper
+            val m3u8Links = try {
+                M3u8Helper.generateM3u8(
                     source = name,
-                    name = "Vidoba Server",
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = url
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
+                    streamUrl = m3u8Url,
+                    referer = url,
+                    headers = mapOf(
+                        "User-Agent" to userAgent,
                         "Referer" to url,
-                        "Origin" to "https://vidoba.org",
-                        "User-Agent" to userAgent
+                        "Origin" to "https://vidoba.org"
                     )
-                }
-            )
+                )
+            } catch (e: Exception) {
+                ProviderLogger.e(TAG, "getUrl", "M3u8Helper parsing failed", e)
+                emptyList()
+            }
+
+            if (m3u8Links.isNotEmpty()) {
+                m3u8Links.forEach { callback(it) }
+            } else {
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "Vidoba Server",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "Referer" to url,
+                            "Origin" to "https://vidoba.org",
+                            "User-Agent" to userAgent
+                        )
+                    }
+                )
+            }
 
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "getUrl", "Error extracting Vidoba", e)
