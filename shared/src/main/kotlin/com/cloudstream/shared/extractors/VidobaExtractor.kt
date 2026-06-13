@@ -93,7 +93,14 @@ class VidobaExtractor : ExtractorApi() {
                     headers = mapOf(
                         "User-Agent" to userAgent,
                         "Referer" to url,
-                        "Origin" to "https://vidoba.org"
+                        "Origin" to "https://vidoba.org",
+                        "Accept" to "*/*",
+                        "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
+                        "sec-ch-ua-mobile" to "?1",
+                        "sec-ch-ua-platform" to "\"Android\"",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "cross-site"
                     )
                 )
             } catch (e: Exception) {
@@ -116,7 +123,14 @@ class VidobaExtractor : ExtractorApi() {
                         this.headers = mapOf(
                             "Referer" to url,
                             "Origin" to "https://vidoba.org",
-                            "User-Agent" to userAgent
+                            "User-Agent" to userAgent,
+                            "Accept" to "*/*",
+                            "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
+                            "sec-ch-ua-mobile" to "?1",
+                            "sec-ch-ua-platform" to "\"Android\"",
+                            "Sec-Fetch-Dest" to "empty",
+                            "Sec-Fetch-Mode" to "cors",
+                            "Sec-Fetch-Site" to "cross-site"
                         )
                     }
                 )
