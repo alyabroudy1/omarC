@@ -189,33 +189,9 @@ class KooraLive : BaseProvider() {
             val innerIframeSrc = innerIframe?.attr("src")
             if (!innerIframeSrc.isNullOrBlank()) {
                 val vertyuzUrl = fixUrl(innerIframeSrc)
-                Log.d("KooraLive", "Fetching vertyuz player: $vertyuzUrl")
-                
-                val vHeaders = mapOf(
-                    "User-Agent" to userAgent,
-                    "Referer" to playerUrl
-                )
-                val vertyuzResponse = httpService.getText(vertyuzUrl, vHeaders, skipRewrite = true)
-                if (vertyuzResponse != null) {
-                    val playRegex = Regex("var playbackURL\\s*=\\s*[\"']([^\"']+)[\"']")
-                    val m3u8Url = playRegex.find(vertyuzResponse)?.groupValues?.get(1)
-                    if (m3u8Url != null) {
-                        Log.d("KooraLive", "Statically extracted Stream 1 M3u8: $m3u8Url")
-                        val m3u8Links = M3u8Helper.generateM3u8(
-                            source = this.name,
-                            streamUrl = m3u8Url,
-                            referer = vertyuzUrl,
-                            headers = mapOf(
-                                "User-Agent" to userAgent,
-                                "Referer" to vertyuzUrl,
-                                "Origin" to "https://tv.vertyuz.xyz"
-                            )
-                        )
-                        m3u8Links.forEach { link ->
-                            callback(link)
-                            foundLinks = true
-                        }
-                    }
+                Log.d("KooraLive", "Loading VertyuzExtractor for: $vertyuzUrl")
+                if (loadExtractor(vertyuzUrl, playerUrl, subtitleCallback, callback)) {
+                    foundLinks = true
                 }
             }
         }
