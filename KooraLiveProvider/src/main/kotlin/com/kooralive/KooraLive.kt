@@ -220,10 +220,10 @@ class KooraLive : BaseProvider() {
             }
         }
         
-        // Execute WebView Sniffer fallback for alternative servers or if Stream 1 failed
-        if (!foundLinks || menuLinks.isNotEmpty()) {
+        // Execute WebView Sniffer fallback if we couldn't statically extract Stream 1
+        if (!foundLinks) {
             val sniffUrls = mutableListOf<String>()
-            if (playerUrl.isNotBlank() && !foundLinks) {
+            if (playerUrl.isNotBlank()) {
                 sniffUrls.add(playerUrl)
             }
             sniffUrls.addAll(menuLinks)
@@ -232,7 +232,7 @@ class KooraLive : BaseProvider() {
                 Log.d("KooraLive", "Executing WebView Sniffer fallback on: $sniffUrl")
                 if (awaitSnifferResult(sniffUrl, data, subtitleCallback, callback, 15000L)) {
                     foundLinks = true
-                    // If we successfully resolved at least one stream via sniffer, we can stop or continue
+                    break // Stop sniffing other servers once we find at least one working stream
                 }
             }
         }
