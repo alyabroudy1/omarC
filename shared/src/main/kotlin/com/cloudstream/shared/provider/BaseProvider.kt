@@ -546,6 +546,7 @@ abstract class BaseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         timeoutMs: Long
     ): List<ExtractorLink> {
+        Log.d("BaseProvider", "collectExtractorLinks starting for URL: $targetUrl")
         val collected = java.util.concurrent.CopyOnWriteArrayList<ExtractorLink>()
         
         try {
@@ -558,6 +559,7 @@ abstract class BaseProvider : MainAPI() {
             Log.w("[$name] [collectExtractorLinks]", "Exception: ${e.message}")
         }
         
+        Log.d("BaseProvider", "collectExtractorLinks finished. Found ${collected.size} links")
         return collected.toList()
     }
     

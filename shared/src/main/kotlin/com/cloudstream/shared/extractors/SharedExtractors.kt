@@ -12,7 +12,9 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(OkPrimeExtractor())
     registerExtractorAPI(Up4FunExtractor())
     registerExtractorAPI(FaselHDExtractor())
+    android.util.Log.d("SharedExtractors", "Registering VidobaExtractor...")
     registerExtractorAPI(VidobaExtractor())
+    android.util.Log.d("SharedExtractors", "VidobaExtractor registered successfully")
     
     // Bysezejataos (API-based extraction with AES decryption)
     registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))

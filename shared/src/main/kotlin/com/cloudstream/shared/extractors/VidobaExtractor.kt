@@ -21,8 +21,12 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
  */
 class VidobaExtractor : ExtractorApi() {
     override val name = "Vidoba"
-    override val mainUrl = "vidoba.org"
+    override val mainUrl = "https://vidoba.org"
     override val requiresReferer = true
+
+    init {
+        android.util.Log.d("VidobaExtractor", "VidobaExtractor successfully initialized")
+    }
 
     companion object {
         private const val TAG = "VidobaExtractor"
