@@ -24,14 +24,16 @@ import kotlin.text.contains
 class EgyDead : BaseProvider() {
 
     override val providerName get() = "EgyDead"
-    override val baseDomain get() = "egydead.space"
+    override val baseDomain get() = "tv9.egydead.live"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/egydead.json"
 
     override val mainPage = mainPageOf(
-        "/page/movies" to "افلام",
-        "/serie" to "مسلسلات",
-        "/type/comedy-1" to "كوميدي",
-        "/series-category/tv-shows" to "برامج تلفزيونية"
+        "/page/movies/" to "افلام اجنبي",
+        "/category/افلام-عربي/" to "افلام عربي",
+        "/type/comedy/" to "كوميديا",
+        "/serie/" to "مسلسلات",
+        "/category/افلام-كرتون/افلام-كرتون-ديزني-باللهجة-المصرية/" to "افلام كرتون",
+        "/series-category/tv-shows/" to "برامج تلفزيونية"
     )
 
     override fun getParser(): NewBaseParser {

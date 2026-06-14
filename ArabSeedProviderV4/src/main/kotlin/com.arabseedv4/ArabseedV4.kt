@@ -11,11 +11,11 @@ class ArabseedV4 : BaseProvider() {
 
     override val baseDomain get() = "arabseed.show"
     override val providerName get() = "ArabseedV4"
-    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseed.json"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
 
     override val mainPage = mainPageOf(
-        "/movies-1/" to "أفلام",
-        "/series-1/" to "مسلسلات"
+        "/movies-5/" to "أفلام",
+        "/series-5/" to "مسلسلات"
     )
 
     override fun getParser(): NewBaseParser {

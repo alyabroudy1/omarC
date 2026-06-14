@@ -64,4 +64,29 @@ object VideoUrlClassifier {
                lowerUrl.contains("/google-analytics") ||
                lowerUrl.contains("favicon.ico")
     }
+
+    /**
+     * Determines if a URL is an HLS Master M3U8 playlist.
+     * Master playlists contain multiple sub-streams (qualities) rather than chunks.
+     */
+    fun isMasterM3u8(url: String): Boolean {
+        val lower = url.lowercase()
+        if (!lower.contains(".m3u8")) return false
+        if (lower.contains("master.m3u8") || 
+            lower.contains("playlist.m3u8") || 
+            lower.contains("manifest.m3u8")) {
+            return true
+        }
+        
+        // Exclude common patterns/keywords representing specific sub-playlists or chunks
+        val hasQualityPattern = lower.contains("360") || 
+                               lower.contains("480") || 
+                               lower.contains("720") || 
+                               lower.contains("1080") || 
+                               lower.contains("240") || 
+                               lower.contains("low") || 
+                               lower.contains("mobile") ||
+                               lower.contains("chunklist")
+        return !hasQualityPattern
+    }
 }

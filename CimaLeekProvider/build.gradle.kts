@@ -1,4 +1,4 @@
-version = 5
+version = 1
 
 android {
     sourceSets {
@@ -16,6 +16,6 @@ cloudstream {
     authors = listOf("omarflex")
     language = "ar"
     status = 3
-    tvTypes = listOf("TvSeries", "Movie", "Anime", "AsianDrama")
-    iconUrl = "https://www.google.com/s2/favicons?domain=egydead.space&sz=%size%"
+    tvTypes = listOf("TvSeries", "Movie", "Anime")
+    iconUrl = "https://www.google.com/s2/favicons?domain=cimaleek.pw&sz=%size%"
 }

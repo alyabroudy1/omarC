@@ -218,11 +218,11 @@ class SnifferExtractor : ExtractorApi() {
                 
                 // 2. Sort links: Master M3U8 > M3U8 > MP4 > Others
                 val sortedLinks = validLinks.sortedWith(compareByDescending { source ->
-                    val u = source.url.lowercase()
+                    val u = source.url
                     when {
-                        u.contains("master.m3u8") -> 100
-                        u.contains(".m3u8") -> 50
-                        u.contains(".mp4") -> 10
+                        com.cloudstream.shared.webview.VideoUrlClassifier.isMasterM3u8(u) -> 100
+                        u.contains(".m3u8", ignoreCase = true) -> 50
+                        u.contains(".mp4", ignoreCase = true) -> 10
                         else -> 1
                     }
                 })
@@ -239,7 +239,7 @@ class SnifferExtractor : ExtractorApi() {
                     } catch (_: Exception) {
                         captured.url.substringBefore("?").substringAfterLast("/")
                     }
-                    if (filename.isNotBlank() && !filename.contains("master.m3u8", ignoreCase = true)) {
+                    if (filename.isNotBlank() && !com.cloudstream.shared.webview.VideoUrlClassifier.isMasterM3u8(captured.url)) {
                         capturedMap[filename] = captured
                     }
                 }

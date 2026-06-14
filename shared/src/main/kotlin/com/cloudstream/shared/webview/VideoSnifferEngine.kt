@@ -424,12 +424,44 @@ class VideoSnifferEngine(
                                 window.object__info = {};
                             }
                             
-                            // 2. Fingerprint Spoofing (Match Desktop UA)
-                            if (navigator.userAgent.indexOf("Windows") !== -1) {
-                                Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; } });
-                                Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
+                            // 2. Fingerprint Spoofing (Match Desktop UA & Hide Automation)
+                            try {
                                 Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
+                            } catch(e) {}
+                            
+                            if (navigator.userAgent.indexOf("Windows") !== -1) {
+                                try {
+                                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; } });
+                                } catch(e) {}
+                                try {
+                                    Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
+                                } catch(e) {}
                             }
+                            
+                            // 3. DisableDevtool Anti-Bot Bypass
+                            try {
+                                var originalDisableDevtool;
+                                Object.defineProperty(window, 'DisableDevtool', {
+                                    get: function() {
+                                        return function(options) {
+                                            options = options || {};
+                                            options.ignore = function() { return true; };
+                                            options.url = "";
+                                            options.timeOutUrl = "";
+                                            options.ondevtoolopen = function() {};
+                                            if (originalDisableDevtool) {
+                                                try {
+                                                    return originalDisableDevtool(options);
+                                                } catch(err) {}
+                                            }
+                                        };
+                                    },
+                                    set: function(val) {
+                                        originalDisableDevtool = val;
+                                    },
+                                    configurable: true
+                                });
+                            } catch(e) {}
                         })();
                         """.trimIndent(), null
                     )
@@ -668,7 +700,7 @@ class VideoSnifferEngine(
              )
 
              // If we found a master m3u8 or blob, we might want to finish early or shortly
-             if (url.contains("master.m3u8") || url.startsWith("blob:")) {
+             if (VideoUrlClassifier.isMasterM3u8(url) || url.startsWith("blob:")) {
                   android.util.Log.i("VideoSnifferEngine", "[captureLink] High confidence link found, suggesting exit.")
              }
 
@@ -698,7 +730,7 @@ class VideoSnifferEngine(
 
                 // === SMART EXIT STRATEGY ===
                 // Check if we should wait for a Master M3U8
-                val hasMaster = capturedLinks.any { it.url.contains("master.m3u8", ignoreCase = true) }
+                val hasMaster = capturedLinks.any { VideoUrlClassifier.isMasterM3u8(it.url) }
                 val timeSinceFirst = System.currentTimeMillis() - firstLinkTime
 
                 if (!hasMaster && timeSinceFirst < SMART_WAIT_TIME_MS) {

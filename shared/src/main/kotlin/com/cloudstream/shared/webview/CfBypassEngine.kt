@@ -132,13 +132,40 @@ class CfBypassEngine(
                     view?.evaluateJavascript(
                         """
                         (function() {
-                            // Hide webdriver flag (CF checks this for headless bot detection)
-                            Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
-                            
                             // Polyfill for sites that expect object__info
                             if (typeof window.object__info === 'undefined') {
                                 window.object__info = {};
                             }
+                            
+                            // Hide webdriver flag (CF checks this for headless bot detection)
+                            try {
+                                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
+                            } catch(e) {}
+                            
+                            // DisableDevtool Anti-Bot Bypass
+                            try {
+                                var originalDisableDevtool;
+                                Object.defineProperty(window, 'DisableDevtool', {
+                                    get: function() {
+                                        return function(options) {
+                                            options = options || {};
+                                            options.ignore = function() { return true; };
+                                            options.url = "";
+                                            options.timeOutUrl = "";
+                                            options.ondevtoolopen = function() {};
+                                            if (originalDisableDevtool) {
+                                                try {
+                                                    return originalDisableDevtool(options);
+                                                } catch(err) {}
+                                            }
+                                        };
+                                    },
+                                    set: function(val) {
+                                        originalDisableDevtool = val;
+                                    },
+                                    configurable: true
+                                });
+                            } catch(e) {}
                         })();
                         """.trimIndent(), null
                     )
