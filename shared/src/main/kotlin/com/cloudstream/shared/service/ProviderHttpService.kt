@@ -7,6 +7,10 @@ import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
+import com.cloudstream.shared.network.ChromiumFetcher
+import com.cloudstream.shared.network.MediaUrlValidator
+import com.cloudstream.shared.network.ValidatedSource
+import com.cloudstream.shared.network.VideoSourceCandidate
 import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
@@ -40,7 +44,9 @@ class ProviderHttpService private constructor(
     private val videoSnifferEngine: VideoSnifferEngine,
     private val domainManager: DomainManager,
     private val cookieManager: CookieLifecycleManager,
-    private val parser: ParserInterface
+    private val parser: ParserInterface,
+    /** Chrome-TLS HTTP client for Tier 3 TLS fingerprint fallback */
+    val chromiumFetcher: ChromiumFetcher
 ) {
     @Volatile
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain)
@@ -48,6 +54,9 @@ class ProviderHttpService private constructor(
     @Volatile
     private var initialized = false
     private val initMutex = Mutex()
+
+    /** Validates media URLs for TLS-based CDN blocks before ExoPlayer */
+    val mediaValidator = MediaUrlValidator()
 
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers) },
@@ -294,6 +303,63 @@ class ProviderHttpService private constructor(
         }
     }
 
+    /**
+     * Validate media URLs before handing them to ExoPlayer.
+     *
+     * Tests each URL with OkHttp (same TLS stack as ExoPlayer) to detect
+     * CDN 403 blocks caused by TLS fingerprint mismatch. Returns results
+     * indicating which sources are accessible and which need WebView playback.
+     *
+     * @param sources Video sources to validate (URL + headers)
+     * @return List of validated sources with accessibility status
+     */
+    suspend fun validateMediaUrls(sources: List<VideoSource>): List<ValidatedSource> {
+        if (sources.isEmpty()) return emptyList()
+
+        val candidates = sources.map { vs ->
+            VideoSourceCandidate(
+                url = vs.url,
+                quality = vs.quality,
+                headers = vs.headers
+            )
+        }
+
+        val validated = mediaValidator.validateSources(candidates, sessionState)
+
+        val blocked = validated.count { it.tlsBlocked }
+        if (blocked > 0) {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "validateMediaUrls",
+                "⚠️ TLS-blocked media URLs detected",
+                "total" to sources.size,
+                "blocked" to blocked,
+                "accessible" to (sources.size - blocked))
+        }
+
+        return validated
+    }
+
+    /**
+     * Quick check: can ExoPlayer reach this media URL?
+     * Returns false if TLS fingerprint mismatch will cause 403.
+     */
+    suspend fun isMediaAccessible(url: String, headers: Map<String, String> = emptyMap()): Boolean {
+        return mediaValidator.isAccessible(url, headers, sessionState)
+    }
+
+    /**
+     * Fetch a URL using Chrome's TLS stack (WebView-based).
+     * Use when OkHttp is TLS-blocked but you need the content programmatically.
+     */
+    suspend fun fetchViaChromeTls(url: String, headers: Map<String, String> = emptyMap()): String? {
+        val allHeaders = sessionState.buildHeaders().toMutableMap()
+        allHeaders.putAll(headers)
+        val response = chromiumFetcher.fetch(url, allHeaders)
+        if (response.success && response.cookies.isNotEmpty()) {
+            updateCookies(response.cookies, fromWebView = true)
+        }
+        return if (response.success) response.body else null
+    }
+
     private fun extractVideoSources(html: String): List<VideoSource> {
         val sources = mutableListOf<VideoSource>()
         Regex("""file:\s*["']([^"']+)["']""").findAll(html).forEach { match ->
@@ -497,7 +563,42 @@ class ProviderHttpService private constructor(
                 .get()
                 .build()
             
-            executeRequestHelper(directClient, okRequest)
+            val result = executeRequestHelper(directClient, okRequest)
+
+            // ── Tier 3 TLS Fallback ──
+            // If OkHttp got CF-blocked despite having valid cookies + browser headers,
+            // this is a TLS fingerprint block. Retry via ChromiumFetcher (Chrome TLS).
+            if (result.isCloudflareBlocked && cookiesForDomain.isNotEmpty()) {
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                    "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
+                    "url" to targetUrl.take(80))
+
+                val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
+                if (chromiumResponse.success) {
+                    ProviderLogger.i(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                        "✅ Chrome TLS fallback succeeded",
+                        "url" to targetUrl.take(80),
+                        "htmlLength" to chromiumResponse.body.length)
+
+                    // Merge any new cookies from the Chrome response
+                    if (chromiumResponse.cookies.isNotEmpty()) {
+                        updateCookies(chromiumResponse.cookies, fromWebView = true)
+                    }
+
+                    return RequestResult.success(
+                        chromiumResponse.body,
+                        chromiumResponse.statusCode,
+                        chromiumResponse.finalUrl ?: targetUrl
+                    )
+                } else {
+                    ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                        "Chrome TLS fallback also failed",
+                        "code" to chromiumResponse.statusCode,
+                        "error" to (chromiumResponse.error ?: ""))
+                }
+            }
+
+            result
         } catch (e: Exception) {
             ProviderLogger.e(TAG_PROVIDER_HTTP, "executeDirectRequest", "Failed", e, "url" to url.take(80))
             RequestResult.failure(e)
@@ -788,8 +889,9 @@ class ProviderHttpService private constructor(
                 )
                 val cfBypassEngine = CfBypassEngine(activityProvider)
                 val videoSnifferEngine = VideoSnifferEngine(activityProvider)
+                val chromiumFetcher = ChromiumFetcher(activityProvider)
                 
-                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, domainManager, cookieManager, parser)
+                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, domainManager, cookieManager, parser, chromiumFetcher)
             }
         }
     }

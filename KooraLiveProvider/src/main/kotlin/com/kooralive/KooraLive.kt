@@ -34,7 +34,11 @@ class KooraLive : BaseProvider() {
         
         return try {
             val uri = java.net.URI(url)
-            if (uri.isAbsolute && uri.host?.contains("koora") == false && uri.host?.contains("live") == false) {
+            val isTargetHost = uri.host?.let { host ->
+                host.contains("koora-live") || host.contains("koora-livehd") || host == "koora-livehd7.com"
+            } ?: false
+            
+            if (uri.isAbsolute && !isTargetHost) {
                 return url
             }
 

@@ -369,9 +369,10 @@ class SnifferExtractor : ExtractorApi() {
                     }
                     finalHeaders["Accept"] = "*/*"
                     finalHeaders["Origin"] = extractOrigin(embedUrl)
-                    finalHeaders["sec-ch-ua"] = """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120""""
+                    // Dynamic sec-ch-ua matching the real WebView Chrome version
+                    finalHeaders["sec-ch-ua"] = com.cloudstream.shared.util.WebConfig.buildSecChUa(snifferUserAgent)
                     finalHeaders["sec-ch-ua-mobile"] = "?1"
-                    finalHeaders["sec-ch-ua-platform"] = "Android"
+                    finalHeaders["sec-ch-ua-platform"] = "\"Android\""
                     finalHeaders["Sec-Fetch-Dest"] = "empty"
                     finalHeaders["Sec-Fetch-Mode"] = "cors"
                     finalHeaders["Sec-Fetch-Site"] = "cross-site"

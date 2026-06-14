@@ -2,6 +2,7 @@ package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
+import com.cloudstream.shared.util.WebConfig
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -357,9 +358,11 @@ abstract class LazyExtractor : ExtractorApi() {
                 }
                 
                 // Cloudflare security headers
-                put("sec-ch-ua", """"Not(A:Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"""")
+                // Dynamic sec-ch-ua matching the real WebView Chrome version
+                val secChUa = WebConfig.buildSecChUa(get("User-Agent") ?: "")
+                put("sec-ch-ua", secChUa)
                 put("sec-ch-ua-mobile", "?1")
-                put("sec-ch-ua-platform", "Android")
+                put("sec-ch-ua-platform", "\"Android\"")
                 put("Sec-Fetch-Dest", "empty")
                 put("Sec-Fetch-Mode", "cors")
                 put("Sec-Fetch-Site", "same-origin")
