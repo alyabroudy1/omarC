@@ -129,21 +129,36 @@ class VidobaExtractor : ExtractorApi() {
                 "Sec-Fetch-Site" to "cross-site"
             )
 
-            android.util.Log.d(TAG, "[getUrl] Emitting master playlist directly: $m3u8Url")
+            android.util.Log.d(TAG, "[getUrl] Generating M3U8 links for: $m3u8Url")
             android.util.Log.d(TAG, "[getUrl] Requesting M3U8 headers: $requestHeaders")
 
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = "Vidoba Server",
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = baseReferer
-                    this.quality = Qualities.Unknown.value
-                    this.headers = requestHeaders
-                }
+            val m3u8Links = M3u8Helper.generateM3u8(
+                source = name,
+                streamUrl = m3u8Url,
+                referer = baseReferer,
+                headers = requestHeaders
             )
+
+            if (m3u8Links.isEmpty()) {
+                android.util.Log.d(TAG, "[getUrl] M3u8Helper returned empty, falling back to master playlist")
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "Vidoba Server",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = baseReferer
+                        this.quality = Qualities.Unknown.value
+                        this.headers = requestHeaders
+                    }
+                )
+            } else {
+                m3u8Links.forEach { link ->
+                    android.util.Log.d(TAG, "[getUrl] Emitting variant: ${link.name} -> ${link.url}")
+                    callback(link)
+                }
+            }
 
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "getUrl", "Error extracting Vidoba", e)
