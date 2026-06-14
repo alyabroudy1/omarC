@@ -230,14 +230,28 @@ class SnifferExtractor : ExtractorApi() {
                 android.util.Log.i("SnifferExtractor", "[getUrl] Processing ${sortedLinks.size} valid links (sorted)")
                 sortedLinks.forEach { android.util.Log.d("SnifferExtractor", " > Candidate: ${it.url}") }
 
-                sortedLinks.firstOrNull()?.let { source ->
-                    android.util.Log.i("SnifferExtractor", "[getUrl] Processing first sorted link: ${source.url.take(80)}")
-                    
-                    if (isFinished) {
-                        android.util.Log.d("SnifferExtractor", "[getUrl] Link skipped (already finished)")
-                        return@let
+                // Build a map of direct WebView-captured links by filename/suffix
+                val capturedMap = mutableMapOf<String, com.cloudstream.shared.webview.CapturedLinkData>()
+                sortedLinks.forEach { captured ->
+                    val filename = try {
+                        val path = java.net.URI(captured.url).path ?: ""
+                        path.substringAfterLast("/")
+                    } catch (_: Exception) {
+                        captured.url.substringBefore("?").substringAfterLast("/")
                     }
-                    
+                    if (filename.isNotBlank() && !filename.contains("master.m3u8", ignoreCase = true)) {
+                        capturedMap[filename] = captured
+                    }
+                }
+
+                val processedFilenames = mutableSetOf<String>()
+
+                for (source in sortedLinks) {
+                    if (isFinished) {
+                        android.util.Log.d("SnifferExtractor", "[getUrl] Loop terminated (isFinished=true)")
+                        break
+                    }
+
                     val url = source.url
                     android.util.Log.i("SnifferExtractor", "[getUrl] Checking URL: ${url.take(100)}")
                     
@@ -246,9 +260,25 @@ class SnifferExtractor : ExtractorApi() {
                         ProviderLogger.w(TAG, "getUrl", "URL appears truncated, skipping",
                             "url" to url,
                             "reason" to getTruncationReason(url))
-                        return@let
+                        continue
                     }
                     android.util.Log.i("SnifferExtractor", "[getUrl] URL passed truncation check")
+
+                    val filename = try {
+                        val path = java.net.URI(url).path ?: ""
+                        path.substringAfterLast("/")
+                    } catch (_: Exception) {
+                        url.substringBefore("?").substringAfterLast("/")
+                    }
+
+                    // Skip duplicate filenames so we don't return redundant qualities
+                    if (filename.isNotBlank() && processedFilenames.contains(filename)) {
+                        android.util.Log.d("SnifferExtractor", "[getUrl] Skipping duplicate filename candidate: $filename")
+                        continue
+                    }
+                    if (filename.isNotBlank()) {
+                        processedFilenames.add(filename)
+                    }
 
                     val linkType = when {
                         url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
@@ -268,17 +298,36 @@ class SnifferExtractor : ExtractorApi() {
                     
                     android.util.Log.i("SnifferExtractor", "[getUrl] Link type: ${linkType.name}")
                     
-                    // STOP after first valid link
-                    isFinished = true
-                    android.util.Log.i("SnifferExtractor", "[getUrl] Set isFinished=true") 
-                    
-                    // Determine quality value
-                    val qualityValue = when {
+                    // Determine quality value & label from source info, fallback to parsing filename/URL if generic
+                    var qualityValue = when {
                         source.qualityLabel.contains("1080") -> Qualities.P1080.value
                         source.qualityLabel.contains("720") -> Qualities.P720.value
                         source.qualityLabel.contains("480") -> Qualities.P480.value
                         source.qualityLabel.contains("360") -> Qualities.P360.value
                         else -> Qualities.Unknown.value
+                    }
+                    var qualityLabel = source.qualityLabel
+
+                    if (qualityValue == Qualities.Unknown.value) {
+                        val lowerUrl = url.lowercase()
+                        when {
+                            lowerUrl.contains("1080") -> {
+                                qualityValue = Qualities.P1080.value
+                                qualityLabel = "1080p"
+                            }
+                            lowerUrl.contains("720") -> {
+                                qualityValue = Qualities.P720.value
+                                qualityLabel = "720p"
+                            }
+                            lowerUrl.contains("480") -> {
+                                qualityValue = Qualities.P480.value
+                                qualityLabel = "480p"
+                            }
+                            lowerUrl.contains("360") -> {
+                                qualityValue = Qualities.P360.value
+                                qualityLabel = "360p"
+                            }
+                        }
                     }
                     
                     // Filter out forbidden headers
@@ -337,22 +386,57 @@ class SnifferExtractor : ExtractorApi() {
                     }
                     
                     if (!qualityLinks.isNullOrEmpty()) {
-                         android.util.Log.i("SnifferExtractor", "[getUrl] Extracted ${qualityLinks.size} qualities from M3U8")
-                         ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
-                          for (qLink in qualityLinks) {
-                               android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
-                               callback(qLink)
-                               callbackCount++
-                               android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
-                          }
+                        android.util.Log.i("SnifferExtractor", "[getUrl] Extracted ${qualityLinks.size} qualities from M3U8")
+                        ProviderLogger.i(TAG, "getUrl", "Extracted ${qualityLinks.size} qualities from M3U8")
+                        
+                        // Merge parsed qualities with WebView-captured links to preserve authorized tokens
+                        val mergedQualityLinks = qualityLinks.map { qLink ->
+                            val parsedFilename = try {
+                                val path = java.net.URI(qLink.url).path ?: ""
+                                path.substringAfterLast("/")
+                            } catch (_: Exception) {
+                                qLink.url.substringBefore("?").substringAfterLast("/")
+                            }
+                            
+                            val matchedCaptured = capturedMap[parsedFilename]
+                            if (matchedCaptured != null) {
+                                android.util.Log.i("SnifferExtractor", "[getUrl] Merging WebView-captured authorized link for filename $parsedFilename: ${matchedCaptured.url.take(80)}")
+                                processedFilenames.add(parsedFilename) // mark as processed so outer loop doesn't double-process
+                                newExtractorLink(
+                                    source = qLink.source,
+                                    name = qLink.name,
+                                    url = matchedCaptured.url,
+                                    type = qLink.type
+                                ) {
+                                    this.referer = qLink.referer
+                                    this.quality = qLink.quality
+                                    this.headers = qLink.headers
+                                }
+                            } else {
+                                qLink
+                            }
+                        }
+
+                        for (qLink in mergedQualityLinks) {
+                            android.util.Log.i("SnifferExtractor", "[getUrl] Invoking callback with quality link: ${qLink.url.take(80)}")
+                            callback(qLink)
+                            callbackCount++
+                            android.util.Log.i("SnifferExtractor", "[getUrl] Quality callback invoked, count=$callbackCount")
+                        }
+                        
+                        // Stop after first successfully parsed M3U8 manifest if it successfully yielded links
+                        isFinished = true
+                        android.util.Log.i("SnifferExtractor", "[getUrl] Master M3U8 successfully resolved. Stopping main loop.")
+                        break
                     } else {
                         // Fallback: Return original link
                         android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")
                         android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
-                         callback(
+                        
+                        callback(
                             newExtractorLink(
                                 source = displaySourceName,
-                                name = "$displaySourceName ${source.qualityLabel}",
+                                name = "$displaySourceName $qualityLabel",
                                 url = source.url,
                                 type = linkType
                             ) {
