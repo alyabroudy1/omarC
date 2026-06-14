@@ -77,16 +77,19 @@ class FaselHDExtractor : ExtractorApi() {
                 
                 val streams = mutableListOf<FaselStream>()
                 
-                // 3. Find the encrypted JS block
-                val scriptBlock = findRelevantScriptBlock(html)
-                if (scriptBlock != null) {
-                    ProviderLogger.d(TAG, methodName, "Found script block, length: ${scriptBlock.length}")
+                // 3. Find the encrypted JS blocks
+                val scriptBlocks = findRelevantScriptBlocks(html)
+                for (scriptBlock in scriptBlocks) {
+                    ProviderLogger.d(TAG, methodName, "Trying script block, length: ${scriptBlock.length}")
                     
                     // 4. Evaluate heavily obfuscated JS natively using Rhino
                     val hlsPlaylistJson = evaluateJsWithRhino(scriptBlock)
-                    if (!hlsPlaylistJson.isNullOrBlank()) {
+                    if (!hlsPlaylistJson.isNullOrBlank() && hlsPlaylistJson != "null") {
                         ProviderLogger.d(TAG, methodName, "JS eval result: ${hlsPlaylistJson.take(200)}")
                         streams.addAll(parseHlsPlaylist(hlsPlaylistJson))
+                        if (streams.isNotEmpty()) {
+                            break
+                        }
                     }
                 }
                 
@@ -151,33 +154,27 @@ class FaselHDExtractor : ExtractorApi() {
         }
     }
 
-    private fun findRelevantScriptBlock(html: String): String? {
+    private fun findRelevantScriptBlocks(html: String): List<String> {
         // Extract content inside every script tag
         val allScripts = Regex("""<script[^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
             .findAll(html)
             .map { it.groupValues[1] }
             .toList()
 
+        val relevant = mutableListOf<String>()
+
         // 1. Look for hlsPlaylist
-        val playlistScript = allScripts.firstOrNull { it.contains("hlsPlaylist", ignoreCase = true) }
-        if (playlistScript != null) {
-            return playlistScript.trim()
-        }
+        allScripts.firstOrNull { it.contains("hlsPlaylist", ignoreCase = true) }?.let { relevant.add(it.trim()) }
 
         // 2. Look for mainPlayer.setup
-        val mainPlayerScript = allScripts.firstOrNull { it.contains("mainPlayer.setup", ignoreCase = true) }
-        if (mainPlayerScript != null) {
-            return mainPlayerScript.trim()
-        }
+        allScripts.firstOrNull { it.contains("mainPlayer.setup", ignoreCase = true) }?.let { relevant.add(it.trim()) }
 
         // 3. Look for obfuscated arrays (_0x...)
-        val obfuscatedScripts = allScripts.filter { Regex("""_0x[a-f0-9]{4,}""", RegexOption.IGNORE_CASE).containsMatchIn(it) }
-        if (obfuscatedScripts.isNotEmpty()) {
-            // Find the longest obfuscated script (likely the decryptor + payload)
-            return obfuscatedScripts.maxByOrNull { it.length }?.trim()
+        allScripts.filter { Regex("""_0x[a-f0-9]{4,}""", RegexOption.IGNORE_CASE).containsMatchIn(it) }.forEach {
+            relevant.add(it.trim())
         }
         
-        return null
+        return relevant.distinct()
     }
 
     private fun evaluateJsWithRhino(script: String): String? {
