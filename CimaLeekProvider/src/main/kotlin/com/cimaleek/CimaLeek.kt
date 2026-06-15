@@ -260,30 +260,57 @@ class CimaLeek : BaseProvider() {
                                     }
                                 }
                                 
-                                // Decrypt
+                        // Decrypt
                                 val cleaned = mdTq(a, bList, pathLength)
                                 val decryptedUrl = decryptIOns(cleaned, c)
                                 
                                 Log.d(methodTag, "Decrypted URL for $serverName: $decryptedUrl")
-                                
-                                if (decryptedUrl.startsWith("http")) {
+                                                                if (decryptedUrl.startsWith("http")) {
+                                    // Dynamically register extractor if domain matches cswru/vid872 wrapper pattern
+                                    try {
+                                        val host = java.net.URI(decryptedUrl).host ?: ""
+                                        if (host.contains("cswru") || host.contains("vid872")) {
+                                            val alreadyRegistered = com.lagradost.cloudstream3.utils.extractorApis.any { 
+                                                it.mainUrl.contains(host) 
+                                            }
+                                            if (!alreadyRegistered) {
+                                                Log.d(methodTag, "Dynamically registering CswruExtractor for host: $host")
+                                                com.lagradost.cloudstream3.utils.extractorApis.add(com.cloudstream.shared.extractors.CswruExtractor(host))
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(methodTag, "Failed to dynamically register CswruExtractor: ${e.message}")
+                                    }
+
                                     if (loadExtractor(decryptedUrl, watchUrl, subtitleCallback, callback)) {
                                          linksFound = true
                                     } else {
-                                         val type = if (decryptedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                         callback(
-                                             newExtractorLink(
-                                                 source = serverName,
-                                                 name = serverName,
-                                                 url = decryptedUrl,
-                                                 type = type
-                                             ) {
-                                                 this.referer = watchUrl
-                                                 this.quality = Qualities.Unknown.value
-                                                 this.headers = mapOf("User-Agent" to userAgent, "Referer" to watchUrl)
+                                         val isWebpage = decryptedUrl.contains(".html") || 
+                                                         decryptedUrl.contains("/e/") || 
+                                                         decryptedUrl.contains("/e2/") || 
+                                                         decryptedUrl.contains("/e3/") || 
+                                                         decryptedUrl.contains("/e4/")
+                                         if (isWebpage) {
+                                             Log.d(methodTag, "loadExtractor failed on webpage, running sniffer: $decryptedUrl")
+                                             if (awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, callback, 15000L)) {
+                                                 linksFound = true
                                              }
-                                         )
-                                         linksFound = true
+                                         } else {
+                                             val type = if (decryptedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                             callback(
+                                                 newExtractorLink(
+                                                     source = serverName,
+                                                     name = serverName,
+                                                     url = decryptedUrl,
+                                                     type = type
+                                                 ) {
+                                                     this.referer = watchUrl
+                                                     this.quality = Qualities.Unknown.value
+                                                     this.headers = mapOf("User-Agent" to userAgent, "Referer" to watchUrl)
+                                                 }
+                                             )
+                                             linksFound = true
+                                         }
                                     }
                                 }
                             }

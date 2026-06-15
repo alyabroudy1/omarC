@@ -16,6 +16,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VidobaExtractor())
     android.util.Log.d("SharedExtractors", "VidobaExtractor registered successfully")
     registerExtractorAPI(VertyuzExtractor())
+    registerExtractorAPI(CswruExtractor())
     
     // Bysezejataos (API-based extraction with AES decryption)
     registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
