@@ -24,6 +24,8 @@ import org.mozilla.javascript.Scriptable
 import android.util.Base64
 import kotlin.text.Regex
 import com.cloudstream.shared.service.ProviderHttpService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 
 
@@ -226,8 +228,48 @@ class Cimanow : BaseProvider() {
         } catch (e: Exception) {
             Log.e("Cimanow", "JS decode format error: ${e.message}")
         }
-        
         return doc
+    }
+
+    private fun decryptWatchHtml(html: String): String? {
+        try {
+            // 1. Extract obfuscated string variable
+            val cVarMatch = Regex("""var (_c\d+)\s*=\s*'([\s\S]*?)';""").find(html) ?: return null
+            val obfuscatedData = cVarMatch.groupValues[2].replace(Regex("""[\r\n\t'+\s]"""), "")
+
+            // 2. Extract _r formula
+            val rMatch = Regex("""var _r\s*=\s*([0-9\s+]+);""").find(html) ?: return null
+            val formula = rMatch.groupValues[1]
+            val rValue = formula.split("+").sumOf { it.trim().toInt() }
+
+            // 3. Decrypt tokens
+            val tokens = obfuscatedData.split("~")
+            val outputStream = java.io.ByteArrayOutputStream()
+
+            for (token in tokens) {
+                if (token.isEmpty()) continue
+                try {
+                    var padded = token
+                    while (padded.length % 4 != 0) {
+                        padded += "="
+                    }
+                    val base64DecodedBytes = Base64.decode(padded, Base64.DEFAULT)
+                    val decodedStr = String(base64DecodedBytes, Charsets.UTF_8)
+                    val digitsOnly = decodedStr.replace(Regex("""\D"""), "")
+                    if (digitsOnly.isEmpty()) continue
+
+                    val num = digitsOnly.toInt() - rValue
+                    outputStream.write(num)
+                } catch (e: Exception) {
+                    Log.e("Cimanow", "Error decoding token $token: ${e.message}")
+                }
+            }
+
+            return String(outputStream.toByteArray(), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e("Cimanow", "Decryption error: ${e.message}")
+            return null
+        }
     }
 
     private fun runJS(script: String): String {
@@ -518,60 +560,67 @@ class Cimanow : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val methodTag = "Cimanow"
+        var linksCount = 0
+        val countingCallback: (ExtractorLink) -> Unit = { link ->
+            linksCount++
+            callback(link)
+        }
+
         try {
             httpService.ensureInitialized()
             
-            // Step 1: Construct watch URL (original: data + "watching/")
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
             Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
             
-            // Step 2: Fetch and decode the watching page. The Referer is strictly required to prevent a 302 redirection.
-            val watchDoc = httpService.getDocument(watchUrl, headers = mapOf("Referer" to data))
-            if (watchDoc == null) {
-                Log.e(methodTag, "Failed to fetch watching page")
-                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+            // Step 1: Fetch the watch page with redirects disabled to capture the 302 Found response body
+            val watchHtml = withContext(Dispatchers.IO) {
+                try {
+                    val client = app.baseClient.newBuilder()
+                        .followRedirects(false)
+                        .followSslRedirects(false)
+                        .build()
+                    
+                    val request = okhttp3.Request.Builder()
+                        .url(watchUrl)
+                        .header("Referer", data)
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .build()
+                    
+                    client.newCall(request).execute().use { response ->
+                        response.body?.string()
+                    }
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Failed to fetch watch page: ${e.message}")
+                    null
+                }
             }
             
-            val doc = decodeObfuscatedHtml(watchDoc)
-            Log.d(methodTag, "Decoded watching doc")
+            val doc = if (watchHtml != null) {
+                val decrypted = decryptWatchHtml(watchHtml)
+                if (decrypted != null) Jsoup.parse(decrypted) else null
+            } else null
             
-            // Debug: log what's in the decoded page
-            val allUls = doc.select("ul")
-            Log.d(methodTag, "DEBUG: Found ${allUls.size} <ul> elements")
-            for (ul in allUls.take(10)) {
-                val className = ul.className()
-                val childCount = ul.children().size
-                Log.d(methodTag, "DEBUG: <ul class='$className'> children=$childCount")
-            }
-            val allLis = doc.select("li[data-index], li[data-id]")
-            Log.d(methodTag, "DEBUG: Found ${allLis.size} <li> with data-index/data-id")
-            for (li in allLis.take(5)) {
-                Log.d(methodTag, "DEBUG: <li data-index='${li.attr("data-index")}' data-id='${li.attr("data-id")}'>${li.text().take(50)}")
-            }
-            val allIframes = doc.select("iframe")
-            Log.d(methodTag, "DEBUG: Found ${allIframes.size} iframes")
-            // Also log a snippet of the decoded HTML
-            val htmlSnippet = doc.outerHtml().take(500)
-            Log.d(methodTag, "DEBUG: HTML snippet: $htmlSnippet")
-            
-            // Step 3: Select server tabs (original: ul.tabcontent li)
-            // Also try alternative selectors in case the class name differs
-            var serverElements = doc.select("ul.tabcontent li")
-            Log.d(methodTag, "Found ${serverElements.size} server elements (ul.tabcontent li)")
-            
+            var serverElements = doc?.select("ul.tabcontent li") ?: org.jsoup.select.Elements()
             if (serverElements.isEmpty()) {
-                // Try broader selectors
-                serverElements = doc.select("li[data-index][data-id]")
-                Log.d(methodTag, "Trying li[data-index][data-id]: found ${serverElements.size}")
+                serverElements = doc?.select("li[data-index][data-id]") ?: org.jsoup.select.Elements()
             }
             
             if (serverElements.isEmpty()) {
-                // Fallback: try extracting servers directly from the page
-                Log.d(methodTag, "No ul.tabcontent li found, trying direct extraction")
-                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+                Log.d(methodTag, "No server elements found in decrypted page. Launching WebView sniffer fallback...")
+                
+                // Fetch detail page to extract watch button if available
+                val detailDoc = httpService.getDocument(data)
+                val watchButton = detailDoc?.select(".btns a[href*=link=]")?.first()?.attr("href")
+                
+                val base64Url = android.util.Base64.encodeToString(watchUrl.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                val finalWatchButton = watchButton ?: "https://rm.freex2line.online/loadon/?link=$base64Url"
+                
+                Log.d(methodTag, "Sniffing wrapper URL: $finalWatchButton")
+                val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(finalWatchButton, referer = data)
+                return loadExtractor(snifferUrl, data, subtitleCallback, callback)
             }
             
-            // Step 4: For each server, AJAX call to core.php and dispatch
+            // For each server, AJAX call to core.php and dispatch
             for (element in serverElements) {
                 try {
                     val dataIndex = element.attr("data-index")
@@ -579,7 +628,6 @@ class Cimanow : BaseProvider() {
                     val serverName = element.text().trim()
                     Log.d(methodTag, "Server: name='$serverName', index=$dataIndex, id=$dataId")
                     
-                    // AJAX call to core.php (original: mainUrl + /wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=X&id=Y)
                     val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
                     val playerDoc = httpService.getDocument(ajaxUrl, headers = mapOf("Referer" to watchUrl))
                     
@@ -588,11 +636,9 @@ class Cimanow : BaseProvider() {
                         continue
                     }
                     
-                    // Get iframe URL from AJAX response
                     val iframeUrl = playerDoc.select("iframe").attr("src")
                     Log.d(methodTag, "Server '$serverName' -> iframe: $iframeUrl")
                     
-                    // Check if element itself has an iframe (okframe fallback)
                     val elementIframe = element.select("iframe").first()
                     val okframe = if (elementIframe != null) {
                         "https:" + element.select("iframe").attr("src")
@@ -600,74 +646,71 @@ class Cimanow : BaseProvider() {
                         iframeUrl
                     }
                     
-                    // Check if it's a VidGuard domain -> handleNet (eval/sigDecode)
                     val isVidGuard = vidGuardDomains.any { iframeUrl.contains(it, ignoreCase = true) }
+                    val currentLinksBefore = linksCount
                     
                     if (isVidGuard) {
-                        // VidGuard domains use eval + sigDecode
                         try {
                             Log.d(methodTag, "VidGuard detected: $iframeUrl")
-                            handleNet(iframeUrl, watchUrl, callback)
+                            handleNet(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in VidGuard: ${e.message}")
                         }
                     } else if (okframe.isNotBlank() && okframe.contains("ok", ignoreCase = true)) {
-                        // ok.ru -> loadExtractor
                         try {
-                            loadExtractor(okframe, watchUrl, subtitleCallback, callback)
+                            loadExtractor(okframe, watchUrl, subtitleCallback, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in okframe: ${e.message}")
                         }
                     } else if (serverName.contains("Cima Now", ignoreCase = true)) {
                         try {
-                            handleCima(iframeUrl, serverName, callback)
+                            handleCima(iframeUrl, serverName, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Cima Now: ${e.message}")
                         }
                     } else if (serverName.contains("VidPro", ignoreCase = true)) {
                         try {
-                            handleVidPro(iframeUrl, watchUrl, callback)
+                            handleVidPro(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in VidPro: ${e.message}")
                         }
                     } else if (serverName.contains("Govid", ignoreCase = true) || serverName.contains("Goovid", ignoreCase = true)) {
                         try {
-                            handleGovid(iframeUrl, watchUrl, callback)
+                            handleGovid(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Govid: ${e.message}")
                         }
                     } else if (serverName.contains("Vidlook", ignoreCase = true)) {
                         try {
-                            handleVidlook(iframeUrl, watchUrl, callback)
+                            handleVidlook(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Vidlook: ${e.message}")
                         }
                     } else if (serverName.contains("Streamwish", ignoreCase = true)) {
                         try {
-                            handleStreamwish(iframeUrl, watchUrl, callback)
+                            handleStreamwish(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Streamwish: ${e.message}")
                         }
                     } else if (serverName.contains("Streamfile", ignoreCase = true) || serverName.contains("Luluvid", ignoreCase = true)) {
                         try {
-                            handleStreamfile(iframeUrl, watchUrl, callback)
+                            handleStreamfile(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Streamfile/Luluvid: ${e.message}")
                         }
                     } else if (serverName.contains("Vadbam", ignoreCase = true) || serverName.contains("Viidshare", ignoreCase = true)) {
                         try {
-                            handleVadbam(iframeUrl, watchUrl, callback)
+                            handleVadbam(iframeUrl, watchUrl, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in Vadbam/Viidshare: ${e.message}")
                         }
                     } else if (serverName.contains("upload", ignoreCase = true) || iframeUrl.contains("uqload.io", ignoreCase = true)) {
                         try {
-                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, callback)
+                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in upload: ${e.message}")
                         }
                     } else {
-                        // Else: try download links from element + loadExtractor fallback
                         try {
                             for (link in element.select("a")) {
                                 val dlink = link.attr("href")
@@ -676,22 +719,33 @@ class Cimanow : BaseProvider() {
                                 } ?: Qualities.Unknown.value
                                 if (dlink.isNotBlank() && dlink.startsWith("http")) {
                                     Log.d(methodTag, "Download link: quality=$quality url=$dlink")
-                                    callback(newExtractorLink(name, "Download Server", dlink, type = getLinkType(dlink)) {
+                                    countingCallback(newExtractorLink(name, "Download Server", dlink, type = getLinkType(dlink)) {
                                         this.referer = mainUrl
                                         this.quality = quality
                                     })
                                 }
                             }
-                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, callback)
+                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, countingCallback)
                         } catch (e: Exception) {
                             Log.e(methodTag, "Error in else: ${e.message}")
+                        }
+                    }
+                    
+                    // Server sniffer fallback
+                    if (linksCount == currentLinksBefore && iframeUrl.isNotBlank()) {
+                        try {
+                            Log.d(methodTag, "Standard extraction failed for $serverName. Sniffing iframeUrl: $iframeUrl")
+                            val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(iframeUrl, referer = watchUrl)
+                            loadExtractor(snifferUrl, watchUrl, subtitleCallback, countingCallback)
+                        } catch (e: Exception) {
+                            Log.e(methodTag, "Error sniffing server $serverName: ${e.message}")
                         }
                     }
                 } catch (e: Exception) {
                     Log.e(methodTag, "Error processing server: ${e.message}")
                 }
             }
-            return true
+            return linksCount > 0
         } catch (e: Exception) {
             Log.e(methodTag, "loadLinks error: ${e.message}")
         }
