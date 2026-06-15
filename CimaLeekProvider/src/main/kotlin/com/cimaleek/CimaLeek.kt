@@ -217,7 +217,7 @@ class CimaLeek : BaseProvider() {
         val pathLength = trimmedPath.length
         Log.d(methodTag, "Trimmed path: $trimmedPath, pathLength: $pathLength")
         
-        var linksFound = false
+        val globalLinksCount = java.util.concurrent.atomic.AtomicInteger(0)
         
         // Process servers in parallel
         coroutineScope {
@@ -260,12 +260,12 @@ class CimaLeek : BaseProvider() {
                                     }
                                 }
                                 
-                        // Decrypt
+                                // Decrypt
                                 val cleaned = mdTq(a, bList, pathLength)
                                 val decryptedUrl = decryptIOns(cleaned, c)
                                 
                                 Log.d(methodTag, "Decrypted URL for $serverName: $decryptedUrl")
-                                                                if (decryptedUrl.startsWith("http")) {
+                                if (decryptedUrl.startsWith("http")) {
                                     // Dynamically register extractor if domain matches cswru/vid872 wrapper pattern
                                     try {
                                         val host = java.net.URI(decryptedUrl).host ?: ""
@@ -282,9 +282,16 @@ class CimaLeek : BaseProvider() {
                                         Log.w(methodTag, "Failed to dynamically register CswruExtractor: ${e.message}")
                                     }
 
-                                    if (loadExtractor(decryptedUrl, watchUrl, subtitleCallback, callback)) {
-                                         linksFound = true
-                                    } else {
+                                    var serverLinksCount = 0
+                                    val countingCallback: (ExtractorLink) -> Unit = { link ->
+                                        serverLinksCount++
+                                        globalLinksCount.incrementAndGet()
+                                        callback(link)
+                                    }
+
+                                    loadExtractor(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
+                                    
+                                    if (serverLinksCount == 0) {
                                          val isWebpage = decryptedUrl.contains(".html") || 
                                                          decryptedUrl.contains("/e/") || 
                                                          decryptedUrl.contains("/e2/") || 
@@ -292,12 +299,12 @@ class CimaLeek : BaseProvider() {
                                                          decryptedUrl.contains("/e4/")
                                          if (isWebpage) {
                                              Log.d(methodTag, "loadExtractor failed on webpage, running sniffer: $decryptedUrl")
-                                             if (awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, callback, 15000L)) {
-                                                 linksFound = true
+                                             if (awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, countingCallback, 15000L)) {
+                                                 // awaitSnifferResult calls countingCallback internally which increments globalLinksCount
                                              }
                                          } else {
                                              val type = if (decryptedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                             callback(
+                                             countingCallback(
                                                  newExtractorLink(
                                                      source = serverName,
                                                      name = serverName,
@@ -309,7 +316,6 @@ class CimaLeek : BaseProvider() {
                                                      this.headers = mapOf("User-Agent" to userAgent, "Referer" to watchUrl)
                                                  }
                                              )
-                                             linksFound = true
                                          }
                                     }
                                 }
@@ -322,6 +328,6 @@ class CimaLeek : BaseProvider() {
             }.awaitAll()
         }
         
-        return linksFound
+        return globalLinksCount.get() > 0
     }
 }

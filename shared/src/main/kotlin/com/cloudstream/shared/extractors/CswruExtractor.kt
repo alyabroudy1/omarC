@@ -41,7 +41,11 @@ class CswruExtractor(
             // If it redirected to a different domain, delegate immediately
             if (finalUrl != url && !finalUrl.contains(host)) {
                 ProviderLogger.d(TAG, "getUrl", "Redirected to a different domain, delegating to loadExtractor", "finalUrl" to finalUrl)
-                loadExtractor(finalUrl, url, subtitleCallback, callback)
+                if (!loadExtractor(finalUrl, url, subtitleCallback, callback)) {
+                    ProviderLogger.d(TAG, "getUrl", "loadExtractor failed for redirected URL, trying sniffer fallback", "finalUrl" to finalUrl)
+                    val snifferUrl = SnifferExtractor.createSnifferUrl(finalUrl, referer = url)
+                    loadExtractor(snifferUrl, url, subtitleCallback, callback)
+                }
                 return
             }
 
@@ -63,8 +67,26 @@ class CswruExtractor(
             }
 
             if (!iframeSrc.isNullOrBlank()) {
-                ProviderLogger.d(TAG, "getUrl", "Found iframe inside wrapper page, delegating to loadExtractor", "iframeSrc" to iframeSrc)
-                loadExtractor(iframeSrc, url, subtitleCallback, callback)
+                ProviderLogger.d(TAG, "getUrl", "Found iframe inside wrapper page", "iframeSrc" to iframeSrc)
+                
+                // Track whether the inner extractor actually produced links
+                var innerLinksCount = 0
+                val countingCallback: (ExtractorLink) -> Unit = { link ->
+                    innerLinksCount++
+                    callback(link)
+                }
+                
+                // Try the inner extractor first, following any redirects
+                val innerUrl = resolveRedirects(iframeSrc, headers)
+                ProviderLogger.d(TAG, "getUrl", "Resolved iframe URL", "original" to iframeSrc, "resolved" to innerUrl)
+                
+                loadExtractor(innerUrl, url, subtitleCallback, countingCallback)
+                
+                if (innerLinksCount == 0) {
+                    ProviderLogger.d(TAG, "getUrl", "Inner loadExtractor produced 0 links, falling back to sniffer", "iframeSrc" to iframeSrc)
+                    val snifferUrl = SnifferExtractor.createSnifferUrl(iframeSrc, referer = url)
+                    loadExtractor(snifferUrl, url, subtitleCallback, callback)
+                }
                 return
             }
 
@@ -79,14 +101,63 @@ class CswruExtractor(
                     val uri = java.net.URI(url)
                     "${uri.scheme}://${uri.host}$redirectLink"
                 }
-                ProviderLogger.d(TAG, "getUrl", "Found AJAX redirect link, delegating to loadExtractor", "redirectUrl" to absoluteRedirectUrl)
-                loadExtractor(absoluteRedirectUrl, url, subtitleCallback, callback)
+                ProviderLogger.d(TAG, "getUrl", "Found AJAX redirect link", "redirectUrl" to absoluteRedirectUrl)
+                
+                // Follow the redirect to get the actual embed URL
+                val resolvedUrl = resolveRedirects(absoluteRedirectUrl, headers)
+                ProviderLogger.d(TAG, "getUrl", "Resolved AJAX redirect", "original" to absoluteRedirectUrl, "resolved" to resolvedUrl)
+                
+                var innerLinksCount = 0
+                val countingCallback: (ExtractorLink) -> Unit = { link ->
+                    innerLinksCount++
+                    callback(link)
+                }
+                
+                loadExtractor(resolvedUrl, url, subtitleCallback, countingCallback)
+                
+                if (innerLinksCount == 0) {
+                    ProviderLogger.d(TAG, "getUrl", "Inner loadExtractor produced 0 links for redirect, falling back to sniffer", "resolvedUrl" to resolvedUrl)
+                    val snifferUrl = SnifferExtractor.createSnifferUrl(resolvedUrl, referer = url)
+                    loadExtractor(snifferUrl, url, subtitleCallback, callback)
+                }
                 return
             }
 
             ProviderLogger.w(TAG, "getUrl", "No iframe or redirect link found in wrapper HTML")
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "getUrl", "Failed to extract from wrapper URL", e)
+        }
+    }
+    
+    /**
+     * Follow HTTP 301/302/307 redirects manually to get the final URL.
+     * This is needed because the inner embed hosts (mixdrop.ag, lulustream.com)
+     * often redirect to different domains (miixdrop.net, luluvdo.com).
+     */
+    private suspend fun resolveRedirects(url: String, headers: Map<String, String>): String {
+        try {
+            var currentUrl = url
+            var maxRedirects = 5
+            while (maxRedirects-- > 0) {
+                val response = app.get(currentUrl, headers = headers, allowRedirects = false)
+                val statusCode = response.code
+                if (statusCode in 301..308) {
+                    val location = response.headers["location"] ?: response.headers["Location"] ?: break
+                    currentUrl = if (location.startsWith("http")) {
+                        location
+                    } else {
+                        val uri = java.net.URI(currentUrl)
+                        "${uri.scheme}://${uri.host}$location"
+                    }
+                    ProviderLogger.d(TAG, "resolveRedirects", "Following redirect $statusCode", "to" to currentUrl)
+                } else {
+                    break
+                }
+            }
+            return currentUrl
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "resolveRedirects", "Failed to resolve redirects, using original URL", "error" to e.message)
+            return url
         }
     }
 }
