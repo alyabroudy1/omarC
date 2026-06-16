@@ -246,10 +246,33 @@ class Cimanow : BaseProvider() {
         }
     }
 
+    private fun extractRandTokens(js: String): List<String> {
+        val stringRegex = Regex("""["']([^"'\\]*(?:\\.[^"'\\]*)*)["']""")
+        val matches = stringRegex.findAll(js)
+        val tokens = mutableSetOf<String>()
+        val md5Regex = Regex("""^[a-f0-9]{32}$""")
+
+        for (match in matches) {
+            val str = match.groupValues[1]
+            if (str.length == 32) {
+                for (key in 1..255) {
+                    var xored = ""
+                    for (i in str.indices) {
+                        xored += (str[i].code xor key).toChar()
+                    }
+                    if (md5Regex.matches(xored)) {
+                        tokens.add(xored)
+                    }
+                }
+            }
+        }
+        return tokens.toList()
+    }
+
     private fun decryptWatchHtml(html: String): String? {
         try {
-            // 1. Extract all obfuscated string chunks matching the base64 format starting with 'O' and containing '~'
-            val chunkRegex = Regex("""['"](O(?:[A-Za-z0-9+/=]+~?)+)['"]""")
+            // 1. Extract all obfuscated string chunks matching the base64 format containing '~'
+            val chunkRegex = Regex("""['"]([A-Za-z0-9+/=]+(?:~[A-Za-z0-9+/=]+)+)['"]""")
             val matches = chunkRegex.findAll(html)
             val sb = StringBuilder()
             for (match in matches) {
@@ -616,26 +639,75 @@ class Cimanow : BaseProvider() {
             httpService.ensureInitialized()
             Log.d(methodTag, "[loadLinks] START data='$data'")
 
-            // Step 1: Construct and fetch the watch page directly
+            // Step 1: Fetch episode page to capture Cloudflare cookies and find post_id
+            val episodeHtml = httpService.getText(data)
+            val postIdMatch = Regex("""<link\s+rel=['"]shortlink['"]\s+href=['"][^'"]*\?p=(\d+)['"]""").find(episodeHtml)
+            val postId = postIdMatch?.groupValues?.get(1) ?: Regex("post-(\\d+)").find(episodeHtml)?.groupValues?.get(1)
+            Log.d(methodTag, "[loadLinks] Extracted post_id=$postId")
+
+            // Step 2: Fetch the watch page
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
-            Log.d(methodTag, "[loadLinks] Fetching watch URL directly: $watchUrl")
+            Log.d(methodTag, "[loadLinks] Fetching watch URL: $watchUrl")
             
-            val watchHtml = httpService.getText(watchUrl)
-            if (watchHtml.isNullOrBlank()) {
-                Log.e(methodTag, "[loadLinks] Empty response from watch page")
+            val watchHtml = httpService.getText(watchUrl, referer = data)
+            var decryptedJs = ""
+            if (!watchHtml.isNullOrBlank()) {
+                decryptedJs = decryptWatchHtml(watchHtml) ?: ""
+            }
+
+            var finalHtml = watchHtml ?: ""
+
+            // Step 3: Extract rand tokens and call API if post_id is available
+            if (postId != null && decryptedJs.isNotBlank()) {
+                val randTokens = extractRandTokens(decryptedJs)
+                Log.d(methodTag, "[loadLinks] Found ${randTokens.size} rand tokens")
+                
+                for (rand in randTokens) {
+                    val apiUrl = "$mainUrl/wp-json/direct_download/v1/"
+                    try {
+                        val response = httpService.post(
+                            apiUrl,
+                            headers = mapOf(
+                                "Content-Type" to "application/x-www-form-urlencoded",
+                                "Accept" to "application/json, text/javascript, */*; q=0.01",
+                                "X-Requested-With" to "XMLHttpRequest"
+                            ),
+                            referer = watchUrl,
+                            data = mapOf("p" to postId, "rand" to rand)
+                        )
+                        Log.d(methodTag, "[loadLinks] direct_download response for rand=$rand: status=${response.code}")
+                        if (response.code == 200 && response.text.isNotBlank()) {
+                            finalHtml = response.text
+                            // Unescape JSON if needed
+                            if (finalHtml.trim().startsWith("{")) {
+                                try {
+                                    val json = org.json.JSONObject(finalHtml)
+                                    finalHtml = json.optString("html", finalHtml)
+                                } catch (e: Exception) {}
+                            }
+                            Log.d(methodTag, "[loadLinks] direct_download returned valid payload")
+                            break // Found the right rand token!
+                        }
+                    } catch (e: Exception) {
+                        Log.e(methodTag, "[loadLinks] direct_download API error: ${e.message}")
+                    }
+                }
+            } else {
+                Log.e(methodTag, "[loadLinks] Fallback to WebView decryption (no post_id or JS)")
+                if (decryptedJs.isNotBlank()) {
+                    val decoded = decodeObfuscatedHtml(Jsoup.parse(decryptedJs))
+                    finalHtml = decoded.outerHtml()
+                }
+            }
+
+            if (finalHtml.isBlank()) {
+                Log.e(methodTag, "[loadLinks] Final HTML is blank")
                 return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
             }
 
-            // Step 2: Decrypt watch HTML
-            val decryptedHtml = decryptWatchHtml(watchHtml)
-            if (decryptedHtml.isNullOrBlank()) {
-                Log.e(methodTag, "[loadLinks] Decryption failed")
-                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
-            }
+            val watchDoc = Jsoup.parse(finalHtml)
 
-            val watchDoc = Jsoup.parse(decryptedHtml)
-
-            // Step 3: Extract iframes from watch document
+            // Step 4: Extract iframes from watch document
             val watchSection = watchDoc.select("ul.tabcontent#watch li[aria-label='embed'] iframe, #watch li[aria-label='embed'] iframe, iframe")
             Log.d(methodTag, "[loadLinks] Decrypted watch section iframes=${watchSection.size}")
             for (iframe in watchSection) {
