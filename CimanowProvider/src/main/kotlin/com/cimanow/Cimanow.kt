@@ -231,16 +231,62 @@ class Cimanow : BaseProvider() {
         return doc
     }
 
+    private fun evalJS(script: String): String? {
+        val rhino = Context.enter()
+        try {
+            rhino.optimizationLevel = -1
+            val scope = rhino.initSafeStandardObjects()
+            val result = rhino.evaluateString(scope, script, "JavaScript", 1, null)
+            return Context.toString(result)
+        } catch (e: Exception) {
+            Log.e("Cimanow", "evalJS Error: ${e.message}")
+            return null
+        } finally {
+            Context.exit()
+        }
+    }
+
     private fun decryptWatchHtml(html: String): String? {
         try {
-            // 1. Extract obfuscated string variable
-            val cVarMatch = Regex("""var (_c\d+)\s*=\s*'([\s\S]*?)';""").find(html) ?: return null
-            val obfuscatedData = cVarMatch.groupValues[2].replace(Regex("""[\r\n\t'+\s]"""), "")
+            // 1. Extract all obfuscated string chunks matching the base64 format starting with 'O' and containing '~'
+            val chunkRegex = Regex("""['"](O(?:[A-Za-z0-9+/=]+~?)+)['"]""")
+            val matches = chunkRegex.findAll(html)
+            val sb = StringBuilder()
+            for (match in matches) {
+                sb.append(match.groupValues[1])
+            }
+            val obfuscatedData = sb.toString().replace(Regex("""[\r\n\t'+\s]"""), "")
+            if (obfuscatedData.isBlank()) {
+                Log.e("Cimanow", "obfuscatedData is blank")
+                return null
+            }
 
-            // 2. Extract _r formula
-            val rMatch = Regex("""var _r\s*=\s*([0-9\s+]+);""").find(html) ?: return null
-            val formula = rMatch.groupValues[1]
-            val rValue = formula.split("+").sumOf { it.trim().toInt() }
+            // 2. Extract _r formula or literal subtraction
+            var rValue: Int? = null
+            
+            val rMatch = Regex("""var\s+_r\s*=\s*([\d\s+\-*\/()]+);""").find(html)
+            if (rMatch != null) {
+                val formula = rMatch.groupValues[1]
+                rValue = try {
+                    evalJS(formula)?.toDoubleOrNull()?.toInt()
+                } catch (e: Exception) {
+                    null
+                } ?: formula.split(Regex("""\D+""")).filter { it.isNotBlank() }.sumOf { it.trim().toInt() }
+            } else {
+                // Try to find the literal subtraction in the loop, e.g. - 87653);
+                val literalMatch = Regex("""-\s*(\d+)\s*\)\s*;\s*\}\s*\)\s*;""").find(html)
+                    ?: Regex("""-\s*(\d+)\s*\)\s*;\s*\}\s*\)\s*;\s*document\.open""").find(html)
+                    ?: Regex("""-\s*(\d+)\s*\)\s*;""").find(html)
+                if (literalMatch != null) {
+                    rValue = literalMatch.groupValues[1].toIntOrNull()
+                }
+            }
+
+            if (rValue == null) {
+                Log.e("Cimanow", "Failed to resolve decryption offset value")
+                return null
+            }
+            Log.d("Cimanow", "Resolved decryption offset: $rValue")
 
             // 3. Decrypt tokens
             val tokens = obfuscatedData.split("~")
@@ -261,7 +307,7 @@ class Cimanow : BaseProvider() {
                     val num = digitsOnly.toInt() - rValue
                     outputStream.write(num)
                 } catch (e: Exception) {
-                    Log.e("Cimanow", "Error decoding token $token: ${e.message}")
+                    // Ignore malformed tokens
                 }
             }
 
@@ -568,188 +614,73 @@ class Cimanow : BaseProvider() {
 
         try {
             httpService.ensureInitialized()
-            
+            Log.d(methodTag, "[loadLinks] START data='$data'")
+
+            // Step 1: Construct and fetch the watch page directly
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
-            Log.d(methodTag, "loadLinks: watchUrl=$watchUrl")
+            Log.d(methodTag, "[loadLinks] Fetching watch URL directly: $watchUrl")
             
-            // Step 1: Fetch the watch page with redirects disabled to capture the 302 Found response body
-            val watchHtml = withContext(Dispatchers.IO) {
+            val watchHtml = httpService.getText(watchUrl)
+            if (watchHtml.isNullOrBlank()) {
+                Log.e(methodTag, "[loadLinks] Empty response from watch page")
+                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+            }
+
+            // Step 2: Decrypt watch HTML
+            val decryptedHtml = decryptWatchHtml(watchHtml)
+            if (decryptedHtml.isNullOrBlank()) {
+                Log.e(methodTag, "[loadLinks] Decryption failed")
+                return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
+            }
+
+            val watchDoc = Jsoup.parse(decryptedHtml)
+
+            // Step 3: Extract iframes from watch document
+            val watchSection = watchDoc.select("ul.tabcontent#watch li[aria-label='embed'] iframe, #watch li[aria-label='embed'] iframe, iframe")
+            Log.d(methodTag, "[loadLinks] Decrypted watch section iframes=${watchSection.size}")
+            for (iframe in watchSection) {
                 try {
-                    val client = app.baseClient.newBuilder()
-                        .followRedirects(false)
-                        .followSslRedirects(false)
-                        .build()
-                    
-                    val request = okhttp3.Request.Builder()
-                        .url(watchUrl)
-                        .header("Referer", data)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .build()
-                    
-                    client.newCall(request).execute().use { response ->
-                        response.body?.string()
+                    val iframeSrc = iframe.attr("data-src").ifBlank { iframe.attr("src") }
+                    if (iframeSrc.isBlank() || iframeSrc.contains("youtube.com")) continue
+                    Log.d(methodTag, "[loadLinks] Found watch iframe: $iframeSrc")
+                    val fullIframeUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
+                    try {
+                        loadExtractor(fullIframeUrl, watchUrl, subtitleCallback, countingCallback)
+                    } catch (e: Exception) {
+                        // Fallback: sniff it
+                        val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(fullIframeUrl, referer = watchUrl)
+                        loadExtractor(snifferUrl, watchUrl, subtitleCallback, countingCallback)
                     }
                 } catch (e: Exception) {
-                    Log.e(methodTag, "Failed to fetch watch page: ${e.message}")
-                    null
+                    Log.e(methodTag, "[loadLinks] Error processing watch iframe: ${e.message}")
                 }
             }
-            
-            val doc = if (watchHtml != null) {
-                val decrypted = decryptWatchHtml(watchHtml)
-                if (decrypted != null) Jsoup.parse(decrypted) else null
-            } else null
-            
-            var serverElements = doc?.select("ul.tabcontent li") ?: org.jsoup.select.Elements()
-            if (serverElements.isEmpty()) {
-                serverElements = doc?.select("li[data-index][data-id]") ?: org.jsoup.select.Elements()
-            }
-            
-            if (serverElements.isEmpty()) {
-                Log.d(methodTag, "No server elements found in decrypted page. Launching WebView sniffer fallback...")
-                
-                // Fetch detail page to extract watch button if available
-                val detailDoc = httpService.getDocument(data)
-                val watchButton = detailDoc?.select(".btns a[href*=link=]")?.first()?.attr("href")
-                
-                val base64Url = android.util.Base64.encodeToString(watchUrl.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                val finalWatchButton = watchButton ?: "https://rm.freex2line.online/loadon/?link=$base64Url"
-                
-                Log.d(methodTag, "Sniffing wrapper URL: $finalWatchButton")
-                val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(finalWatchButton, referer = data)
-                return loadExtractor(snifferUrl, data, subtitleCallback, callback)
-            }
-            
-            // For each server, AJAX call to core.php and dispatch
-            for (element in serverElements) {
+
+            // Step 4: Extract download links
+            val downloadLinks = watchDoc.select("li[aria-label='quality'] a[href]")
+            Log.d(methodTag, "[loadLinks] Found ${downloadLinks.size} download links")
+            for (dl in downloadLinks) {
                 try {
-                    val dataIndex = element.attr("data-index")
-                    val dataId = element.attr("data-id")
-                    val serverName = element.text().trim()
-                    Log.d(methodTag, "Server: name='$serverName', index=$dataIndex, id=$dataId")
-                    
-                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
-                    val playerDoc = httpService.getDocument(ajaxUrl, headers = mapOf("Referer" to watchUrl))
-                    
-                    if (playerDoc == null) {
-                        Log.w(methodTag, "Failed to fetch player for server '$serverName'")
-                        continue
-                    }
-                    
-                    val iframeUrl = playerDoc.select("iframe").attr("src")
-                    Log.d(methodTag, "Server '$serverName' -> iframe: $iframeUrl")
-                    
-                    val elementIframe = element.select("iframe").first()
-                    val okframe = if (elementIframe != null) {
-                        "https:" + element.select("iframe").attr("src")
-                    } else {
-                        iframeUrl
-                    }
-                    
-                    val isVidGuard = vidGuardDomains.any { iframeUrl.contains(it, ignoreCase = true) }
-                    val currentLinksBefore = linksCount
-                    
-                    if (isVidGuard) {
-                        try {
-                            Log.d(methodTag, "VidGuard detected: $iframeUrl")
-                            handleNet(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in VidGuard: ${e.message}")
-                        }
-                    } else if (okframe.isNotBlank() && okframe.contains("ok", ignoreCase = true)) {
-                        try {
-                            loadExtractor(okframe, watchUrl, subtitleCallback, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in okframe: ${e.message}")
-                        }
-                    } else if (serverName.contains("Cima Now", ignoreCase = true)) {
-                        try {
-                            handleCima(iframeUrl, serverName, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Cima Now: ${e.message}")
-                        }
-                    } else if (serverName.contains("VidPro", ignoreCase = true)) {
-                        try {
-                            handleVidPro(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in VidPro: ${e.message}")
-                        }
-                    } else if (serverName.contains("Govid", ignoreCase = true) || serverName.contains("Goovid", ignoreCase = true)) {
-                        try {
-                            handleGovid(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Govid: ${e.message}")
-                        }
-                    } else if (serverName.contains("Vidlook", ignoreCase = true)) {
-                        try {
-                            handleVidlook(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Vidlook: ${e.message}")
-                        }
-                    } else if (serverName.contains("Streamwish", ignoreCase = true)) {
-                        try {
-                            handleStreamwish(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Streamwish: ${e.message}")
-                        }
-                    } else if (serverName.contains("Streamfile", ignoreCase = true) || serverName.contains("Luluvid", ignoreCase = true)) {
-                        try {
-                            handleStreamfile(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Streamfile/Luluvid: ${e.message}")
-                        }
-                    } else if (serverName.contains("Vadbam", ignoreCase = true) || serverName.contains("Viidshare", ignoreCase = true)) {
-                        try {
-                            handleVadbam(iframeUrl, watchUrl, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in Vadbam/Viidshare: ${e.message}")
-                        }
-                    } else if (serverName.contains("upload", ignoreCase = true) || iframeUrl.contains("uqload.io", ignoreCase = true)) {
-                        try {
-                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in upload: ${e.message}")
-                        }
-                    } else {
-                        try {
-                            for (link in element.select("a")) {
-                                val dlink = link.attr("href")
-                                val quality = link.text().let { text ->
-                                    Regex("\\d+").find(text)?.value?.toIntOrNull()
-                                } ?: Qualities.Unknown.value
-                                if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                                    Log.d(methodTag, "Download link: quality=$quality url=$dlink")
-                                    countingCallback(newExtractorLink(name, "Download Server", dlink, type = getLinkType(dlink)) {
-                                        this.referer = mainUrl
-                                        this.quality = quality
-                                    })
-                                }
-                            }
-                            loadExtractor(iframeUrl, watchUrl, subtitleCallback, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error in else: ${e.message}")
-                        }
-                    }
-                    
-                    // Server sniffer fallback
-                    if (linksCount == currentLinksBefore && iframeUrl.isNotBlank()) {
-                        try {
-                            Log.d(methodTag, "Standard extraction failed for $serverName. Sniffing iframeUrl: $iframeUrl")
-                            val snifferUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(iframeUrl, referer = watchUrl)
-                            loadExtractor(snifferUrl, watchUrl, subtitleCallback, countingCallback)
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "Error sniffing server $serverName: ${e.message}")
-                        }
-                    }
+                    val dlUrl = dl.attr("href")
+                    if (dlUrl.isBlank() || !dlUrl.startsWith("http")) continue
+                    val dlText = dl.text().trim()
+                    val quality = Regex("(\\d{3,4})p?").find(dlText)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
+                    Log.d(methodTag, "[loadLinks] Download: quality=$quality url=$dlUrl")
+                    countingCallback(newExtractorLink(providerName, "Cimanow تحميل", dlUrl, type = getLinkType(dlUrl)) {
+                        this.referer = watchUrl
+                        this.quality = quality
+                    })
                 } catch (e: Exception) {
-                    Log.e(methodTag, "Error processing server: ${e.message}")
+                    Log.e(methodTag, "[loadLinks] Error processing download link: ${e.message}")
                 }
             }
-            return linksCount > 0
+
+            Log.d(methodTag, "[loadLinks] Direct links found: $linksCount")
+            if (linksCount > 0) return true
         } catch (e: Exception) {
-            Log.e(methodTag, "loadLinks error: ${e.message}")
+            Log.e(methodTag, "[loadLinks] error: ${e.message}")
         }
-        
+
         return fallbackLoadLinks(data, isCasting, subtitleCallback, callback)
     }
     
