@@ -640,7 +640,7 @@ class Cimanow : BaseProvider() {
             Log.d(methodTag, "[loadLinks] START data='$data'")
 
             // Step 1: Fetch episode page to capture Cloudflare cookies and find post_id
-            val episodeHtml = httpService.getText(data)
+            val episodeHtml = httpService.getText(data) ?: ""
             val postIdMatch = Regex("""<link\s+rel=['"]shortlink['"]\s+href=['"][^'"]*\?p=(\d+)['"]""").find(episodeHtml)
             val postId = postIdMatch?.groupValues?.get(1) ?: Regex("post-(\\d+)").find(episodeHtml)?.groupValues?.get(1)
             Log.d(methodTag, "[loadLinks] Extracted post_id=$postId")
@@ -649,7 +649,7 @@ class Cimanow : BaseProvider() {
             val watchUrl = if (data.endsWith("/")) "${data}watching/" else "$data/watching/"
             Log.d(methodTag, "[loadLinks] Fetching watch URL: $watchUrl")
             
-            val watchHtml = httpService.getText(watchUrl, referer = data)
+            val watchHtml = httpService.getText(watchUrl, headers = mapOf("Referer" to data))
             var decryptedJs = ""
             if (!watchHtml.isNullOrBlank()) {
                 decryptedJs = decryptWatchHtml(watchHtml) ?: ""
