@@ -665,8 +665,8 @@ class Cimanow : BaseProvider() {
                 for (rand in randTokens) {
                     val apiUrl = "$mainUrl/wp-json/direct_download/v1/"
                     try {
-                        val response = httpService.post(
-                            apiUrl,
+                        val responseText = httpService.postText(
+                            url = apiUrl,
                             headers = mapOf(
                                 "Content-Type" to "application/x-www-form-urlencoded",
                                 "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -675,9 +675,9 @@ class Cimanow : BaseProvider() {
                             referer = watchUrl,
                             data = mapOf("p" to postId, "rand" to rand)
                         )
-                        Log.d(methodTag, "[loadLinks] direct_download response for rand=$rand: status=${response.code}")
-                        if (response.code == 200 && response.text.isNotBlank()) {
-                            finalHtml = response.text
+                        Log.d(methodTag, "[loadLinks] direct_download response for rand=$rand length: ${responseText?.length ?: 0}")
+                        if (!responseText.isNullOrBlank()) {
+                            finalHtml = responseText
                             // Unescape JSON if needed
                             if (finalHtml.trim().startsWith("{")) {
                                 try {
