@@ -343,6 +343,19 @@ class VideoSnifferEngine(
                         return true
                     }
 
+                    // Auto-accept redirects to embed page URLs (/e/, /v/, /f/ within first 70 chars).
+                    // Embed hosts use these path patterns for their video player pages (e.g., 
+                    // mixdrop.ag/e/XXXXX, filelions.to/v/XXXXX, ds2play.com/e/XXXXX).
+                    // Without this, cross-domain embed redirects get stuck behind the user
+                    // confirmation dialog which auto-rejects after 8s — too slow for multi-server fallback.
+                    val first70 = nextUrl.take(70)
+                    if ((nextUrl.startsWith("http://") || nextUrl.startsWith("https://")) &&
+                        (first70.contains("/e/") || first70.contains("/v/") || first70.contains("/f/"))) {
+                        ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.shouldOverrideUrlLoading",
+                            "Auto-accepting embed redirect", "url" to nextUrl.take(80))
+                        return false
+                    }
+
                     // Check if this redirect goes to a DIFFERENT domain than the target URL
                     try {
                         val nextHost = java.net.URI(nextUrl).host?.lowercase() ?: ""
@@ -518,6 +531,57 @@ class VideoSnifferEngine(
                         }
                     }
 
+                    // === IMMEDIATE ERROR PAGE DETECTION ===
+                    // Check page title, body text, and URL for error patterns right away
+                    // instead of waiting 2s for the DOM poll cycle.
+                    view?.evaluateJavascript("""
+                        (function() {
+                            var title = document.title ? document.title.toLowerCase().substring(0, 500) : '';
+                            var body = document.body ? document.body.innerText.toLowerCase().substring(0, 3000) : '';
+                            var url = window.location.href.toLowerCase();
+                            var combined = title + ' ' + body + ' ' + url;
+                            var errorPatterns = [
+                                'file was deleted', 'video not found', '404 not found',
+                                'no longer available', 'file not found',
+                                "we're sorry, this video is no longer available",
+                                'file deleted', 'video removed', 'content removed',
+                                'this video has been removed', 'page not found',
+                                'the file you requested has been deleted',
+                                'تم حذف الملف', 'الملف غير موجود', 'الصفحة غير موجودة',
+                                'هذا الفيديو غير متاح', 'تم الحذف', 'غير موجود',
+                                'الملف المطلوب غير موجود',
+                                'error 404', '404 error', '410 error',
+                                'this video does not exist',
+                                'access denied', 'blocked'
+                            ];
+                            for (var i = 0; i < errorPatterns.length; i++) {
+                                if (combined.indexOf(errorPatterns[i]) !== -1) {
+                                    return JSON.stringify({detected: true, pattern: errorPatterns[i]});
+                                }
+                            }
+                            return JSON.stringify({detected: false});
+                        })()
+                    """) { result ->
+                        if (!resultDelivered && !result.isNullOrBlank() && result != "null") {
+                            try {
+                                val jsonString = org.json.JSONTokener(result).nextValue().toString()
+                                val jsonObj = org.json.JSONObject(jsonString)
+                                if (jsonObj.optBoolean("detected", false)) {
+                                    val pattern = jsonObj.optString("pattern", "unknown")
+                                    ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                                        "Error page detected immediately", "pattern" to pattern)
+                                    CoroutineScope(Dispatchers.Main).launch {
+                                        delay(1500)
+                                        showSkipOverlay(view)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                                    "Error parsing immediate error check", e)
+                            }
+                        }
+                    }
+
                     if (resultDelivered) {
                         ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Result already delivered, skipping")
                         return
@@ -574,6 +638,29 @@ class VideoSnifferEngine(
                         }
                         ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedError", "WebView error",
                             "description" to description, "url" to request.url.toString().take(80))
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    errorResponse: android.webkit.WebResourceResponse?
+                ) {
+                    if (request?.isForMainFrame == true && !resultDelivered) {
+                        val statusCode = errorResponse?.statusCode ?: 0
+                        ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedHttpError",
+                            "HTTP error on main frame",
+                            "statusCode" to statusCode,
+                            "url" to (request.url?.toString()?.take(80) ?: ""))
+                        // 404/410/403/451 = page/file not found or access denied → skip immediately
+                        if (statusCode == 404 || statusCode == 410 || statusCode == 403 || statusCode == 451) {
+                            ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedHttpError",
+                                "Dead/corrupted page detected via HTTP $statusCode, scheduling skip")
+                            CoroutineScope(Dispatchers.Main).launch {
+                                delay(1500) // Brief grace period for page content to settle
+                                showSkipOverlay(view)
+                            }
+                        }
                     }
                 }
             }
@@ -1127,20 +1214,33 @@ class VideoSnifferEngine(
                         }
                         
                         // 5. Check for Server Error / Deleted File texts
-                        var invalidPageDetected = false;
-                        var textContent = document.body ? document.body.innerText.toLowerCase() : "";
-                        if (textContent.length > 0 && textContent.length < 5000) { // Don't check massive DOMs to save perf
-                            var errorTexts = [
-                                "file was deleted", "video not found", "404 not found", 
-                                "no longer available", "file not found", "we're sorry, this video is no longer available"
-                            ];
-                            for (var i = 0; i < errorTexts.length; i++) {
-                                if (textContent.indexOf(errorTexts[i]) !== -1) {
-                                    invalidPageDetected = true;
-                                    break;
+                            var invalidPageDetected = false;
+                            var titleText = document.title ? document.title.toLowerCase() : "";
+                            var bodyText = document.body ? document.body.innerText.toLowerCase() : "";
+                            var urlText = window.location.href.toLowerCase();
+                            var textContent = (titleText + " " + bodyText + " " + urlText).substring(0, 5000);
+                            if (textContent.length > 20) {
+                                var errorTexts = [
+                                    "file was deleted", "video not found", "404 not found",
+                                    "no longer available", "file not found",
+                                    "we're sorry, this video is no longer available",
+                                    "file deleted", "video removed", "content removed",
+                                    "this video has been removed", "page not found",
+                                    "the file you requested has been deleted",
+                                    "تم حذف الملف", "الملف غير موجود", "الصفحة غير موجودة",
+                                    "هذا الفيديو غير متاح", "تم الحذف", "غير موجود",
+                                    "الملف المطلوب غير موجود",
+                                    "error 404", "404 error", "410 error",
+                                    "this video does not exist",
+                                    "access denied", "blocked"
+                                ];
+                                for (var i = 0; i < errorTexts.length; i++) {
+                                    if (textContent.indexOf(errorTexts[i]) !== -1) {
+                                        invalidPageDetected = true;
+                                        break;
+                                    }
                                 }
                             }
-                        }
                         
                         console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected);
                         return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected});
