@@ -433,16 +433,16 @@ class CimaLeek : BaseProvider() {
         for (result in phase2) {
             val sniffTarget = result.resolvedUrl ?: resolved.firstOrNull { it.idx == result.idx }?.url
             if (sniffTarget == null) {
-                Log.w(methodTag, "PHASE 4: [$result.idx] ${result.name} — no URL to sniffer")
+                Log.w(methodTag, "PHASE 4: [${result.idx}] ${result.name} — no URL to sniffer")
                 continue
             }
-            Log.d(methodTag, "PHASE 4: Sniffing [$result.idx] ${result.name} — ${sniffTarget.take(80)}")
+            Log.d(methodTag, "PHASE 4: Sniffing [${result.idx}] ${result.name} — ${sniffTarget.take(80)}")
             val ok = awaitSnifferResult(sniffTarget, watchUrl, subtitleCallback, callback, 15000L)
             if (ok) {
-                Log.i(methodTag, "PHASE 4: SUCCESS [$result.idx] ${result.name}")
+                Log.i(methodTag, "PHASE 4: SUCCESS [${result.idx}] ${result.name}")
                 return true
             }
-            Log.w(methodTag, "PHASE 4: FAILED [$result.idx] ${result.name}")
+            Log.w(methodTag, "PHASE 4: FAILED [${result.idx}] ${result.name}")
         }
 
         Log.w(methodTag, "END — all ${resolved.size} URLs exhausted, no video found")

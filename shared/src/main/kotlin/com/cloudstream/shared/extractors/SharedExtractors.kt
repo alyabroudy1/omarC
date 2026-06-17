@@ -40,4 +40,32 @@ fun Plugin.registerSharedExtractors() {
     // Vidmoly Proxies
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Common embed host extractors (for sites that use cswru wrappers pointing
+    // to mixdrop, ds2play, krakenfiles, luluvdo, filelions, etc.)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // MixDrop (extracts video URL from packed JS on /e/ pages)
+    registerExtractorAPI(MixDropExtractor("https://mixdrop.ag", "MixDropAg"))
+    registerExtractorAPI(MixDropExtractor("https://mixdrop.co", "MixDropCo"))
+    registerExtractorAPI(MixDropExtractor("https://mixdrop.ch", "MixDropCh"))
+    registerExtractorAPI(MixDropExtractor("https://mixdrop.to", "MixDropTo"))
+    registerExtractorAPI(MixDropExtractor("https://mixdrop.bz", "MixDropBz"))
+
+    // DoodStream (used by ds2play.com, ds2video.com)
+    registerExtractorAPI(Ds2playExtractor("https://ds2play.com", "Ds2play"))
+    registerExtractorAPI(Ds2playExtractor("https://ds2video.com", "Ds2video"))
+
+    // Krakenfiles
+    registerExtractorAPI(KrakenfilesExtractor("https://krakenfiles.com", "Krakenfiles"))
+
+    // LuluStream (luluvdo.com, lulustream.com)
+    registerExtractorAPI(LuluStreamExtractor("https://luluvdo.com", "LuluStream"))
+    registerExtractorAPI(LuluStreamExtractor("https://lulustream.com", "Lulustream"))
+
+    // Filelions / VidHidePro
+    registerExtractorAPI(FilelionsExtractor("https://filelions.to", "VidHidePro"))
+    registerExtractorAPI(FilelionsExtractor("https://filelions.live", "VidHideProLive"))
+    registerExtractorAPI(FilelionsExtractor("https://filelions.online", "VidHideProOnline"))
 }
