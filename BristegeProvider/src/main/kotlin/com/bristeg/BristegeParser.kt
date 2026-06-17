@@ -56,10 +56,10 @@ class BristegeParser : NewBaseParser() {
         val isMovieByTag = allTags.any { it.contains("افلام", true) || it.contains("فلم", true) }
         
         if (hasSeasonBox && !isMovieByTag) {
-            doc.select("div.SeasonsBoxUL ul li").forEach { seasonLi ->
+            for (seasonLi in doc.select("div.SeasonsBoxUL ul li")) {
                 val seasonId = seasonLi.attr("data-serie")
                 val seasonNum = seasonId.toIntOrNull() ?: 1
-                doc.select("div.SeasonsEpisodes[data-serie='$seasonId'] a").forEach { epEl ->
+                for (epEl in doc.select("div.SeasonsEpisodes[data-serie='$seasonId'] a")) {
                     val epUrl = epEl.attr("abs:href")
                     val epName = epEl.attr("title").ifBlank { epEl.text() }
                     val epNum = epEl.selectFirst("em")?.text()?.toIntOrNull()

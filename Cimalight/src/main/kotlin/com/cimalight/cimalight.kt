@@ -95,7 +95,7 @@ class CimaLightProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = getDocOrSolve(request.data) ?: return HomePageResponse(emptyList())
+        val document = getDocOrSolve(request.data) ?: return newHomePageResponse(emptyList())
         val homePageList = ArrayList<HomePageList>()
         val addedSectionNames = mutableSetOf<String>()
 
@@ -110,14 +110,13 @@ class CimaLightProvider : MainAPI() {
             }
         }
 
-        val sections = document.select("div.pm-section-head, h2.pm-section-title")
-        sections.forEach { head ->
+        for (head in document.select("div.pm-section-head, h2.pm-section-title")) {
             val title = head.selectFirst("h2 a")?.text()?.trim()
                 ?: head.selectFirst("h2")?.text()?.trim()
                 ?: head.text().trim()
 
             if (title.isEmpty() || title.contains("جديد الموقع") || title.contains("أحدث الأفلام") || addedSectionNames.contains(title)) {
-                return@forEach
+                continue
             }
 
             var parent = head.parent()
@@ -141,7 +140,7 @@ class CimaLightProvider : MainAPI() {
             }
         }
 
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -191,12 +190,12 @@ class CimaLightProvider : MainAPI() {
             val seasonElements = document.select("div.SeasonsEpisodesMain div.tabcontent")
 
             if (seasonElements.isNotEmpty()) {
-                seasonElements.forEach { seasonElement ->
+                for (seasonElement in seasonElements) {
                     val seasonId = seasonElement.attr("id")
                     val seasonName = document.selectFirst("button[onclick*='$seasonId']")?.text()?.trim()
                     val seasonNum = seasonName?.filter { it.isDigit() }?.toIntOrNull() ?: 1
 
-                    seasonElement.select("ul a").forEach { epElement ->
+                    for (epElement in seasonElement.select("ul a")) {
                         val epHref = fixUrl(epElement.attr("href"))
                         val epName = epElement.text().trim()
                         val epNum = epName.filter { it.isDigit() }.toIntOrNull()
@@ -248,7 +247,7 @@ class CimaLightProvider : MainAPI() {
             }
 
         val intermediateDoc = app.get(intermediateUrl, headers = headersWithReferer).document
-        intermediateDoc.select("div.embeding ul li").apmap { serverElement ->
+        for (serverElement in intermediateDoc.select("div.embeding ul li")) {
             val serverUrl = serverElement.attr("data-embed")
             if (serverUrl.startsWith("http")) {
                 loadExtractor(serverUrl, data, subtitleCallback, callback)

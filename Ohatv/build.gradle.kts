@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.oha"
     compileSdk = 34
 
     defaultConfig {

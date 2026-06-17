@@ -92,7 +92,7 @@ class FullMatchShowsProvider(private val context: Context) : MainAPI() {
             }
         }
 
-        return HomePageResponse(lists)
+        return newHomePageResponse(lists)
     }
 
     override suspend fun load(url: String): LoadResponse? {

@@ -6,7 +6,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.animerco"
     compileSdk = 34
 
     defaultConfig {

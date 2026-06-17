@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.anime4up"
     compileSdk = 34
 
     defaultConfig {

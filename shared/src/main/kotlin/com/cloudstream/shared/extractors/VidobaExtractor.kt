@@ -154,7 +154,7 @@ class VidobaExtractor : ExtractorApi() {
                     }
                 )
             } else {
-                m3u8Links.forEach { link ->
+                for (link in m3u8Links) {
                     android.util.Log.d(TAG, "[getUrl] Emitting variant: ${link.name} -> ${link.url}")
                     callback(link)
                 }

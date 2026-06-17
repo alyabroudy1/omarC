@@ -88,7 +88,7 @@ class Bristege : BaseProvider() {
         val items = mutableListOf<EmbedData>()
         
         // Buttons
-        doc.select("div#WatchServers button.watchButton, div#WatchServers button.watchbutton").forEach { btn ->
+        for (btn in doc.select("div#WatchServers button.watchButton, div#WatchServers button.watchbutton")) {
             val url = btn.attr("data-embed-url").ifBlank { btn.attr("data-embed") }
             if (url.isNotBlank()) {
                 val absoluteUrl = buildAbsoluteUrl(url)
@@ -96,8 +96,7 @@ class Bristege : BaseProvider() {
             }
         }
         
-        // Iframe
-        doc.select("div#Playerholder iframe").forEach { iframe ->
+        for (iframe in doc.select("div#Playerholder iframe")) {
             val url = iframe.attr("src")
             if (url.isNotBlank()) {
                 val absoluteUrl = buildAbsoluteUrl(url)

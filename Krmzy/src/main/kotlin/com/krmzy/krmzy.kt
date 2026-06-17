@@ -482,7 +482,7 @@ class krmzyProvider : MainAPI() {
                                     )
 
                                     if (qualityLinks.isNotEmpty()) {
-                                        qualityLinks.forEach { link ->
+                                        for (link in qualityLinks) {
 
                                             callback.invoke(
                                                 newExtractorLink(

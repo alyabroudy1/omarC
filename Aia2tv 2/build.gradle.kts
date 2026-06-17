@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.asia2tv"
     compileSdk = 34
 
     defaultConfig {

@@ -11,7 +11,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import android.util.Log
 import kotlin.io.encoding.Base64
-import android.service.controls.ControlsProviderService.TAG
+
 import com.lagradost.cloudstream3.syncproviders.providers.OpenSubtitlesApi.Companion.headers
 
 class eishk : MainAPI() {
@@ -76,7 +76,7 @@ class eishk : MainAPI() {
                 all.add(HomePageList(title, items))
             }
         }
-        return HomePageResponse(all)
+        return newHomePageResponse(all)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -211,6 +211,7 @@ class eishk : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val TAG = "eishk"
 
         fun jsStringUnescape(s: String): String {
             val regex = Regex("""\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|\\.|\\n|\\r|\\t""")
@@ -403,13 +404,16 @@ class eishk : MainAPI() {
                 }
                 val text1 = rIf1.text
 
-                Regex(
+                for (match in Regex(
                     """(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""",
                     RegexOption.IGNORE_CASE
-                ).findAll(text1)
-                    .forEach { result.add(it.groupValues[1]) }
+                ).findAll(text1)) {
+                    result.add(match.groupValues[1])
+                }
 
-                analyzeAndSaveEvalScripts(text1).forEach { result.add(it) }
+                for (it in analyzeAndSaveEvalScripts(text1)) {
+                    result.add(it)
+                }
 
                 val docIf1 = rIf1.document
                 val iframe1Srcs = getAllIframeSrcs(docIf1)
@@ -425,12 +429,15 @@ class eishk : MainAPI() {
                     }
                     if (rFinal != null) {
                         val t = rFinal.text
-                        Regex(
+                        for (match in Regex(
                             """(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""",
                             RegexOption.IGNORE_CASE
-                        ).findAll(t)
-                            .forEach { result.add(it.groupValues[1]) }
-                        analyzeAndSaveEvalScripts(t).forEach { result.add(it) }
+                        ).findAll(t)) {
+                            result.add(match.groupValues[1])
+                        }
+                        for (it in analyzeAndSaveEvalScripts(t)) {
+                            result.add(it)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -541,7 +548,7 @@ class eishk : MainAPI() {
                     )
                     if (mediaLinks.isNotEmpty()) {
 
-                        mediaLinks.forEach { link ->
+                        for (link in mediaLinks) {
                             foundAllMediaLinks.getOrPut(link) { mutableSetOf() }
                                 .add(serverNum.toString())
                         }
@@ -554,8 +561,8 @@ class eishk : MainAPI() {
                 val mediaLinks =
                     processSingleEmbedServer(baseIframeSrc, r2.url, headers, serverLabel = "base")
                 if (mediaLinks.isNotEmpty()) {
-                    mediaLinks.forEach {
-                        foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("base")
+                    for (link in mediaLinks) {
+                        foundAllMediaLinks.getOrPut(link) { mutableSetOf() }.add("base")
                     }
                 }
             }

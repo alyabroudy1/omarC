@@ -367,11 +367,13 @@ class GessehProvider : MainAPI() {
                 val jsonString = String(decodedBytes, Charsets.UTF_8)
                 val payload = parseJson<GessehPayload>(jsonString)
 
-                payload.servers?.forEach { server ->
-                    val sName = server.name ?: return@forEach
-                    val sId = server.id ?: return@forEach
-                    buildEmbedUrl(sName, sId)?.let { url ->
-                        serversToProcess.add(ServerData(sName, url))
+                payload.servers?.let { servers ->
+                    for (server in servers) {
+                        val sName = server.name ?: continue
+                        val sId = server.id ?: continue
+                        buildEmbedUrl(sName, sId)?.let { url ->
+                            serversToProcess.add(ServerData(sName, url))
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -588,7 +590,9 @@ class GessehProvider : MainAPI() {
             name: String,
             callback: (ExtractorLink) -> Unit
         ) {
-            generateM3u8(name, streamLink, mainUrl).forEach(callback)
+            for (link in generateM3u8(name, streamLink, mainUrl)) {
+                callback(link)
+            }
         }
 
         data class MetaData(

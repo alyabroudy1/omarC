@@ -113,14 +113,14 @@ class FaselHDV2Parser : NewBaseParser() {
         val urls = mutableListOf<String>()
 
         // 1. New WatchList pattern (data-embed-url)
-        doc.select("ul.WatchList li[data-embed-url]").forEach { li ->
+        for (li in doc.select("ul.WatchList li[data-embed-url]")) {
             val embedUrl = li.attr("data-embed-url")
             if (embedUrl.isNotBlank()) urls.add(embedUrl)
         }
 
         // 2. Old onclick pattern (.signleWatch ul.tabs-ul li[onclick])
         val urlRegex = "'.*?'".toRegex()
-        doc.select(".signleWatch ul.tabs-ul li[onclick], ul.tabs-ul li[onclick]").forEach { li ->
+        for (li in doc.select(".signleWatch ul.tabs-ul li[onclick], ul.tabs-ul li[onclick]")) {
             val onclick = li.attr("onclick")
             val match = urlRegex.find(onclick)
             if (match != null) {
@@ -134,7 +134,7 @@ class FaselHDV2Parser : NewBaseParser() {
         }
 
         // 3. Direct iframes
-        doc.select(".brooks_player iframe[src], iframe[name=player_iframe][src]").forEach { iframe ->
+        for (iframe in doc.select(".brooks_player iframe[src], iframe[name=player_iframe][src]")) {
             val src = iframe.attr("src")
             if (src.isNotBlank()) urls.add(src)
         }
@@ -173,7 +173,7 @@ class FaselHDV2Parser : NewBaseParser() {
 
         if (mobileEpisodeBlocks.isNotEmpty()) {
             val seasonMap = mutableMapOf<String, Int>()
-            doc.select("select#mobileselect option, select[aria-label='Seasons'] option").forEach { option ->
+            for (option in doc.select("select#mobileselect option, select[aria-label='Seasons'] option")) {
                 val seasonId = option.attr("value")
                 val seasonText = option.text()
                 val extractedSeasonNum = Regex("(\\d+)").find(seasonText)?.groupValues?.get(1)?.toIntOrNull()
@@ -182,14 +182,14 @@ class FaselHDV2Parser : NewBaseParser() {
                 }
             }
 
-            mobileEpisodeBlocks.forEach { block ->
+            for (block in mobileEpisodeBlocks) {
                 val blockId = block.attr("id")
                 val actualSeasonNum = seasonMap[blockId] 
                     ?: Regex("(\\d+)").find(blockId)?.groupValues?.get(1)?.toIntOrNull() 
                     ?: seasonNum 
                     ?: 1
 
-                block.select("option:not([value='select-ep'])").forEach { option ->
+                for (option in block.select("option:not([value='select-ep'])")) {
                     val epTitle = option.text().trim()
                     val epUrl = option.attr("value").trim()
 
@@ -214,13 +214,13 @@ class FaselHDV2Parser : NewBaseParser() {
         val desktopSeasonTabs = doc.select(".SeasonsEpisodesMains .tabcontent")
         
         if (desktopSeasonTabs.isNotEmpty()) {
-            desktopSeasonTabs.forEach { tabBlock ->
+            for (tabBlock in desktopSeasonTabs) {
                 val tabId = tabBlock.attr("id")
                 val actualSeasonNum = Regex("(\\d+)").find(tabId)?.groupValues?.get(1)?.toIntOrNull() 
                     ?: seasonNum 
                     ?: 1
                     
-                tabBlock.select("ul.pm-ul-browse-videos li").forEach { li ->
+                for (li in tabBlock.select("ul.pm-ul-browse-videos li")) {
                     val epTitle = li.selectFirst("h3 a")?.text()?.trim() ?: ""
                     val epUrl = li.selectFirst("h3 a")?.attr("href")?.trim() ?: ""
                     
@@ -243,7 +243,7 @@ class FaselHDV2Parser : NewBaseParser() {
 
         // 3. Old FaselHD layout: div.epAll a (with season from seasonDiv)
         val activeSeasonNum = extractActiveSeasonNum(doc) ?: seasonNum ?: 1
-        doc.select("div.epAll a").forEach { ep ->
+        for (ep in doc.select("div.epAll a")) {
             val epUrl = ep.attr("href")
             val epTitle = ep.text().trim()
             if (epUrl.isNotBlank()) {
@@ -326,9 +326,10 @@ class FaselHDV2Parser : NewBaseParser() {
         val results = mutableListOf<Pair<Int, String>>()
         val seasonTabs = doc.select("div.seasonDiv")
         
-        seasonTabs.filter { !it.hasClass("active") }.forEach { tab ->
+        for (tab in seasonTabs) {
+            if (tab.hasClass("active")) continue
             val title = tab.select(".title").text()
-            val seasonNum = Regex("\\d+").find(title)?.value?.toIntOrNull() ?: return@forEach
+            val seasonNum = Regex("\\d+").find(title)?.value?.toIntOrNull() ?: continue
             
             // Extract URL from onclick
             val onclick = tab.attr("onclick")

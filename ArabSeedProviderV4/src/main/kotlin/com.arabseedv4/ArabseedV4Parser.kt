@@ -74,7 +74,7 @@ class ArabseedV4Parser : NewBaseParser() {
         // Build lazy URLs for highest quality × visible servers
         // Always prefer lazy URL path to force highest quality instead of using
         // pre-baked data-link (which is locked to the page's default 480p quality)
-        visibleServers.forEach { server ->
+        for (server in visibleServers) {
             if (server.postId.isNotBlank() && csrfToken.isNotBlank()) {
                 urls.add("arabseed-lazy://resolve?post_id=${server.postId}&quality=$highestQuality&server=${server.serverId}&csrf=$csrfToken&base=$currentBaseUrl")
             } else if (globalPostId.isNotBlank() && csrfToken.isNotBlank()) {
@@ -151,7 +151,7 @@ class ArabseedV4Parser : NewBaseParser() {
 
     fun parseSeasonsWithPostId(doc: Document): List<SeasonData> {
         val list = mutableListOf<SeasonData>()
-        doc.select("div.SeasonsListHolder ul > li").forEach { li ->
+        for (li in doc.select("div.SeasonsListHolder ul > li")) {
             val season = li.attr("data-season").toIntOrNull()
             val postId = li.attr("data-id")
             if (season != null && postId.isNotBlank()) list.add(SeasonData(season, postId))
@@ -213,7 +213,7 @@ class ArabseedV4Parser : NewBaseParser() {
     
     fun extractQualities(doc: Document): List<QualityData> {
         val qualities = mutableListOf<QualityData>()
-        doc.select("ul.qualities__list li").forEach { li ->
+        for (li in doc.select("ul.qualities__list li")) {
             val q = li.attr("data-quality").toIntOrNull() ?: 0
             val title = li.attr("data-title")
             if (q > 0) qualities.add(QualityData(q, title))
@@ -238,7 +238,7 @@ class ArabseedV4Parser : NewBaseParser() {
 
     fun extractVisibleServers(doc: Document): List<ServerData> {
         val servers = mutableListOf<ServerData>()
-        doc.select("li[data-server]").forEach { li ->
+        for (li in doc.select("li[data-server]")) {
             val postId = li.attr("data-post")
             val serverId = li.attr("data-server")
             val quality = li.attr("data-qu").toIntOrNull() ?: 0

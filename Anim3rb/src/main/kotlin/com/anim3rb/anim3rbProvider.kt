@@ -504,8 +504,10 @@ class Anime3rb(val context: Context) : MainAPI() {
                             try {
                                 val connection = URL(reqUrl).openConnection() as HttpURLConnection
                                 connection.requestMethod = "GET"
-                                request.requestHeaders?.forEach { (k, v) ->
-                                    if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v)
+                                request.requestHeaders?.let { headers ->
+                                    for ((k, v) in headers) {
+                                        if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v)
+                                    }
                                 }
                                 CookieManager.getInstance().getCookie(url)?.let { connection.setRequestProperty("Cookie", it) }
                                 connection.setRequestProperty("Referer", url)
@@ -518,12 +520,11 @@ class Anime3rb(val context: Context) : MainAPI() {
                                 if (jsonMatch != null) {
                                     val jsonStr = jsonMatch.groupValues[1]
                                     val linksFromJson = AppUtils.parseJson<List<Map<String, Any?>>>(jsonStr)
-                                    linksFromJson.forEach { item ->
+                                    for (item in linksFromJson) {
                                         val src = item["src"]?.toString() ?: item["file"]?.toString()
                                         val label = item["label"]?.toString() ?: "Default"
                                         if (!src.isNullOrBlank()) extractedRaw.add(src to label)
                                     }
-
                                     if (extractedRaw.isNotEmpty()) {
                                         handler.post { finish() }
                                     }
@@ -539,8 +540,10 @@ class Anime3rb(val context: Context) : MainAPI() {
                         try {
                             val connection = URL(reqUrl).openConnection() as HttpURLConnection
                             connection.requestMethod = "GET"
-                            request.requestHeaders?.forEach { (k, v) ->
-                                if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v)
+                            request.requestHeaders?.let { headers ->
+                                for ((k, v) in headers) {
+                                    if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v)
+                                }
                             }
                             CookieManager.getInstance().getCookie(reqUrl)?.let { connection.setRequestProperty("Cookie", it) }
 
@@ -548,7 +551,7 @@ class Anime3rb(val context: Context) : MainAPI() {
                             val jsonString = String(responseBytes, Charsets.UTF_8)
 
                             val linksFromJson = AppUtils.parseJson<List<Map<String, Any?>>>(jsonString)
-                            linksFromJson.forEach { item ->
+                            for (item in linksFromJson) {
                                 val src = item["src"]?.toString() ?: item["file"]?.toString()
                                 val label = item["label"]?.toString() ?: "Default"
                                 if (!src.isNullOrBlank()) extractedRaw.add(src to label)
@@ -588,7 +591,7 @@ class Anime3rb(val context: Context) : MainAPI() {
             return false
         }
 
-        rawLinks.forEach { (src, label) ->
+        for ((src, label) in rawLinks) {
             try {
                 callback(
                     newExtractorLink(

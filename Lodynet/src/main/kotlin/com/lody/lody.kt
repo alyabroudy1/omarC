@@ -59,7 +59,7 @@ class LodyNet : MainAPI() {
             homePageList.add(0, HomePageList("مثبتات", pinnedMovies))
         }
 
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {

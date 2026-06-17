@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.tuniflix"
     compileSdk = 34
     defaultConfig {
         minSdk = 21

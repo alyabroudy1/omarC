@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.mvvm.suspendSafeApiCall
 import org.jsoup.nodes.Element
 import kotlinx.coroutines.launch
@@ -25,8 +24,8 @@ import kotlin.collections.set
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URI
 
@@ -121,7 +120,7 @@ class animerco : MainAPI() {
                 toSearchResponse(it)
             }.let { if (it.isNotEmpty()) homePageList.add(HomePageList("آخر الأفلام المضافة", it)) }
 
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     data class PlayerAjaxResponse(
@@ -195,10 +194,10 @@ class animerco : MainAPI() {
 
         suspend fun fetchEpisodesFromDoc(doc: org.jsoup.nodes.Document): List<Episode> {
             val episodes = mutableListOf<Episode>()
-            doc.select("ul.episodes-lists#filter li").forEach { el ->
-                val link = el.selectFirst("a.title") ?: return@forEach
-                val epUrlRaw = link.attr("href") ?: return@forEach
-                val epUrl = normalizeUrl(epUrlRaw) ?: return@forEach
+            for (el in doc.select("ul.episodes-lists#filter li")) {
+                val link = el.selectFirst("a.title") ?: continue
+                val epUrlRaw = link.attr("href") ?: continue
+                val epUrl = normalizeUrl(epUrlRaw) ?: continue
                 val epTitle = link.selectFirst("h3")?.text()?.trim() ?: link.text().trim()
                 val poster = el.selectFirst("a.image")?.attr("data-src")
                 val epNumber = el.attr("data-number").toIntOrNull()
@@ -222,7 +221,7 @@ class animerco : MainAPI() {
             val plot = doc.selectFirst("div.media-story div.content p")?.text()
             val tags = doc.select("div.genres a").map { it.text() }
             val year = doc.select("ul.media-info li:contains(بداية العرض) a").text().toIntOrNull()
-            val rating = doc.selectFirst("div.votes span.score")?.text()?.toRatingInt()
+            val rating = doc.selectFirst("div.votes span.score")?.text()?.trim()?.toFloatOrNull()
 
             val typeText = doc.select("div.media-info li:contains(النوع) span").text()
             val isMovieByText = typeText.contains("Movie", ignoreCase = true) || typeText.contains("film", ignoreCase = true)
@@ -242,13 +241,12 @@ class animerco : MainAPI() {
                     this.plot = plot
                     this.tags = tags
                     this.year = year
-                    this.rating = rating
+                    this.score = rating?.let { Score.from10(it) }
                 }
             }
 
             val seasonNodes = doc.select("div.media-seasons ul.episodes-lists li")
             if (seasonNodes.isEmpty()) {
-
                 val candidateSelectors = listOf(
                     "a.btn.seasons",
                     "a.seasons",
@@ -296,7 +294,7 @@ class animerco : MainAPI() {
                     this.plot = plot
                     this.tags = tags
                     this.year = year
-                    this.rating = rating
+                    this.score = rating?.let { Score.from10(it) }
                 }
             }
 
@@ -316,7 +314,9 @@ class animerco : MainAPI() {
                 val seasonNum = seasonName?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
 
                 val eps = fetchEpisodesFromDoc(seasonDoc)
-                eps.forEach { it.season = seasonNum ?: 1 }
+                for (ep in eps) {
+                    ep.season = seasonNum ?: 1
+                }
                 episodes.addAll(eps)
             }
 
@@ -325,7 +325,7 @@ class animerco : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 this.year = year
-                this.rating = rating
+                this.score = rating?.let { Score.from10(it) }
             }
         } catch (e: Exception) {
 
@@ -366,37 +366,6 @@ class animerco : MainAPI() {
             else -> s
         }
     }
-    @Serializable
-    data class Share4maxMirror(
-        @SerialName("link") val link: String?,
-        @SerialName("driver") val driver: String?
-    )
-
-    @Serializable
-    data class Share4maxQuality(
-        @SerialName("label") val label: String?,
-        @SerialName("mirrors") val mirrors: List<com.animerco.animerco.Share4maxMirror>?
-    )
-
-    @Serializable
-    data class Share4maxStreamsData(
-        @SerialName("data") val data: List<Share4maxQuality>?
-    )
-
-    @Serializable
-    data class Share4maxProps(
-        @SerialName("streams") val streams: Share4maxStreamsData?
-    )
-
-    @Serializable
-    data class Share4maxInertiaResponse(
-        @SerialName("props") val props: Share4maxProps?
-    )
-
-    @Serializable
-    data class Share4maxInitialPage(
-        @SerialName("version") val version: String?
-    )
         private suspend fun processMegabox(url: String, referer: String): List<String> {
             val extractedIframes = mutableListOf<String>()
 
@@ -406,7 +375,7 @@ class animerco : MainAPI() {
                 val initialResponse = app.get(targetUrl, referer = referer)
                 val soup = initialResponse.document
                 val version = soup.selectFirst("script[data-page=app]")?.html()?.let {
-                    parseJson<Share4maxInitialPage>(it).version
+                    JSONObject(it).optString("version").ifEmpty { null }
                 }
 
                 if (version == null) return emptyList()
@@ -420,13 +389,23 @@ class animerco : MainAPI() {
                 )
 
                 val streamResponse = app.get(targetUrl, headers = inertiaHeaders, referer = referer)
-                val streamJson = parseJson<Share4maxInertiaResponse>(streamResponse.text)
-
-                streamJson.props?.streams?.data?.forEach { qualityLevel ->
-                    qualityLevel.mirrors?.forEach { mirror ->
-                        mirror.link?.let { link ->
-                            val finalUrl = if (link.startsWith("//")) "https:$link" else link
-                            extractedIframes.add(finalUrl)
+                val streamJson = JSONObject(streamResponse.text)
+                val props = streamJson.optJSONObject("props")
+                val streams = props?.optJSONObject("streams")
+                val data = streams?.optJSONArray("data")
+                data?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val qualityLevel = arr.getJSONObject(i)
+                        val mirrors = qualityLevel.optJSONArray("mirrors")
+                        mirrors?.let { mirArr ->
+                            for (j in 0 until mirArr.length()) {
+                                val mirror = mirArr.getJSONObject(j)
+                                val link = mirror.optString("link")
+                                if (link.isNotEmpty()) {
+                                    val finalUrl = if (link.startsWith("//")) "https:$link" else link
+                                    extractedIframes.add(finalUrl)
+                                }
+                            }
                         }
                     }
                 }
@@ -562,8 +541,8 @@ class animerco : MainAPI() {
 
                             var embedRaw: String? = null
                             runCatching {
-                                val parsed = parseJson<PlayerAjaxResponse>(txt)
-                                embedRaw = parsed?.embedUrl
+                                val parsed = JSONObject(txt)
+                                embedRaw = parsed.optString("embed_url").ifEmpty { null }
                             }.onFailure { /* ignore */ }
 
                             if (embedRaw.isNullOrBlank()) {

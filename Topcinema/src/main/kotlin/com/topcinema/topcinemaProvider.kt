@@ -82,7 +82,7 @@ class TopCinemaProvider : MainAPI() {
                 logError(e)
             }
         }
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     private fun toSearchResponse(element: Element): SearchResponse? {
@@ -138,7 +138,7 @@ class TopCinemaProvider : MainAPI() {
         val tags = document.select(".RightTaxContent li:contains(نوع) a").map { it.text() }
         val year =
             document.selectFirst(".RightTaxContent li:contains(الصدور) a")?.text()?.toIntOrNull()
-        val rating = document.selectFirst(".imdbR span")?.text()?.toRatingInt()
+        val rating = document.selectFirst(".imdbR span")?.text()?.trim()?.toFloatOrNull()
         val actors =
             document.select(".RightTaxContent li.actor a").map { Actor(it.text(), it.attr("href")) }
 
@@ -149,7 +149,8 @@ class TopCinemaProvider : MainAPI() {
 
             val seasonsElements = document.select("section.allseasonss .Small--Box.Season a")
             if (seasonsElements.isNotEmpty()) {
-                episodes = seasonsElements.apmap { seasonLink ->
+                val episodesList = mutableListOf<Episode>()
+                for (seasonLink in seasonsElements) {
                     val seasonUrl = seasonLink.attr("href")
                     val seasonPoster = seasonLink.selectFirst("img")?.attr("src")
                     val seasonNum =
@@ -157,7 +158,7 @@ class TopCinemaProvider : MainAPI() {
                             ?.toIntOrNull()
 
                     val seasonDoc = httpGet(seasonUrl)
-                    seasonDoc.select(".allepcont .row > a").map { ep ->
+                    for (ep in seasonDoc.select(".allepcont .row > a")) {
                         val epUrl = ep.attr("href")
                         val data = "$epUrl/watch/||$epUrl/download/"
                         val epTitle = ep.selectFirst("h2")?.text()
@@ -173,9 +174,10 @@ class TopCinemaProvider : MainAPI() {
                             episode = episodeNumber
                             posterUrl = seasonPoster
                         }
-                        episode // Return the modified episode object
-                    }.reversed()
-                }.flatten()
+                        episodesList.add(episode)
+                    }
+                }
+                episodes = episodesList
             }
 
             if (episodes.isEmpty()) {
@@ -208,7 +210,7 @@ class TopCinemaProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.rating = rating
+                this.score = rating?.let { Score.from10(it) }
             }
         } else {
             val data = "$url/watch/||$url/download/"
@@ -217,7 +219,7 @@ class TopCinemaProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.rating = rating
+                this.score = rating?.let { Score.from10(it) }
             }
         }
     }
@@ -408,7 +410,7 @@ class TopCinemaProvider : MainAPI() {
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val extractedLinks = ConcurrentHashMap<String, String>()
 
-        data.split("||").filter { it.isNotBlank() }.apmap { rawUrl ->
+        for (rawUrl in data.split("||").filter { it.isNotBlank() }) {
             try {
                 if (rawUrl.contains("/watch/")) {
                     val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
@@ -420,7 +422,7 @@ class TopCinemaProvider : MainAPI() {
                         extractedLinks[it] = finalWatchUrl
                     }
 
-                    watchDoc.select(".watch--servers--list li.server--item").apmap { server ->
+                    for (server in watchDoc.select(".watch--servers--list li.server--item")) {
                         val ajaxUrl = "$finalBaseUrl/wp-content/themes/movies2023/Ajaxat/Single/Server.php"
                         val res = app.post(
                             ajaxUrl,
@@ -436,7 +438,7 @@ class TopCinemaProvider : MainAPI() {
                 } else if (rawUrl.contains("/download/")) {
                     val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
                     val finalDownloadUrl = response.url
-                    response.document.select("a.downloadsLink").forEach { a ->
+                    for (a in response.document.select("a.downloadsLink")) {
                         val href = a.attr("href")
                         if (href.isNotBlank()) {
                             extractedLinks[href] = finalDownloadUrl
@@ -448,7 +450,7 @@ class TopCinemaProvider : MainAPI() {
             } catch (e: Exception) { logError(e) }
         }
 
-        extractedLinks.entries.toList().apmap { (rawLink, referer) ->
+        for ((rawLink, referer) in extractedLinks.entries.toList()) {
             val finalLink = unwrapPlayUrl(rawLink)
             val baseUrlForExtractor = getBaseUrl(referer)
 

@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.tvgarden"
     compileSdk = 34
 
     defaultConfig {

@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.viu"
     compileSdk = 34
     defaultConfig {
         minSdk = 21

@@ -4,9 +4,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerialName
 import android.util.Log
+import org.json.JSONObject
+import org.json.JSONArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -569,11 +569,14 @@ class CeeProvider : MainAPI() {
 
         val detailsUrl = "$apiV2/allVideoInfo/id/$extractedId"
         app.get(detailsUrl).parsedSafe<Map<String, Any>>()?.let { detailsMap ->
-            (detailsMap["translations"] as? List<Map<String, Any>>)?.forEach { sub ->
-                val file = sub["file"] as? String
-                val lang = sub["name"] as? String
-                if (file != null && lang != null) {
-                    subtitleCallback(SubtitleFile(lang, file))
+            val subs = detailsMap["translations"] as? List<Map<String, Any>>
+            if (subs != null) {
+                for (sub in subs) {
+                    val file = sub["file"] as? String
+                    val lang = sub["name"] as? String
+                    if (file != null && lang != null) {
+                        subtitleCallback(SubtitleFile(lang, file))
+                    }
                 }
             }
         }
@@ -581,13 +584,11 @@ class CeeProvider : MainAPI() {
         return true
     }
 
-    @Serializable
     data class Category(
         val en_title: String? = null,
         val ar_title: String? = null
     )
 
-    @Serializable
     data class ActorInfo(
         val nb: String? = null,
         val name: String? = null,
@@ -597,28 +598,25 @@ class CeeProvider : MainAPI() {
         val staff_img_medium_thumb: String? = null
     )
 
-    @Serializable
     data class CinemanaItem(
         val nb: String? = null,
-        @SerialName("en_title") val enTitle: String? = null,
+        val enTitle: String? = null,
         val imgObjUrl: String? = null,
         val year: String? = null,
-        @SerialName("en_content") val enContent: String? = null,
+        val enContent: String? = null,
         val stars: String? = null,
         val kind: Int? = null,
         val fileFile: String? = null,
-        @SerialName("episodeNummer") val episodeNummer: String? = null,
+        val episodeNummer: String? = null,
         val season: String? = null,
         val categories: List<Category>? = null,
-        @SerialName("actorsInfo") val actorsInfo: List<ActorInfo>? = null
+        val actorsInfo: List<ActorInfo>? = null
     )
 
-    @Serializable
     data class SeasonNumberItem(
         val season: String? = null
     )
 
-    @Serializable
     data class VideoGroup(
         val id: String? = null,
         val title: String? = null,

@@ -11,7 +11,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.shahid4u"
     compileSdk = 34
     defaultConfig {
         minSdk = 21

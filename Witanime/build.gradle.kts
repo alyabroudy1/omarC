@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.witanime"
     compileSdk = 34
     defaultConfig {
         minSdk = 21

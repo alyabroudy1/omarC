@@ -95,7 +95,7 @@ class EgyDeadParser : NewBaseParser() {
         val urls = mutableListOf<String>()
         
         // Method 1: From server list links (data-src)
-        doc.select("a[data-src]").forEach { link ->
+        for (link in doc.select("a[data-src]")) {
             val dataSrc = link.attr("data-src")
             if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
                 urls.add(dataSrc)
@@ -103,7 +103,7 @@ class EgyDeadParser : NewBaseParser() {
         }
         
         // Method 2: From iframes (data-src)
-        doc.select("iframe[data-src]").forEach { iframe ->
+        for (iframe in doc.select("iframe[data-src]")) {
             val dataSrc = iframe.attr("data-src")
             if (dataSrc.isNotBlank()) {
                 urls.add(dataSrc)
@@ -111,7 +111,7 @@ class EgyDeadParser : NewBaseParser() {
         }
         
         // Method 3: From inline iframes
-        doc.select("iframe[src]").forEach { iframe ->
+        for (iframe in doc.select("iframe[src]")) {
             val src = iframe.attr("src")
             if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
                 urls.add(src)
@@ -119,7 +119,7 @@ class EgyDeadParser : NewBaseParser() {
         }
         
         // Method 4: From data-id
-        doc.select("a[data-id]").forEach { link ->
+        for (link in doc.select("a[data-id]")) {
             val dataId = link.attr("data-id")
             if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
                 urls.add(dataId)

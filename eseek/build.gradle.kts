@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.eseek"
     compileSdk = 34
     defaultConfig {
         minSdk = 21
@@ -35,6 +35,7 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
         cloudstream("com.lagradost:cloudstream3:pre-release")
+    implementation("com.google.code.gson:gson:2.10.1")
 
 
 }

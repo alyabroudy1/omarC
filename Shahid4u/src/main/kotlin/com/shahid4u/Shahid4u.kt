@@ -230,11 +230,11 @@ class Shahid4u : MainAPI() {
         val episodes = ArrayList<Episode>()
 
         if (seasons.isNotEmpty()) {
-            seasons.apmap { seasonElement ->
+            for (seasonElement in seasons) {
                 val seasonUrl = seasonElement.attr("href")
                 val seasonDoc = app.get(seasonUrl).document
 
-                seasonDoc.select("div.w-100.bg-main.rounded.my-4 a.epss:not([href*='/season/'])").forEach { episodeElement ->
+                for (episodeElement in seasonDoc.select("div.w-100.bg-main.rounded.my-4 a.epss:not([href*='/season/'])")) {
                     val epName = episodeElement.text().trim()
                     val epUrl = episodeElement.attr("href")
                     val episodeNumber = Regex("""\d+""").find(epName)?.value?.toIntOrNull()

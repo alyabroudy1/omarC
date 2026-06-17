@@ -28,22 +28,23 @@ class Asia2tvProvider : MainAPI() {
             Pair("$mainUrl/completed-dramas/", "دراما مكتملة")
         )
 
-        val items = urls.apmap { (url, name) ->
+        val items = mutableListOf<HomePageList>()
+        for ((url, name) in urls) {
             val pageUrl = if (page > 1) "$url/page/$page/" else url
             val soup = app.get(pageUrl).document
-            val home = soup.select("div.box-item").mapNotNull {
-                val a = it.selectFirst("div.postmovie-photo a") ?: return@mapNotNull null
+            val home = soup.select("div.box-item").mapNotNull { item ->
+                val a = item.selectFirst("div.postmovie-photo a") ?: return@mapNotNull null
                 val title = a.attr("title")
                 if (title.isBlank()) return@mapNotNull null
                 val href = a.attr("href")
-                val posterUrl = getPosterFromElement(it)
+                val posterUrl = getPosterFromElement(item)
                 newAnimeSearchResponse(title, href) {
                     this.posterUrl = posterUrl
                 }
             }
-            HomePageList(name, home)
+            items.add(HomePageList(name, home))
         }
-        return HomePageResponse(items.filter { it.list.isNotEmpty() })
+        return newHomePageResponse(items.filter { it.list.isNotEmpty() })
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -137,7 +138,7 @@ class Asia2tvProvider : MainAPI() {
             it.attr("data-server")
         }
 
-        serverUrls.apmap { url ->
+        for (url in serverUrls) {
             loadExtractor(url, mainUrl, subtitleCallback, callback)
         }
         return true

@@ -3,12 +3,10 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.Qualities
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
+import org.json.JSONObject
 class Anime4up : MainAPI() {
     override var mainUrl = "https://w1.anime4up.rest"
     override var name = "Anime4Up"
@@ -62,7 +60,7 @@ class Anime4up : MainAPI() {
             }
         }
 
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
 
@@ -162,40 +160,6 @@ class Anime4up : MainAPI() {
             this.year = year
         }
     }
-    @Serializable
-    data class Share4maxMirror(
-        @SerialName("link") val link: String?,
-        @SerialName("driver") val driver: String?
-    )
-
-    @Serializable
-    data class Share4maxQuality(
-        @SerialName("label") val label: String?,
-        @SerialName("mirrors") val mirrors: List<Share4maxMirror>?
-    )
-
-    @Serializable
-    data class Share4maxStreamsData(
-        @SerialName("data") val data: List<Share4maxQuality>?
-    )
-
-    @Serializable
-    data class Share4maxProps(
-        @SerialName("streams") val streams: Share4maxStreamsData?
-    )
-
-    @Serializable
-    data class Share4maxInertiaResponse(
-        @SerialName("props") val props: Share4maxProps?
-    )
-
-    @Serializable
-    data class Share4maxInitialPage(
-        @SerialName("version") val version: String?
-    )
-
-
-
     private suspend fun processMegabox(url: String, referer: String): List<String> {
         val extractedIframes = mutableListOf<String>()
 
@@ -205,7 +169,7 @@ class Anime4up : MainAPI() {
             val initialResponse = app.get(targetUrl, referer = referer)
             val soup = initialResponse.document
             val version = soup.selectFirst("script[data-page=app]")?.html()?.let {
-                parseJson<Share4maxInitialPage>(it).version
+                try { JSONObject(it).optString("version") } catch (_: Exception) { null }
             }
 
             if (version == null) return emptyList()
@@ -219,13 +183,24 @@ class Anime4up : MainAPI() {
             )
 
             val streamResponse = app.get(targetUrl, headers = inertiaHeaders, referer = referer)
-            val streamJson = parseJson<Share4maxInertiaResponse>(streamResponse.text)
+            val streamJson = JSONObject(streamResponse.text)
+            val data = streamJson.optJSONObject("props")
+                ?.optJSONObject("streams")
+                ?.optJSONArray("data")
 
-            streamJson.props?.streams?.data?.forEach { qualityLevel ->
-                qualityLevel.mirrors?.forEach { mirror ->
-                    mirror.link?.let { link ->
-                        val finalUrl = if (link.startsWith("//")) "https:$link" else link
-                        extractedIframes.add(finalUrl)
+            if (data != null) {
+                for (i in 0 until data.length()) {
+                    val qualityLevel = data.optJSONObject(i) ?: continue
+                    val mirrors = qualityLevel.optJSONArray("mirrors")
+                    if (mirrors != null) {
+                        for (j in 0 until mirrors.length()) {
+                            val mirror = mirrors.optJSONObject(j) ?: continue
+                            val link = mirror.optString("link")
+                            if (link.isNotBlank()) {
+                                val finalUrl = if (link.startsWith("//")) "https:$link" else link
+                                extractedIframes.add(finalUrl)
+                            }
+                        }
                     }
                 }
             }
@@ -245,7 +220,7 @@ class Anime4up : MainAPI() {
 
         val seenLinks = mutableSetOf<String>()
 
-        doc.select("ul#episode-servers li[data-watch]").apmap { li ->
+        for (li in doc.select("ul#episode-servers li[data-watch]")) {
             val serverUrl = li.attr("data-watch")
 
             val linksToProcess = if (serverUrl.contains("share4max") || serverUrl.contains("megamax")) {
@@ -254,14 +229,14 @@ class Anime4up : MainAPI() {
                 listOf(serverUrl)
             }
 
-            linksToProcess.forEach { link ->
+            for (link in linksToProcess) {
                 if (link.isNotBlank() && seenLinks.add(link)) {
                     loadExtractor(link, data, subtitleCallback, callback)
                 }
             }
         }
 
-        doc.select("div.download-list table.table tbody tr").apmap { tr ->
+        for (tr in doc.select("div.download-list table.table tbody tr")) {
             val downloadLink = tr.selectFirst("td.td-link a")?.attr("href")
 
             if (!downloadLink.isNullOrBlank() && seenLinks.add(downloadLink)) {

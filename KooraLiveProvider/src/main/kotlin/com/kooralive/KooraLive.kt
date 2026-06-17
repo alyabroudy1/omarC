@@ -59,8 +59,8 @@ class KooraLive : BaseProvider() {
         val matches = mutableListOf<SearchResponse>()
         val processedUrls = mutableSetOf<String>()
         
-        doc.select(".AF_Match.AF_EvItem").forEach { container ->
-            val aTag = container.selectFirst("a.AF_EventMask") ?: return@forEach
+        for (container in doc.select(".AF_Match.AF_EvItem")) {
+            val aTag = container.selectFirst("a.AF_EventMask") ?: continue
             val urlRaw = aTag.attr("href")
             
             val fTeam = container.selectFirst(".AF_FTeam")
@@ -90,7 +90,7 @@ class KooraLive : BaseProvider() {
             }
             
             val url = fixUrl(urlRaw)
-            if (url.isBlank() || !processedUrls.add(url)) return@forEach
+            if (url.isBlank() || !processedUrls.add(url)) continue
             
             matches.add(newMovieSearchResponse(title, url, TvType.Live) {
                 this.posterUrl = rightLogo.ifBlank { leftLogo }
@@ -182,7 +182,7 @@ class KooraLive : BaseProvider() {
             val playerDoc = org.jsoup.Jsoup.parse(playerResponse, playerUrl)
             
             // Extract alternate stream servers from the aplr-menu
-            playerDoc.select("a.aplr-link").forEach { btn ->
+            for (btn in playerDoc.select("a.aplr-link")) {
                 val href = btn.attr("href")
                 if (href.isNotBlank() && href != playerUrl && !href.contains("javascript:")) {
                     menuLinks.add(fixUrl(href))

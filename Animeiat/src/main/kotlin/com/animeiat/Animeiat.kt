@@ -60,7 +60,7 @@ class AnimeiatProvider : MainAPI() {
         lists.add(HomePageList("أنميات شائعة", popularAnimes, true))
 
 
-        return HomePageResponse(lists)
+        return newHomePageResponse(lists)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -158,11 +158,13 @@ class AnimeiatProvider : MainAPI() {
                 val sourceUrl = source.file
 
                 if (sourceUrl.contains(".m3u8")) {
-                    M3u8Helper.generateM3u8(
+                    for (link in M3u8Helper.generateM3u8(
                         name,
                         sourceUrl,
                         referer = mainUrl
-                    ).forEach(callback)
+                    )) {
+                        callback(link)
+                    }
                 } else {
                     callback(
                         newExtractorLink(

@@ -63,7 +63,7 @@ class VertyuzExtractor : ExtractorApi() {
             val m3u8Links = extractM3u8Qualities(m3u8Url, url, streamHeaders)
 
             if (m3u8Links.isNotEmpty()) {
-                m3u8Links.forEach { link ->
+                for (link in m3u8Links) {
                     callback(link)
                 }
             } else {

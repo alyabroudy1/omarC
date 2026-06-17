@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.eshk"
     compileSdk = 34
 
     defaultConfig {

@@ -7,7 +7,7 @@ plugins {
 
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.cimalight"
     compileSdk = 34
 
     defaultConfig {

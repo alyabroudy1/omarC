@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.cimaclub"
     compileSdk = 34
 
     defaultConfig {

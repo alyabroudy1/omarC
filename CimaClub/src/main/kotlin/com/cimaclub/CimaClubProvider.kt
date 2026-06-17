@@ -116,14 +116,14 @@ class CimaClub : MainAPI() {
             val seasons = document.select("section.allseasonss .Small--Box a")
 
             if (seasons.isNotEmpty()) {
-                seasons.apmap { seasonLink ->
+                for (seasonLink in seasons) {
                     val seasonUrl = seasonLink.attr("href")
                     val seasonDoc = if (seasonUrl == url) document else app.get(seasonUrl).document
                     val seasonNumText =
                         seasonLink.selectFirst(".epnum span")?.nextSibling()?.toString()?.trim()
                     val seasonNum = seasonNumText?.toIntOrNull()
 
-                    seasonDoc.select("section.allepcont .row a").map { ep ->
+                    seasonDoc.select("section.allepcont .row a").mapTo(episodes) { ep ->
                         newEpisode(ep.attr("href")) {
                             this.name = ep.selectFirst(".ep-info h2")?.text()
                             this.episode =
@@ -132,7 +132,7 @@ class CimaClub : MainAPI() {
                             this.posterUrl = poster
                         }
                     }
-                }.flatten().toCollection(episodes)
+                }
             } else {
                 document.select("section.allepcont .row a").mapTo(episodes) { ep ->
                     newEpisode(ep.attr("href")) {
@@ -183,15 +183,15 @@ class CimaClub : MainAPI() {
 
         val document = app.get(watchUrl).document
 
-        document.select("ul#watch li").apmap {
-            val embedUrl = it.attr("data-watch")
+        for (li in document.select("ul#watch li")) {
+            val embedUrl = li.attr("data-watch")
             if (embedUrl.isNotBlank()) {
 
                 loadExtractor(embedUrl, watchUrl, subtitleCallback, callback)
             }
         }
 
-        document.select(".ServersList.Download a").apmap { element ->
+        for (element in document.select(".ServersList.Download a")) {
             val downloadUrl = element.attr("href")?.trim()
             if (!downloadUrl.isNullOrBlank()) {
 

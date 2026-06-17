@@ -4,8 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerialName
+import org.json.JSONObject
+import org.json.JSONArray
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -603,13 +603,11 @@ class Cinemana : MainAPI() {
         return true
     }
 
-    @Serializable
     data class Category(
         val en_title: String? = null,
         val ar_title: String? = null
     )
 
-    @Serializable
     data class ActorInfo(
         val nb: String? = null,
         val name: String? = null,
@@ -619,28 +617,25 @@ class Cinemana : MainAPI() {
         val staff_img_medium_thumb: String? = null
     )
 
-    @Serializable
     data class CinemanaItem(
         val nb: String? = null,
-        @SerialName("en_title") val enTitle: String? = null,
+        val enTitle: String? = null,
         val imgObjUrl: String? = null,
         val year: String? = null,
-        @SerialName("en_content") val enContent: String? = null,
+        val enContent: String? = null,
         val stars: String? = null,
         val kind: Int? = null,
         val fileFile: String? = null,
-        @SerialName("episodeNummer") val episodeNummer: String? = null,
+        val episodeNummer: String? = null,
         val season: String? = null,
         val categories: List<Category>? = null,
-        @SerialName("actorsInfo") val actorsInfo: List<ActorInfo>? = null
+        val actorsInfo: List<ActorInfo>? = null
     )
 
-    @Serializable
     data class SeasonNumberItem(
         val season: String? = null
     )
 
-    @Serializable
     data class VideoGroup(
         val id: String? = null,
         val title: String? = null,

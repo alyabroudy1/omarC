@@ -75,7 +75,7 @@ class OhaTvProvider : MainAPI() {
             }
             HomePageList(countryName, items)
         }
-        return HomePageResponse(homeLists)
+        return newHomePageResponse(homeLists)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {

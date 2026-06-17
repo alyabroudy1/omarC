@@ -162,13 +162,13 @@ class Akwam : BaseProvider() {
 
         val currentDomain = baseDomain
         
-        seasonsLinks.forEach { link ->
+        for (link in seasonsLinks) {
             val seasonUrl = link.attr("abs:href").ifBlank { link.attr("href") }
             val absoluteSeasonUrl = if (seasonUrl.startsWith("http")) seasonUrl else "https://$currentDomain$seasonUrl"
             
             // Skip current page
             if (absoluteSeasonUrl.contains(url.substringBefore("#").trimEnd('/'))) {
-                return@forEach
+                continue
             }
 
             try {

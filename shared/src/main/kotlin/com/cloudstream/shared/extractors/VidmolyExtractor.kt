@@ -42,12 +42,12 @@ class VidmolyExtractor(val host: String, override val name: String = "Vidmoly") 
                 Log.d(methodTag, "Extracted robust M3U8: $m3u8Url")
                 
                 // Let the native M3U8 Helper parse the playlist and emit links for all available qualities
-                M3u8Helper.generateM3u8(
+                for (link in M3u8Helper.generateM3u8(
                     source = name,
                     streamUrl = m3u8Url,
                     referer = referer ?: "$mainUrl/",
                     name = name
-                ).forEach { link ->
+                )) {
                     Log.d(methodTag, "Emitting parsed variant: ${link.url}")
                     callback(link)
                 }

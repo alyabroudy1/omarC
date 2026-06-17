@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.anime3rb"
     compileSdk = 34
 
     defaultConfig {

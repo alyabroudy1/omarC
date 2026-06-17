@@ -52,7 +52,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
     // ==================== decodeHtml ====================
 
-    private fun decodeAndWriteFast(chunk: StringBuilder, decoder: java.util.Base64.Decoder, key: Long, out: ByteArrayOutputStream): Int {
+    private fun decodeAndWriteFast(chunk: StringBuilder, key: Long, out: ByteArrayOutputStream): Int {
         val r = chunk.length % 4
         if (r > 0) {
             when (r) {
@@ -61,7 +61,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
         }
         return try {
-            val bytes = decoder.decode(chunk.toString())
+            val bytes = Base64.decode(chunk.toString(), Base64.DEFAULT)
             var num = 0L
             for (b in bytes) {
                 val bInt = b.toInt()
@@ -94,7 +94,6 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             if (extractedData.isEmpty()) return doc
 
             val out = ByteArrayOutputStream(extractedData.length / 4)
-            val decoder = java.util.Base64.getDecoder()
             val chunk = StringBuilder(64)
             val len = extractedData.length
 
@@ -103,7 +102,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 when {
                     c == '~' -> {
                         if (chunk.isNotEmpty()) {
-                            decodeAndWriteFast(chunk, decoder, dynamicKey, out)
+                            decodeAndWriteFast(chunk, dynamicKey, out)
                             chunk.setLength(0)
                         }
                     }
@@ -113,7 +112,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 }
             }
             if (chunk.isNotEmpty()) {
-                decodeAndWriteFast(chunk, decoder, dynamicKey, out)
+                decodeAndWriteFast(chunk, dynamicKey, out)
             }
 
             val decoded = out.toString("UTF-8")

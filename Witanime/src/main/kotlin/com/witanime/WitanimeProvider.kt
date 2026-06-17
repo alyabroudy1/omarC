@@ -88,7 +88,7 @@ class WitAnime : MainAPI() {
             if (items.isNotEmpty()) homePageList.add(HomePageList(title, items))
         }
 
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {

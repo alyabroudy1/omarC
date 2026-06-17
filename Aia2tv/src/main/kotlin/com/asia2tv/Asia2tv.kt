@@ -43,7 +43,7 @@ class Asia2tvProvider : MainAPI() {
             }
         }
 
-        return HomePageResponse(homePageList.filter { it.list.isNotEmpty() })
+        return newHomePageResponse(homePageList.filter { it.list.isNotEmpty() })
     }
 
 
@@ -107,7 +107,6 @@ class Asia2tvProvider : MainAPI() {
             ?: document.selectFirst("meta[name=description]")?.attr("content")
         val tags = document.select("div.post_tags a").map { it.text() }
         val year = document.select("ul.mb-2 li:contains(سنة العرض) a").firstOrNull()?.text()?.toIntOrNull()
-        val rating = document.selectFirst("div.post_review_avg")?.text()?.toRatingInt()
         val recommendations = document.select(".row .postmovie").mapNotNull { it.toSearchResponse() }
         val allEpisodesElements = document.select("div.loop-episode a").toMutableList()
         val serieId = Regex("""serieid=(\d+)""").find(document.html())?.groupValues?.get(1)
@@ -220,21 +219,18 @@ class Asia2tvProvider : MainAPI() {
 
         }
 
-        serverElements.apmap { serverLiElement ->
-            val serverElement = serverLiElement.selectFirst("a") ?: return@apmap
+        for (serverLiElement in serverElements) {
+            val serverElement = serverLiElement.selectFirst("a") ?: continue
             val serverName = serverElement.text()?.trim() ?: "Unknown Server"
             val serverCode = serverElement.attr("data-code")
 
             if (serverCode.isBlank()) {
-
-                return@apmap
+                continue
             }
 
             try {
-
-
                 val postData = mapOf(
-                    "action" to "iframe_server", // <-- القيمة الصحيحة
+                    "action" to "iframe_server",
                     "code" to serverCode
                 )
 
@@ -250,14 +246,10 @@ class Asia2tvProvider : MainAPI() {
                     val iframeSrc = Jsoup.parseBodyFragment(iframeHtml).selectFirst("iframe")?.attr("src")
 
                     if (!iframeSrc.isNullOrBlank()) {
-
                         loadExtractor(iframeSrc, data, subtitleCallback, callback)
-                    } else {
-
                     }
                 }
             } catch (e: Exception) {
-
             }
         }
 

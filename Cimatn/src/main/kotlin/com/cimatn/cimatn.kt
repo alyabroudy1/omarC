@@ -119,7 +119,7 @@ class CimaTn : MainAPI() {
                 val (epHtml, epUrl) = if (sUrl.contains(cleanUrl.substringAfterLast("/"))) Pair(htmlContent, cleanUrl) else Pair(app.get(sUrl).text, sUrl)
 
                 val foundEps = getSeriesEpisodes(domain, epHtml, epUrl)
-                foundEps.forEach { (epName, epLink) ->
+                for ((epName, epLink) in foundEps) {
                     val epNum = Regex("""(\d+)""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
                     episodes.add(newEpisode(epLink) {
                         this.name = epName
@@ -131,7 +131,7 @@ class CimaTn : MainAPI() {
         } else {
 
             val foundEps = getSeriesEpisodes(domain, htmlContent, cleanUrl)
-            foundEps.forEach { (epName, epLink) ->
+            for ((epName, epLink) in foundEps) {
                 val epNum = Regex("""(\d+)""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
                 episodes.add(newEpisode(epLink) {
                     this.name = epName
@@ -277,7 +277,7 @@ class CimaTn : MainAPI() {
         val doc = org.jsoup.Jsoup.parse(html)
         val links = doc.select(".allepcont .row a")
         if (links.isNotEmpty()) {
-            links.forEach { link ->
+            for (link in links) {
                 val href = link.attr("href")
                 if (href.isNotEmpty() && href != "#") {
                     val title = link.select("h2").text().ifEmpty { "Ep" }

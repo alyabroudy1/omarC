@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.topcinema"
     compileSdk = 34
     defaultConfig {
         minSdk = 21

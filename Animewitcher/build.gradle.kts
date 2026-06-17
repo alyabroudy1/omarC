@@ -10,7 +10,7 @@ repositories {
 }
 
 android {
-    namespace = "com.arabseed"
+    namespace = "com.animewitcher"
     compileSdk = 34
 
     defaultConfig {
