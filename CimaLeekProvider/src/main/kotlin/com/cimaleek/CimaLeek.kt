@@ -3,9 +3,6 @@ package com.cimaleek
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
@@ -174,58 +171,114 @@ class CimaLeek : BaseProvider() {
         return result.toString()
     }
 
-    /// Handles cswru/vid872 wrapper pages: fetches the page, extracts the iframe,
-    /// resolves it, and emits the first link. Returns null if no link found.
+    /**
+     * Handles cswru/vid872 wrapper pages by fetching the raw HTML (bypassing CS3's
+     * URL rewriting), extracting the iframe or AJAX redirect, then calling
+     * loadExtractor / sniffer on the resolved URL.
+     *
+     * This mirrors the logic from [CswruExtractor] but is inlined here because
+     * the runtime CS3 does not expose extractorApis for dynamic registration.
+     *
+     * Logs intermediate states for live debugging.
+     */
     private suspend fun handleCswruWrapper(
         url: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): ExtractorLink? {
+    ) {
         val methodTag = "[CimaLeek] [CswruWrapper]"
-        val collectedLinks = mutableListOf<ExtractorLink>()
         try {
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
                 "Referer" to referer
             )
-            val html = httpService.getText(url, headers) ?: return null
+
+            Log.d(methodTag, "Fetching wrapper page: ${url.take(100)}")
+
+            // Use app.get() to bypass CS3's rewriteUrlIfNeeded which would change
+            // cswru.vid872.top -> m.cimaleek.pw and return wrong content
+            val response = app.get(url, headers = headers)
+            val html = response.text
+
+            if (html.isBlank()) {
+                Log.w(methodTag, "Empty response from wrapper page")
+                return
+            }
+
             val doc = Jsoup.parse(html, url)
 
-            // Find iframe
-            val iframeSrc = doc.selectFirst("iframe#embedr")?.attr("src")
-                ?: doc.selectFirst("iframe")?.attr("src")
-            if (iframeSrc.isNullOrBlank()) {
-                Log.w(methodTag, "No iframe found in wrapper page")
-                // Fallback: sniffer
-                awaitSnifferResult(url, referer, subtitleCallback, callback, 15000L)
-                return null
+            // 1) Try to find the iframe source (same selectors as CswruExtractor)
+            val iframeSrc = doc.selectFirst("iframe#embedr")?.let {
+                val src = it.attr("src")
+                if (src.startsWith("http")) src else it.absUrl("src")
+            } ?: doc.selectFirst("iframe")?.let {
+                val src = it.attr("src")
+                if (src.startsWith("http")) src else it.absUrl("src")
             }
 
-            val absoluteIframeSrc = if (iframeSrc.startsWith("http")) iframeSrc else
-                if (iframeSrc.startsWith("//")) "https:$iframeSrc" else
-                    "${java.net.URI(url).scheme}://${java.net.URI(url).host}$iframeSrc"
+            if (!iframeSrc.isNullOrBlank()) {
+                Log.d(methodTag, "Found iframe: $iframeSrc")
 
-            Log.d(methodTag, "Found iframe: $absoluteIframeSrc")
+                var innerLinksCount = 0
+                val countingCallback: (ExtractorLink) -> Unit = { link ->
+                    innerLinksCount++
+                    callback(link)
+                }
 
-            // Try loadExtractor on the iframe URL
-            loadExtractor(absoluteIframeSrc, url, subtitleCallback) { link ->
-                collectedLinks.add(link)
-                callback(link)
+                // Let standard extractors handle the iframe URL (e.g. Mixdrop, Doodstream)
+                loadExtractor(iframeSrc, url, subtitleCallback, countingCallback)
+
+                if (innerLinksCount == 0) {
+                    Log.d(methodTag, "loadExtractor on iframe produced 0 links, sniffer fallback: ${iframeSrc.take(80)}")
+                    awaitSnifferResult(iframeSrc, url, subtitleCallback, callback, 15000L)
+                }
+                return
             }
 
-            if (collectedLinks.isEmpty()) {
-                // Sniffer fallback on iframe
-                awaitSnifferResult(absoluteIframeSrc, url, subtitleCallback, callback, 15000L)
+            // 2) Check for AJAX redirect data block
+            val linkRegex = Regex(""""link"\s*:\s*"([^"]+)"""")
+            val redirectLink = linkRegex.find(html)?.groupValues?.get(1)?.replace("\\/", "/")
+            if (!redirectLink.isNullOrBlank()) {
+                val absoluteRedirectUrl = if (redirectLink.startsWith("http")) {
+                    redirectLink
+                } else {
+                    val uri = java.net.URI(url)
+                    "${uri.scheme}://${uri.host}$redirectLink"
+                }
+                Log.d(methodTag, "Found AJAX redirect: $absoluteRedirectUrl")
+
+                var innerLinksCount = 0
+                val countingCallback: (ExtractorLink) -> Unit = { link ->
+                    innerLinksCount++
+                    callback(link)
+                }
+
+                loadExtractor(absoluteRedirectUrl, url, subtitleCallback, countingCallback)
+
+                if (innerLinksCount == 0) {
+                    Log.d(methodTag, "loadExtractor on redirect produced 0 links, sniffer fallback: ${absoluteRedirectUrl.take(80)}")
+                    awaitSnifferResult(absoluteRedirectUrl, url, subtitleCallback, callback, 15000L)
+                }
+                return
             }
+
+            Log.w(methodTag, "No iframe or redirect found in wrapper page (${html.length} chars)")
         } catch (e: Exception) {
-            Log.w(methodTag, "Error handling cswru wrapper: ${e.message}")
-            // Fallback: try sniffer on the original URL
-            awaitSnifferResult(url, referer, subtitleCallback, callback, 15000L)
+            Log.w(methodTag, "Error: ${e.javaClass.simpleName}: ${e.message}")
         }
-        return collectedLinks.firstOrNull()
     }
 
+    // ──────────────────────────────────────────────────────────────────────────────
+    // 4-phase loadLinks (mirrors Laroza / shared BaseProvider pattern):
+    //
+    //   Phase 1 – Resolve (decrypt) all server URLs in parallel
+    //   Phase 2 – Try standard extractors on EVERY resolved URL in parallel
+    //   Phase 3 – Deliver all found links from Phase 2
+    //   Phase 4 – Sniffer fallback: try servers ONE-BY-ONE sequentially
+    //
+    // Logging is verbose so each phase can be traced in logcat.
+    // ──────────────────────────────────────────────────────────────────────────────
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -234,140 +287,168 @@ class CimaLeek : BaseProvider() {
     ): Boolean {
         val methodTag = "[CimaLeek] [loadLinks]"
         Log.i(methodTag, "START data='$data'")
-        
+
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent
-        
-        // Fetch the watch page directly by appending /watch/ if needed
+
+        // ====================================================================
+        // PHASE 0 – Fetch watch page and parse metadata (ver, postId, servers)
+        // ====================================================================
+        Log.i(methodTag, "PHASE 0: Fetching watch page...")
         val watchUrl = if (data.endsWith("/watch/")) data else {
             if (data.endsWith("/")) "${data}watch/" else "$data/watch/"
         }
-        
-        Log.d(methodTag, "Fetching watch URL: $watchUrl")
         val html = httpService.getText(watchUrl, skipRewrite = true)
         if (html.isNullOrBlank()) {
-            Log.e(methodTag, "Empty watch page HTML")
+            Log.e(methodTag, "PHASE 0: Empty watch page HTML")
             return false
         }
-        
+
         val doc = Jsoup.parse(html, watchUrl)
-        
-        // Parse ver and post_id from the html
         val ver = Regex(""""ver"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
-        val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1) 
+        val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)
             ?: Regex(""""post_id"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
-            
-        Log.d(methodTag, "Parsed ver='$ver', postId='$postId'")
-        
+        Log.d(methodTag, "PHASE 0: ver='$ver', postId='$postId'")
+
         val serverElements = doc.select(".lalaplay_player_option")
-        Log.d(methodTag, "Found ${serverElements.size} server options")
-        
+        Log.d(methodTag, "PHASE 0: Found ${serverElements.size} server options")
         if (serverElements.isEmpty()) return false
-        
+
         val path = java.net.URL(watchUrl).path.trim('/')
         val trimmedPath = if (path.endsWith("watch")) path.substringBeforeLast("watch").trim('/') else path
         val pathLength = trimmedPath.length
-        Log.d(methodTag, "Trimmed path: $trimmedPath, pathLength: $pathLength")
-        
-        val globalLinksCount = java.util.concurrent.atomic.AtomicInteger(0)
-        
-        // Process servers in parallel
-        coroutineScope {
-            serverElements.map { server ->
+        Log.d(methodTag, "PHASE 0: path='$trimmedPath' length=$pathLength")
+
+        // ====================================================================
+        // PHASE 1 – Call API + decrypt for every server (all in parallel)
+        // ====================================================================
+        Log.i(methodTag, "PHASE 1: Resolving ${serverElements.size} servers...")
+
+        data class Resolved(val name: String, val url: String, val idx: Int)
+
+        val resolved: List<Resolved> = coroutineScope {
+            serverElements.mapIndexed { idx, server ->
                 async {
                     try {
                         val dataType = server.attr("data-type")
                         val dataPost = server.attr("data-post").ifBlank { postId }
                         val dataNume = server.attr("data-nume")
                         val serverName = server.text().trim()
-                        
-                        if (dataType.isBlank() || dataPost.isBlank() || dataNume.isBlank()) return@async
-                        
+                        if (dataType.isBlank() || dataPost.isBlank() || dataNume.isBlank()) return@async null
+
                         val rand = generateRandomString(16)
                         val apiUrl = "$mainUrl/wp-json/lalaplayer/v2/?p=$dataPost&t=$dataType&n=$dataNume&ver=$ver&rand=$rand"
-                        
-                        Log.d(methodTag, "Fetching API for $serverName: $apiUrl")
                         val headers = mapOf(
                             "User-Agent" to userAgent,
                             "Referer" to watchUrl,
                             "X-Requested-With" to "com.android.browser"
                         )
-                        
-                        val apiResponseStr = httpService.getText(apiUrl, headers, skipRewrite = true)
-                        if (!apiResponseStr.isNullOrBlank()) {
-                            val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-                            val node = mapper.readTree(apiResponseStr)
-                            
-                            val a = node.get("a")?.asText() ?: ""
-                            val bNode = node.get("b")
-                            val c = node.get("c")?.asText() ?: ""
-                            
-                            if (a.isNotBlank()) {
-                                val bList = mutableListOf<List<Int>>()
-                                if (bNode != null && bNode.isArray) {
-                                    for (rangeNode in bNode) {
-                                         if (rangeNode.isArray && rangeNode.size() >= 2) {
-                                             bList.add(listOf(rangeNode.get(0).asInt(), rangeNode.get(1).asInt()))
-                                         }
-                                    }
-                                }
-                                
-                                // Decrypt
-                                val cleaned = mdTq(a, bList, pathLength)
-                                val decryptedUrl = decryptIOns(cleaned, c)
-                                
-                                Log.d(methodTag, "Decrypted URL for $serverName: $decryptedUrl")
-                                if (decryptedUrl.startsWith("http")) {
-                                    var serverLinksCount = 0
-                                    val countingCallback: (ExtractorLink) -> Unit = { link ->
-                                        serverLinksCount++
-                                        globalLinksCount.incrementAndGet()
-                                        callback(link)
-                                    }
 
-                                    // Handle cswru/vid872 wrapper pages inline (no dynamic extractor registration needed)
-                                    if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
-                                        handleCswruWrapper(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
-                                    } else {
-                                        loadExtractor(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
-                                    }
+                        val json = httpService.getText(apiUrl, headers, skipRewrite = true)
+                        if (json.isNullOrBlank()) {
+                            Log.w(methodTag, "PHASE 1: [$idx] $serverName — empty API response")
+                            return@async null
+                        }
 
-                                    if (serverLinksCount == 0) {
-                                         val isWebpage = decryptedUrl.contains(".html") ||
-                                                         decryptedUrl.contains("/e/") ||
-                                                         decryptedUrl.contains("/e2/") ||
-                                                         decryptedUrl.contains("/e3/") ||
-                                                         decryptedUrl.contains("/e4/")
-                                         if (isWebpage) {
-                                             Log.d(methodTag, "loadExtractor failed on webpage, running sniffer: $decryptedUrl")
-                                             if (awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, countingCallback, 15000L)) {
-                                             }
-                                         } else {
-                                             val type = if (decryptedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                                             countingCallback(
-                                                 newExtractorLink(
-                                                     source = serverName,
-                                                     name = serverName,
-                                                     url = decryptedUrl,
-                                                     type = type
-                                                 ) {
-                                                     this.referer = watchUrl
-                                                     this.quality = Qualities.Unknown.value
-                                                     this.headers = mapOf("User-Agent" to userAgent, "Referer" to watchUrl)
-                                                 }
-                                             )
-                                         }
-                                    }
-                                }
+                        val node = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper().readTree(json)
+                        val a = node.get("a")?.asText() ?: ""
+                        val bNode = node.get("b")
+                        val c = node.get("c")?.asText() ?: ""
+                        if (a.isBlank()) {
+                            Log.w(methodTag, "PHASE 1: [$idx] $serverName — missing 'a'")
+                            return@async null
+                        }
+
+                        val bList = mutableListOf<List<Int>>()
+                        if (bNode != null && bNode.isArray) {
+                            for (r in bNode) {
+                                if (r.isArray && r.size() >= 2)
+                                    bList.add(listOf(r.get(0).asInt(), r.get(1).asInt()))
                             }
                         }
+
+                        val cleaned = mdTq(a, bList, pathLength)
+                        val decrypted = decryptIOns(cleaned, c)
+                        if (!decrypted.startsWith("http")) {
+                            Log.w(methodTag, "PHASE 1: [$idx] $serverName — decrypt did not produce http URL: $decrypted")
+                            return@async null
+                        }
+
+                        Log.d(methodTag, "PHASE 1: [$idx] $serverName -> ${decrypted.take(80)}")
+                        Resolved(serverName, decrypted, idx)
                     } catch (e: Exception) {
-                        Log.e(methodTag, "Error loading link for server: ${e.message}")
+                        Log.e(methodTag, "PHASE 1: [$idx] error: ${e.javaClass.simpleName}: ${e.message}")
+                        null
                     }
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        Log.i(methodTag, "PHASE 1 done: ${resolved.size}/${serverElements.size} resolved")
+        if (resolved.isEmpty()) return false
+
+        // ====================================================================
+        // PHASE 2 – Try standard extractors on ALL resolved URLs IN PARALLEL
+        // ====================================================================
+        Log.i(methodTag, "PHASE 2: Processing ${resolved.size} URLs via extractors...")
+
+        data class Phase2Result(val name: String, val idx: Int, val links: List<ExtractorLink>)
+
+        val phase2: List<Phase2Result> = coroutineScope {
+            resolved.map { (serverName, decryptedUrl, idx) ->
+                async {
+                    val collected = mutableListOf<ExtractorLink>()
+                    val collectCb: (ExtractorLink) -> Unit = { collected.add(it) }
+
+                    Log.d(methodTag, "PHASE 2: [$idx] $serverName — ${decryptedUrl.take(80)}")
+
+                    if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
+                        // Inline CswruExtractor logic (bypasses URL rewriting)
+                        handleCswruWrapper(decryptedUrl, watchUrl, subtitleCallback, collectCb)
+                    } else {
+                        loadExtractor(decryptedUrl, watchUrl, subtitleCallback, collectCb)
+                    }
+
+                    Phase2Result(serverName, idx, collected.toList())
                 }
             }.awaitAll()
         }
-        
-        return globalLinksCount.get() > 0
+
+        // ====================================================================
+        // PHASE 3 – Deliver ALL links found in Phase 2
+        // ====================================================================
+        val allLinks = phase2.flatMap { it.links }
+        val successServers = phase2.filter { it.links.isNotEmpty() }
+
+        if (successServers.isNotEmpty()) {
+            Log.i(methodTag, "PHASE 3: ${successServers.size} servers produced ${allLinks.size} link(s)")
+            val unique = allLinks.distinctBy { it.url }
+            unique.forEach { link ->
+                Log.d(methodTag, "PHASE 3: → ${link.name} | ${link.url.take(80)}")
+                callback(link)
+            }
+            Log.i(methodTag, "PHASE 3 done: delivered ${unique.size} unique link(s)")
+            return true
+        }
+
+        Log.w(methodTag, "PHASE 2-3: no extractor matched any URL")
+
+        // ====================================================================
+        // PHASE 4 – Sniffer fallback: ONE server at a time (sequential)
+        // ====================================================================
+        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${resolved.size} server(s) sequentially...")
+
+        for ((serverName, decryptedUrl, idx) in resolved) {
+            Log.d(methodTag, "PHASE 4: Sniffing [$idx] $serverName — ${decryptedUrl.take(80)}")
+            val ok = awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, callback, 15000L)
+            if (ok) {
+                Log.i(methodTag, "PHASE 4: SUCCESS [$idx] $serverName")
+                return true
+            }
+            Log.w(methodTag, "PHASE 4: FAILED [$idx] $serverName")
+        }
+
+        Log.w(methodTag, "END — all ${resolved.size} URLs exhausted, no video found")
+        return false
     }
 }
