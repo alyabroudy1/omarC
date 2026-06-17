@@ -60,9 +60,10 @@ fun Plugin.registerSharedExtractors() {
     // Krakenfiles
     registerExtractorAPI(KrakenfilesExtractor("https://krakenfiles.com", "Krakenfiles"))
 
-    // LuluStream (luluvdo.com, lulustream.com)
+    // LuluStream (luluvdo.com, lulustream.com, kinoger.pw)
     registerExtractorAPI(LuluStreamExtractor("https://luluvdo.com", "LuluStream"))
     registerExtractorAPI(LuluStreamExtractor("https://lulustream.com", "Lulustream"))
+    registerExtractorAPI(LuluStreamExtractor("https://kinoger.pw", "Kinoger"))
 
     // Filelions / VidHidePro
     registerExtractorAPI(FilelionsExtractor("https://filelions.to", "VidHidePro"))
