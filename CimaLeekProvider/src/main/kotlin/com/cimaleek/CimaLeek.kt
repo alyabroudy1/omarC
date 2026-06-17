@@ -172,21 +172,19 @@ class CimaLeek : BaseProvider() {
     }
 
     /**
-     * Handles cswru/vid872 wrapper pages by fetching the raw HTML (bypassing CS3's
-     * URL rewriting), extracting the iframe or AJAX redirect, then calling
-     * loadExtractor / sniffer on the resolved URL.
+     * Fetches a cswru/vid872 wrapper page (bypassing CS3 URL rewriting with
+     * skipRewrite=true), extracts the iframe or AJAX redirect URL, and calls
+     * loadExtractor on the resolved URL.
      *
-     * This mirrors the logic from [CswruExtractor] but is inlined here because
-     * the runtime CS3 does not expose extractorApis for dynamic registration.
-     *
-     * Logs intermediate states for live debugging.
+     * @return The resolved (iframe/redirect) URL for sniffer fallback, or null.
+     *         Phase 2 uses this to deliver links; Phase 4 uses it for sniffing.
      */
     private suspend fun handleCswruWrapper(
         url: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ) {
+    ): String? {
         val methodTag = "[CimaLeek] [CswruWrapper]"
         try {
             val headers = mapOf(
@@ -194,20 +192,17 @@ class CimaLeek : BaseProvider() {
                 "Referer" to referer
             )
 
-            Log.d(methodTag, "Fetching wrapper page: ${url.take(100)}")
+            Log.d(methodTag, "Fetching wrapper: ${url.take(100)}")
 
-            // Use httpService with skipRewrite=true to bypass CS3's rewriteUrlIfNeeded
-            // (which would change cswru.vid872.top -> m.cimaleek.pw and return wrong content)
-            // while preserving Cloudflare-bypass capability that httpService provides.
             val html = httpService.getText(url, headers, skipRewrite = true)
             if (html.isNullOrBlank()) {
-                Log.w(methodTag, "Empty response from wrapper page")
-                return
+                Log.w(methodTag, "Empty response")
+                return null
             }
 
             val doc = Jsoup.parse(html, url)
 
-            // 1) Try to find the iframe source (same selectors as CswruExtractor)
+            // 1) Find iframe (same selectors as CswruExtractor)
             val iframeSrc = doc.selectFirst("iframe#embedr")?.let {
                 val src = it.attr("src")
                 if (src.startsWith("http")) src else it.absUrl("src")
@@ -219,52 +214,42 @@ class CimaLeek : BaseProvider() {
             if (!iframeSrc.isNullOrBlank()) {
                 Log.d(methodTag, "Found iframe: $iframeSrc")
 
-                var innerLinksCount = 0
-                val countingCallback: (ExtractorLink) -> Unit = { link ->
-                    innerLinksCount++
+                var innerLinks = 0
+                loadExtractor(iframeSrc, url, subtitleCallback) { link ->
+                    innerLinks++
                     callback(link)
                 }
 
-                // Let standard extractors handle the iframe URL (e.g. Mixdrop, Doodstream)
-                loadExtractor(iframeSrc, url, subtitleCallback, countingCallback)
-
-                if (innerLinksCount == 0) {
-                    Log.d(methodTag, "loadExtractor on iframe produced 0 links, sniffer fallback: ${iframeSrc.take(80)}")
-                    awaitSnifferResult(iframeSrc, url, subtitleCallback, callback, 15000L)
-                }
-                return
+                // Return iframe URL even if loadExtractor gave 0 links (Phase 4 sniffs it)
+                Log.d(methodTag, "loadExtractor returned $innerLinks links from iframe")
+                return iframeSrc
             }
 
-            // 2) Check for AJAX redirect data block
-            val linkRegex = Regex(""""link"\s*:\s*"([^"]+)"""")
-            val redirectLink = linkRegex.find(html)?.groupValues?.get(1)?.replace("\\/", "/")
+            // 2) AJAX redirect data block
+            val redirectLink = Regex(""""link"\s*:\s*"([^"]+)"""").find(html)
+                ?.groupValues?.get(1)?.replace("\\/", "/")
             if (!redirectLink.isNullOrBlank()) {
-                val absoluteRedirectUrl = if (redirectLink.startsWith("http")) {
-                    redirectLink
-                } else {
+                val absoluteRedirect = if (redirectLink.startsWith("http")) redirectLink else {
                     val uri = java.net.URI(url)
                     "${uri.scheme}://${uri.host}$redirectLink"
                 }
-                Log.d(methodTag, "Found AJAX redirect: $absoluteRedirectUrl")
+                Log.d(methodTag, "Found AJAX redirect: $absoluteRedirect")
 
-                var innerLinksCount = 0
-                val countingCallback: (ExtractorLink) -> Unit = { link ->
-                    innerLinksCount++
+                var innerLinks = 0
+                loadExtractor(absoluteRedirect, url, subtitleCallback) { link ->
+                    innerLinks++
                     callback(link)
                 }
 
-                loadExtractor(absoluteRedirectUrl, url, subtitleCallback, countingCallback)
-
-                if (innerLinksCount == 0) {
-                    Log.d(methodTag, "loadExtractor on redirect produced 0 links, sniffer fallback: ${absoluteRedirectUrl.take(80)}")
-                    awaitSnifferResult(absoluteRedirectUrl, url, subtitleCallback, callback, 15000L)
-                }
-                return
+                Log.d(methodTag, "loadExtractor returned $innerLinks links from redirect")
+                return absoluteRedirect
             }
 
-            Log.w(methodTag, "No iframe or redirect found in wrapper page (${html.length} chars)")
+            Log.w(methodTag, "No iframe or redirect found (${html.length} chars)")
+            return null
         } catch (e: Exception) {
             Log.w(methodTag, "Error: ${e.javaClass.simpleName}: ${e.message}")
+            return null
         }
     }
 
@@ -391,7 +376,13 @@ class CimaLeek : BaseProvider() {
         // ====================================================================
         Log.i(methodTag, "PHASE 2: Processing ${resolved.size} URLs via extractors...")
 
-        data class Phase2Result(val name: String, val idx: Int, val links: List<ExtractorLink>)
+        data class Phase2Result(
+            val name: String,
+            val idx: Int,
+            val links: List<ExtractorLink>,
+            /** Resolved iframe/redirect URL for Phase 4 sniffer fallback, or null. */
+            val resolvedUrl: String? = null
+        )
 
         val phase2: List<Phase2Result> = coroutineScope {
             resolved.map { (serverName, decryptedUrl, idx) ->
@@ -401,14 +392,14 @@ class CimaLeek : BaseProvider() {
 
                     Log.d(methodTag, "PHASE 2: [$idx] $serverName — ${decryptedUrl.take(80)}")
 
-                    if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
-                        // Inline CswruExtractor logic (bypasses URL rewriting)
+                    val resolvedUrl = if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
                         handleCswruWrapper(decryptedUrl, watchUrl, subtitleCallback, collectCb)
                     } else {
                         loadExtractor(decryptedUrl, watchUrl, subtitleCallback, collectCb)
+                        null
                     }
 
-                    Phase2Result(serverName, idx, collected.toList())
+                    Phase2Result(serverName, idx, collected.toList(), resolvedUrl)
                 }
             }.awaitAll()
         }
@@ -433,18 +424,25 @@ class CimaLeek : BaseProvider() {
         Log.w(methodTag, "PHASE 2-3: no extractor matched any URL")
 
         // ====================================================================
-        // PHASE 4 – Sniffer fallback: ONE server at a time (sequential)
+        // PHASE 4 – Sniffer fallback: ONE server at a time (sequential).
+        //           Uses the resolved (iframe/redirect) URL when available,
+        //           otherwise falls back to the original decrypted URL.
         // ====================================================================
-        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${resolved.size} server(s) sequentially...")
+        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${phase2.size} server(s) sequentially...")
 
-        for ((serverName, decryptedUrl, idx) in resolved) {
-            Log.d(methodTag, "PHASE 4: Sniffing [$idx] $serverName — ${decryptedUrl.take(80)}")
-            val ok = awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, callback, 15000L)
+        for (result in phase2) {
+            val sniffTarget = result.resolvedUrl ?: resolved.firstOrNull { it.idx == result.idx }?.url
+            if (sniffTarget == null) {
+                Log.w(methodTag, "PHASE 4: [$result.idx] ${result.name} — no URL to sniffer")
+                continue
+            }
+            Log.d(methodTag, "PHASE 4: Sniffing [$result.idx] ${result.name} — ${sniffTarget.take(80)}")
+            val ok = awaitSnifferResult(sniffTarget, watchUrl, subtitleCallback, callback, 15000L)
             if (ok) {
-                Log.i(methodTag, "PHASE 4: SUCCESS [$idx] $serverName")
+                Log.i(methodTag, "PHASE 4: SUCCESS [$result.idx] ${result.name}")
                 return true
             }
-            Log.w(methodTag, "PHASE 4: FAILED [$idx] $serverName")
+            Log.w(methodTag, "PHASE 4: FAILED [$result.idx] ${result.name}")
         }
 
         Log.w(methodTag, "END — all ${resolved.size} URLs exhausted, no video found")
