@@ -21,7 +21,8 @@ object VideoUrlClassifier {
     /**
      * Determines if a URL is an extractable video stream.
      * Rejects: blacklisted URLs, DRM-protected streams, and segment/asset files.
-     * Accepts: .m3u8, .mp4, .mkv, .webm, blob: URLs.
+     * Accepts: .m3u8, .mp4, .mkv, .webm, blob: URLs, and likely HLS manifests
+     * served with non-standard extensions (e.g., master.txt, play.php).
      */
     fun isVideoUrl(url: String): Boolean {
         if (isBlacklisted(url)) return false
@@ -39,7 +40,8 @@ object VideoUrlClassifier {
         return url.contains(".m3u8", ignoreCase = true) ||
                url.contains(".mp4", ignoreCase = true) ||
                url.contains(".mkv", ignoreCase = true) ||
-               url.contains(".webm", ignoreCase = true)
+               url.contains(".webm", ignoreCase = true) ||
+               isLikelyHlsManifest(url)
     }
 
     /** Check if a URL belongs to a DRM-protected domain or uses a DRM format. */
@@ -66,27 +68,51 @@ object VideoUrlClassifier {
     }
 
     /**
+     * Detects HLS manifest URLs served without the standard .m3u8 extension.
+     * Many embed CDNs serve master playlists as .txt, .php, or with URL rewriting
+     * (e.g., /hls3/.../master.txt) to bypass CORS restrictions on .m3u8 files.
+     */
+    fun isLikelyHlsManifest(url: String): Boolean {
+        val lower = url.lowercase()
+        // Must contain HLS path patterns
+        if (!lower.contains("/hls") && !lower.contains("/hls3")) return false
+        // Not already detected as a standard video format
+        if (lower.contains(".m3u8") || lower.contains(".mp4") || lower.contains(".mkv") || lower.contains(".webm")) return false
+        // Reject segments and non-video assets
+        if (isSegmentOrAsset(url)) return false
+        return true
+    }
+
+    /**
      * Determines if a URL is an HLS Master M3U8 playlist.
      * Master playlists contain multiple sub-streams (qualities) rather than chunks.
+     * Also detects non-standard manifests (e.g., master.txt) via [isLikelyHlsManifest].
      */
     fun isMasterM3u8(url: String): Boolean {
         val lower = url.lowercase()
-        if (!lower.contains(".m3u8")) return false
-        if (lower.contains("master.m3u8") || 
-            lower.contains("playlist.m3u8") || 
-            lower.contains("manifest.m3u8")) {
-            return true
+        
+        // Standard .m3u8 master detection
+        if (lower.contains(".m3u8")) {
+            if (lower.contains("master.m3u8") || 
+                lower.contains("playlist.m3u8") || 
+                lower.contains("manifest.m3u8")) {
+                return true
+            }
+            // Exclude quality-specific sub-playlists
+            val hasQualityPattern = lower.contains("360") || 
+                                   lower.contains("480") || 
+                                   lower.contains("720") || 
+                                   lower.contains("1080") || 
+                                   lower.contains("240") || 
+                                   lower.contains("low") || 
+                                   lower.contains("mobile") ||
+                                   lower.contains("chunklist")
+            return !hasQualityPattern
         }
         
-        // Exclude common patterns/keywords representing specific sub-playlists or chunks
-        val hasQualityPattern = lower.contains("360") || 
-                               lower.contains("480") || 
-                               lower.contains("720") || 
-                               lower.contains("1080") || 
-                               lower.contains("240") || 
-                               lower.contains("low") || 
-                               lower.contains("mobile") ||
-                               lower.contains("chunklist")
-        return !hasQualityPattern
+        // Non-standard extension: check if it's a likely HLS manifest with "master" in the name
+        if (isLikelyHlsManifest(lower) && lower.contains("master")) return true
+        
+        return false
     }
 }

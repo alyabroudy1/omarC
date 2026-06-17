@@ -281,7 +281,8 @@ class SnifferExtractor : ExtractorApi() {
                     }
 
                     val linkType = when {
-                        url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
+                        url.contains(".m3u8", ignoreCase = true) ||
+                        com.cloudstream.shared.webview.VideoUrlClassifier.isLikelyHlsManifest(url) -> ExtractorLinkType.M3U8
                         url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
                         else -> ExtractorLinkType.VIDEO
                     }
