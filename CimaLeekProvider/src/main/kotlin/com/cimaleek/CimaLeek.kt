@@ -1,8 +1,8 @@
 package com.cimaleek
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
@@ -172,12 +172,115 @@ class CimaLeek : BaseProvider() {
     }
 
     /**
+     * Extracts the video URL directly from known embed hosts using httpService
+     * (with Cloudflare bypass). Returns true if a video link was found.
+     */
+    private suspend fun extractEmbedUrl(
+        embedUrl: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val tag = "[CimaLeek] [DirectEmbed]"
+        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        val baseHeaders = mapOf("User-Agent" to ua, "Referer" to referer)
+
+        // ── MixDrop ──
+        if (embedUrl.contains("mixdrop")) {
+            val html = httpService.getText(embedUrl, baseHeaders, skipRewrite = true) ?: return false
+            val unpacked = getAndUnpack(html)
+            val link = Regex("""wurl.*?=.*?"(.*?)";""").find(unpacked)?.groupValues?.get(1) ?: return false
+            callback(newExtractorLink("MixDrop", "MixDrop", httpsify(link)) {
+                this.referer = embedUrl; this.quality = Qualities.Unknown.value
+            })
+            Log.d(tag, "MixDrop OK")
+            return true
+        }
+
+        // ── DoodStream (ds2play, ds2video) ──
+        if (embedUrl.contains("ds2play") || embedUrl.contains("ds2video")) {
+            val page = httpService.getText(embedUrl.replace("/d/", "/e/"), baseHeaders, skipRewrite = true) ?: return false
+            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
+            val md5Path = Regex("/pass_md5/[^']*").find(page)?.value ?: return false
+            val md5 = host + md5Path
+            val token = md5.substringAfterLast("/")
+            val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+            val hash = buildString { repeat(10) { append(alphabet.random()) } }
+            val trueUrl = httpService.getText(md5, baseHeaders, skipRewrite = true) + hash + "?token=$token"
+            val quality = Regex("\\d{3,4}p").find(page.substringAfter("<title>").substringBefore("</title>"))?.value
+            callback(newExtractorLink("DoodStream", "DoodStream", trueUrl) {
+                this.referer = "$host/"; this.quality = getQualityFromName(quality)
+            })
+            Log.d(tag, "DoodStream OK")
+            return true
+        }
+
+        // ── Krakenfiles ──
+        if (embedUrl.contains("krakenfiles")) {
+            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
+            val id = Regex("/(?:view|embed-video)/([\\da-zA-Z]+)").find(embedUrl)?.groupValues?.get(1) ?: return false
+            val html = httpService.getText("$host/embed-video/$id", baseHeaders, skipRewrite = true) ?: return false
+            val link = Jsoup.parse(html, embedUrl).selectFirst("source")?.attr("src") ?: return false
+            callback(newExtractorLink("Krakenfiles", "Krakenfiles", httpsify(link)))
+            Log.d(tag, "Krakenfiles OK")
+            return true
+        }
+
+        // ── LuluStream (luluvdo, lulustream, kinoger.pw) ──
+        if (embedUrl.contains("luluvdo") || embedUrl.contains("lulustream") || embedUrl.contains("kinoger.pw")) {
+            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
+            val filecode = embedUrl.substringAfterLast("/")
+            val html = httpService.postText("$host/dl", mapOf(
+                "op" to "embed", "file_code" to filecode, "auto" to "1", "referer" to referer
+            ), referer = referer, headers = baseHeaders) ?: return false
+            val script = Jsoup.parse(html, "$host/dl").selectFirst("script:containsData(vplayer)")?.data() ?: return false
+            val link = Regex("file:\"(.*)\"").find(script)?.groupValues?.get(1) ?: return false
+            callback(newExtractorLink("LuluStream", "LuluStream", link) {
+                this.referer = host; this.quality = Qualities.P1080.value
+            })
+            Log.d(tag, "LuluStream OK")
+            return true
+        }
+
+        // ── Filelions / VidHidePro ──
+        if (embedUrl.contains("filelions") || embedUrl.contains("vidhide")) {
+            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
+            val embedPage = when {
+                embedUrl.contains("/d/") -> embedUrl.replace("/d/", "/v/")
+                embedUrl.contains("/download/") -> embedUrl.replace("/download/", "/v/")
+                embedUrl.contains("/file/") -> embedUrl.replace("/file/", "/v/")
+                else -> embedUrl.replace("/f/", "/v/")
+            }
+            val html = httpService.getText(embedPage, baseHeaders, skipRewrite = true) ?: return false
+            val script = if (!getPacked(html).isNullOrEmpty()) {
+                var r = getAndUnpack(html); if (r.contains("var links")) r = r.substringAfter("var links"); r
+            } else {
+                Jsoup.parse(html, embedPage).selectFirst("script:containsData(sources:)")?.data()
+            } ?: return false
+            val vidHeaders = mapOf(
+                "Sec-Fetch-Dest" to "empty", "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "cross-site", "Origin" to host, "User-Agent" to ua
+            )
+            var found = false
+            Regex(":\\s*\"(.*?m3u8.*?)\"").findAll(script).forEach { m ->
+                val videoUrl = m.groupValues[1]
+                val absoluteUrl = if (videoUrl.startsWith("http")) videoUrl else "$host/$videoUrl"
+                generateM3u8("VidHidePro", absoluteUrl, referer = "$host/", headers = vidHeaders).forEach(callback)
+                found = true
+            }
+            if (found) Log.d(tag, "Filelions OK")
+            return found
+        }
+
+        return false
+    }
+
+    /**
      * Fetches a cswru/vid872 wrapper page (bypassing CS3 URL rewriting with
-     * skipRewrite=true), extracts the iframe or AJAX redirect URL, and calls
-     * loadExtractor on the resolved URL.
+     * skipRewrite=true), extracts the iframe or AJAX redirect URL, and
+     * extracts the video URL directly via httpService (with Cloudflare bypass).
+     * Falls back to loadExtractor for unknown hosts.
      *
      * @return The resolved (iframe/redirect) URL for sniffer fallback, or null.
-     *         Phase 2 uses this to deliver links; Phase 4 uses it for sniffing.
      */
     private suspend fun handleCswruWrapper(
         url: String,
@@ -215,13 +318,15 @@ class CimaLeek : BaseProvider() {
                 Log.d(methodTag, "Found iframe: $iframeSrc")
 
                 var innerLinks = 0
-                loadExtractor(iframeSrc, url, subtitleCallback) { link ->
-                    innerLinks++
-                    callback(link)
+                val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
+
+                // Try direct extraction via httpService first (has CF bypass)
+                if (!extractEmbedUrl(iframeSrc, url, trackingCb)) {
+                    // Fallback to registered extractors for unknown hosts
+                    loadExtractor(iframeSrc, url, subtitleCallback, trackingCb)
                 }
 
-                // Return iframe URL even if loadExtractor gave 0 links (Phase 4 sniffs it)
-                Log.d(methodTag, "loadExtractor returned $innerLinks links from iframe")
+                Log.d(methodTag, "extractEmbedUrl returned $innerLinks links from iframe")
                 return iframeSrc
             }
 
@@ -235,13 +340,23 @@ class CimaLeek : BaseProvider() {
                 }
                 Log.d(methodTag, "Found AJAX redirect: $absoluteRedirect")
 
-                var innerLinks = 0
-                loadExtractor(absoluteRedirect, url, subtitleCallback) { link ->
-                    innerLinks++
-                    callback(link)
+                // Follow redirect to get final embed URL
+                val redirectHtml = httpService.getText(absoluteRedirect, headers, skipRewrite = true)
+                val finalUrl = if (!redirectHtml.isNullOrBlank()) {
+                    Regex("""(https?://[^\s"']+)""").find(redirectHtml)?.groupValues?.get(1) ?: absoluteRedirect
+                } else {
+                    absoluteRedirect
                 }
 
-                Log.d(methodTag, "loadExtractor returned $innerLinks links from redirect")
+                var innerLinks = 0
+                val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
+
+                // Try direct extraction on the final URL first
+                if (!extractEmbedUrl(finalUrl, url, trackingCb)) {
+                    loadExtractor(absoluteRedirect, url, subtitleCallback, trackingCb)
+                }
+
+                Log.d(methodTag, "extractEmbedUrl returned $innerLinks links from redirect")
                 return absoluteRedirect
             }
 
