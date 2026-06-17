@@ -441,7 +441,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 null
             }
 
-            val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
+            val iframeUrl = (playerDoc?.select("iframe")?.attr("src") ?: "").let { normalizeUrl(it, mainUrl) }
 
             when {
                 serverName.contains("Cima Now", true) || serverName.contains("cima", true) -> {
@@ -940,6 +940,19 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     }
 
     // ==================== Utilities ====================
+
+    /// Normalizes a URL: protocol-relative (//example.com) → https://example.com,
+    /// relative paths (/path) → https://mainUrl/path.
+    private fun normalizeUrl(url: String, baseUrl: String): String {
+        return when {
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> {
+                val base = baseUrl.trimEnd('/')
+                "$base$url"
+            }
+            else -> url
+        }
+    }
 
     /// Matches a regex pattern against html and returns the first capture group.
     /// Returns null if no match or if the pattern throws.
