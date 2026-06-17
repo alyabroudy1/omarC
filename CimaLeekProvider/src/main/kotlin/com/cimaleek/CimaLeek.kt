@@ -174,6 +174,58 @@ class CimaLeek : BaseProvider() {
         return result.toString()
     }
 
+    /// Handles cswru/vid872 wrapper pages: fetches the page, extracts the iframe,
+    /// resolves it, and emits the first link. Returns null if no link found.
+    private suspend fun handleCswruWrapper(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): ExtractorLink? {
+        val methodTag = "[CimaLeek] [CswruWrapper]"
+        val collectedLinks = mutableListOf<ExtractorLink>()
+        try {
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Referer" to referer
+            )
+            val html = httpService.getText(url, headers) ?: return null
+            val doc = Jsoup.parse(html, url)
+
+            // Find iframe
+            val iframeSrc = doc.selectFirst("iframe#embedr")?.attr("src")
+                ?: doc.selectFirst("iframe")?.attr("src")
+            if (iframeSrc.isNullOrBlank()) {
+                Log.w(methodTag, "No iframe found in wrapper page")
+                // Fallback: sniffer
+                awaitSnifferResult(url, referer, subtitleCallback, callback, 15000L)
+                return null
+            }
+
+            val absoluteIframeSrc = if (iframeSrc.startsWith("http")) iframeSrc else
+                if (iframeSrc.startsWith("//")) "https:$iframeSrc" else
+                    "${java.net.URI(url).scheme}://${java.net.URI(url).host}$iframeSrc"
+
+            Log.d(methodTag, "Found iframe: $absoluteIframeSrc")
+
+            // Try loadExtractor on the iframe URL
+            loadExtractor(absoluteIframeSrc, url, subtitleCallback) { link ->
+                collectedLinks.add(link)
+                callback(link)
+            }
+
+            if (collectedLinks.isEmpty()) {
+                // Sniffer fallback on iframe
+                awaitSnifferResult(absoluteIframeSrc, url, subtitleCallback, callback, 15000L)
+            }
+        } catch (e: Exception) {
+            Log.w(methodTag, "Error handling cswru wrapper: ${e.message}")
+            // Fallback: try sniffer on the original URL
+            awaitSnifferResult(url, referer, subtitleCallback, callback, 15000L)
+        }
+        return collectedLinks.firstOrNull()
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -266,22 +318,6 @@ class CimaLeek : BaseProvider() {
                                 
                                 Log.d(methodTag, "Decrypted URL for $serverName: $decryptedUrl")
                                 if (decryptedUrl.startsWith("http")) {
-                                    // Dynamically register extractor if domain matches cswru/vid872 wrapper pattern
-                                    try {
-                                        val host = java.net.URI(decryptedUrl).host ?: ""
-                                        if (host.contains("cswru") || host.contains("vid872")) {
-                                            val alreadyRegistered = com.lagradost.cloudstream3.utils.extractorApis.any { 
-                                                it.mainUrl.contains(host) 
-                                            }
-                                            if (!alreadyRegistered) {
-                                                Log.d(methodTag, "Dynamically registering CswruExtractor for host: $host")
-                                                com.lagradost.cloudstream3.utils.extractorApis.add(com.cloudstream.shared.extractors.CswruExtractor(host))
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.w(methodTag, "Failed to dynamically register CswruExtractor: ${e.message}")
-                                    }
-
                                     var serverLinksCount = 0
                                     val countingCallback: (ExtractorLink) -> Unit = { link ->
                                         serverLinksCount++
@@ -289,18 +325,22 @@ class CimaLeek : BaseProvider() {
                                         callback(link)
                                     }
 
-                                    loadExtractor(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
-                                    
+                                    // Handle cswru/vid872 wrapper pages inline (no dynamic extractor registration needed)
+                                    if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
+                                        handleCswruWrapper(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
+                                    } else {
+                                        loadExtractor(decryptedUrl, watchUrl, subtitleCallback, countingCallback)
+                                    }
+
                                     if (serverLinksCount == 0) {
-                                         val isWebpage = decryptedUrl.contains(".html") || 
-                                                         decryptedUrl.contains("/e/") || 
-                                                         decryptedUrl.contains("/e2/") || 
-                                                         decryptedUrl.contains("/e3/") || 
+                                         val isWebpage = decryptedUrl.contains(".html") ||
+                                                         decryptedUrl.contains("/e/") ||
+                                                         decryptedUrl.contains("/e2/") ||
+                                                         decryptedUrl.contains("/e3/") ||
                                                          decryptedUrl.contains("/e4/")
                                          if (isWebpage) {
                                              Log.d(methodTag, "loadExtractor failed on webpage, running sniffer: $decryptedUrl")
                                              if (awaitSnifferResult(decryptedUrl, watchUrl, subtitleCallback, countingCallback, 15000L)) {
-                                                 // awaitSnifferResult calls countingCallback internally which increments globalLinksCount
                                              }
                                          } else {
                                              val type = if (decryptedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
