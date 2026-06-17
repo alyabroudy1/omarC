@@ -96,10 +96,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         try {
             val rawHtml = doc.outerHtml()
 
-            // Extract the dynamic numeric key from `var _r = <number>`
-            val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+)").matcher(rawHtml)
+            // Extract the dynamic numeric key from `var _r = 36938+36939+36938` (can be sum of multiple numbers)
+            val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+(?:\\+\\d+)*)").matcher(rawHtml)
             if (!keyMatcher.find()) return doc
-            val dynamicKey = keyMatcher.group(1).toLong()
+            val dynamicKey = keyMatcher.group(1).split("+").sumOf { it.toLong() }
 
             // Collect all base64-like strings (20+ chars inside quotes)
             val dataMatcher = Pattern.compile("['\"]([A-Za-z0-9+/=~]{20,})['\"]").matcher(rawHtml)
