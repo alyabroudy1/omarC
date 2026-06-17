@@ -196,12 +196,11 @@ class CimaLeek : BaseProvider() {
 
             Log.d(methodTag, "Fetching wrapper page: ${url.take(100)}")
 
-            // Use app.get() to bypass CS3's rewriteUrlIfNeeded which would change
-            // cswru.vid872.top -> m.cimaleek.pw and return wrong content
-            val response = app.get(url, headers = headers)
-            val html = response.text
-
-            if (html.isBlank()) {
+            // Use httpService with skipRewrite=true to bypass CS3's rewriteUrlIfNeeded
+            // (which would change cswru.vid872.top -> m.cimaleek.pw and return wrong content)
+            // while preserving Cloudflare-bypass capability that httpService provides.
+            val html = httpService.getText(url, headers, skipRewrite = true)
+            if (html.isNullOrBlank()) {
                 Log.w(methodTag, "Empty response from wrapper page")
                 return
             }
