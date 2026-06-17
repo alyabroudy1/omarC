@@ -320,13 +320,15 @@ class CimaLeek : BaseProvider() {
                 var innerLinks = 0
                 val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
 
-                // Try direct extraction via httpService first (has CF bypass)
-                if (!extractEmbedUrl(iframeSrc, url, trackingCb)) {
-                    // Fallback to registered extractors for unknown hosts
-                    loadExtractor(iframeSrc, url, subtitleCallback, trackingCb)
+                // 1st: try built-in CS3 extractors (loadExtractor)
+                loadExtractor(iframeSrc, url, subtitleCallback, trackingCb)
+
+                // 2nd: if extractors found nothing, try httpService direct fallback
+                if (innerLinks == 0) {
+                    extractEmbedUrl(iframeSrc, url, trackingCb)
                 }
 
-                Log.d(methodTag, "extractEmbedUrl returned $innerLinks links from iframe")
+                Log.d(methodTag, "Phase2 produced $innerLinks links from iframe")
                 return iframeSrc
             }
 
@@ -351,12 +353,15 @@ class CimaLeek : BaseProvider() {
                 var innerLinks = 0
                 val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
 
-                // Try direct extraction on the final URL first
-                if (!extractEmbedUrl(finalUrl, url, trackingCb)) {
-                    loadExtractor(absoluteRedirect, url, subtitleCallback, trackingCb)
+                // 1st: try built-in CS3 extractors (loadExtractor)
+                loadExtractor(finalUrl, url, subtitleCallback, trackingCb)
+
+                // 2nd: if extractors found nothing, try httpService direct fallback
+                if (innerLinks == 0) {
+                    extractEmbedUrl(finalUrl, url, trackingCb)
                 }
 
-                Log.d(methodTag, "extractEmbedUrl returned $innerLinks links from redirect")
+                Log.d(methodTag, "Phase2 produced $innerLinks links from redirect")
                 return absoluteRedirect
             }
 
