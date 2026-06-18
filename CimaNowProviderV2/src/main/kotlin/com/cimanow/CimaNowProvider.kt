@@ -1,13 +1,13 @@
 package com.cimanow
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
+import android.webkit.*
 import android.widget.Toast
 import com.cloudstream.shared.android.ActivityProvider
-import com.cloudstream.shared.webview.CfBypassEngine
-import com.cloudstream.shared.webview.Mode
-import com.cloudstream.shared.webview.ExitCondition
-import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -40,9 +40,166 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
-    private val cfBypassEngine by lazy {
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun renderHtmlInWebView(
+        html: String,
+        baseUrl: String,
+        timeoutMs: Long = 8_000L
+    ): String? = withContext(Dispatchers.Main) {
+        val activity = ActivityProvider.currentActivity
+        if (activity == null) {
+            Log.w(TAG, "   renderHtmlInWebView: No Activity available")
+            return@withContext null
+        }
+
         ActivityProvider.initCompat(context)
-        CfBypassEngine { ActivityProvider.currentActivity }
+        val deferred = CompletableDeferred<String?>()
+        var delivered = false
+        var webView: WebView? = null
+
+        val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
+            delay(timeoutMs)
+            if (!delivered) {
+                delivered = true
+                Log.w(TAG, "   renderHtmlInWebView: Timeout after ${timeoutMs}ms")
+                cleanupWebView(webView)
+                deferred.complete(null)
+            }
+        }
+
+        try {
+            webView = WebView(activity).apply {
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    mediaPlaybackRequiresUserGesture = true
+                    blockNetworkImage = true
+                    loadsImagesAutomatically = false
+                    @Suppress("DEPRECATION")
+                    allowFileAccess = false
+                    javaScriptCanOpenWindowsAutomatically = false
+                    setSupportMultipleWindows(false)
+                }
+            }
+
+            CookieManager.getInstance().apply {
+                setAcceptCookie(true)
+                setAcceptThirdPartyCookies(webView, true)
+            }
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    if (delivered) return
+                    Log.d(TAG, "   renderHtmlInWebView: onPageFinished url=${url?.take(80)}")
+
+                    CoroutineScope(Dispatchers.Main).launch {
+                        delay(2000L)
+                        if (delivered) return@launch
+
+                        val rendered = extractHtmlFromWebView(view!!)
+                        if (rendered != null && rendered.length > 512) {
+                            val bodyText = Jsoup.parse(rendered).body()?.html() ?: ""
+                            if (bodyText.isNotBlank()) {
+                                delivered = true
+                                timeoutJob.cancel()
+                                Log.d(TAG, "   renderHtmlInWebView: Got ${bodyText.length} chars body after 2s delay")
+                                cleanupWebView(webView)
+                                deferred.complete(rendered)
+                                return@launch
+                            }
+                        }
+
+                        delay(3000L)
+                        if (delivered) return@launch
+
+                        val retryRendered = extractHtmlFromWebView(view!!)
+                        delivered = true
+                        timeoutJob.cancel()
+                        val retryBody = retryRendered?.let { Jsoup.parse(it).body()?.html() } ?: ""
+                        Log.d(TAG, "   renderHtmlInWebView: 5s delay result body=${retryBody.length} chars")
+                        cleanupWebView(webView)
+                        deferred.complete(if (retryBody.isNotBlank()) retryRendered else null)
+                    }
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                    if (request?.isForMainFrame == true && !delivered) {
+                        val desc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            error?.description?.toString()
+                        } else error?.toString()
+                        Log.w(TAG, "   renderHtmlInWebView: Error - $desc")
+                    }
+                }
+
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val nextUrl = request?.url?.toString() ?: return super.shouldOverrideUrlLoading(view, request)
+                    val scheme = request.url?.scheme?.lowercase()
+                    if (scheme != null && scheme != "http" && scheme != "https") return true
+                    return false
+                }
+            }
+
+            webView.webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
+                    msg?.let {
+                        val text = "${it.message()} [${it.sourceId()}:${it.lineNumber()}]"
+                        when (it.messageLevel()) {
+                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> android.util.Log.e("CimaNowWV", text)
+                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> android.util.Log.w("CimaNowWV", text)
+                            else -> android.util.Log.d("CimaNowWV", text)
+                        }
+                    }
+                    return true
+                }
+            }
+
+            Log.d(TAG, "   renderHtmlInWebView: Loading HTML (${html.length} chars) with baseUrl=$baseUrl")
+            webView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null)
+
+        } catch (e: Exception) {
+            delivered = true
+            timeoutJob.cancel()
+            Log.w(TAG, "   renderHtmlInWebView: Exception - ${e.message}")
+            cleanupWebView(webView)
+            deferred.complete(null)
+        }
+
+        deferred.await()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun extractHtmlFromWebView(webView: WebView): String? = suspendCancellableCoroutine { cont ->
+        Handler(Looper.getMainLooper()).post {
+            webView.evaluateJavascript(
+                "(function() { return document.documentElement.outerHTML; })();"
+            ) { result ->
+                val html = try {
+                    if (result == null || result == "null") null
+                    else org.json.JSONTokener(result).nextValue().toString()
+                } catch (e: Exception) { null }
+                if (cont.isActive) cont.resume(html) {}
+            }
+        }
+    }
+
+    private fun cleanupWebView(webView: WebView?) {
+        try {
+            webView?.let { wv ->
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        wv.stopLoading()
+                        wv.loadUrl("about:blank")
+                        wv.clearHistory()
+                        wv.removeAllViews()
+                        (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+                        wv.destroy()
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private val TAG = "CimaNowDebug"
@@ -520,43 +677,14 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             val decodedDoc: Document = if (bodyEmpty) {
-                Log.d(TAG, "   Body empty — rendering via CfBypassEngine (HEADLESS + 1s dwell)...")
-                val cfResult = cfBypassEngine.runSession(
-                    finalCimaNowUrl,
-                    mode = Mode.HEADLESS,
-                    userAgent = "",
-                    exitCondition = ExitCondition.PageLoaded,
-                    timeout = 15_000L
-                )
-                when (cfResult) {
-                    is WebViewResult.Success -> {
-                        if (cfResult.html.isNotBlank()) {
-                            Log.d(TAG, "   CfBypassEngine rendered ${cfResult.html.length} chars. Preview: ${cfResult.html.take(200).replace('\n', ' ')}")
-                            Jsoup.parse(cfResult.html)
-                        } else {
-                            Log.w(TAG, "   CfBypassEngine returned empty HTML, decodeHtml fallback")
-                            decodeHtml(watchDoc, "watchPage")
-                        }
-                    }
-                    is WebViewResult.Timeout -> {
-                        val partial = cfResult.partialHtml
-                        if (!partial.isNullOrBlank() && partial.contains("<div", ignoreCase = true)) {
-                            Log.d(TAG, "   CfBypassEngine timeout but got partial HTML ${partial.length} chars — using it")
-                            Jsoup.parse(partial)
-                        } else {
-                            Log.w(TAG, "   CfBypassEngine timeout with no usable HTML, decodeHtml fallback")
-                            decodeHtml(watchDoc, "watchPage")
-                        }
-                    }
-                    else -> {
-                        val reason = when (cfResult) {
-                            is WebViewResult.Error -> cfResult.reason
-                            is WebViewResult.Cancelled -> cfResult.reason
-                            else -> "unknown"
-                        }
-                        Log.w(TAG, "   CfBypassEngine failed ($reason), decodeHtml fallback")
-                        decodeHtml(watchDoc, "watchPage")
-                    }
+                Log.d(TAG, "   Body empty — rendering fetched JS HTML in WebView (loadDataWithBaseURL)...")
+                val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
+                if (rendered != null) {
+                    Log.d(TAG, "   WebView rendered ${rendered.length} chars. Preview: ${rendered.take(200).replace('\n', ' ')}")
+                    Jsoup.parse(rendered)
+                } else {
+                    Log.w(TAG, "   WebView rendering failed, decodeHtml fallback")
+                    decodeHtml(watchDoc, "watchPage")
                 }
             } else {
                 Log.d(TAG, "   Body has content — trying decodeHtml")
