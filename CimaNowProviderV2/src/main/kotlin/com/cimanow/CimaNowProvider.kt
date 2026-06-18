@@ -234,8 +234,28 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 }
             }
 
-            Log.i(TAG, "   renderHtmlInWebView: Loading HTML (${html.length} chars, baseUrl=${baseUrl.take(80)})")
-            webView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null)
+            val spoofedHtml = html.replaceFirst(
+                "<script",
+                """<script>
+(function(){
+    try { Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } }); } catch(e) {}
+    try {
+        var od;
+        Object.defineProperty(window, 'DisableDevtool', {
+            get: function() {
+                return function(o) { o = o || {}; o.ignore = function() { return true; }; o.url = ""; o.timeOutUrl = ""; o.ondevtoolopen = function() {}; if (od) try { return od(o); } catch(e) {} };
+            },
+            set: function(v) { od = v; },
+            configurable: true
+        });
+    } catch(e) {}
+    try { Object.defineProperty(navigator, 'plugins', { get: function() { return [1,2,3,4,5]; } }); } catch(e) {}
+    try { Object.defineProperty(navigator, 'languages', { get: function() { return ['ar-SA','en-US','en']; } }); } catch(e) {}
+})();
+</script><script"""
+            )
+            Log.i(TAG, "   renderHtmlInWebView: Loading HTML (${spoofedHtml.length} chars, baseUrl=${baseUrl.take(80)})")
+            webView.loadDataWithBaseURL(baseUrl, spoofedHtml, "text/html", "UTF-8", null)
 
         } catch (e: Exception) {
             delivered = true
