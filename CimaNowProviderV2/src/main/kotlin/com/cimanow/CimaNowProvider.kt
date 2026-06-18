@@ -3,6 +3,9 @@ package com.cimanow
 import android.content.Context
 import android.util.Base64
 import android.widget.Toast
+import com.cloudstream.shared.android.ActivityProvider
+import com.cloudstream.shared.network.ChromiumFetcher
+import com.cloudstream.shared.network.ChromiumResponse
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -34,6 +37,11 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     override val usesWebView = false
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+
+    private val chromiumFetcher by lazy {
+        ActivityProvider.initCompat(context)
+        ChromiumFetcher { ActivityProvider.currentActivity }
+    }
 
     private val TAG = "CimaNowDebug"
     private val TAG_LOAD = "CimaNowLoadLinks"
@@ -493,36 +501,38 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             Log.i(TAG, "[4/6] Fetching and decoding watch page...")
 
             val watchResp = app.get(finalCimaNowUrl, referer = data)
-            Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars, cookies=${watchResp.cookies.size}")
+            Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars")
             val watchDoc = watchResp.document
-            val watchBodyHtml = watchDoc.body()?.html() ?: ""
-            val watchBodyText = watchDoc.body()?.text() ?: ""
-            Log.d(TAG, "   Watch page body HTML length: ${watchBodyHtml.length} chars")
-            Log.d(TAG, "   Watch page body text length: ${watchBodyText.length} chars")
+            val bodyHtml = watchDoc.body()?.html() ?: ""
+            val bodyEmpty = bodyHtml.isBlank()
+            Log.d(TAG, "   Watch page body HTML length: ${bodyHtml.length} chars, empty=$bodyEmpty")
 
-            // Check for common non-content responses
+            // Check for block pages
             when {
-                watchBodyHtml.contains("ubiquiti", true) || watchBodyHtml.contains("UniFi", true) ->
-                    Log.w(TAG, "   WARNING: Watch page appears to be a UniFi block page!")
-                watchBodyHtml.contains("cloudflare", true) ->
-                    Log.w(TAG, "   WARNING: Watch page appears to be a Cloudflare challenge!")
-                watchBodyHtml.contains("captcha", true) ->
-                    Log.w(TAG, "   WARNING: Watch page contains CAPTCHA!")
-                watchBodyHtml.isBlank() ->
-                    Log.w(TAG, "   WARNING: Watch page body is BLANK!")
-                else -> Log.d(TAG, "   Watch page body seems to contain real content")
+                bodyHtml.contains("ubiquiti", true) || bodyHtml.contains("UniFi", true) ->
+                    Log.w(TAG, "   WARNING: UniFi block page!")
+                bodyHtml.contains("cloudflare", true) ->
+                    Log.w(TAG, "   WARNING: Cloudflare challenge!")
+                bodyHtml.contains("captcha", true) ->
+                    Log.w(TAG, "   WARNING: CAPTCHA detected!")
             }
 
-            val decodedDoc = decodeHtml(watchDoc, "watchPage")
-            val isSameDoc = decodedDoc === watchDoc
-
-            Log.d(TAG, "   Watch page title: ${watchDoc.title()}")
-            Log.d(TAG, "   Decode applied: ${!isSameDoc}")
-            if (!isSameDoc) {
-                Log.d(TAG, "   Decoded body length: ${decodedDoc.body()?.text()?.length ?: 0} chars")
-                Log.d(TAG, "   Decoded body snippet: ${decodedDoc.body()?.text()?.take(200)}")
+            val decodedDoc: Document = if (bodyEmpty) {
+                Log.d(TAG, "   Body empty — rendering via Chromium WebView...")
+                val chromiumResponse = chromiumFetcher.fetch(
+                    finalCimaNowUrl,
+                    mapOf("Referer" to data)
+                )
+                if (chromiumResponse.success && chromiumResponse.body.isNotBlank()) {
+                    Log.d(TAG, "   WebView rendered ${chromiumResponse.body.length} chars. Preview: ${chromiumResponse.body.take(200).replace('\n', ' ')}")
+                    Jsoup.parse(chromiumResponse.body)
+                } else {
+                    Log.w(TAG, "   WebView failed (${chromiumResponse.error ?: "empty"}), decodeHtml fallback")
+                    decodeHtml(watchDoc, "watchPage")
+                }
             } else {
-                Log.d(TAG, "   Raw body snippet: ${watchBodyText.take(200)}")
+                Log.d(TAG, "   Body has content — trying decodeHtml")
+                decodeHtml(watchDoc, "watchPage")
             }
 
             // Log the full body HTML of the decoded doc for server element debugging
