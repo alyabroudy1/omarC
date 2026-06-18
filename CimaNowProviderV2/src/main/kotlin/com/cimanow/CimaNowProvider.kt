@@ -4,8 +4,10 @@ import android.content.Context
 import android.util.Base64
 import android.widget.Toast
 import com.cloudstream.shared.android.ActivityProvider
-import com.cloudstream.shared.network.ChromiumFetcher
-import com.cloudstream.shared.network.ChromiumResponse
+import com.cloudstream.shared.webview.CfBypassEngine
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.ExitCondition
+import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -38,9 +40,9 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
-    private val chromiumFetcher by lazy {
+    private val cfBypassEngine by lazy {
         ActivityProvider.initCompat(context)
-        ChromiumFetcher { ActivityProvider.currentActivity }
+        CfBypassEngine { ActivityProvider.currentActivity }
     }
 
     private val TAG = "CimaNowDebug"
@@ -518,17 +520,43 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             val decodedDoc: Document = if (bodyEmpty) {
-                Log.d(TAG, "   Body empty — rendering via Chromium WebView...")
-                val chromiumResponse = chromiumFetcher.fetch(
+                Log.d(TAG, "   Body empty — rendering via CfBypassEngine (HEADLESS + 1s dwell)...")
+                val cfResult = cfBypassEngine.runSession(
                     finalCimaNowUrl,
-                    mapOf("Referer" to data)
+                    mode = Mode.HEADLESS,
+                    userAgent = "",
+                    exitCondition = ExitCondition.PageLoaded,
+                    timeout = 15_000L
                 )
-                if (chromiumResponse.success && chromiumResponse.body.isNotBlank()) {
-                    Log.d(TAG, "   WebView rendered ${chromiumResponse.body.length} chars. Preview: ${chromiumResponse.body.take(200).replace('\n', ' ')}")
-                    Jsoup.parse(chromiumResponse.body)
-                } else {
-                    Log.w(TAG, "   WebView failed (${chromiumResponse.error ?: "empty"}), decodeHtml fallback")
-                    decodeHtml(watchDoc, "watchPage")
+                when (cfResult) {
+                    is WebViewResult.Success -> {
+                        if (cfResult.html.isNotBlank()) {
+                            Log.d(TAG, "   CfBypassEngine rendered ${cfResult.html.length} chars. Preview: ${cfResult.html.take(200).replace('\n', ' ')}")
+                            Jsoup.parse(cfResult.html)
+                        } else {
+                            Log.w(TAG, "   CfBypassEngine returned empty HTML, decodeHtml fallback")
+                            decodeHtml(watchDoc, "watchPage")
+                        }
+                    }
+                    is WebViewResult.Timeout -> {
+                        val partial = cfResult.partialHtml
+                        if (!partial.isNullOrBlank() && partial.contains("<div", ignoreCase = true)) {
+                            Log.d(TAG, "   CfBypassEngine timeout but got partial HTML ${partial.length} chars — using it")
+                            Jsoup.parse(partial)
+                        } else {
+                            Log.w(TAG, "   CfBypassEngine timeout with no usable HTML, decodeHtml fallback")
+                            decodeHtml(watchDoc, "watchPage")
+                        }
+                    }
+                    else -> {
+                        val reason = when (cfResult) {
+                            is WebViewResult.Error -> cfResult.reason
+                            is WebViewResult.Cancelled -> cfResult.reason
+                            else -> "unknown"
+                        }
+                        Log.w(TAG, "   CfBypassEngine failed ($reason), decodeHtml fallback")
+                        decodeHtml(watchDoc, "watchPage")
+                    }
                 }
             } else {
                 Log.d(TAG, "   Body has content — trying decodeHtml")
