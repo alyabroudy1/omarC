@@ -38,6 +38,15 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     private val TAG = "CimaNowDebug"
     private val TAG_LOAD = "CimaNowLoadLinks"
 
+    /// Helper: logs full response metadata for every app.get/app.post call.
+    private fun logResponse(tag: String, label: String, resp: com.lagradost.cloudstream3.app.Response) {
+        Log.d(tag, "   [$label] HTTP ${resp.code} -> ${resp.url}")
+        Log.d(tag, "   [$label] Content-Type: ${resp.headers["content-type"] ?: resp.headers["Content-Type"] ?: "N/A"}")
+        Log.d(tag, "   [$label] Content-Length: ${resp.text.length} chars")
+        Log.d(tag, "   [$label] Cookies: ${resp.cookies.size}")
+        Log.d(tag, "   [$label] Response URL (after redirects): ${resp.url}")
+    }
+
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -92,17 +101,26 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         }
     }
 
-    private fun decodeHtml(doc: Document): Document {
+    private fun decodeHtml(doc: Document, sourceLabel: String = "unknown"): Document {
         try {
             val rawHtml = doc.outerHtml()
+            val rawLen = rawHtml.length
+            val rawTitle = doc.title()
+
+            Log.d(TAG, "decodeHtml[$sourceLabel]: doc.title=\"$rawTitle\", outerHtml.length=$rawLen")
 
             // Extract the dynamic numeric key from `var _r = 36938+36939+36938` (can be sum of multiple numbers)
             val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+(?:\\+\\d+)*)").matcher(rawHtml)
             if (!keyMatcher.find()) {
-                Log.w(TAG, "decodeHtml: no _r key found, returning original doc")
+                Log.w(TAG, "decodeHtml[$sourceLabel]: no _r key found (title=\"$rawTitle\", len=$rawLen)")
+                // Log first 500 chars so we can see what the page actually contains
+                val preview = rawHtml.take(500).replace('\n', ' ').replace('\r', ' ')
+                Log.d(TAG, "decodeHtml[$sourceLabel]: rawHtml preview: $preview")
                 return doc
             }
-            val dynamicKey = keyMatcher.group(1).split("+").sumOf { it.toLong() }
+            val keyExpr = keyMatcher.group(1)
+            val dynamicKey = keyExpr.split("+").sumOf { it.toLong() }
+            Log.d(TAG, "decodeHtml[$sourceLabel]: _r expression='$keyExpr' => key=$dynamicKey")
 
             // Collect all base64-like strings (20+ chars inside quotes)
             val dataMatcher = Pattern.compile("['\"]([A-Za-z0-9+/=~]{20,})['\"]").matcher(rawHtml)
@@ -110,22 +128,33 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             while (dataMatcher.find()) {
                 extractedData.append(dataMatcher.group(1))
             }
+            val extractedLen = extractedData.length
             if (extractedData.isEmpty()) {
-                Log.w(TAG, "decodeHtml: no base64 data found")
+                Log.w(TAG, "decodeHtml[$sourceLabel]: no base64 data found (key=$dynamicKey)")
                 return doc
             }
+            Log.d(TAG, "decodeHtml[$sourceLabel]: extracted ${extractedLen} chars of base64 data")
+
+            // Inspect: count '~' separators to gauge number of encoded chunks
+            val tildeCount = extractedData.count { it == '~' }
+            Log.d(TAG, "decodeHtml[$sourceLabel]: $tildeCount ~-separated chunks in extracted data")
+
+            // Log the first 200 chars of extracted data for debugging
+            val dataPreview = extractedData.substring(0, minOf(200, extractedLen))
+            Log.d(TAG, "decodeHtml[$sourceLabel]: extracted data preview: $dataPreview")
 
             // Process each ~-separated chunk
-            val out = ByteArrayOutputStream(extractedData.length / 4)
+            val out = ByteArrayOutputStream(extractedLen / 4)
             val chunk = StringBuilder(64)
-            val len = extractedData.length
+            val len = extractedLen
+            var decodedCount = 0
 
             for (i in 0 until len) {
                 val c = extractedData[i]
                 when {
                     c == '~' -> {
                         if (chunk.isNotEmpty()) {
-                            decodeAndWriteFast(chunk, dynamicKey, out)
+                            decodedCount += decodeAndWriteFast(chunk, dynamicKey, out)
                             chunk.setLength(0)
                         }
                     }
@@ -135,18 +164,20 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 }
             }
             if (chunk.isNotEmpty()) {
-                decodeAndWriteFast(chunk, dynamicKey, out)
+                decodedCount += decodeAndWriteFast(chunk, dynamicKey, out)
             }
+
+            Log.d(TAG, "decodeHtml[$sourceLabel]: decodeAndWriteFast succeeded for $decodedCount chunks")
 
             val decoded = out.toString("UTF-8")
             if (decoded.isBlank()) {
-                Log.w(TAG, "decodeHtml: decoded output is blank")
+                Log.w(TAG, "decodeHtml[$sourceLabel]: decoded output is BLANK ($decodedCount chunks processed)")
                 return doc
             }
-            Log.d(TAG, "decodeHtml: decoded ${decoded.length} chars")
+            Log.d(TAG, "decodeHtml[$sourceLabel]: decoded ${decoded.length} chars. Preview: ${decoded.take(300).replace('\n', ' ')}")
             return Jsoup.parse(decoded)
         } catch (e: Exception) {
-            Log.e(TAG, "decodeHtml error: ${e.message}")
+            Log.e(TAG, "decodeHtml[$sourceLabel] error: ${e.message}")
         }
         return doc
     }
@@ -156,8 +187,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query
         Log.d(TAG, "search: query=$q")
-        val doc = app.get("$mainUrl/?s=$q", referer = mainUrl).document
-        val decodedDoc = decodeHtml(doc)
+        val resp = app.get("$mainUrl/?s=$q", referer = mainUrl)
+        logResponse(TAG, "search", resp)
+        val doc = resp.document
+        val decodedDoc = decodeHtml(doc, "search")
         val results = decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
         Log.d(TAG, "search: found ${results.size} results")
         return results
@@ -229,8 +262,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     /// For series: fetches each season's episode list concurrently.
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "load: url=$url")
-        val doc = app.get(url, referer = mainUrl).document
-        val decodedDoc = decodeHtml(doc)
+        val detailResp = app.get(url, referer = mainUrl)
+        logResponse(TAG, "load", detailResp)
+        val doc = detailResp.document
+        val decodedDoc = decodeHtml(doc, "load")
 
         val isMovie = decodedDoc.title().contains("فيلم")
         Log.d(TAG, "load: isMovie=$isMovie")
@@ -277,14 +312,16 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             coroutineScope {
                 val deferredEpisodes = seasonElements.map { seasonElement ->
                     async {
-                        val seasonDoc = try {
-                            app.get(seasonElement.attr("href"), referer = url).document
+                        val (seasonResp, seasonDoc) = try {
+                            val r = app.get(seasonElement.attr("href"), referer = url)
+                            logResponse(TAG, "season", r)
+                            Pair(r, r.document)
                         } catch (e: Exception) {
                             Log.w(TAG, "load: failed fetching season: ${e.message}")
-                            null
+                            Pair(null, null)
                         }
                         if (seasonDoc != null) {
-                            val decodedSeason = decodeHtml(seasonDoc)
+                            val decodedSeason = decodeHtml(seasonDoc, "season")
                             val seasonTitle = decodedSeason.selectFirst("span[aria-label=season-title]")
                             val seasonNum = getIntFromText(seasonTitle?.text() ?: "") ?: 1
                             decodedSeason.select("ul#eps li a").mapNotNull { epElement ->
@@ -347,7 +384,14 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
         try {
             Log.i(TAG_LOAD, "[1/6] Fetching initial movie page...")
-            val moviePageDoc = app.get(data).document
+            val initialResp = app.get(data)
+            logResponse(TAG_LOAD, "initial movie page", initialResp)
+            val moviePageDoc = initialResp.document
+
+            // Log the page title and body length to check if we got a valid page
+            Log.d(TAG_LOAD, "   Initial page title: ${moviePageDoc.title()}")
+            Log.d(TAG_LOAD, "   Initial page body length: ${moviePageDoc.body()?.text()?.length ?: 0} chars")
+            Log.d(TAG_LOAD, "   Has freex2line links: ${moviePageDoc.select("a[href*='freex2line']").size}")
 
             Log.i(TAG_LOAD, "[2/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
@@ -383,53 +427,106 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
             Log.i(TAG, "[4/6] Fetching and decoding watch page...")
 
-            val watchDoc = app.get(finalCimaNowUrl, referer = data).document
-            val decodedDoc = decodeHtml(watchDoc)
+            val watchResp = app.get(finalCimaNowUrl, referer = data)
+            logResponse(TAG, "watch page", watchResp)
+            val watchDoc = watchResp.document
+            val watchBodyHtml = watchDoc.body()?.html() ?: ""
+            val watchBodyText = watchDoc.body()?.text() ?: ""
+            Log.d(TAG, "   Watch page body HTML length: ${watchBodyHtml.length} chars")
+            Log.d(TAG, "   Watch page body text length: ${watchBodyText.length} chars")
+
+            // Check for common non-content responses
+            when {
+                watchBodyHtml.contains("ubiquiti", true) || watchBodyHtml.contains("UniFi", true) ->
+                    Log.w(TAG, "   WARNING: Watch page appears to be a UniFi block page!")
+                watchBodyHtml.contains("cloudflare", true) ->
+                    Log.w(TAG, "   WARNING: Watch page appears to be a Cloudflare challenge!")
+                watchBodyHtml.contains("captcha", true) ->
+                    Log.w(TAG, "   WARNING: Watch page contains CAPTCHA!")
+                watchBodyHtml.isBlank() ->
+                    Log.w(TAG, "   WARNING: Watch page body is BLANK!")
+                else -> Log.d(TAG, "   Watch page body seems to contain real content")
+            }
+
+            val decodedDoc = decodeHtml(watchDoc, "watchPage")
             val isSameDoc = decodedDoc === watchDoc
 
             Log.d(TAG, "   Watch page title: ${watchDoc.title()}")
             Log.d(TAG, "   Decode applied: ${!isSameDoc}")
             if (!isSameDoc) {
+                Log.d(TAG, "   Decoded body length: ${decodedDoc.body()?.text()?.length ?: 0} chars")
                 Log.d(TAG, "   Decoded body snippet: ${decodedDoc.body()?.text()?.take(200)}")
             } else {
-                Log.d(TAG, "   Raw body snippet: ${watchDoc.body()?.text()?.take(200)}")
+                Log.d(TAG, "   Raw body snippet: ${watchBodyText.take(200)}")
             }
 
+            // Log the full body HTML of the decoded doc for server element debugging
+            val decodedHtml = decodedDoc.body()?.html() ?: ""
+            Log.d(TAG, "   Decoded document body HTML length: ${decodedHtml.length} chars")
+
+            // Check for "ul#watch" or other expected structure patterns
+            val hasUlWatch = decodedHtml.contains("ul#watch") || decodedHtml.contains("ul id=\"watch\"")
+            val hasDataIndex = decodedHtml.contains("data-index")
+            val hasLiTags = decodedHtml.contains("<li")
+            Log.d(TAG, "   Decoded HTML has ul#watch=$hasUlWatch, data-index=$hasDataIndex, li tags=$hasLiTags")
+
             var serverElements = decodedDoc.select("ul#watch li[data-index]")
+            Log.d(TAG, "   ul#watch li[data-index] count: ${serverElements.size}")
             if (serverElements.isEmpty()) {
                 serverElements = decodedDoc.select("li[data-index]")
+                Log.d(TAG, "   Fallback li[data-index] count: ${serverElements.size}")
             }
             if (serverElements.isEmpty()) {
                 serverElements = decodedDoc.select("li[class*='server'], li[class*='Server'], li[data-id]")
+                Log.d(TAG, "   Fallback li[server/data-id] count: ${serverElements.size}")
             }
             if (serverElements.isEmpty()) {
-                Log.w(TAG, "   No watch server elements found after decoding. Body: ${decodedDoc.body()?.html()?.take(500)}")
+                // Last resort: log ALL <li> elements for debugging
+                val allLis = decodedDoc.select("li")
+                Log.w(TAG, "   No watch server elements found. All <li> count: ${allLis.size}")
+                allLis.take(20).forEachIndexed { i, el ->
+                    Log.d(TAG, "     li[$i]: class='${el.className()}' text='${el.text().take(80)}' html='${el.html().take(120)}'")
+                }
+                Log.w(TAG, "   Full decoded body HTML (first 1000 chars): ${decodedHtml.take(1000)}")
             } else {
                 Log.i(TAG, "   Found ${serverElements.size} watch server elements.")
                 serverElements.forEach { el ->
-                    Log.d(TAG, "     Server: '${el.text()}' index=${el.attr("data-index")} id=${el.attr("data-id")}")
+                    Log.d(TAG, "     Server: '${el.text()}' index=${el.attr("data-index")} id=${el.attr("data-id")} class=${el.className()}")
                 }
             }
 
-            Log.i(TAG, "[5/6] Processing WATCH server elements...")
+            Log.i(TAG, "[5/6] Processing WATCH server elements (count=${serverElements.size})...")
 
-            coroutineScope {
-                serverElements.map { serverElement ->
-                    async {
-                        processServerElement(serverElement, finalCimaNowUrl, subtitleCallback, callback)
-                    }
-                }.awaitAll()
+            if (serverElements.isEmpty()) {
+                Log.w(TAG, "   No server elements to process — skipping watch server extraction.")
+            } else {
+                coroutineScope {
+                    serverElements.map { serverElement ->
+                        async {
+                            processServerElement(serverElement, finalCimaNowUrl, subtitleCallback, callback)
+                        }
+                    }.awaitAll()
+                }
             }
 
             Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
             var downloadLinks = decodedDoc.select("ul#download li a[href]")
+            Log.d(TAG, "   ul#download li a count: ${downloadLinks.size}")
             if (downloadLinks.isEmpty()) {
                 downloadLinks = decodedDoc.select("a[href*='download'], a[href*='dl'], .download-links a[href]")
+                Log.d(TAG, "   Fallback download link count: ${downloadLinks.size}")
             }
             if (downloadLinks.isEmpty()) {
                 downloadLinks = decodedDoc.select("ul li a[href*='.mp4'], ul li a[href*='.mkv']")
+                Log.d(TAG, "   Fallback mp4/mkv link count: ${downloadLinks.size}")
+            }
+            if (downloadLinks.isEmpty()) {
+                Log.d(TAG, "   No download links found. Decoded body #download section: ${decodedDoc.select("#download").html().take(300)}")
             }
             Log.d(TAG, "   Found ${downloadLinks.size} download links")
+            downloadLinks.forEach { a ->
+                Log.d(TAG, "     Download: href='${a.attr("href").take(80)}' text='${a.text().take(60)}'")
+            }
 
             coroutineScope {
                 downloadLinks.map { aTag ->
@@ -472,18 +569,26 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
             Log.d(TAG, "   AJAX URL: $ajaxUrl")
             val playerResponse = try {
-                app.get(ajaxUrl, referer = finalCimaNowUrl)
+                val r = app.get(ajaxUrl, referer = finalCimaNowUrl)
+                Log.d(TAG, "   AJAX HTTP ${r.code} -> ${r.url}, body length: ${r.text.length}")
+                r
             } catch (e: Exception) {
                 Log.w(TAG, "   AJAX failed for server '$serverName': ${e.message}")
                 null
             }
             val playerDoc = playerResponse?.document
             if (playerDoc != null) {
-                Log.d(TAG, "   AJAX response length: ${playerResponse.text.length}, iframes found: ${playerDoc.select("iframe").size}")
+                val iframes = playerDoc.select("iframe")
+                Log.d(TAG, "   AJAX response body length: ${playerResponse.text.length}, iframes found: ${iframes.size}")
+                if (iframes.isEmpty()) {
+                    Log.d(TAG, "   AJAX response body (first 500): ${playerResponse.text.take(500)}")
+                }
+            } else {
+                Log.w(TAG, "   playerDoc is null for server '$serverName'")
             }
 
             val iframeUrl = (playerDoc?.select("iframe")?.attr("src") ?: "").let { normalizeUrl(it, mainUrl) }
-            Log.d(TAG, "   Extracted iframe URL: $iframeUrl")
+            Log.d(TAG, "   Extracted iframe URL: $iframeUrl"))
 
             when {
                 serverName.contains("Cima Now", true) || serverName.contains("cima", true) -> {
@@ -848,18 +953,32 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             )
 
             // Step 1: Load the intermediate (loadon/?link=...) URL to establish session
+            Log.d("Freex2lineResolver", "   [1/6] Loading: $url")
             val headResponse = app.get(url, headers = baseHeaders)
             sessionCookies.putAll(headResponse.cookies)
             val headHtml = headResponse.text
-            Log.d(TAG, "   Head response length: ${headHtml.length}, URL: ${headResponse.url}")
+            Log.d("Freex2lineResolver", "   [1/6] HTTP ${headResponse.code} -> ${headResponse.url}")
+            Log.d("Freex2lineResolver", "   [1/6] Response length: ${headHtml.length}, cookies: ${headResponse.cookies.size}")
+            if (headHtml.length < 100) {
+                Log.w("Freex2lineResolver", "   [1/6] WARNING: Head response is very short: '$headHtml'")
+            }
+            Log.d("Freex2lineResolver", "   [1/6] Has _0x_cfg: ${headHtml.contains("_0x_cfg")}")
+            Log.d("Freex2lineResolver", "   [1/6] Has ptr_: ${headHtml.contains("ptr_")}")
 
             // Step 2: Fetch the challenge page that contains the JS variables
             Log.i("Freex2lineResolver", "[2/6] Fetching data page...")
             val pageUrl = "https://rm.freex2line.online/2020/02/blog-post.html/"
+            Log.d("Freex2lineResolver", "   [2/6] URL: $pageUrl, cookies: ${sessionCookies.size}")
             val res = app.get(pageUrl, headers = baseHeaders, cookies = sessionCookies)
             var html = res.text
             sessionCookies.putAll(res.cookies)
-            Log.d(TAG, "   Blog page length: ${html.length}")
+            Log.d("Freex2lineResolver", "   [2/6] HTTP ${res.code} -> ${res.url}")
+            Log.d("Freex2lineResolver", "   [2/6] Response length: ${html.length}")
+            Log.d("Freex2lineResolver", "   [2/6] Has _0x_cfg: ${html.contains("_0x_cfg")}")
+            Log.d("Freex2lineResolver", "   [2/6] Has ptr_: ${html.contains("ptr_")}")
+            if (html.length < 200) {
+                Log.w("Freex2lineResolver", "   [2/6] WARNING: Blog page is very short: '$html'")
+            }
 
             // If the blog page doesn't have challenge data, try the head response instead
             if (!html.contains("_0x_cfg")) {
@@ -926,7 +1045,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 (byte.toInt() xor sXorKey[index % sXorKey.length].code).toChar()
             }
             val secretKey = decryptedChars.joinToString("")
-            Log.d(TAG, "   Dynamic Secret Key: $secretKey")
+            Log.d("Freex2lineResolver", "   Secret key length: ${secretKey.length}, secretKey: $secretKey")
 
             Log.i("Freex2lineResolver", "[6/6] Generating HMAC signature...")
             val fpRaw = "Mozilla/5.10"
@@ -934,14 +1053,18 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             val messageToSign = requestId + ch + fpBase64
             val hmacToken = calculateHmacSha256(messageToSign, secretKey)
             val hmacTokenEncoded = java.net.URLEncoder.encode(hmacToken, "UTF-8")
-            Log.d(TAG, "   messageToSign length=${messageToSign.length}, hmac=$hmacToken")
+            Log.d("Freex2lineResolver", "   FP (base64): $fpBase64")
+            Log.d("Freex2lineResolver", "   messageToSign length=${messageToSign.length}, hmac=$hmacToken")
 
             // Mandatory delay — the server enforces timing
+            Log.d("Freex2lineResolver", "   Waiting 10s before API call...")
             delay(10000)
+            Log.d("Freex2lineResolver", "   Wait complete, sending API request...")
 
             Log.i(TAG, "Sending final API request...")
             val apiUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php?request_id=$requestId&hmac_token=$hmacTokenEncoded&ch=$ch&fp=$fpBase64"
-            Log.d(TAG, "   API URL (sensitive values masked): request_id=${requestId.take(16)}..., ch=${ch.take(8)}...")
+            Log.d("Freex2lineResolver", "   API URL full: $apiUrl")
+            Log.d("Freex2lineResolver", "   request_id=$requestId, ch=$ch")
 
             // Build cookie header string from session cookies
             val cookieHeader = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
@@ -950,20 +1073,23 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 "Referer" to "https://rm.freex2line.online/",
                 "Cookie" to cookieHeader
             )
+            Log.d("Freex2lineResolver", "   Cookie count: ${sessionCookies.size}")
 
             val finalRes = app.get(apiUrl, headers = finalHeaders)
+            Log.d("Freex2lineResolver", "   Final API HTTP ${finalRes.code} -> ${finalRes.url}")
+            Log.d("Freex2lineResolver", "   Final API response length: ${finalRes.text.length}")
             // Strip UTF-8 BOM (\uFEFF) that some responses include before the URL
             val finalResult = finalRes.text.trim().trim('\uFEFF')
-            Log.d(TAG, "   Raw response (trimmed): ${finalResult.take(80)}")
+            Log.d("Freex2lineResolver", "   Raw response (trimmed): $finalResult")
 
             if (finalResult.startsWith("http")) {
-                Log.i(TAG, "[SUCCESS] Watch page URL obtained: $finalResult")
+                Log.i("Freex2lineResolver", "[SUCCESS] Watch page URL obtained: $finalResult")
                 return finalResult
             }
 
-            Log.e(TAG, "[FAILURE] Server did not return a valid URL. Response: $finalResult")
+            Log.e("Freex2lineResolver", "[FAILURE] Server did not return a valid URL. Response: $finalResult")
         } catch (e: Exception) {
-            Log.e(TAG, "[FATAL ERROR] An exception occurred during resolution: ${e.message}")
+            Log.e("Freex2lineResolver", "[FATAL ERROR] An exception occurred during resolution: ${e.message}")
             e.printStackTrace()
         }
 
