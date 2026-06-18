@@ -205,7 +205,17 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                     val nextUrl = request?.url?.toString() ?: return super.shouldOverrideUrlLoading(view, request)
                     val scheme = request.url?.scheme?.lowercase()
                     if (scheme != null && scheme != "http" && scheme != "https") return true
-                    Log.d(TAG, "   renderHtmlInWebView: nav to ${nextUrl.take(80)} (allowing)")
+                    val currentHost = try { java.net.URI(nextUrl).host } catch (_: Exception) { null }
+                    val baseHost = try { java.net.URI(baseUrl).host } catch (_: Exception) { null }
+                    if (currentHost != null && baseHost != null && currentHost != baseHost) {
+                        Log.d(TAG, "   renderHtmlInWebView: BLOCK cross-domain nav to ${nextUrl.take(80)}")
+                        return true
+                    }
+                    if (!nextUrl.contains("/watching/", ignoreCase = true) && nextUrl.contains("cimanow.cc", ignoreCase = true)) {
+                        Log.w(TAG, "   renderHtmlInWebView: BLOCK nav away from watch page -> ${nextUrl.take(80)}")
+                        return true
+                    }
+                    Log.d(TAG, "   renderHtmlInWebView: ALLOW nav to ${nextUrl.take(80)}")
                     return false
                 }
             }
