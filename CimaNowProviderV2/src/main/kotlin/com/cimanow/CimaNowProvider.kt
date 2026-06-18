@@ -15,6 +15,7 @@ import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.InvalidKeyException
 import java.security.NoSuchAlgorithmException
@@ -44,7 +45,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     private suspend fun renderHtmlInWebView(
         html: String,
         baseUrl: String,
-        timeoutMs: Long = 8_000L
+        timeoutMs: Long = 12_000L
     ): String? = withContext(Dispatchers.Main) {
         val activity = ActivityProvider.currentActivity
         if (activity == null) {
@@ -56,12 +57,14 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         val deferred = CompletableDeferred<String?>()
         var delivered = false
         var webView: WebView? = null
+        var interceptedCount = 0
+        var proxySuccessCount = 0
 
         val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
             delay(timeoutMs)
             if (!delivered) {
                 delivered = true
-                Log.w(TAG, "   renderHtmlInWebView: Timeout after ${timeoutMs}ms")
+                Log.w(TAG, "   renderHtmlInWebView: Timeout after ${timeoutMs}ms (intercepted=$interceptedCount, proxied=$proxySuccessCount)")
                 cleanupWebView(webView)
                 deferred.complete(null)
             }
@@ -91,37 +94,99 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): WebResourceResponse? {
+                    val reqUrl = request?.url?.toString() ?: return null
+                    val scheme = request.url?.scheme?.lowercase()
+                    if (scheme != "http" && scheme != "https") return null
+                    interceptedCount++
+
+                    if (!reqUrl.contains("cimanow.cc", ignoreCase = true)) {
+                        Log.d(TAG, "   [WV:${interceptedCount}] skip non-cimanow ${reqUrl.take(80)}")
+                        return null
+                    }
+
+                    try {
+                        val proxyResp = runBlocking {
+                            app.get(reqUrl, referer = baseUrl)
+                        }
+                        if (proxyResp.code !in 200..399) {
+                            Log.w(TAG, "   [WV:${interceptedCount}] proxy ${reqUrl.take(80)} failed HTTP ${proxyResp.code}")
+                            return null
+                        }
+                        proxySuccessCount++
+                        val mime = when {
+                            reqUrl.contains(".js") -> "application/javascript"
+                            reqUrl.contains(".css") -> "text/css"
+                            reqUrl.contains(".png") -> "image/png"
+                            reqUrl.contains(".jpg") || reqUrl.contains(".jpeg") -> "image/jpeg"
+                            reqUrl.contains(".svg") -> "image/svg+xml"
+                            reqUrl.contains(".woff2") || reqUrl.contains(".woff") -> "font/woff2"
+                            reqUrl.contains(".json") -> "application/json"
+                            else -> "text/html"
+                        }
+                        Log.i(TAG, "   [WV:${interceptedCount}] proxy OK ${reqUrl.take(80)} -> ${mime} ${proxyResp.text.length} chars, HTTP ${proxyResp.code}")
+                        return WebResourceResponse(mime, "UTF-8", proxyResp.text.byteInputStream())
+                    } catch (e: Exception) {
+                        Log.w(TAG, "   [WV:${interceptedCount}] proxy EXCEPTION ${reqUrl.take(80)}: ${e.message}")
+                        return null
+                    }
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (delivered) return
                     Log.d(TAG, "   renderHtmlInWebView: onPageFinished url=${url?.take(80)}")
 
                     CoroutineScope(Dispatchers.Main).launch {
-                        delay(2000L)
-                        if (delivered) return@launch
-
-                        val rendered = extractHtmlFromWebView(view!!)
-                        if (rendered != null && rendered.length > 512) {
-                            val bodyText = Jsoup.parse(rendered).body()?.html() ?: ""
-                            if (bodyText.isNotBlank()) {
-                                delivered = true
-                                timeoutJob.cancel()
-                                Log.d(TAG, "   renderHtmlInWebView: Got ${bodyText.length} chars body after 2s delay")
-                                cleanupWebView(webView)
-                                deferred.complete(rendered)
-                                return@launch
-                            }
-                        }
+                        val attempt1 = extractHtmlFromWebView(view!!)
+                        val doc1 = attempt1?.let { Jsoup.parse(it) }
+                        val bodyLen1 = doc1?.body()?.html()?.length ?: 0
+                        Log.d(TAG, "   renderHtmlInWebView: immediate extract body=${bodyLen1} chars, title='${doc1?.title()}'")
 
                         delay(3000L)
                         if (delivered) return@launch
 
-                        val retryRendered = extractHtmlFromWebView(view!!)
+                        val attempt2 = extractHtmlFromWebView(view!!)
+                        val doc2 = attempt2?.let { Jsoup.parse(it) }
+                        val bodyLen2 = doc2?.body()?.html()?.length ?: 0
+                        val hasWatchUl = attempt2?.contains("ul#watch", ignoreCase = true) == true || attempt2?.contains("data-index", ignoreCase = true) == true
+                        Log.d(TAG, "   renderHtmlInWebView: +3s extract body=${bodyLen2} chars, title='${doc2?.title()}', hasWatchUl=$hasWatchUl")
+
+                        if (attempt2 != null && bodyLen2 > 512 && hasWatchUl) {
+                            delivered = true
+                            timeoutJob.cancel()
+                            Log.i(TAG, "   renderHtmlInWebView: Got watch page after 3s (${bodyLen2} chars body)")
+                            cleanupWebView(webView)
+                            deferred.complete(attempt2)
+                            return@launch
+                        }
+
+                        delay(4000L)
+                        if (delivered) return@launch
+
+                        val attempt3 = extractHtmlFromWebView(view!!)
+                        val doc3 = attempt3?.let { Jsoup.parse(it) }
+                        val bodyLen3 = doc3?.body()?.html()?.length ?: 0
+                        val hasWatchUl3 = attempt3?.contains("ul#watch", ignoreCase = true) == true || attempt3?.contains("data-index", ignoreCase = true) == true
+                        Log.d(TAG, "   renderHtmlInWebView: +7s extract body=${bodyLen3} chars, title='${doc3?.title()}', hasWatchUl=$hasWatchUl3")
+
                         delivered = true
                         timeoutJob.cancel()
-                        val retryBody = retryRendered?.let { Jsoup.parse(it).body()?.html() } ?: ""
-                        Log.d(TAG, "   renderHtmlInWebView: 5s delay result body=${retryBody.length} chars")
-                        cleanupWebView(webView)
-                        deferred.complete(if (retryBody.isNotBlank()) retryRendered else null)
+                        if (attempt3 != null && bodyLen3 > bodyLen2) {
+                            Log.i(TAG, "   renderHtmlInWebView: Got ${bodyLen3} chars body after 7s")
+                            cleanupWebView(webView)
+                            deferred.complete(attempt3)
+                        } else if (attempt2 != null && bodyLen2 > 512) {
+                            Log.w(TAG, "   renderHtmlInWebView: No improvement at 7s, using 3s result (${bodyLen2} chars)")
+                            cleanupWebView(webView)
+                            deferred.complete(attempt2)
+                        } else {
+                            Log.w(TAG, "   renderHtmlInWebView: All attempts produced no useful body")
+                            cleanupWebView(webView)
+                            deferred.complete(attempt3)
+                        }
                     }
                 }
 
@@ -130,7 +195,9 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                         val desc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                             error?.description?.toString()
                         } else error?.toString()
-                        Log.w(TAG, "   renderHtmlInWebView: Error - $desc")
+                        Log.w(TAG, "   renderHtmlInWebView: onReceivedError - $desc  url=${request.url?.toString()?.take(80)}")
+                    } else if (!delivered) {
+                        Log.d(TAG, "   renderHtmlInWebView: onReceivedError (sub) url=${request?.url?.toString()?.take(80)}")
                     }
                 }
 
@@ -138,6 +205,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                     val nextUrl = request?.url?.toString() ?: return super.shouldOverrideUrlLoading(view, request)
                     val scheme = request.url?.scheme?.lowercase()
                     if (scheme != null && scheme != "http" && scheme != "https") return true
+                    Log.d(TAG, "   renderHtmlInWebView: nav to ${nextUrl.take(80)} (allowing)")
                     return false
                 }
             }
@@ -145,18 +213,18 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             webView.webChromeClient = object : android.webkit.WebChromeClient() {
                 override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
                     msg?.let {
-                        val text = "${it.message()} [${it.sourceId()}:${it.lineNumber()}]"
-                        when (it.messageLevel()) {
-                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> android.util.Log.e("CimaNowWV", text)
-                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> android.util.Log.w("CimaNowWV", text)
-                            else -> android.util.Log.d("CimaNowWV", text)
+                        val level = when (it.messageLevel()) {
+                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> "E"
+                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> "W"
+                            else -> "D"
                         }
+                        android.util.Log.println(android.util.Log.INFO, "CimaNowWV", "[$level] ${it.message()} [${it.sourceId()}:${it.lineNumber()}]")
                     }
                     return true
                 }
             }
 
-            Log.d(TAG, "   renderHtmlInWebView: Loading HTML (${html.length} chars) with baseUrl=$baseUrl")
+            Log.i(TAG, "   renderHtmlInWebView: Loading HTML (${html.length} chars, baseUrl=${baseUrl.take(80)})")
             webView.loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", null)
 
         } catch (e: Exception) {
@@ -661,6 +729,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
             val watchResp = app.get(finalCimaNowUrl, referer = data)
             Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars")
+            Log.d(TAG, "   [watchPage] Raw HTML preview: ${watchResp.text.take(300).replace('\n', ' ')}")
             val watchDoc = watchResp.document
             val bodyHtml = watchDoc.body()?.html() ?: ""
             val bodyEmpty = bodyHtml.isBlank()
@@ -680,10 +749,17 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 Log.d(TAG, "   Body empty — rendering fetched JS HTML in WebView (loadDataWithBaseURL)...")
                 val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
                 if (rendered != null) {
-                    Log.d(TAG, "   WebView rendered ${rendered.length} chars. Preview: ${rendered.take(200).replace('\n', ' ')}")
-                    Jsoup.parse(rendered)
+                    val renderedDoc = Jsoup.parse(rendered)
+                    val renderedTitle = renderedDoc.title()
+                    val renderedBodyLen = renderedDoc.body()?.html()?.length ?: 0
+                    Log.i(TAG, "   WebView rendered ${rendered.length} total chars, title='$renderedTitle', body=$renderedBodyLen chars")
+                    Log.d(TAG, "   Rendered body preview: ${(renderedDoc.body()?.html() ?: "").take(500).replace('\n', ' ')}")
+                    if (renderedBodyLen > 512 && renderedTitle.contains("مشهد محذوف", true)) {
+                        Log.w(TAG, "   BLOCK PAGE DETECTED in rendered output")
+                    }
+                    renderedDoc
                 } else {
-                    Log.w(TAG, "   WebView rendering failed, decodeHtml fallback")
+                    Log.w(TAG, "   WebView rendering failed (null), decodeHtml fallback")
                     decodeHtml(watchDoc, "watchPage")
                 }
             } else {
