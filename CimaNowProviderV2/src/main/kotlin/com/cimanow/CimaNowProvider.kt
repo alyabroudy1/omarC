@@ -98,7 +98,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
             // Extract the dynamic numeric key from `var _r = 36938+36939+36938` (can be sum of multiple numbers)
             val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+(?:\\+\\d+)*)").matcher(rawHtml)
-            if (!keyMatcher.find()) return doc
+            if (!keyMatcher.find()) {
+                Log.w(TAG, "decodeHtml: no _r key found, returning original doc")
+                return doc
+            }
             val dynamicKey = keyMatcher.group(1).split("+").sumOf { it.toLong() }
 
             // Collect all base64-like strings (20+ chars inside quotes)
@@ -107,7 +110,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             while (dataMatcher.find()) {
                 extractedData.append(dataMatcher.group(1))
             }
-            if (extractedData.isEmpty()) return doc
+            if (extractedData.isEmpty()) {
+                Log.w(TAG, "decodeHtml: no base64 data found")
+                return doc
+            }
 
             // Process each ~-separated chunk
             val out = ByteArrayOutputStream(extractedData.length / 4)
@@ -133,7 +139,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             val decoded = out.toString("UTF-8")
-            if (decoded.isBlank()) return doc
+            if (decoded.isBlank()) {
+                Log.w(TAG, "decodeHtml: decoded output is blank")
+                return doc
+            }
             Log.d(TAG, "decodeHtml: decoded ${decoded.length} chars")
             return Jsoup.parse(decoded)
         } catch (e: Exception) {
@@ -175,9 +184,12 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         val urlElement = element.selectFirst("a") ?: return null
         val href = urlElement.attr("href")
 
-        var posterUrl = element.select("img.lazy").attr("data-src")
+        var posterUrl = element.select("img[data-src]").attr("data-src")
         if (posterUrl.isBlank()) {
-            posterUrl = element.select("img.lazy").attr("src")
+            posterUrl = element.select("img[src]").attr("src")
+        }
+        if (posterUrl.isBlank()) {
+            posterUrl = element.select("img").attr("src")
         }
 
         val category = element.select("ul.info li[aria-label=tab]").text()
@@ -224,6 +236,9 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         Log.d(TAG, "load: isMovie=$isMovie")
 
         val posterUrl = decodedDoc.select("figure img").attr("src")
+            .ifBlank { decodedDoc.select("img[poster]").attr("poster") }
+            .ifBlank { decodedDoc.select("img[src*='uploads']").attr("src") }
+            .ifBlank { decodedDoc.select("img[src]").attr("src") }
         val year = decodedDoc.select("ul li a[href^='https://cimanow.cc/release-year/']").text().toIntOrNull()
 
         val titleRegex = Regex("الموسم الأول|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|\\|${year}|Cima Now|-|سيما ناو|ج[0-9]|\\|")
@@ -370,10 +385,25 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
             val watchDoc = app.get(finalCimaNowUrl, referer = data).document
             val decodedDoc = decodeHtml(watchDoc)
-            val serverElements = decodedDoc.select("ul#watch li[data-index]")
+            val isSameDoc = decodedDoc === watchDoc
 
+            Log.d(TAG, "   Watch page title: ${watchDoc.title()}")
+            Log.d(TAG, "   Decode applied: ${!isSameDoc}")
+            if (!isSameDoc) {
+                Log.d(TAG, "   Decoded body snippet: ${decodedDoc.body()?.text()?.take(200)}")
+            } else {
+                Log.d(TAG, "   Raw body snippet: ${watchDoc.body()?.text()?.take(200)}")
+            }
+
+            var serverElements = decodedDoc.select("ul#watch li[data-index]")
             if (serverElements.isEmpty()) {
-                Log.w(TAG, "   No watch server elements found after decoding.")
+                serverElements = decodedDoc.select("li[data-index]")
+            }
+            if (serverElements.isEmpty()) {
+                serverElements = decodedDoc.select("li[class*='server'], li[class*='Server'], li[data-id]")
+            }
+            if (serverElements.isEmpty()) {
+                Log.w(TAG, "   No watch server elements found after decoding. Body: ${decodedDoc.body()?.html()?.take(500)}")
             } else {
                 Log.i(TAG, "   Found ${serverElements.size} watch server elements.")
                 serverElements.forEach { el ->
@@ -392,7 +422,13 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
-            val downloadLinks = decodedDoc.select("ul#download li a[href]")
+            var downloadLinks = decodedDoc.select("ul#download li a[href]")
+            if (downloadLinks.isEmpty()) {
+                downloadLinks = decodedDoc.select("a[href*='download'], a[href*='dl'], .download-links a[href]")
+            }
+            if (downloadLinks.isEmpty()) {
+                downloadLinks = decodedDoc.select("ul li a[href*='.mp4'], ul li a[href*='.mkv']")
+            }
             Log.d(TAG, "   Found ${downloadLinks.size} download links")
 
             coroutineScope {
@@ -434,14 +470,20 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
             // AJAX call to get the iframe URL for this server
             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
-            val playerDoc = try {
-                app.get(ajaxUrl, referer = finalCimaNowUrl).document
+            Log.d(TAG, "   AJAX URL: $ajaxUrl")
+            val playerResponse = try {
+                app.get(ajaxUrl, referer = finalCimaNowUrl)
             } catch (e: Exception) {
                 Log.w(TAG, "   AJAX failed for server '$serverName': ${e.message}")
                 null
             }
+            val playerDoc = playerResponse?.document
+            if (playerDoc != null) {
+                Log.d(TAG, "   AJAX response length: ${playerResponse.text.length}, iframes found: ${playerDoc.select("iframe").size}")
+            }
 
             val iframeUrl = (playerDoc?.select("iframe")?.attr("src") ?: "").let { normalizeUrl(it, mainUrl) }
+            Log.d(TAG, "   Extracted iframe URL: $iframeUrl")
 
             when {
                 serverName.contains("Cima Now", true) || serverName.contains("cima", true) -> {
