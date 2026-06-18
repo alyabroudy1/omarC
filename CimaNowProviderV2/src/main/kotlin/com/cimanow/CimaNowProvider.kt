@@ -187,7 +187,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                         val attempt2 = extractHtmlFromWebView(view!!)
                         val doc2 = attempt2?.let { Jsoup.parse(it) }
                         val bodyLen2 = doc2?.body()?.html()?.length ?: 0
-                        val hasWatchUl = attempt2?.contains("ul#watch", ignoreCase = true) == true || attempt2?.contains("data-index", ignoreCase = true) == true
+                        val hasWatchUl = doc2?.select("ul#watch li[data-index], li[data-index]")?.isNotEmpty() == true
                         Log.d(TAG, "   renderHtmlInWebView: +3s extract body=${bodyLen2} chars, title='${doc2?.title()}', hasWatchUl=$hasWatchUl")
 
                         // Query the LIVE DOM inside WebView via JS to understand structure
@@ -281,8 +281,8 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                         val attempt3 = extractHtmlFromWebView(view!!)
                         val doc3 = attempt3?.let { Jsoup.parse(it) }
                         val bodyLen3 = doc3?.body()?.html()?.length ?: 0
-                        val hasWatchUl3 = attempt3?.contains("ul#watch", ignoreCase = true) == true || attempt3?.contains("data-index", ignoreCase = true) == true
-                        Log.d(TAG, "   renderHtmlInWebView: +7s extract body=${bodyLen3} chars, title='${doc3?.title()}', hasWatchUl=$hasWatchUl3")
+                        val hasWatchUl3 = doc3?.select("ul#watch li[data-index], li[data-index]")?.isNotEmpty() == true
+                        Log.d(TAG, "   renderHtmlInWebView: +7s extract body=${bodyLen3} chars, title='${doc3?.title()}', hasWatchUl3=$hasWatchUl3")
 
                         delivered = true
                         timeoutJob.cancel()
@@ -637,6 +637,33 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
         Log.w(TAG, "decodeHtml[$sourceLabel]: ALL strategies failed. rawHtml preview: ${rawHtml.take(500).replace('\n', ' ')}")
         return doc
+    }
+
+    /// Decode raw HTTP response body directly (bypasses Jsoup parsing).
+    /// The watch page returns ~3MB of JS-obfuscated HTML that Jsoup misparses.
+    /// This feeds the raw text directly to the decode strategies.
+    private fun decodeHtmlRaw(rawText: String, sourceLabel: String = "raw"): Document? {
+        Log.d(TAG, "decodeHtmlRaw[$sourceLabel]: raw text length=${rawText.length}")
+
+        // Strategy 1: _r key + base64 on raw text
+        val keyDecoded = decodeWithRKey(rawText, sourceLabel)
+        if (keyDecoded != null) {
+            val doc = Jsoup.parse(keyDecoded)
+            Log.i(TAG, "decodeHtmlRaw[$sourceLabel]: Strategy1 succeeded, decoded ${keyDecoded.length} chars, body=${doc.body()?.html()?.length ?: 0} chars")
+            return doc
+        }
+
+        // Strategy 2: Rhino on raw text
+        Log.d(TAG, "decodeHtmlRaw[$sourceLabel]: Strategy1 failed, trying Rhino...")
+        val rhinoDecoded = decodeWithRhino(rawText, sourceLabel)
+        if (rhinoDecoded != null) {
+            val doc = Jsoup.parse(rhinoDecoded)
+            Log.i(TAG, "decodeHtmlRaw[$sourceLabel]: Rhino succeeded, decoded ${rhinoDecoded.length} chars, body=${doc.body()?.html()?.length ?: 0} chars")
+            return doc
+        }
+
+        Log.w(TAG, "decodeHtmlRaw[$sourceLabel]: ALL strategies failed on raw text")
+        return null
     }
 
     /// Strategy 1: extract _r key + base64 data (current working approach)
@@ -1055,31 +1082,53 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                         Log.w(TAG, "   WARNING: CAPTCHA detected!")
                 }
 
-                val decodedDoc: Document = if (bodyEmpty) {
-                    Log.d(TAG, "   Body empty — rendering fetched JS HTML in WebView (loadDataWithBaseURL)...")
-                    val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
-                    if (rendered != null) {
-                        val renderedDoc = Jsoup.parse(rendered)
-                        val renderedTitle = renderedDoc.title()
-                        val renderedBodyLen = renderedDoc.body()?.html()?.length ?: 0
-                        Log.i(TAG, "   WebView rendered ${rendered.length} total chars, title='$renderedTitle', body=$renderedBodyLen chars")
-                        Log.d(TAG, "   Rendered body preview: ${(renderedDoc.body()?.html() ?: "").take(500).replace('\n', ' ')}")
-                        if (renderedBodyLen > 512 && renderedTitle.contains("مشهد محذوف", true)) {
-                            Log.w(TAG, "   BLOCK PAGE DETECTED in rendered output")
-                        }
-                        watchPageHtml = rendered
-                        renderedDoc
+                // Step 1: Try decoding the raw HTTP body directly (bypasses Jsoup)
+                // The watch page returns ~3MB of JS-obfuscated HTML; feeding raw text
+                // to the decode strategies often succeeds where Jsoup+WebView fails.
+                val decodedDoc: Document
+                Log.d(TAG, "   Trying decodeHtmlRaw on raw response body...")
+                val rawDecoded = decodeHtmlRaw(watchResp.text, "watchPage")
+                if (rawDecoded != null) {
+                    val serverEls = rawDecoded.select("ul#watch li[data-index]")
+                    val hasServers = serverEls.isNotEmpty()
+                    Log.i(TAG, "   decodeHtmlRaw result: body=${rawDecoded.body()?.html()?.length ?: 0} chars, servers=$hasServers (${serverEls.size})")
+                    if (hasServers) {
+                        decodedDoc = rawDecoded
+                        watchPageHtml = rawDecoded.body()?.html()
+                        Log.i(TAG, "   decodeHtmlRaw SUCCESS — server elements found directly!")
                     } else {
-                        Log.w(TAG, "   WebView rendering failed (null), decodeHtml fallback")
-                        val fallbackDoc = decodeHtml(watchDoc, "watchPage")
-                        watchPageHtml = fallbackDoc.body()?.html()
-                        fallbackDoc
+                        // Raw decode produced HTML but no servers — try WebView render as fallback
+                        Log.d(TAG, "   decodeHtmlRaw got body but no servers, trying WebView render...")
+                        val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
+                        if (rendered != null) {
+                            val rDoc = Jsoup.parse(rendered)
+                            val rServerEls = rDoc.select("ul#watch li[data-index]")
+                            if (rServerEls.isNotEmpty()) {
+                                decodedDoc = rDoc
+                                watchPageHtml = rendered
+                                Log.i(TAG, "   WebView render SUCCESS — server elements found!")
+                            } else {
+                                decodedDoc = rawDecoded
+                                watchPageHtml = rawDecoded.body()?.html()
+                                Log.w(TAG, "   WebView also has no servers, using raw decode result")
+                            }
+                        } else {
+                            decodedDoc = rawDecoded
+                            watchPageHtml = rawDecoded.body()?.html()
+                            Log.w(TAG, "   WebView render returned null, using raw decode result")
+                        }
                     }
                 } else {
-                    Log.d(TAG, "   Body has content — trying decodeHtml")
-                    val fallbackDoc = decodeHtml(watchDoc, "watchPage")
-                    watchPageHtml = fallbackDoc.body()?.html()
-                    fallbackDoc
+                    Log.d(TAG, "   decodeHtmlRaw returned null, trying WebView render...")
+                    val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
+                    if (rendered != null) {
+                        decodedDoc = Jsoup.parse(rendered)
+                        watchPageHtml = rendered
+                        Log.i(TAG, "   WebView rendered ${rendered.length} chars, title='${decodedDoc.title()}'")
+                    } else {
+                        Log.e(TAG, "   Both decodeHtmlRaw and WebView render failed")
+                        throw ErrorLoadingException("Failed to decode watch page")
+                    }
                 }
             }
 

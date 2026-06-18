@@ -11,8 +11,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-private const val TAG = "NavigationEngine"
-
 /**
  * Multi-step WebView navigation engine with trusted touch simulation.
  *
@@ -73,7 +71,7 @@ class NavigationEngine(
             val result = CompletableDeferred<NavigationResult>()
             var delivered = false
 
-            val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
+            val timeoutJob = launch {
                 delay(overallTimeoutMs)
                 if (!delivered) {
                     delivered = true
@@ -93,7 +91,6 @@ class NavigationEngine(
             try {
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, requestInterceptor)
-                setupConsoleLogging(webView)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -114,10 +111,16 @@ class NavigationEngine(
                                 val clicked = clickElementInWebView(webView, step.selector, step.timeoutMs)
                                 if (!clicked) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: ClickElement failed for selector: ${step.selector}")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "ClickElement failed: ${step.selector}"
+                                        break
+                                    }
                                 }
                             }
                             is NavigationStep.ClickCoordinates -> {
                                 dispatchNativeClick(webView, step.x, step.y)
+                                delay(150)
                             }
                             is NavigationStep.ExecuteJs -> {
                                 executeJsInWebView(webView, step.javascript)
@@ -127,12 +130,22 @@ class NavigationEngine(
                                 val found = waitForSelector(webView, step.selector, step.timeoutMs)
                                 if (!found) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: WaitForSelector timed out: ${step.selector}")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "WaitForSelector timed out: ${step.selector}"
+                                        break
+                                    }
                                 }
                             }
                             is NavigationStep.WaitForUrl -> {
                                 val found = waitForUrl(webView, step.urlPattern, step.timeoutMs)
                                 if (!found) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: WaitForUrl timed out: ${step.urlPattern}")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "WaitForUrl timed out: ${step.urlPattern}"
+                                        break
+                                    }
                                 }
                             }
                             is NavigationStep.WaitForDelay -> {
@@ -142,11 +155,16 @@ class NavigationEngine(
                                 val met = waitForDomCondition(webView, step.jsCondition, step.timeoutMs, step.pollIntervalMs)
                                 if (!met) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: WaitForDomCondition timed out")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "WaitForDomCondition timed out"
+                                        break
+                                    }
                                 }
                             }
                             is NavigationStep.ExtractHtml -> {
                                 val html = extractHtmlFromWebView(webView, step.selector)
-                                val key = step.selector ?: "body_${index}"
+                                val key = step.selector ?: "full_page_${index}"
                                 extractedHtml[key] = html ?: ""
                                 ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> ${html?.length ?: 0} chars")
                             }
@@ -294,10 +312,6 @@ class NavigationEngine(
         }
     }
 
-    private fun setupConsoleLogging(webView: WebView) {
-        // Already done in setupWebViewClient via webChromeClient
-    }
-
     private fun loadUrlInWebView(
         webView: WebView,
         url: String,
@@ -359,11 +373,10 @@ class NavigationEngine(
                 """.trimIndent()) { result ->
                     try {
                         if (result != null && result != "null" && result != "\"\"") {
-                            val cleaned = result.removeSurrounding("\"")
-                            if (cleaned.isNotBlank() && cleaned != "null") {
-                                val json = org.json.JSONObject(cleaned)
-                                val x = json.getDouble("x").toFloat()
-                                val y = json.getDouble("y").toFloat()
+                            val parsed = org.json.JSONTokener(result).nextValue()
+                            if (parsed is org.json.JSONObject) {
+                                val x = parsed.getDouble("x").toFloat()
+                                val y = parsed.getDouble("y").toFloat()
                                 if (cont.isActive) cont.resume(Pair(x, y)) {}
                                 return@evaluateJavascript
                             }

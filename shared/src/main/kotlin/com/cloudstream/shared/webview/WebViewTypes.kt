@@ -83,7 +83,8 @@ sealed class NavigationStep {
 
     data class ClickElement(
         val selector: String,
-        val timeoutMs: Long = 10_000L
+        val timeoutMs: Long = 10_000L,
+        val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
     data class ClickCoordinates(
@@ -97,12 +98,14 @@ sealed class NavigationStep {
 
     data class WaitForSelector(
         val selector: String,
-        val timeoutMs: Long = 10_000L
+        val timeoutMs: Long = 10_000L,
+        val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
     data class WaitForUrl(
         val urlPattern: String,
-        val timeoutMs: Long = 15_000L
+        val timeoutMs: Long = 15_000L,
+        val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
     data class WaitForDelay(
@@ -112,7 +115,8 @@ sealed class NavigationStep {
     data class WaitForDomCondition(
         val jsCondition: String,
         val timeoutMs: Long = 15_000L,
-        val pollIntervalMs: Long = 500L
+        val pollIntervalMs: Long = 500L,
+        val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
     data class ExtractHtml(
