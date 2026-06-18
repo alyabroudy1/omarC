@@ -38,15 +38,6 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     private val TAG = "CimaNowDebug"
     private val TAG_LOAD = "CimaNowLoadLinks"
 
-    /// Helper: logs full response metadata for every app.get/app.post call.
-    private fun logResponse(tag: String, label: String, resp: com.lagradost.cloudstream3.app.Response) {
-        Log.d(tag, "   [$label] HTTP ${resp.code} -> ${resp.url}")
-        Log.d(tag, "   [$label] Content-Type: ${resp.headers["content-type"] ?: resp.headers["Content-Type"] ?: "N/A"}")
-        Log.d(tag, "   [$label] Content-Length: ${resp.text.length} chars")
-        Log.d(tag, "   [$label] Cookies: ${resp.cookies.size}")
-        Log.d(tag, "   [$label] Response URL (after redirects): ${resp.url}")
-    }
-
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -188,7 +179,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         val q = query
         Log.d(TAG, "search: query=$q")
         val resp = app.get("$mainUrl/?s=$q", referer = mainUrl)
-        logResponse(TAG, "search", resp)
+        Log.d(TAG, "   [search] HTTP ${resp.code} -> ${resp.url}, body=${resp.text.length} chars, cookies=${resp.cookies.size}")
         val doc = resp.document
         val decodedDoc = decodeHtml(doc, "search")
         val results = decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
@@ -263,7 +254,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "load: url=$url")
         val detailResp = app.get(url, referer = mainUrl)
-        logResponse(TAG, "load", detailResp)
+        Log.d(TAG, "   [load] HTTP ${detailResp.code} -> ${detailResp.url}, body=${detailResp.text.length} chars, cookies=${detailResp.cookies.size}")
         val doc = detailResp.document
         val decodedDoc = decodeHtml(doc, "load")
 
@@ -314,7 +305,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                     async {
                         val (seasonResp, seasonDoc) = try {
                             val r = app.get(seasonElement.attr("href"), referer = url)
-                            logResponse(TAG, "season", r)
+                            Log.d(TAG, "   [season] HTTP ${r.code} -> ${r.url}, body=${r.text.length} chars, cookies=${r.cookies.size}")
                             Pair(r, r.document)
                         } catch (e: Exception) {
                             Log.w(TAG, "load: failed fetching season: ${e.message}")
@@ -385,7 +376,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         try {
             Log.i(TAG_LOAD, "[1/6] Fetching initial movie page...")
             val initialResp = app.get(data)
-            logResponse(TAG_LOAD, "initial movie page", initialResp)
+            Log.d(TAG_LOAD, "   [initial] HTTP ${initialResp.code} -> ${initialResp.url}, body=${initialResp.text.length} chars, cookies=${initialResp.cookies.size}")
             val moviePageDoc = initialResp.document
 
             // Log the page title and body length to check if we got a valid page
@@ -428,7 +419,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             Log.i(TAG, "[4/6] Fetching and decoding watch page...")
 
             val watchResp = app.get(finalCimaNowUrl, referer = data)
-            logResponse(TAG, "watch page", watchResp)
+            Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars, cookies=${watchResp.cookies.size}")
             val watchDoc = watchResp.document
             val watchBodyHtml = watchDoc.body()?.html() ?: ""
             val watchBodyText = watchDoc.body()?.text() ?: ""
@@ -588,7 +579,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             val iframeUrl = (playerDoc?.select("iframe")?.attr("src") ?: "").let { normalizeUrl(it, mainUrl) }
-            Log.d(TAG, "   Extracted iframe URL: $iframeUrl"))
+            Log.d(TAG, "   Extracted iframe URL: $iframeUrl")
 
             when {
                 serverName.contains("Cima Now", true) || serverName.contains("cima", true) -> {
