@@ -290,7 +290,15 @@ class CfBypassEngine(
                                     exitCondition.keys.all { key -> cookies.containsKey(key) }
                                 }
                                 is ExitCondition.VideoFound -> {
-                                    // CfBypassEngine does not handle VideoFound — always false
+                                    false
+                                }
+                                is ExitCondition.ElementsFound -> {
+                                    false
+                                }
+                                is ExitCondition.UrlMatches -> {
+                                    false
+                                }
+                                is ExitCondition.AfterDelay -> {
                                     false
                                 }
                             }

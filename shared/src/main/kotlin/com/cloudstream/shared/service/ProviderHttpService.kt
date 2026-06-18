@@ -22,6 +22,9 @@ import com.cloudstream.shared.util.WebConfig
 import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.NavigationEngine
+import com.cloudstream.shared.webview.NavigationResult
+import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
@@ -42,6 +45,7 @@ class ProviderHttpService private constructor(
     private val sessionStore: SessionStore,
     private val cfBypassEngine: CfBypassEngine,
     private val videoSnifferEngine: VideoSnifferEngine,
+    private val navigationEngine: NavigationEngine,
     private val domainManager: DomainManager,
     private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface,
@@ -301,6 +305,34 @@ class ProviderHttpService private constructor(
             }
             else -> emptyList()
         }
+    }
+
+    /**
+     * Execute a multi-step WebView navigation flow with trusted touch simulation.
+     *
+     * Simulates real user interactions (load URL, click elements, wait for
+     * conditions, extract HTML) with isTrusted=true touch events.
+     * Ideal for sites with anti-bot protection that requires real user flow.
+     *
+     * @param steps Ordered list of navigation steps to execute
+     * @param mode HEADLESS (no UI) or FULLSCREEN (visible dialog)
+     * @param overallTimeoutMs Maximum time for the entire flow
+     * @param requestInterceptor Optional interceptor for shouldInterceptRequest
+     * @return NavigationResult with cookies, extracted HTML, and step completion info
+     */
+    suspend fun navigateWithSteps(
+        steps: List<NavigationStep>,
+        mode: Mode = Mode.HEADLESS,
+        overallTimeoutMs: Long = 120_000L,
+        requestInterceptor: ((android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse?)? = null
+    ): NavigationResult {
+        return navigationEngine.execute(
+            steps = steps,
+            userAgent = sessionState.userAgent,
+            mode = mode,
+            overallTimeoutMs = overallTimeoutMs,
+            requestInterceptor = requestInterceptor
+        )
     }
 
     /**
@@ -889,9 +921,10 @@ class ProviderHttpService private constructor(
                 )
                 val cfBypassEngine = CfBypassEngine(activityProvider)
                 val videoSnifferEngine = VideoSnifferEngine(activityProvider)
+                val navigationEngine = NavigationEngine(activityProvider)
                 val chromiumFetcher = ChromiumFetcher(activityProvider)
                 
-                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, domainManager, cookieManager, parser, chromiumFetcher)
+                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, cookieManager, parser, chromiumFetcher)
             }
         }
     }

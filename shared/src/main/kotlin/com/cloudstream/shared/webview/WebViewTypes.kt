@@ -27,6 +27,15 @@ sealed class ExitCondition {
 
     /** Exit when video URLs are found */
     data class VideoFound(val minCount: Int = 1) : ExitCondition()
+
+    /** Exit when a CSS selector matches at least [minCount] elements */
+    data class ElementsFound(val selector: String, val minCount: Int = 1) : ExitCondition()
+
+    /** Exit when current URL matches [urlPattern] regex */
+    data class UrlMatches(val urlPattern: String) : ExitCondition()
+
+    /** Exit after a fixed delay from page load */
+    data class AfterDelay(val delayMs: Long) : ExitCondition()
 }
 
 /**
@@ -60,4 +69,66 @@ data class CapturedLinkData(
     val url: String,
     val qualityLabel: String,
     val headers: Map<String, String>
+)
+
+/**
+ * A single step in a multi-step WebView navigation flow.
+ */
+sealed class NavigationStep {
+    data class LoadUrl(
+        val url: String,
+        val referer: String? = null,
+        val extraHeaders: Map<String, String> = emptyMap()
+    ) : NavigationStep()
+
+    data class ClickElement(
+        val selector: String,
+        val timeoutMs: Long = 10_000L
+    ) : NavigationStep()
+
+    data class ClickCoordinates(
+        val x: Float,
+        val y: Float
+    ) : NavigationStep()
+
+    data class ExecuteJs(
+        val javascript: String
+    ) : NavigationStep()
+
+    data class WaitForSelector(
+        val selector: String,
+        val timeoutMs: Long = 10_000L
+    ) : NavigationStep()
+
+    data class WaitForUrl(
+        val urlPattern: String,
+        val timeoutMs: Long = 15_000L
+    ) : NavigationStep()
+
+    data class WaitForDelay(
+        val delayMs: Long
+    ) : NavigationStep()
+
+    data class WaitForDomCondition(
+        val jsCondition: String,
+        val timeoutMs: Long = 15_000L,
+        val pollIntervalMs: Long = 500L
+    ) : NavigationStep()
+
+    data class ExtractHtml(
+        val selector: String? = null
+    ) : NavigationStep()
+}
+
+/**
+ * Result of a multi-step navigation flow.
+ */
+data class NavigationResult(
+    val success: Boolean,
+    val finalUrl: String,
+    val cookies: Map<String, String>,
+    val extractedHtml: Map<String, String>,
+    val completedSteps: Int,
+    val failedAtStep: Int? = null,
+    val error: String? = null
 )

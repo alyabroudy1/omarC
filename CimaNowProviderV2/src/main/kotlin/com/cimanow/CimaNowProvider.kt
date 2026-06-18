@@ -8,6 +8,10 @@ import android.util.Base64
 import android.webkit.*
 import android.widget.Toast
 import com.cloudstream.shared.android.ActivityProvider
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.NavigationEngine
+import com.cloudstream.shared.webview.NavigationResult
+import com.cloudstream.shared.webview.NavigationStep
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -93,7 +97,29 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 setAcceptThirdPartyCookies(webView, true)
             }
 
+            // Sync app.get() session cookies into WebView CookieManager
+            // so the page JS's document.cookie reads include them
+            try {
+                val initialCookies = CookieManager.getInstance().getCookie(baseUrl)
+                Log.d(TAG, "   Initial CookieManager cookies for baseUrl: ${initialCookies?.take(80) ?: "none"}")
+            } catch (_: Exception) {}
+
             webView.webViewClient = object : WebViewClient() {
+                private fun syncCookiesToWebView(reqUrl: String, cookies: Map<String, String>) {
+                    try {
+                        if (cookies.isEmpty()) return
+                        val domain = try { java.net.URI(reqUrl).host } catch (_: Exception) { null }
+                        val cookieDomain = if (domain != null) "domain=$domain" else ""
+                        for ((key, value) in cookies) {
+                            if (key.isNotBlank() && value.isNotBlank()) {
+                                CookieManager.getInstance().setCookie(reqUrl, "$key=$value; path=/; $cookieDomain; secure")
+                            }
+                        }
+                        CookieManager.getInstance().flush()
+                        Log.d(TAG, "   [WV] synced ${cookies.size} cookies from app.get to WebView CookieManager for ${reqUrl.take(60)}")
+                    } catch (_: Exception) {}
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
@@ -109,14 +135,24 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                     }
 
                     try {
+                        val wvCookies = CookieManager.getInstance().getCookie(reqUrl)
+                        val cookieHeaders = if (!wvCookies.isNullOrBlank()) {
+                            mapOf("Cookie" to wvCookies)
+                        } else emptyMap()
+                        Log.d(TAG, "   [WV:${interceptedCount}] proxy ${reqUrl.take(80)} wvCookies=${wvCookies?.take(60) ?: "none"}")
+
                         val proxyResp = runBlocking {
-                            app.get(reqUrl, referer = baseUrl)
+                            app.get(reqUrl, referer = baseUrl, headers = cookieHeaders)
                         }
                         if (proxyResp.code !in 200..399) {
                             Log.w(TAG, "   [WV:${interceptedCount}] proxy ${reqUrl.take(80)} failed HTTP ${proxyResp.code}")
                             return null
                         }
                         proxySuccessCount++
+
+                        // Sync cookies from app.get response back to WebView CookieManager
+                        syncCookiesToWebView(reqUrl, proxyResp.cookies)
+
                         val mime = when {
                             reqUrl.contains(".js") -> "application/javascript"
                             reqUrl.contains(".css") -> "text/css"
@@ -374,6 +410,155 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    private val navigationEngine by lazy {
+        NavigationEngine { ActivityProvider.currentActivity }
+    }
+
+    /**
+     * Use the NavigationEngine to simulate a full user flow through the site.
+     *
+     * Flow:
+     *   1. Load movie detail page in WebView (with proxy + spoofing)
+     *   2. Click the "Watch" button (trusted touch) → navigates to freex2line
+     *   3. Wait for freex2line page to load and 10s timer to complete
+     *   4. Click the enabled button on freex2line → navigates to watch page
+     *   5. Wait for server list elements to appear in the watch page
+     *   6. Extract the DOM HTML
+     *
+     * This produces isTrusted=true touch events throughout, which anti-bot
+     * scripts cannot distinguish from real user input.
+     *
+     * @param moviePageUrl The original movie page URL
+     * @param intermediateLink The freex2line URL to click through
+     * @return NavigationResult with extracted watch page HTML, or null on failure
+     */
+    private suspend fun navigateToWatchPageViaUserFlow(
+        moviePageUrl: String,
+        intermediateLink: String
+    ): NavigationResult? {
+        Log.i(TAG, "navigateToWatchPageViaUserFlow: Starting WebView user flow...")
+        Log.d(TAG, "  moviePageUrl=$moviePageUrl")
+        Log.d(TAG, "  intermediateLink=$intermediateLink")
+
+        try {
+            // Create proxy interceptor for cimanow.cc resources
+            // Using anonymous function to allow plain `return null` for early exits
+            val proxyInterceptor: (android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse? =
+                fun(_, req): android.webkit.WebResourceResponse? {
+                    val reqUrl = req.url?.toString() ?: return null
+                    val scheme = req.url?.scheme?.lowercase()
+                    if (scheme != "http" && scheme != "https") return null
+                    if (!reqUrl.contains("cimanow.cc", ignoreCase = true)) return null
+
+                    return try {
+                        val wvCookies = CookieManager.getInstance().getCookie(reqUrl)
+                        val cookieHeaders = if (!wvCookies.isNullOrBlank()) {
+                            mapOf("Cookie" to wvCookies)
+                        } else emptyMap()
+
+                        val proxyResp = runBlocking {
+                            app.get(reqUrl, referer = moviePageUrl, headers = cookieHeaders)
+                        }
+                        if (proxyResp.code !in 200..399) null else {
+                            val domain = try { java.net.URI(reqUrl).host } catch (_: Exception) { null }
+                            val cookieDomain = if (domain != null) "domain=$domain" else ""
+                            for ((key, value) in proxyResp.cookies) {
+                                CookieManager.getInstance().setCookie(reqUrl, "$key=$value; path=/; $cookieDomain; secure")
+                            }
+                            if (proxyResp.cookies.isNotEmpty()) CookieManager.getInstance().flush()
+
+                            val mime = when {
+                                reqUrl.contains(".js") -> "application/javascript"
+                                reqUrl.contains(".css") -> "text/css"
+                                reqUrl.contains(".png") -> "image/png"
+                                reqUrl.contains(".jpg") || reqUrl.contains(".jpeg") -> "image/jpeg"
+                                reqUrl.contains(".svg") -> "image/svg+xml"
+                                reqUrl.contains(".woff2") || reqUrl.contains(".woff") -> "font/woff2"
+                                reqUrl.contains(".json") -> "application/json"
+                                else -> "text/html"
+                            }
+                            android.webkit.WebResourceResponse(mime, "UTF-8", proxyResp.text.byteInputStream())
+                        }
+                    } catch (_: Exception) { null }
+                }
+
+            val steps = listOf(
+                // Step 0: Load the movie detail page
+                NavigationStep.LoadUrl(moviePageUrl),
+
+                // Step 1: Wait for the freex2line button to appear
+                NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 15_000L),
+
+                // Step 2: Click the freex2line link with trusted touch
+                NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L),
+
+                // Step 3: Wait for navigation to freex2line domain
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15_000L),
+
+                // Step 4: Wait for the 10-second timer to complete on freex2line
+                // The freex2line page activates a button after the timer.
+                // Try common selectors for the continue/watch button
+                NavigationStep.WaitForDelay(13_000L),
+
+                // Step 5: Try to click the enabled button on freex2line
+                // Use JS to find the right button, then click via coordinates
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = """
+                        document.querySelector('a[href*="get-link"], button:not([disabled]), a.continue-btn, #download-btn, #watch-btn') !== null
+                        || document.querySelectorAll('a:not([disabled])').length > 0
+                    """.trimIndent(),
+                    timeoutMs = 10_000L,
+                    pollIntervalMs = 1000L
+                ),
+            )
+
+            val result = navigationEngine.execute(
+                steps = steps,
+                userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                mode = Mode.HEADLESS,
+                overallTimeoutMs = 90_000L,
+                requestInterceptor = proxyInterceptor
+            )
+
+            if (!result.success) {
+                Log.w(TAG, "navigateToWatchPageViaUserFlow: Navigation flow failed at step ${result.failedAtStep}: ${result.error}")
+                // Still try to extract HTML from the final page if we got anywhere
+                if (result.extractedHtml.isNotEmpty() || result.finalUrl.contains("watching", ignoreCase = true)) {
+                    return result
+                }
+                return null
+            }
+
+            Log.i(TAG, "navigateToWatchPageViaUserFlow: Flow completed successfully. finalUrl=${result.finalUrl.take(100)}, steps=${result.completedSteps}")
+            Log.d(TAG, "  cookies: ${result.cookies.size}, extracted keys: ${result.extractedHtml.keys}")
+            for ((key, html) in result.extractedHtml) {
+                Log.d(TAG, "  extracted[$key]: ${html.length} chars")
+            }
+
+            // If we made it to the watch page, try to wait for server elements and extract
+            if (result.finalUrl.contains("watching", ignoreCase = true)) {
+                val extraSteps = listOf(
+                    NavigationStep.WaitForSelector("#watch li[data-index], li[data-index], [data-index]", timeoutMs = 10_000L),
+                    NavigationStep.ExtractHtml()
+                )
+                val extraResult = navigationEngine.execute(
+                    steps = extraSteps,
+                    userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                    mode = Mode.HEADLESS,
+                    overallTimeoutMs = 20_000L,
+                    requestInterceptor = proxyInterceptor
+                )
+                return extraResult
+            }
+
+            return result
+
+        } catch (e: Exception) {
+            Log.e(TAG, "navigateToWatchPageViaUserFlow: Exception: ${e.message}")
+            return null
+        }
     }
 
     private val TAG = "CimaNowDebug"
@@ -821,56 +1006,86 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
-            Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
+            Log.i(TAG, "[3/6] Attempting NavigationEngine user-flow first...")
 
-            // Bypass the freex2line JS challenge to get the real watch page URL
-            val finalCimaNowUrl = resolveFreex2line(intermediateLink, context)
-                ?: run {
-                    Log.e(TAG, "   CRITICAL: resolveFreex2line returned null.")
-                    throw ErrorLoadingException("Failed to bypass shortlink.")
-                }
+            // Try the full user-flow simulation via NavigationEngine
+            var watchPageHtml: String? = null
+            var watchPageUrl = ""
+            var flowFromNavEngine = false
 
-            Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
-            Log.i(TAG, "[4/6] Fetching and decoding watch page...")
-
-            val watchResp = app.get(finalCimaNowUrl, referer = data)
-            Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars")
-            Log.d(TAG, "   [watchPage] Raw HTML preview: ${watchResp.text.take(300).replace('\n', ' ')}")
-            val watchDoc = watchResp.document
-            val bodyHtml = watchDoc.body()?.html() ?: ""
-            val bodyEmpty = bodyHtml.isBlank()
-            Log.d(TAG, "   Watch page body HTML length: ${bodyHtml.length} chars, empty=$bodyEmpty")
-
-            // Check for block pages
-            when {
-                bodyHtml.contains("ubiquiti", true) || bodyHtml.contains("UniFi", true) ->
-                    Log.w(TAG, "   WARNING: UniFi block page!")
-                bodyHtml.contains("cloudflare", true) ->
-                    Log.w(TAG, "   WARNING: Cloudflare challenge!")
-                bodyHtml.contains("captcha", true) ->
-                    Log.w(TAG, "   WARNING: CAPTCHA detected!")
+            ActivityProvider.initCompat(context)
+            val navResult = navigateToWatchPageViaUserFlow(data, intermediateLink)
+            if (navResult != null && navResult.success && navResult.finalUrl.contains("watching", ignoreCase = true)) {
+                watchPageHtml = navResult.extractedHtml.values.firstOrNull { it.contains("data-index") }
+                    ?: navResult.extractedHtml.values.firstOrNull()
+                watchPageUrl = navResult.finalUrl
+                flowFromNavEngine = true
+                Log.i(TAG, "   NavigationEngine user-flow SUCCEEDED! finalUrl=${watchPageUrl.take(80)}, extracted=${watchPageHtml?.length ?: 0} chars")
+            } else {
+                Log.w(TAG, "   NavigationEngine user-flow failed (${navResult?.error ?: "null result"}), falling back to resolveFreex2line+WebView...")
             }
 
-            val decodedDoc: Document = if (bodyEmpty) {
-                Log.d(TAG, "   Body empty — rendering fetched JS HTML in WebView (loadDataWithBaseURL)...")
-                val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
-                if (rendered != null) {
-                    val renderedDoc = Jsoup.parse(rendered)
-                    val renderedTitle = renderedDoc.title()
-                    val renderedBodyLen = renderedDoc.body()?.html()?.length ?: 0
-                    Log.i(TAG, "   WebView rendered ${rendered.length} total chars, title='$renderedTitle', body=$renderedBodyLen chars")
-                    Log.d(TAG, "   Rendered body preview: ${(renderedDoc.body()?.html() ?: "").take(500).replace('\n', ' ')}")
-                    if (renderedBodyLen > 512 && renderedTitle.contains("مشهد محذوف", true)) {
-                        Log.w(TAG, "   BLOCK PAGE DETECTED in rendered output")
+            if (!flowFromNavEngine) {
+                Log.i(TAG, "[3b/6] Falling back to resolveFreex2line + HTTP fetch + WebView render...")
+                val finalCimaNowUrl = resolveFreex2line(intermediateLink, context)
+                    ?: run {
+                        Log.e(TAG, "   CRITICAL: resolveFreex2line returned null.")
+                        throw ErrorLoadingException("Failed to bypass shortlink.")
                     }
-                    renderedDoc
-                } else {
-                    Log.w(TAG, "   WebView rendering failed (null), decodeHtml fallback")
-                    decodeHtml(watchDoc, "watchPage")
+                watchPageUrl = finalCimaNowUrl
+
+                Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
+                Log.i(TAG, "[4/6] Fetching and decoding watch page...")
+
+                val watchResp = app.get(finalCimaNowUrl, referer = data)
+                Log.d(TAG, "   [watchPage] HTTP ${watchResp.code} -> ${watchResp.url}, body=${watchResp.text.length} chars")
+                Log.d(TAG, "   [watchPage] Raw HTML preview: ${watchResp.text.take(300).replace('\n', ' ')}")
+                val watchDoc = watchResp.document
+                val bodyHtml = watchDoc.body()?.html() ?: ""
+                val bodyEmpty = bodyHtml.isBlank()
+                Log.d(TAG, "   Watch page body HTML length: ${bodyHtml.length} chars, empty=$bodyEmpty")
+
+                // Check for block pages
+                when {
+                    bodyHtml.contains("ubiquiti", true) || bodyHtml.contains("UniFi", true) ->
+                        Log.w(TAG, "   WARNING: UniFi block page!")
+                    bodyHtml.contains("cloudflare", true) ->
+                        Log.w(TAG, "   WARNING: Cloudflare challenge!")
+                    bodyHtml.contains("captcha", true) ->
+                        Log.w(TAG, "   WARNING: CAPTCHA detected!")
                 }
-            } else {
-                Log.d(TAG, "   Body has content — trying decodeHtml")
-                decodeHtml(watchDoc, "watchPage")
+
+                val decodedDoc: Document = if (bodyEmpty) {
+                    Log.d(TAG, "   Body empty — rendering fetched JS HTML in WebView (loadDataWithBaseURL)...")
+                    val rendered = renderHtmlInWebView(watchResp.text, finalCimaNowUrl)
+                    if (rendered != null) {
+                        val renderedDoc = Jsoup.parse(rendered)
+                        val renderedTitle = renderedDoc.title()
+                        val renderedBodyLen = renderedDoc.body()?.html()?.length ?: 0
+                        Log.i(TAG, "   WebView rendered ${rendered.length} total chars, title='$renderedTitle', body=$renderedBodyLen chars")
+                        Log.d(TAG, "   Rendered body preview: ${(renderedDoc.body()?.html() ?: "").take(500).replace('\n', ' ')}")
+                        if (renderedBodyLen > 512 && renderedTitle.contains("مشهد محذوف", true)) {
+                            Log.w(TAG, "   BLOCK PAGE DETECTED in rendered output")
+                        }
+                        watchPageHtml = rendered
+                        renderedDoc
+                    } else {
+                        Log.w(TAG, "   WebView rendering failed (null), decodeHtml fallback")
+                        val fallbackDoc = decodeHtml(watchDoc, "watchPage")
+                        watchPageHtml = fallbackDoc.body()?.html()
+                        fallbackDoc
+                    }
+                } else {
+                    Log.d(TAG, "   Body has content — trying decodeHtml")
+                    val fallbackDoc = decodeHtml(watchDoc, "watchPage")
+                    watchPageHtml = fallbackDoc.body()?.html()
+                    fallbackDoc
+                }
+            }
+
+            val decodedDoc = if (watchPageHtml != null) Jsoup.parse(watchPageHtml) else {
+                Log.e(TAG, "   No watch page HTML available")
+                throw ErrorLoadingException("Failed to decode watch page")
             }
 
             // Log the full body HTML of the decoded doc for server element debugging
@@ -916,7 +1131,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 coroutineScope {
                     serverElements.map { serverElement ->
                         async {
-                            processServerElement(serverElement, finalCimaNowUrl, subtitleCallback, callback)
+                            processServerElement(serverElement, watchPageUrl, subtitleCallback, callback)
                         }
                     }.awaitAll()
                 }
@@ -941,10 +1156,10 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 Log.d(TAG, "     Download: href='${a.attr("href").take(80)}' text='${a.text().take(60)}'")
             }
 
-            coroutineScope {
+                coroutineScope {
                 downloadLinks.map { aTag ->
                     async {
-                        processDownloadLink(aTag, finalCimaNowUrl, subtitleCallback, callback)
+                        processDownloadLink(aTag, watchPageUrl, subtitleCallback, callback)
                     }
                 }.awaitAll()
             }

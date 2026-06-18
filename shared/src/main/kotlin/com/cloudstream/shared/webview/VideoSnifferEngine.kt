@@ -601,8 +601,11 @@ class VideoSnifferEngine(
                                     val count = capturedLinks.size
                                     if (count >= exitCondition.minCount) true else false
                                 }
-                                is ExitCondition.PageLoaded -> false // Not handled by this engine
-                                is ExitCondition.CookiesPresent -> false // Not handled by this engine
+                                is ExitCondition.PageLoaded -> false
+                                is ExitCondition.CookiesPresent -> false
+                                is ExitCondition.ElementsFound -> false
+                                is ExitCondition.UrlMatches -> false
+                                is ExitCondition.AfterDelay -> false
                             }
 
                             if (shouldExit) {
