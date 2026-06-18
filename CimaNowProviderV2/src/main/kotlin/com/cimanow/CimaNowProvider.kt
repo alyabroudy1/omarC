@@ -92,28 +92,39 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         }
     }
 
-    private fun decodeHtml(doc: Document, sourceLabel: String = "unknown"): Document {
+    private fun decodeHtml(doc: Document, sourceLabel: String = "unknown", rawResponseText: String? = null): Document {
+        val rawHtml = doc.outerHtml()
+        val rawLen = rawHtml.length
+        val rawTitle = doc.title()
+        val bodyEmpty = doc.body()?.html()?.isBlank() != false
+
+        Log.d(TAG, "decodeHtml[$sourceLabel]: doc.title=\"$rawTitle\", outerHtml.length=$rawLen, bodyEmpty=$bodyEmpty")
+
+        // Try Strategy 1: _r key + base64
+        var decoded = decodeWithRKey(rawHtml, sourceLabel)
+        if (decoded != null) return Jsoup.parse(decoded)
+
+        // Try Strategy 2: extract base64 data even without _r key, look for alternative keys
+        Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy 1 failed, trying Strategy 2 (script extraction)...")
+        val scriptDecoded = decodeWithRhino(rawHtml, sourceLabel)
+        if (scriptDecoded != null) return Jsoup.parse(scriptDecoded)
+
+        Log.w(TAG, "decodeHtml[$sourceLabel]: ALL strategies failed. rawHtml preview: ${rawHtml.take(500).replace('\n', ' ')}")
+        return doc
+    }
+
+    /// Strategy 1: extract _r key + base64 data (current working approach)
+    private fun decodeWithRKey(rawHtml: String, sourceLabel: String): String? {
         try {
-            val rawHtml = doc.outerHtml()
-            val rawLen = rawHtml.length
-            val rawTitle = doc.title()
-
-            Log.d(TAG, "decodeHtml[$sourceLabel]: doc.title=\"$rawTitle\", outerHtml.length=$rawLen")
-
-            // Extract the dynamic numeric key from `var _r = 36938+36939+36938` (can be sum of multiple numbers)
             val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+(?:\\+\\d+)*)").matcher(rawHtml)
             if (!keyMatcher.find()) {
-                Log.w(TAG, "decodeHtml[$sourceLabel]: no _r key found (title=\"$rawTitle\", len=$rawLen)")
-                // Log first 500 chars so we can see what the page actually contains
-                val preview = rawHtml.take(500).replace('\n', ' ').replace('\r', ' ')
-                Log.d(TAG, "decodeHtml[$sourceLabel]: rawHtml preview: $preview")
-                return doc
+                Log.w(TAG, "decodeHtml[$sourceLabel]: no _r key found")
+                return null
             }
-            val keyExpr = keyMatcher.group(1)
+            val keyExpr = keyMatcher.group(1) ?: return null
             val dynamicKey = keyExpr.split("+").sumOf { it.toLong() }
-            Log.d(TAG, "decodeHtml[$sourceLabel]: _r expression='$keyExpr' => key=$dynamicKey")
+            Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy1 _r expression='$keyExpr' => key=$dynamicKey")
 
-            // Collect all base64-like strings (20+ chars inside quotes)
             val dataMatcher = Pattern.compile("['\"]([A-Za-z0-9+/=~]{20,})['\"]").matcher(rawHtml)
             val extractedData = StringBuilder(100000)
             while (dataMatcher.find()) {
@@ -121,26 +132,15 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
             val extractedLen = extractedData.length
             if (extractedData.isEmpty()) {
-                Log.w(TAG, "decodeHtml[$sourceLabel]: no base64 data found (key=$dynamicKey)")
-                return doc
+                Log.w(TAG, "decodeHtml[$sourceLabel]: Strategy1 no base64 data found")
+                return null
             }
-            Log.d(TAG, "decodeHtml[$sourceLabel]: extracted ${extractedLen} chars of base64 data")
+            Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy1 extracted ${extractedLen} chars, ${extractedData.count { it == '~' }} chunks")
 
-            // Inspect: count '~' separators to gauge number of encoded chunks
-            val tildeCount = extractedData.count { it == '~' }
-            Log.d(TAG, "decodeHtml[$sourceLabel]: $tildeCount ~-separated chunks in extracted data")
-
-            // Log the first 200 chars of extracted data for debugging
-            val dataPreview = extractedData.substring(0, minOf(200, extractedLen))
-            Log.d(TAG, "decodeHtml[$sourceLabel]: extracted data preview: $dataPreview")
-
-            // Process each ~-separated chunk
             val out = ByteArrayOutputStream(extractedLen / 4)
             val chunk = StringBuilder(64)
-            val len = extractedLen
             var decodedCount = 0
-
-            for (i in 0 until len) {
+            for (i in 0 until extractedLen) {
                 val c = extractedData[i]
                 when {
                     c == '~' -> {
@@ -154,23 +154,97 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                     }
                 }
             }
-            if (chunk.isNotEmpty()) {
-                decodedCount += decodeAndWriteFast(chunk, dynamicKey, out)
-            }
-
-            Log.d(TAG, "decodeHtml[$sourceLabel]: decodeAndWriteFast succeeded for $decodedCount chunks")
+            if (chunk.isNotEmpty()) decodedCount += decodeAndWriteFast(chunk, dynamicKey, out)
+            Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy1 decoded $decodedCount chunks")
 
             val decoded = out.toString("UTF-8")
             if (decoded.isBlank()) {
-                Log.w(TAG, "decodeHtml[$sourceLabel]: decoded output is BLANK ($decodedCount chunks processed)")
-                return doc
+                Log.w(TAG, "decodeHtml[$sourceLabel]: Strategy1 decoded output BLANK")
+                return null
             }
-            Log.d(TAG, "decodeHtml[$sourceLabel]: decoded ${decoded.length} chars. Preview: ${decoded.take(300).replace('\n', ' ')}")
-            return Jsoup.parse(decoded)
+            Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy1 decoded ${decoded.length} chars. Preview: ${decoded.take(300).replace('\n', ' ')}")
+            return decoded
         } catch (e: Exception) {
-            Log.e(TAG, "decodeHtml[$sourceLabel] error: ${e.message}")
+            Log.e(TAG, "decodeHtml[$sourceLabel] Strategy1 error: ${e.message}")
         }
-        return doc
+        return null
+    }
+
+    /// Strategy 2: extract <script> content and evaluate via Rhino with document.write polyfill
+    private fun decodeWithRhino(rawHtml: String, sourceLabel: String): String? {
+        try {
+            // Extract script content - look for type="text/javascript" or language="Javascript"
+            val scriptRegex = Regex(
+                """<script(?:\s+[^>]*)?>\s*(function\s*\([\s\S]*?)\s*</script>""",
+                RegexOption.IGNORE_CASE
+            )
+            val scriptMatch = scriptRegex.find(rawHtml)
+            if (scriptMatch == null) {
+                Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy2 no function-based script found")
+                return null
+            }
+
+            var jsCode = scriptMatch.groupValues[1]
+            Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy2 extracted script length: ${jsCode.length}")
+
+            if (jsCode.length < 100) {
+                Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy2 script too short, skipping")
+                return null
+            }
+
+            // Set up Rhino with polyfills for atob and document.write
+            val rhino = org.mozilla.javascript.Context.enter()
+            try {
+                rhino.optimizationLevel = -1
+                val scope = rhino.initSafeStandardObjects()
+
+                // Polyfill: document object with write/open/close
+                val polyfill = """
+                    var document = {
+                        written: "",
+                        open: function() {},
+                        write: function(str) { this.written += str; },
+                        close: function() {},
+                        writeln: function(str) { this.written += str + "\n"; }
+                    };
+                    var window = this;
+                    var navigator = { userAgent: "Mozilla/5.0" };
+                    var location = { href: "", hostname: "" };
+                    var _0x3f2a = '';
+                    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+                    function atob(input) {
+                        var str = String(input).replace(/=+$/, '');
+                        var output = '';
+                        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+                            buffer = chars.indexOf(buffer);
+                        }
+                        return output;
+                    }
+                """.trimIndent()
+
+                jsCode = "$polyfill\n$jsCode"
+                rhino.evaluateString(scope, jsCode, "JavaScript", 1, null)
+
+                val documentObj = scope.get("document", scope)
+                if (documentObj is org.mozilla.javascript.NativeObject) {
+                    val written = documentObj.get("written", documentObj)?.toString() ?: ""
+                    if (written.isNotBlank()) {
+                        Log.d(TAG, "decodeHtml[$sourceLabel]: Strategy2 Rhino decoded ${written.length} chars. Preview: ${written.take(300).replace('\n', ' ')}")
+                        return written
+                    }
+                    Log.w(TAG, "decodeHtml[$sourceLabel]: Strategy2 Rhino document.written is blank")
+                } else {
+                    Log.w(TAG, "decodeHtml[$sourceLabel]: Strategy2 document is not NativeObject: ${documentObj?.javaClass?.name}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "decodeHtml[$sourceLabel]: Strategy2 Rhino eval failed: ${e.message}")
+            } finally {
+                org.mozilla.javascript.Context.exit()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "decodeHtml[$sourceLabel] Strategy2 error: ${e.message}")
+        }
+        return null
     }
 
     // ==================== search ====================
