@@ -363,13 +363,20 @@ class SnifferExtractor : ExtractorApi() {
                     
                     val finalHeaders = mutableMapOf<String, String>()
                     finalHeaders.putAll(filteredHeaders)
-                    finalHeaders["Referer"] = originReferer
+                    // Preserve original Origin/Referer from the intercepted request if present.
+                    // Some CDNs (e.g. Cloudflare-protected) require the exact origin from the
+                    // page that made the request, not a fallback derived from the embed URL.
+                    if (!finalHeaders.containsKey("Origin")) {
+                        finalHeaders["Origin"] = extractOrigin(embedUrl)
+                    }
+                    if (!finalHeaders.containsKey("Referer")) {
+                        finalHeaders["Referer"] = originReferer
+                    }
                     finalHeaders["User-Agent"] = snifferUserAgent
                     if (!cookieHeader.isNullOrBlank()) {
                         finalHeaders["Cookie"] = cookieHeader
                     }
                     finalHeaders["Accept"] = "*/*"
-                    finalHeaders["Origin"] = extractOrigin(embedUrl)
                     // Dynamic sec-ch-ua matching the real WebView Chrome version
                     finalHeaders["sec-ch-ua"] = com.cloudstream.shared.util.WebConfig.buildSecChUa(snifferUserAgent)
                     finalHeaders["sec-ch-ua-mobile"] = "?1"
