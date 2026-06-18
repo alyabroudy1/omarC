@@ -154,6 +154,82 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                         val hasWatchUl = attempt2?.contains("ul#watch", ignoreCase = true) == true || attempt2?.contains("data-index", ignoreCase = true) == true
                         Log.d(TAG, "   renderHtmlInWebView: +3s extract body=${bodyLen2} chars, title='${doc2?.title()}', hasWatchUl=$hasWatchUl")
 
+                        // Query the LIVE DOM inside WebView via JS to understand structure
+                        try {
+                            val jsResult = suspendCancellableCoroutine<String?> { c ->
+                                Handler(Looper.getMainLooper()).post {
+                                    view!!.evaluateJavascript("""
+                                        (function(){
+                                            var results = [];
+                                            // Find elements with data-index
+                                            var diEls = document.querySelectorAll('[data-index]');
+                                            results.push('DATA-INDEX_ELS:' + diEls.length);
+                                            for(var i=0;i<Math.min(diEls.length,10);i++){
+                                                var e=diEls[i];
+                                                results.push('  di['+i+']: tag='+e.tagName+' class='+e.className+' id='+e.id+' parent='+e.parentElement?.tagName+'#'+e.parentElement?.id+' data-index='+e.getAttribute('data-index')+' text='+e.textContent?.substring(0,60));
+                                            }
+                                            // Find elements with id=watch or class=watch
+                                            var watchEls = document.querySelectorAll('#watch, .watch, [id*=watch], [class*=watch]');
+                                            results.push('WATCH_ELS:' + watchEls.length);
+                                            for(var i=0;i<Math.min(watchEls.length,10);i++){
+                                                var e=watchEls[i];
+                                                results.push('  w['+i+']: tag='+e.tagName+' class='+e.className+' id='+e.id+' children='+e.children.length+' html='+e.innerHTML?.substring(0,200));
+                                            }
+                                            // Find elements with data-id
+                                            var didEls = document.querySelectorAll('[data-id]');
+                                            results.push('DATA-ID_ELS:' + didEls.length);
+                                            for(var i=0;i<Math.min(didEls.length,10);i++){
+                                                var e=didEls[i];
+                                                results.push('  did['+i+']: tag='+e.tagName+' class='+e.className+' id='+e.id+' data-id='+e.getAttribute('data-id')+' text='+e.textContent?.substring(0,60));
+                                            }
+                                            // Find all ul elements
+                                            var uls = document.querySelectorAll('ul');
+                                            results.push('UL_ELS:' + uls.length);
+                                            for(var i=0;i<Math.min(uls.length,20);i++){
+                                                var e=uls[i];
+                                                results.push('  ul['+i+']: id='+e.id+' class='+e.className+' li_count='+e.querySelectorAll('li').length);
+                                            }
+                                            return results.join('\\n');
+                                        })();
+                                    """.trimIndent()) { r ->
+                                        if (c.isActive) c.resume(r) {}
+                                    }
+                                }
+                            }
+                            if (jsResult != null && jsResult != "null") {
+                                val cleaned = try { org.json.JSONTokener(jsResult).nextValue().toString() } catch (_: Exception) { jsResult }
+                                Log.i(TAG, "   === LIVE DOM QUERY RESULTS ===\n$cleaned")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "   Live DOM query failed: ${e.message}")
+                        }
+
+                        // Log sections of HTML containing 'data-index' and 'watch'
+                        if (attempt2 != null) {
+                            val html2 = attempt2
+                            val diIdx = html2.indexOf("data-index", ignoreCase = true)
+                            if (diIdx >= 0) {
+                                val start = maxOf(0, diIdx - 300)
+                                val end = minOf(html2.length, diIdx + 500)
+                                Log.i(TAG, "   === HTML AROUND data-index ===\n${html2.substring(start, end)}")
+                            }
+                            val watchIdx = html2.indexOf("watch", ignoreCase = true)
+                            if (watchIdx >= 0) {
+                                val start2 = maxOf(0, watchIdx - 300)
+                                val end2 = minOf(html2.length, watchIdx + 500)
+                                Log.i(TAG, "   === HTML AROUND 'watch' ===\n${html2.substring(start2, end2)}")
+                            }
+                            // Also search for server-related keywords
+                            for (kw in listOf("server", "سيرفر", "watch-ul", "watchUl", "tab-")) {
+                                val kwIdx = html2.indexOf(kw, ignoreCase = true)
+                                if (kwIdx >= 0) {
+                                    val s = maxOf(0, kwIdx - 200)
+                                    val e2 = minOf(html2.length, kwIdx + 400)
+                                    Log.i(TAG, "   === HTML AROUND '$kw' ===\n${html2.substring(s, e2)}")
+                                }
+                            }
+                        }
+
                         if (attempt2 != null && bodyLen2 > 512 && hasWatchUl) {
                             delivered = true
                             timeoutJob.cancel()
