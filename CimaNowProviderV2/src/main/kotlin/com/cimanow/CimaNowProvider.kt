@@ -700,7 +700,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         // Debug trigger: search for "!test" to run standalone WebView test
         if (q.trim().startsWith("!test", ignoreCase = true)) {
             Log.i(TAG, "search: TEST TRIGGER DETECTED — returning mock entry")
-            return listOf(newMovieSearchResponse("🚀 WebView Test", "test://run", TvType.Movie) {
+            return listOf(newMovieSearchResponse("WebView Test", "https://test-cimanow.webview/run", TvType.Movie) {
                 this.posterUrl = "https://via.placeholder.com/200x300/1a1a2e/ffffff?text=TEST"
             })
         }
@@ -782,7 +782,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         Log.d(TAG, "load: url=$url")
 
         // Debug trigger for WebView test
-        if (url == "test://run") {
+        if (url.contains("test-cimanow.webview")) {
             Log.i(TAG, "load: TEST TRIGGER — returning mock LoadResponse")
             return newMovieLoadResponse("WebView Test", url, TvType.Movie, url) {
                 this.plot = "Standalone WebView test — mirrors demo app"
@@ -910,7 +910,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         Log.d(TAG_LOAD, "-> Data URL: $data")
 
         // Debug trigger: run standalone WebView test mirroring demo app
-        if (data == "test://run") {
+        if (data.contains("test-cimanow.webview")) {
             Log.i(TAG, "loadLinks: TEST TRIGGER — launching standalone WebView test...")
             try {
                 ActivityProvider.initCompat(context)
