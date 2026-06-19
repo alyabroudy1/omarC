@@ -237,14 +237,15 @@ class WebViewFlowHelper(
      *
      * Steps:
      *   0. Load the intermediate URL with referer
-     *   1. Wait for redirect to blog-post.html (loadon → href.li → redirectingfree → blog-post)
-     *   2. If stuck on redirectingfree, navigate directly to blog-post.html
-     *   3. Wait again for blog-post.html
-     *   4. Dismiss consent popup if present
-     *   5. Wait for a visible server link (post-consent, CF-safe extended poll)
-     *   6. Click server link (redirects through href.li → cimanow.cc/watching/)
-     *   7. Wait for watching page URL
-     *   8. Wait for server list elements on watching page
+     *   1. Wait for redirect to blog-post.html (CF-safe, polls JS through content swaps)
+     *   2. Dismiss consent popup if present
+     *   3. Wait for a visible server link (CF-safe extended poll)
+     *   4. Click server link (redirects through href.li → cimanow.cc/watching/)
+     *   5. Wait for watching page URL
+     *   6. Wait for server list elements on watching page
+     *
+     * If redirect gets stuck (e.g. on /redirectingfree/), steps 1-3 timeout
+     * and Phase 1 fails gracefully — caller falls through to resolveFreex2line.
      */
     private fun buildPhase1Steps(
         url: String,
@@ -252,39 +253,27 @@ class WebViewFlowHelper(
         config: FlowConfig
     ): List<NavigationStep> {
         return listOf(
-            // Step 0: Load the intermediate page with correct referer
             NavigationStep.LoadUrl(url, referer = referer),
-            // Step 1: Wait for redirect chain to reach blog-post.html
-            NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 30_000L, abortOnFailure = false),
-            // Step 2: If stuck on redirectingfree, try direct nav to blog-post
-            NavigationStep.ExecuteJs(
-                javascript = JS_REDIRECTINGFREE_RECOVERY,
-                key = "redirect_recovery"
+            NavigationStep.WaitForSelector(
+                selector = config.serverLinkSelector,
+                timeoutMs = config.initialWaitTimeoutMs
             ),
-            NavigationStep.WaitForDelay(5_000L),
-            // Step 3: Wait again for blog-post.html (after potential recovery nav)
-            NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 20_000L, abortOnFailure = false),
-            // Step 4: Dismiss consent popup
             NavigationStep.ExecuteJs(
                 javascript = JS_DISMISS_CONSENT,
                 key = "consent_dismissed"
             ),
             NavigationStep.WaitForDelay(config.consentDismissDelayMs),
-            // Step 5: Wait for a visible server link (CF-safe extended poll)
             NavigationStep.WaitForDomCondition(
                 jsCondition = JS_VISIBLE_SERVER_LINK_CONDITION
                     .replace("__SERVER_LINK_SELECTOR__", config.serverLinkSelector),
-                timeoutMs = config.initialWaitTimeoutMs,
+                timeoutMs = 10_000L,
                 pollIntervalMs = 500L
             ),
-            // Step 6: Click server link
             NavigationStep.ClickElement(
                 selector = config.serverLinkSelector,
                 timeoutMs = 5_000L
             ),
-            // Step 7: Wait for watching page URL
             NavigationStep.WaitForUrl("/watching/", timeoutMs = 30_000L),
-            // Step 8: Wait for server list elements on watching page
             NavigationStep.WaitForSelector(
                 selector = config.watchListSelector,
                 timeoutMs = 15_000L
@@ -536,29 +525,6 @@ return 'fetching_' + total + '_servers';
          * Uses text-matching to find and click close buttons (more reliable
          * than CSS selectors which change frequently).
          */
-        // ──────────────────────────────────────────────
-        //  REDIRECTINGFREE RECOVERY JS
-        // ──────────────────────────────────────────────
-
-        /**
-         * If the redirect chain gets stuck at /redirectingfree/,
-         * navigate directly to the blog-post.html URL.
-         */
-        val JS_REDIRECTINGFREE_RECOVERY = """
-            (function(){
-                var url = window.location.href || '';
-                if (url.indexOf('redirectingfree') !== -1 || url.indexOf('loadon') !== -1) {
-                    console.log('[WFH] Stuck on intermediate page, navigating to blog-post...');
-                    window.location.href = 'https://rm.freex2line.online/2020/02/blog-post.html/';
-                    return 'navigating_to_blog_post';
-                }
-                if (url.indexOf('blog-post') !== -1) {
-                    return 'already_on_blog_post';
-                }
-                return 'url:' + url;
-            })();
-        """.trimIndent()
-
         val JS_DISMISS_CONSENT = """
             (function(){
                 var closed = 0;
