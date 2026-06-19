@@ -34,7 +34,7 @@ class WebViewFlowHelper(
         val overallTimeoutMs: Long = 120_000L,
         val allowedDomains: List<String> = emptyList(),
         val destinationLockPatterns: List<String> = emptyList(),
-        val mode: Mode = Mode.HEADLESS
+        val mode: Mode = Mode.FULLSCREEN
     )
 
     data class ServerInfo(

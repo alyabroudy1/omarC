@@ -234,8 +234,8 @@ class NavigationEngine(
                 userAgentString = userAgent
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 mediaPlaybackRequiresUserGesture = true
-                blockNetworkImage = true
-                loadsImagesAutomatically = false
+                blockNetworkImage = false
+                loadsImagesAutomatically = true
                 @Suppress("DEPRECATION")
                 allowFileAccess = false
                 javaScriptCanOpenWindowsAutomatically = false
