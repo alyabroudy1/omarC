@@ -105,6 +105,7 @@ class NavigationEngine(
                     if (delivered) break
 
                     ProviderLogger.i(TAG, "execute", "Step $index: ${step.javaClass.simpleName}")
+                    val stepStartMs = SystemClock.uptimeMillis()
                     try {
                         when (step) {
                             is NavigationStep.LoadUrl -> {
@@ -178,7 +179,9 @@ class NavigationEngine(
                             }
                         }
                         completedSteps = index + 1
+                        val stepMs = SystemClock.uptimeMillis() - stepStartMs
                         currentUrl = getCurrentUrlFromWebView(webView) ?: currentUrl
+                        ProviderLogger.d(TAG, "execute", "Step $index done in ${stepMs}ms, currentUrl=${currentUrl.take(80)}")
                     } catch (e: Exception) {
                         ProviderLogger.e(TAG, "execute", "Step $index failed", e)
                         failedStep = index
@@ -260,21 +263,29 @@ class NavigationEngine(
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url != null) {
-                    ProviderLogger.d(TAG, "onPageStarted", url.take(80))
+                    ProviderLogger.i(TAG, "onPageStarted", "URL=${url}")
                     // Update destination lock state
                     if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
                         if (!isOnDestination) {
-                            ProviderLogger.i(TAG, "onPageStarted", "Destination lock engaged for URL matching pattern", "url" to url.take(80))
+                            ProviderLogger.i(TAG, "onPageStarted", "Destination lock engaged for URL matching pattern", "url" to url)
                         }
                         isOnDestination = true
                     }
                 }
+                view?.evaluateJavascript("(function(){ return document.title; })();", null)
                 view?.evaluateJavascript(SPOOFING_JS, null)
                 super.onPageStarted(view, url, favicon)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                ProviderLogger.d(TAG, "onPageFinished", (url ?: "").take(80))
+                ProviderLogger.i(TAG, "onPageFinished", "URL=${url}")
+                view?.evaluateJavascript("(function(){ return document.title; })();") { result ->
+                    val title = try { org.json.JSONTokener(result).nextValue().toString() } catch (_: Exception) { result }
+                    ProviderLogger.i(TAG, "onPageFinished", "title=$title")
+                }
+                view?.evaluateJavascript("(function(){ return document.body.innerHTML.length; })();") { result ->
+                    ProviderLogger.i(TAG, "onPageFinished", "bodyLength=$result")
+                }
             }
 
             override fun shouldInterceptRequest(
@@ -285,7 +296,9 @@ class NavigationEngine(
                 val reqUrl = request.url?.toString() ?: return null
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
-
+                if (reqUrl.contains(".js") || reqUrl.contains(".css") || reqUrl.contains(".png") || reqUrl.contains(".jpg")) {
+                    ProviderLogger.d(TAG, "shouldInterceptRequest", "PASS-THROUGH ${reqUrl.take(120)}")
+                }
                 if (requestInterceptor != null) {
                     return requestInterceptor.invoke(view, request)
                 }
@@ -300,24 +313,27 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != null && scheme != "http" && scheme != "https") return true
 
+                val isMainFrame = request?.isForMainFrame == true
+                val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+
                 // Destination lock: once on destination, block all main-frame nav away
-                if (request?.isForMainFrame == true && isOnDestination) {
-                    ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "Destination lock BLOCK nav away from target", "url" to nextUrl.take(80))
+                if (isMainFrame && isOnDestination) {
+                    ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK", "url" to nextUrl, "host" to nextHost)
                     return true
                 }
 
                 // Domain allowlist: if non-empty, only allow navigations to allowed domains
                 if (allowedDomains.isNotEmpty()) {
-                    val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
                     val allowed = allowedDomains.any { allowedDomain ->
                         nextHost == allowedDomain || nextHost.endsWith(".$allowedDomain")
                     }
                     if (!allowed) {
-                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "BLOCKED navigation to non-allowed domain", "url" to nextUrl.take(80), "host" to nextHost)
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DOMAIN BLOCK", "url" to nextUrl, "host" to nextHost, "allowed" to allowedDomains.joinToString(","))
                         return true
                     }
                 }
 
+                ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "ALLOWED", "url" to nextUrl.take(120), "host" to nextHost, "mainFrame" to isMainFrame.toString())
                 return false
             }
 
@@ -330,7 +346,7 @@ class NavigationEngine(
                     val desc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                         error?.description?.toString()
                     } else error?.toString()
-                    ProviderLogger.w(TAG, "onReceivedError", desc ?: "unknown", "url" to (request.url?.toString()?.take(80) ?: ""))
+                    ProviderLogger.w(TAG, "onReceivedError", desc ?: "unknown", "url" to (request.url?.toString()?.take(120) ?: ""))
                 }
             }
         }
@@ -360,6 +376,7 @@ class NavigationEngine(
         headers["X-Requested-With"] = ""
         if (referer != null) headers["Referer"] = referer
         headers.putAll(extraHeaders)
+        ProviderLogger.i(TAG, "loadUrl", "url=$url headers=${headers.entries.joinToString(",") { "${it.key}=${it.value.take(20)}" }}")
         webView.loadUrl(url, headers)
     }
 
@@ -405,11 +422,29 @@ class NavigationEngine(
                 webView.evaluateJavascript("""
                     (function() {
                         var el = document.querySelector('$safeSelector');
-                        if (el) { el.click(); return true; }
-                        return false;
+                        if (!el) return JSON.stringify({clicked: false, reason: 'not found'});
+                        try {
+                            el.click();
+                            return JSON.stringify({clicked: true, tag: el.tagName, id: el.id || '', classes: (el.className || '').substring(0, 100)});
+                        } catch(e) {
+                            return JSON.stringify({clicked: false, reason: e.message});
+                        }
                     })();
                 """.trimIndent()) { result ->
-                    if (cont.isActive) cont.resume(result == "true") {}
+                    val clicked = try {
+                        if (result != null && result != "null") {
+                            val parsed = org.json.JSONTokener(result).nextValue()
+                            if (parsed is org.json.JSONObject) {
+                                ProviderLogger.d(TAG, "jsClickElement", "selector=$safeSelector result=$parsed")
+                                parsed.optBoolean("clicked")
+                            } else result == "true"
+                        } else false
+                    } catch (_: Exception) {
+                        ProviderLogger.w(TAG, "jsClickElement", "raw result=$result")
+                        result == "true"
+                    }
+                    ProviderLogger.i(TAG, "jsClickElement", "selector=$safeSelector clicked=$clicked")
+                    if (cont.isActive) cont.resume(clicked) {}
                 }
             }
         }
@@ -427,13 +462,20 @@ class NavigationEngine(
                 webView.evaluateJavascript("""
                     (function() {
                         var el = document.querySelector('$safeSelector');
-                        if (!el) return null;
+                        if (!el) return JSON.stringify({found: false});
                         var rect = el.getBoundingClientRect();
-                        if (rect.width <= 0 || rect.height <= 0) return null;
-                        var d = window.devicePixelRatio || 1;
+                        var cs = window.getComputedStyle(el);
                         return JSON.stringify({
-                            x: (rect.left + rect.width / 2) * d,
-                            y: (rect.top + rect.height / 2) * d
+                            found: true,
+                            tag: el.tagName,
+                            id: el.id || '',
+                            classes: el.className || '',
+                            rect: {left: rect.left, top: rect.top, width: rect.width, height: rect.height},
+                            display: cs.display,
+                            visibility: cs.visibility,
+                            offsetParent: !!el.offsetParent,
+                            rects: el.getClientRects().length,
+                            dpr: window.devicePixelRatio || 1
                         });
                     })();
                 """.trimIndent()) { result ->
@@ -441,10 +483,24 @@ class NavigationEngine(
                         if (result != null && result != "null" && result != "\"\"") {
                             val parsed = org.json.JSONTokener(result).nextValue()
                             if (parsed is org.json.JSONObject) {
-                                val x = parsed.getDouble("x").toFloat()
-                                val y = parsed.getDouble("y").toFloat()
-                                if (cont.isActive) cont.resume(Pair(x, y)) {}
-                                return@evaluateJavascript
+                                if (!parsed.optBoolean("found")) {
+                                    ProviderLogger.w(TAG, "findElementCoordinates", "Element not found for $safeSelector")
+                                    if (cont.isActive) cont.resume(null) {}
+                                    return@evaluateJavascript
+                                }
+                                ProviderLogger.d(TAG, "findElementCoordinates", "selector=$safeSelector tag=${parsed.optString("tag")} classes=${parsed.optString("classes")} rect=${parsed.optJSONObject("rect")} display=${parsed.optString("display")} visibility=${parsed.optString("visibility")} offsetParent=${parsed.optBoolean("offsetParent")}")
+                                val rect = parsed.optJSONObject("rect")
+                                val w = rect?.optDouble("width") ?: 0.0
+                                val h = rect?.optDouble("height") ?: 0.0
+                                if (w > 0 && h > 0) {
+                                    val dpr = parsed.optDouble("dpr", 1.0)
+                                    val x = (rect.optDouble("left") + w / 2) * dpr
+                                    val y = (rect.optDouble("top") + h / 2) * dpr
+                                    ProviderLogger.i(TAG, "findElementCoordinates", "Valid rect for $safeSelector -> coords=($x, $y) dpr=$dpr")
+                                    if (cont.isActive) cont.resume(Pair(x.toFloat(), y.toFloat())) {}
+                                    return@evaluateJavascript
+                                }
+                                ProviderLogger.w(TAG, "findElementCoordinates", "Zero rect for $safeSelector w=$w h=$h")
                             }
                         }
                     } catch (e: Exception) {
@@ -482,11 +538,18 @@ class NavigationEngine(
         timeoutMs: Long
     ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
+        var pollCount = 0
         while (System.currentTimeMillis() < deadline) {
+            pollCount++
             val found = checkSelectorExists(webView, selector)
-            if (found) return true
+            ProviderLogger.d(TAG, "waitForSelector", "poll#$pollCount selector=$selector found=$found remaining=${deadline - System.currentTimeMillis()}ms")
+            if (found) {
+                ProviderLogger.i(TAG, "waitForSelector", "FOUND selector=$selector after ${pollCount} polls")
+                return true
+            }
             delay(500)
         }
+        ProviderLogger.w(TAG, "waitForSelector", "TIMEOUT selector=$selector after ${pollCount} polls")
         return false
     }
 
@@ -497,10 +560,27 @@ class NavigationEngine(
                 val safeSelector = selector.replace("'", "\\'")
                 webView.evaluateJavascript("""
                     (function() {
-                        return document.querySelector('$safeSelector') !== null;
+                        var el = document.querySelector('$safeSelector');
+                        return JSON.stringify({
+                            exists: el !== null,
+                            tag: el ? el.tagName : null,
+                            id: el ? (el.id || '') : null,
+                            classes: el ? (el.className || '') : null,
+                            display: el ? window.getComputedStyle(el).display : null,
+                            visible: el ? (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0) : false
+                        });
                     })();
                 """.trimIndent()) { result ->
-                    if (cont.isActive) cont.resume(result == "true") {}
+                    val exists = try {
+                        if (result != null && result != "null") {
+                            val parsed = org.json.JSONTokener(result).nextValue()
+                            if (parsed is org.json.JSONObject) {
+                                ProviderLogger.d(TAG, "checkSelectorExists", "selector=$safeSelector exists=${parsed.optBoolean("exists")} tag=${parsed.optString("tag")} id=${parsed.optString("id")} classes=${parsed.optString("classes")} display=${parsed.optString("display")} visible=${parsed.optBoolean("visible")}")
+                                parsed.optBoolean("exists")
+                            } else result == "true"
+                        } else false
+                    } catch (_: Exception) { result == "true" }
+                    if (cont.isActive) cont.resume(exists) {}
                 }
             }
         }
@@ -513,11 +593,18 @@ class NavigationEngine(
     ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         val regex = Regex(urlPattern)
+        var pollCount = 0
         while (System.currentTimeMillis() < deadline) {
+            pollCount++
             val currentUrl = getCurrentUrlFromWebView(webView) ?: ""
-            if (regex.containsMatchIn(currentUrl)) return true
+            ProviderLogger.d(TAG, "waitForUrl", "poll#$pollCount pattern=$urlPattern currentUrl=${currentUrl.take(120)} match=${regex.containsMatchIn(currentUrl)} remaining=${deadline - System.currentTimeMillis()}ms")
+            if (regex.containsMatchIn(currentUrl)) {
+                ProviderLogger.i(TAG, "waitForUrl", "MATCHED pattern=$urlPattern after ${pollCount} polls, url=${currentUrl.take(120)}")
+                return true
+            }
             delay(500)
         }
+        ProviderLogger.w(TAG, "waitForUrl", "TIMEOUT pattern=$urlPattern after ${pollCount} polls")
         return false
     }
 
@@ -528,11 +615,18 @@ class NavigationEngine(
         pollIntervalMs: Long
     ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
+        var pollCount = 0
         while (System.currentTimeMillis() < deadline) {
+            pollCount++
             val met = evaluateDomCondition(webView, jsCondition)
-            if (met) return true
+            ProviderLogger.d(TAG, "waitForDomCondition", "poll#$pollCount condition=${jsCondition.take(60)} met=$met remaining=${deadline - System.currentTimeMillis()}ms")
+            if (met) {
+                ProviderLogger.i(TAG, "waitForDomCondition", "MET after ${pollCount} polls")
+                return true
+            }
             delay(pollIntervalMs)
         }
+        ProviderLogger.w(TAG, "waitForDomCondition", "TIMEOUT after ${pollCount} polls")
         return false
     }
 
