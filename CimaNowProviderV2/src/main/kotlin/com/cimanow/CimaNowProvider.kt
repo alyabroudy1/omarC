@@ -615,7 +615,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         try {
             // Extract script content - look for type="text/javascript" or language="Javascript"
             val scriptRegex = Regex(
-                """<script(?:\s+[^>]*)?>\s*(function\s*\([\s\S]*?)\s*</script>""",
+                """<script(?:\s+[^>]*)?>\s*(?:\(?\s*function\s*\([\s\S]*?)\s*</script>""",
                 RegexOption.IGNORE_CASE
             )
             val scriptMatch = scriptRegex.find(rawHtml)
