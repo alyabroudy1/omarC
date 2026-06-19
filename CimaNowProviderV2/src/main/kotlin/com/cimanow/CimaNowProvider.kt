@@ -696,6 +696,15 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val q = query
         Log.d(TAG, "search: query=$q")
+
+        // Debug trigger: search for "!test" to run standalone WebView test
+        if (q.trim().startsWith("!test", ignoreCase = true)) {
+            Log.i(TAG, "search: TEST TRIGGER DETECTED — returning mock entry")
+            return listOf(newMovieSearchResponse("🚀 WebView Test", "test://run", TvType.Movie) {
+                this.posterUrl = "https://via.placeholder.com/200x300/1a1a2e/ffffff?text=TEST"
+            })
+        }
+
         val resp = app.get("$mainUrl/?s=$q", referer = mainUrl)
         Log.d(TAG, "   [search] HTTP ${resp.code} -> ${resp.url}, body=${resp.text.length} chars, cookies=${resp.cookies.size}")
         val doc = resp.document
@@ -771,6 +780,15 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     /// For series: fetches each season's episode list concurrently.
     override suspend fun load(url: String): LoadResponse? {
         Log.d(TAG, "load: url=$url")
+
+        // Debug trigger for WebView test
+        if (url == "test://run") {
+            Log.i(TAG, "load: TEST TRIGGER — returning mock LoadResponse")
+            return newMovieLoadResponse("WebView Test", url, TvType.Movie, url) {
+                this.plot = "Standalone WebView test — mirrors demo app"
+            }
+        }
+
         val detailResp = app.get(url, referer = mainUrl)
         Log.d(TAG, "   [load] HTTP ${detailResp.code} -> ${detailResp.url}, body=${detailResp.text.length} chars, cookies=${detailResp.cookies.size}")
         val doc = detailResp.document
@@ -890,6 +908,30 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
     ): Boolean {
         Log.i(TAG_LOAD, "================ [START LOADLINKS] ================")
         Log.d(TAG_LOAD, "-> Data URL: $data")
+
+        // Debug trigger: run standalone WebView test mirroring demo app
+        if (data == "test://run") {
+            Log.i(TAG, "loadLinks: TEST TRIGGER — launching standalone WebView test...")
+            try {
+                ActivityProvider.initCompat(context)
+                val activity = ActivityProvider.currentActivity
+                if (activity != null) {
+                    val result = runCimaNowTest(activity)
+                    Log.i(TAG, "Test result: success=${result.success} completed=${result.completedSteps}/${result.totalSteps} finalUrl=${result.finalUrl}")
+                    if (result.error != null) {
+                        Toast.makeText(context, "Test failed: ${result.error}", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, "Test completed: ${result.completedSteps}/${result.totalSteps}", Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    Log.w(TAG, "loadLinks: No activity available for test")
+                    Toast.makeText(context, "No activity for test", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Test failed with exception: ${e.message}")
+            }
+            return true
+        }
 
         try {
             Log.i(TAG_LOAD, "[1/4] Fetching initial movie page (for logging)...")
