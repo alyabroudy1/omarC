@@ -324,14 +324,18 @@ class ProviderHttpService private constructor(
         steps: List<NavigationStep>,
         mode: Mode = Mode.HEADLESS,
         overallTimeoutMs: Long = 120_000L,
-        requestInterceptor: ((android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse?)? = null
+        requestInterceptor: ((android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse?)? = null,
+        allowedDomains: Set<String> = emptySet(),
+        destinationLockPatterns: List<Regex> = emptyList()
     ): NavigationResult {
         return navigationEngine.execute(
             steps = steps,
             userAgent = sessionState.userAgent,
             mode = mode,
             overallTimeoutMs = overallTimeoutMs,
-            requestInterceptor = requestInterceptor
+            requestInterceptor = requestInterceptor,
+            allowedDomains = allowedDomains,
+            destinationLockPatterns = destinationLockPatterns
         )
     }
 

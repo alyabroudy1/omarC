@@ -8,10 +8,8 @@ import android.util.Base64
 import android.webkit.*
 import android.widget.Toast
 import com.cloudstream.shared.android.ActivityProvider
-import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationEngine
-import com.cloudstream.shared.webview.NavigationResult
-import com.cloudstream.shared.webview.NavigationStep
+import com.cloudstream.shared.webview.WebViewFlowHelper
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -416,148 +414,37 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
         NavigationEngine { ActivityProvider.currentActivity }
     }
 
-    /**
-     * Use the NavigationEngine to simulate a full user flow through the site.
-     *
-     * Flow:
-     *   1. Load movie detail page in WebView (with proxy + spoofing)
-     *   2. Click the "Watch" button (trusted touch) → navigates to freex2line
-     *   3. Wait for freex2line page to load and 10s timer to complete
-     *   4. Click the enabled button on freex2line → navigates to watch page
-     *   5. Wait for server list elements to appear in the watch page
-     *   6. Extract the DOM HTML
-     *
-     * This produces isTrusted=true touch events throughout, which anti-bot
-     * scripts cannot distinguish from real user input.
-     *
-     * @param moviePageUrl The original movie page URL
-     * @param intermediateLink The freex2line URL to click through
-     * @return NavigationResult with extracted watch page HTML, or null on failure
-     */
-    private suspend fun navigateToWatchPageViaUserFlow(
-        moviePageUrl: String,
-        intermediateLink: String
-    ): NavigationResult? {
-        Log.i(TAG, "navigateToWatchPageViaUserFlow: Starting WebView user flow...")
-        Log.d(TAG, "  moviePageUrl=$moviePageUrl")
-        Log.d(TAG, "  intermediateLink=$intermediateLink")
-
-        try {
-            // Create proxy interceptor for cimanow.cc resources
-            // Using anonymous function to allow plain `return null` for early exits
-            val proxyInterceptor: (android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse? =
-                fun(_, req): android.webkit.WebResourceResponse? {
-                    val reqUrl = req.url?.toString() ?: return null
-                    val scheme = req.url?.scheme?.lowercase()
-                    if (scheme != "http" && scheme != "https") return null
-                    if (!reqUrl.contains("cimanow.cc", ignoreCase = true)) return null
-
-                    return try {
-                        val wvCookies = CookieManager.getInstance().getCookie(reqUrl)
-                        val cookieHeaders = if (!wvCookies.isNullOrBlank()) {
-                            mapOf("Cookie" to wvCookies)
-                        } else emptyMap()
-
-                        val proxyResp = runBlocking {
-                            app.get(reqUrl, referer = moviePageUrl, headers = cookieHeaders)
-                        }
-                        if (proxyResp.code !in 200..399) null else {
-                            val domain = try { java.net.URI(reqUrl).host } catch (_: Exception) { null }
-                            val cookieDomain = if (domain != null) "domain=$domain" else ""
-                            for ((key, value) in proxyResp.cookies) {
-                                CookieManager.getInstance().setCookie(reqUrl, "$key=$value; path=/; $cookieDomain; secure")
-                            }
-                            if (proxyResp.cookies.isNotEmpty()) CookieManager.getInstance().flush()
-
-                            val mime = when {
-                                reqUrl.contains(".js") -> "application/javascript"
-                                reqUrl.contains(".css") -> "text/css"
-                                reqUrl.contains(".png") -> "image/png"
-                                reqUrl.contains(".jpg") || reqUrl.contains(".jpeg") -> "image/jpeg"
-                                reqUrl.contains(".svg") -> "image/svg+xml"
-                                reqUrl.contains(".woff2") || reqUrl.contains(".woff") -> "font/woff2"
-                                reqUrl.contains(".json") -> "application/json"
-                                else -> "text/html"
-                            }
-                            android.webkit.WebResourceResponse(mime, "UTF-8", proxyResp.text.byteInputStream())
-                        }
-                    } catch (_: Exception) { null }
-                }
-
-            val steps = listOf(
-                // Step 0: Load the movie detail page
-                NavigationStep.LoadUrl(moviePageUrl),
-
-                // Step 1: Wait for the freex2line button to appear
-                NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 15_000L),
-
-                // Step 2: Click the freex2line link with trusted touch
-                NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L),
-
-                // Step 3: Wait for navigation to freex2line domain
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15_000L),
-
-                // Step 4: Wait for the 10-second timer to complete on freex2line
-                // The freex2line page activates a button after the timer.
-                // Try common selectors for the continue/watch button
-                NavigationStep.WaitForDelay(13_000L),
-
-                // Step 5: Try to click the enabled button on freex2line
-                // Use JS to find the right button, then click via coordinates
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = """
-                        document.querySelector('a[href*="get-link"], button:not([disabled]), a.continue-btn, #download-btn, #watch-btn') !== null
-                        || document.querySelectorAll('a:not([disabled])').length > 0
-                    """.trimIndent(),
-                    timeoutMs = 10_000L,
-                    pollIntervalMs = 1000L
-                ),
-            )
-
-            val result = navigationEngine.execute(
-                steps = steps,
-                userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                mode = Mode.HEADLESS,
-                overallTimeoutMs = 90_000L,
-                requestInterceptor = proxyInterceptor
-            )
-
-            if (!result.success) {
-                Log.w(TAG, "navigateToWatchPageViaUserFlow: Navigation flow failed at step ${result.failedAtStep}: ${result.error}")
-                // Still try to extract HTML from the final page if we got anywhere
-                if (result.extractedHtml.isNotEmpty() || result.finalUrl.contains("watching", ignoreCase = true)) {
-                    return result
-                }
-                return null
-            }
-
-            Log.i(TAG, "navigateToWatchPageViaUserFlow: Flow completed successfully. finalUrl=${result.finalUrl.take(100)}, steps=${result.completedSteps}")
-            Log.d(TAG, "  cookies: ${result.cookies.size}, extracted keys: ${result.extractedHtml.keys}")
-            for ((key, html) in result.extractedHtml) {
-                Log.d(TAG, "  extracted[$key]: ${html.length} chars")
-            }
-
-            // If we made it to the watch page, try to wait for server elements and extract
-            if (result.finalUrl.contains("watching", ignoreCase = true)) {
-                val extraSteps = listOf(
-                    NavigationStep.WaitForSelector("#watch li[data-index], li[data-index], [data-index]", timeoutMs = 10_000L),
-                    NavigationStep.ExtractHtml()
-                )
-                val extraResult = navigationEngine.execute(
-                    steps = extraSteps,
-                    userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                    mode = Mode.HEADLESS,
-                    overallTimeoutMs = 20_000L,
-                    requestInterceptor = proxyInterceptor
-                )
-                return extraResult
-            }
-
-            return result
-
-        } catch (e: Exception) {
-            Log.e(TAG, "navigateToWatchPageViaUserFlow: Exception: ${e.message}")
-            return null
+    private suspend fun routeServerByName(
+        serverName: String,
+        iframeUrl: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (iframeUrl.isBlank()) {
+            Log.w(TAG, "routeServerByName: Empty iframe URL for server '$serverName'")
+            return
+        }
+        Log.d(TAG, "routeServerByName: name='$serverName' iframe=${iframeUrl.take(80)}")
+        when {
+            serverName.contains("Cima Now", true) || serverName.contains("cima", true) ->
+                handlecima(iframeUrl, serverName, callback)
+            serverName.contains("VidPro", true) ->
+                handleVidPro(iframeUrl, serverName, callback)
+            serverName.contains("Govid", true) || serverName.contains("Goovid", true) ->
+                handleGovid(iframeUrl, serverName, callback)
+            serverName.contains("Vidlook", true) ->
+                handleVidlook(iframeUrl, serverName, callback)
+            serverName.contains("Streamwish", true) ->
+                handleStreamwish(iframeUrl, serverName, callback)
+            serverName.contains("Streamfile", true) || serverName.contains("Luluvid", true) ->
+                handleStreamfileAndLuluvid(iframeUrl, serverName, callback)
+            serverName.contains("Vadbam", true) || serverName.contains("Viidshare", true) ->
+                handleVadbamAndViidshare(iframeUrl, serverName, callback)
+            serverName.contains("Jetload", true) ->
+                handleJetload(iframeUrl, 0, referer, callback)
+            serverName.contains("Forafile", true) || iframeUrl.contains("forafile.com") ->
+                handleForafile(iframeUrl, 0, referer, callback)
+            else -> loadExtractor(iframeUrl, referer, { }, callback)
         }
     }
 
@@ -1033,23 +920,42 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             }
 
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
-            Log.i(TAG, "[3/6] Attempting NavigationEngine user-flow first...")
+            Log.i(TAG, "[3/6] Attempting WebViewFlowHelper (freex2line → watching page)...")
 
-            // Try the full user-flow simulation via NavigationEngine
             var watchPageHtml: String? = null
             var watchPageUrl = ""
             var flowFromNavEngine = false
+            var preParsedServers = emptyList<WebViewFlowHelper.ServerInfo>()
+            var preParsedDownloads = emptyList<WebViewFlowHelper.DownloadInfo>()
 
             ActivityProvider.initCompat(context)
-            val navResult = navigateToWatchPageViaUserFlow(data, intermediateLink)
-            if (navResult != null && navResult.success && navResult.finalUrl.contains("watching", ignoreCase = true)) {
-                watchPageHtml = navResult.extractedHtml.values.firstOrNull { it.contains("data-index") }
-                    ?: navResult.extractedHtml.values.firstOrNull()
-                watchPageUrl = navResult.finalUrl
+            val flowHelper = WebViewFlowHelper(navigationEngine)
+            val flowResult = flowHelper.navigateToWatchPage(
+                intermediateUrl = intermediateLink,
+                referer = data,
+                config = WebViewFlowHelper.FlowConfig(
+                    allowedDomains = setOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li"),
+                    destinationLockPatterns = listOf(Regex("/watching/"))
+                )
+            )
+
+            if (flowResult.success && flowResult.finalUrl.contains("watching", ignoreCase = true)) {
+                watchPageHtml = flowResult.watchPageHtml
+                watchPageUrl = flowResult.finalUrl
+                preParsedServers = flowResult.servers
+                preParsedDownloads = flowResult.downloads
                 flowFromNavEngine = true
-                Log.i(TAG, "   NavigationEngine user-flow SUCCEEDED! finalUrl=${watchPageUrl.take(80)}, extracted=${watchPageHtml?.length ?: 0} chars")
+                Log.i(TAG, "   WebViewFlowHelper SUCCEEDED! finalUrl=${watchPageUrl.take(80)}, " +
+                    "servers=${preParsedServers.size}, downloads=${preParsedDownloads.size}, " +
+                    "htmlLen=${watchPageHtml?.length ?: 0}")
+                preParsedServers.forEach { s ->
+                    Log.d(TAG, "     Server: '${s.name}' index=${s.index} iframe=${s.iframeUrl.take(60)}")
+                }
+                preParsedDownloads.forEach { d ->
+                    Log.d(TAG, "     Download: '${d.name}' url=${d.url.take(60)}")
+                }
             } else {
-                Log.w(TAG, "   NavigationEngine user-flow failed (${navResult?.error ?: "null result"}), falling back to resolveFreex2line+WebView...")
+                Log.w(TAG, "   WebViewFlowHelper failed (${flowResult.error ?: "no watch page URL"}), falling back to resolveFreex2line...")
             }
 
             if (!flowFromNavEngine) {
@@ -1147,70 +1053,102 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             val hasLiTags = decodedHtml.contains("<li")
             Log.d(TAG, "   Decoded HTML has ul#watch=$hasUlWatch, data-index=$hasDataIndex, li tags=$hasLiTags")
 
-            var serverElements = decodedDoc.select("ul#watch li[data-index]")
-            Log.d(TAG, "   ul#watch li[data-index] count: ${serverElements.size}")
-            if (serverElements.isEmpty()) {
-                serverElements = decodedDoc.select("li[data-index]")
-                Log.d(TAG, "   Fallback li[data-index] count: ${serverElements.size}")
-            }
-            if (serverElements.isEmpty()) {
-                serverElements = decodedDoc.select("li[class*='server'], li[class*='Server'], li[data-id]")
-                Log.d(TAG, "   Fallback li[server/data-id] count: ${serverElements.size}")
-            }
-            if (serverElements.isEmpty()) {
-                // Last resort: log ALL <li> elements for debugging
-                val allLis = decodedDoc.select("li")
-                Log.w(TAG, "   No watch server elements found. All <li> count: ${allLis.size}")
-                allLis.take(20).forEachIndexed { i, el ->
-                    Log.d(TAG, "     li[$i]: class='${el.className()}' text='${el.text().take(80)}' html='${el.html().take(120)}'")
-                }
-                Log.w(TAG, "   Full decoded body HTML (first 1000 chars): ${decodedHtml.take(1000)}")
-            } else {
-                Log.i(TAG, "   Found ${serverElements.size} watch server elements.")
-                serverElements.forEach { el ->
-                    Log.d(TAG, "     Server: '${el.text()}' index=${el.attr("data-index")} id=${el.attr("data-id")} class=${el.className()}")
-                }
-            }
-
-            Log.i(TAG, "[5/6] Processing WATCH server elements (count=${serverElements.size})...")
-
-            if (serverElements.isEmpty()) {
-                Log.w(TAG, "   No server elements to process — skipping watch server extraction.")
-            } else {
+            if (flowFromNavEngine && preParsedServers.isNotEmpty()) {
+                // WebViewFlowHelper already parsed servers with iframe URLs — use them directly
+                Log.i(TAG, "[5/6] Processing WATCH servers from WebViewFlowHelper (${preParsedServers.size})...")
                 coroutineScope {
-                    serverElements.map { serverElement ->
+                    preParsedServers.map { server ->
                         async {
-                            processServerElement(serverElement, watchPageUrl, subtitleCallback, callback)
+                            routeServerByName(
+                                serverName = server.name,
+                                iframeUrl = server.iframeUrl,
+                                referer = watchPageUrl,
+                                callback = callback
+                            )
                         }
                     }.awaitAll()
+                }
+            } else {
+                // Fallback: parse server elements from decoded document
+                var serverElements = decodedDoc.select("ul#watch li[data-index]")
+                Log.d(TAG, "   ul#watch li[data-index] count: ${serverElements.size}")
+                if (serverElements.isEmpty()) {
+                    serverElements = decodedDoc.select("li[data-index]")
+                    Log.d(TAG, "   Fallback li[data-index] count: ${serverElements.size}")
+                }
+                if (serverElements.isEmpty()) {
+                    serverElements = decodedDoc.select("li[class*='server'], li[class*='Server'], li[data-id]")
+                    Log.d(TAG, "   Fallback li[server/data-id] count: ${serverElements.size}")
+                }
+                if (serverElements.isEmpty()) {
+                    val allLis = decodedDoc.select("li")
+                    Log.w(TAG, "   No watch server elements found. All <li> count: ${allLis.size}")
+                    allLis.take(20).forEachIndexed { i, el ->
+                        Log.d(TAG, "     li[$i]: class='${el.className()}' text='${el.text().take(80)}' html='${el.html().take(120)}'")
+                    }
+                    Log.w(TAG, "   Full decoded body HTML (first 1000 chars): ${decodedHtml.take(1000)}")
+                } else {
+                    Log.i(TAG, "   Found ${serverElements.size} watch server elements.")
+                    serverElements.forEach { el ->
+                        Log.d(TAG, "     Server: '${el.text()}' index=${el.attr("data-index")} id=${el.attr("data-id")} class=${el.className()}")
+                    }
+                }
+
+                Log.i(TAG, "[5/6] Processing WATCH server elements (count=${serverElements.size})...")
+                if (serverElements.isNotEmpty()) {
+                    coroutineScope {
+                        serverElements.map { serverElement ->
+                            async {
+                                processServerElement(serverElement, watchPageUrl, subtitleCallback, callback)
+                            }
+                        }.awaitAll()
+                    }
+                } else {
+                    Log.w(TAG, "   No server elements to process — skipping watch server extraction.")
                 }
             }
 
             Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
-            var downloadLinks = decodedDoc.select("ul#download li a[href]")
-            Log.d(TAG, "   ul#download li a count: ${downloadLinks.size}")
-            if (downloadLinks.isEmpty()) {
-                downloadLinks = decodedDoc.select("a[href*='download'], a[href*='dl'], .download-links a[href]")
-                Log.d(TAG, "   Fallback download link count: ${downloadLinks.size}")
-            }
-            if (downloadLinks.isEmpty()) {
-                downloadLinks = decodedDoc.select("ul li a[href*='.mp4'], ul li a[href*='.mkv']")
-                Log.d(TAG, "   Fallback mp4/mkv link count: ${downloadLinks.size}")
-            }
-            if (downloadLinks.isEmpty()) {
-                Log.d(TAG, "   No download links found. Decoded body #download section: ${decodedDoc.select("#download").html().take(300)}")
-            }
-            Log.d(TAG, "   Found ${downloadLinks.size} download links")
-            downloadLinks.forEach { a ->
-                Log.d(TAG, "     Download: href='${a.attr("href").take(80)}' text='${a.text().take(60)}'")
-            }
+            if (flowFromNavEngine && preParsedDownloads.isNotEmpty()) {
+                // WebViewFlowHelper already extracted download links — use them directly
+                Log.d(TAG, "   Using ${preParsedDownloads.size} download links from WebViewFlowHelper")
+                preParsedDownloads.forEach { d ->
+                    Log.d(TAG, "     Download: '${d.name}' url=${d.url.take(80)}")
+                    if (d.url.startsWith("http")) {
+                        val quality = Regex("\\d+p").find(d.name)?.value?.let { getQualityFromName(it) }
+                            ?: Qualities.Unknown.value
+                        callback(newExtractorLink("CimaNow", "CimaNow", d.url, type = getLinkType(d.url)) {
+                            this.referer = watchPageUrl
+                            this.quality = quality
+                        })
+                    }
+                }
+            } else {
+                var downloadLinks = decodedDoc.select("ul#download li a[href]")
+                Log.d(TAG, "   ul#download li a count: ${downloadLinks.size}")
+                if (downloadLinks.isEmpty()) {
+                    downloadLinks = decodedDoc.select("a[href*='download'], a[href*='dl'], .download-links a[href]")
+                    Log.d(TAG, "   Fallback download link count: ${downloadLinks.size}")
+                }
+                if (downloadLinks.isEmpty()) {
+                    downloadLinks = decodedDoc.select("ul li a[href*='.mp4'], ul li a[href*='.mkv']")
+                    Log.d(TAG, "   Fallback mp4/mkv link count: ${downloadLinks.size}")
+                }
+                if (downloadLinks.isEmpty()) {
+                    Log.d(TAG, "   No download links found. Decoded body #download section: ${decodedDoc.select("#download").html().take(300)}")
+                }
+                Log.d(TAG, "   Found ${downloadLinks.size} download links")
+                downloadLinks.forEach { a ->
+                    Log.d(TAG, "     Download: href='${a.attr("href").take(80)}' text='${a.text().take(60)}'")
+                }
 
                 coroutineScope {
-                downloadLinks.map { aTag ->
-                    async {
-                        processDownloadLink(aTag, watchPageUrl, subtitleCallback, callback)
-                    }
-                }.awaitAll()
+                    downloadLinks.map { aTag ->
+                        async {
+                            processDownloadLink(aTag, watchPageUrl, subtitleCallback, callback)
+                        }
+                    }.awaitAll()
+                }
             }
 
             Log.i(TAG, "================ [END LOADLINKS] =================")

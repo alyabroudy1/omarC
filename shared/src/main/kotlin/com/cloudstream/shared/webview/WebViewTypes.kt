@@ -93,7 +93,9 @@ sealed class NavigationStep {
     ) : NavigationStep()
 
     data class ExecuteJs(
-        val javascript: String
+        val javascript: String,
+        /** If non-blank, the JS return value is stored in NavigationResult.extractedHtml[key] */
+        val key: String = ""
     ) : NavigationStep()
 
     data class WaitForSelector(
@@ -120,7 +122,8 @@ sealed class NavigationStep {
     ) : NavigationStep()
 
     data class ExtractHtml(
-        val selector: String? = null
+        val selector: String? = null,
+        val key: String = ""
     ) : NavigationStep()
 }
 

@@ -48,7 +48,11 @@ class NavigationEngine(
         requestInterceptor: ((
             view: WebView,
             request: WebResourceRequest
-        ) -> WebResourceResponse?)? = null
+        ) -> WebResourceResponse?)? = null,
+        /** Only navigation to these domains (or subdomains) is allowed. Empty = allow all. */
+        allowedDomains: Set<String> = emptySet(),
+        /** Once the URL matches one of these regex patterns, all main-frame navigation away is blocked. */
+        destinationLockPatterns: List<Regex> = emptyList()
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             val activity = activityProvider()
@@ -90,7 +94,7 @@ class NavigationEngine(
 
             try {
                 webView = createWebView(activity, userAgent)
-                setupWebViewClient(webView, requestInterceptor)
+                setupWebViewClient(webView, requestInterceptor, allowedDomains, destinationLockPatterns)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -123,7 +127,11 @@ class NavigationEngine(
                                 delay(150)
                             }
                             is NavigationStep.ExecuteJs -> {
-                                executeJsInWebView(webView, step.javascript)
+                                val jsResult = executeJsInWebView(webView, step.javascript)
+                                if (step.key.isNotBlank()) {
+                                    extractedHtml[step.key] = jsResult ?: ""
+                                    ProviderLogger.d(TAG, "execute", "JS result stored in extractedHtml['${step.key}']: ${(jsResult ?: "").take(100)}")
+                                }
                                 delay(300)
                             }
                             is NavigationStep.WaitForSelector -> {
@@ -164,7 +172,7 @@ class NavigationEngine(
                             }
                             is NavigationStep.ExtractHtml -> {
                                 val html = extractHtmlFromWebView(webView, step.selector)
-                                val key = step.selector ?: "full_page_${index}"
+                                val key = step.key.ifBlank { step.selector ?: "full_page_${index}" }
                                 extractedHtml[key] = html ?: ""
                                 ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> ${html?.length ?: 0} chars")
                             }
@@ -238,17 +246,28 @@ class NavigationEngine(
 
     private fun setupWebViewClient(
         webView: WebView,
-        requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?
+        requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
+        allowedDomains: Set<String> = emptySet(),
+        destinationLockPatterns: List<Regex> = emptyList()
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
 
+        var isOnDestination = false
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url != null) {
                     ProviderLogger.d(TAG, "onPageStarted", url.take(80))
+                    // Update destination lock state
+                    if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
+                        if (!isOnDestination) {
+                            ProviderLogger.i(TAG, "onPageStarted", "Destination lock engaged for URL matching pattern", "url" to url.take(80))
+                        }
+                        isOnDestination = true
+                    }
                 }
                 view?.evaluateJavascript(SPOOFING_JS, null)
                 super.onPageStarted(view, url, favicon)
@@ -280,6 +299,25 @@ class NavigationEngine(
                 val nextUrl = request?.url?.toString() ?: return super.shouldOverrideUrlLoading(view, request)
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != null && scheme != "http" && scheme != "https") return true
+
+                // Destination lock: once on destination, block all main-frame nav away
+                if (request?.isForMainFrame == true && isOnDestination) {
+                    ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "Destination lock BLOCK nav away from target", "url" to nextUrl.take(80))
+                    return true
+                }
+
+                // Domain allowlist: if non-empty, only allow navigations to allowed domains
+                if (allowedDomains.isNotEmpty()) {
+                    val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+                    val allowed = allowedDomains.any { allowedDomain ->
+                        nextHost == allowedDomain || nextHost.endsWith(".$allowedDomain")
+                    }
+                    if (!allowed) {
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "BLOCKED navigation to non-allowed domain", "url" to nextUrl.take(80), "host" to nextHost)
+                        return true
+                    }
+                }
+
                 return false
             }
 
@@ -326,9 +364,9 @@ class NavigationEngine(
     }
 
     /**
-     * Click an element found by CSS selector using a trusted native touch event.
-     * The JS finds the element's viewport coordinates, then Kotlin dispatches
-     * a real MotionEvent (isTrusted=true) at those coordinates.
+     * Click an element found by CSS selector.
+     * First tries native touch event at element coordinates.
+     * If element has zero bounding rect (hidden/detached), falls back to JS click.
      */
     private suspend fun clickElementInWebView(
         webView: WebView,
@@ -340,13 +378,41 @@ class NavigationEngine(
             val coords = findElementCoordinates(webView, selector)
             if (coords != null) {
                 dispatchNativeClick(webView, coords.first, coords.second)
-                ProviderLogger.i(TAG, "clickElement", "Clicked $selector at (${coords.first}, ${coords.second})")
+                ProviderLogger.i(TAG, "clickElement", "Native click $selector at (${coords.first}, ${coords.second})")
+                return true
+            }
+            // Try JS click fallback (handles display:none / zero-rect elements)
+            val jsClicked = jsClickElement(webView, selector)
+            if (jsClicked) {
+                ProviderLogger.i(TAG, "clickElement", "JS click fallback $selector")
                 return true
             }
             delay(500)
         }
         ProviderLogger.w(TAG, "clickElement", "Element not found: $selector within ${timeoutMs}ms")
         return false
+    }
+
+    /**
+     * Fallback click using JavaScript's el.click().
+     * Works on elements with zero bounding rect that can't receive native touch events.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun jsClickElement(webView: WebView, selector: String): Boolean {
+        return suspendCancellableCoroutine { cont ->
+            Handler(Looper.getMainLooper()).post {
+                val safeSelector = selector.replace("'", "\\'")
+                webView.evaluateJavascript("""
+                    (function() {
+                        var el = document.querySelector('$safeSelector');
+                        if (el) { el.click(); return true; }
+                        return false;
+                    })();
+                """.trimIndent()) { result ->
+                    if (cont.isActive) cont.resume(result == "true") {}
+                }
+            }
+        }
     }
 
     /**
