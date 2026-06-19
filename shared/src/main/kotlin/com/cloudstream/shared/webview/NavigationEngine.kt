@@ -244,6 +244,19 @@ class NavigationEngine(
                 javaScriptCanOpenWindowsAutomatically = false
                 setSupportMultipleWindows(false)
             }
+            // Use reflection to clear X-Requested-With header for ALL requests (not just loadUrl)
+            hideXRequestedWithHeader(this)
+        }
+    }
+
+    private fun hideXRequestedWithHeader(webView: android.webkit.WebView) {
+        try {
+            val field = android.webkit.WebView::class.java.getDeclaredField("mXRequestedWithHeader")
+            field.isAccessible = true
+            field.set(webView, "")
+            ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Reflection succeeded — cleared mXRequestedWithHeader")
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Reflection failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
