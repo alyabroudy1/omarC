@@ -356,11 +356,14 @@ class NavigationEngine(
         referer: String?,
         extraHeaders: Map<String, String>
     ) {
-        val headers = mutableMapOf<String, String>()
-        headers["X-Requested-With"] = ""
-        if (referer != null) headers["Referer"] = referer
-        headers.putAll(extraHeaders)
-        webView.loadUrl(url, headers)
+        if (referer != null || extraHeaders.isNotEmpty()) {
+            val headers = mutableMapOf<String, String>()
+            if (referer != null) headers["Referer"] = referer
+            headers.putAll(extraHeaders)
+            webView.loadUrl(url, headers)
+        } else {
+            webView.loadUrl(url)
+        }
     }
 
     /**
