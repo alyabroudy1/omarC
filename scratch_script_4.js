@@ -1,0 +1,1 @@
+(function() { var css = document.createElement('link'); css.href = 'https://kit-pro.fontawesome.com/releases/v6.7.0/css/pro.min.css'; css.rel = 'stylesheet'; css.type = 'text/css'; document.getElementsByTagName('head')[0].appendChild(css); })();

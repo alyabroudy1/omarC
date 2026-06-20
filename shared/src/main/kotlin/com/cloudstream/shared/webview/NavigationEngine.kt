@@ -94,7 +94,7 @@ class NavigationEngine(
 
             try {
                 webView = createWebView(activity, userAgent)
-                setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains, destinationLockPatterns)
+                setupWebViewClient(webView, requestInterceptor, allowedDomains, destinationLockPatterns)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -250,19 +250,36 @@ class NavigationEngine(
     }
 
     private fun hideXRequestedWithHeader(webView: android.webkit.WebView) {
-        try {
-            val field = android.webkit.WebView::class.java.getDeclaredField("mXRequestedWithHeader")
-            field.isAccessible = true
-            field.set(webView, "")
-            ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Reflection succeeded — cleared mXRequestedWithHeader")
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Reflection failed: ${e.javaClass.simpleName}: ${e.message}")
+        fun tryClear(obj: Any?): Boolean {
+            if (obj == null) return false
+            var cls: Class<*>? = obj.javaClass
+            while (cls != null) {
+                try {
+                    val f = cls.getDeclaredField("mXRequestedWithHeader")
+                    f.isAccessible = true
+                    f.set(obj, "")
+                    ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via ${cls.name}")
+                    return true
+                } catch (_: NoSuchFieldException) {
+                    cls = cls.superclass
+                }
+            }
+            return false
         }
+
+        if (tryClear(webView)) return
+
+        try {
+            val pf = webView.javaClass.getDeclaredField("mProvider")
+            pf.isAccessible = true
+            if (tryClear(pf.get(webView))) return
+        } catch (_: Exception) {}
+
+        ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak")
     }
 
     private fun setupWebViewClient(
         webView: WebView,
-        userAgent: String,
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList()
@@ -314,27 +331,6 @@ class NavigationEngine(
                 // Intercept CSS/JS to work around servers that return text/html when
                 // they see X-Requested-With (which WebView can't always clear via reflection).
                 // Re-fetch ourselves via HttpURLConnection which never sends that header.
-                val path = request.url?.path?.lowercase() ?: ""
-                if (path.endsWith(".css") || path.endsWith(".js")) {
-                    try {
-                        val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
-                        val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        conn.setRequestProperty("User-Agent", userAgent)
-                        conn.setRequestProperty("Accept", mimeType)
-                        val cookies = CookieManager.getInstance().getCookie(reqUrl)
-                        if (!cookies.isNullOrBlank()) {
-                            conn.setRequestProperty("Cookie", cookies)
-                        }
-                        conn.connectTimeout = 15000
-                        conn.readTimeout = 15000
-                        ProviderLogger.d(TAG, "shouldInterceptRequest", "RE-FETCH ${reqUrl.take(120)} as $mimeType")
-                        return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
-                    } catch (e: Exception) {
-                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Re-fetch failed: ${e.message}")
-                    }
-                }
-
-                ProviderLogger.d(TAG, "shouldInterceptRequest", "PASS-THROUGH ${reqUrl.take(120)}")
                 if (requestInterceptor != null) {
                     return requestInterceptor.invoke(view, request)
                 }

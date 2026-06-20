@@ -1,0 +1,163 @@
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $] CALL with args: ["#lalaplay-report-form"]
+[Proxy $()] GET prop: length
+[Proxy $] CALL with args: [".report-video-checkbox"]
+[Proxy $()] GET prop: change
+[Proxy $().change] CALL with args: [null]
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=submit, subSelector=#lalaplay-report-form
+[Proxy $] CALL with args: ["#lalaplay-contact-form"]
+[Proxy $()] GET prop: length
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=submit, subSelector=#lalaplay-contact-form
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.report-video-error
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.close-modal-report
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=mouseup, subSelector=function(AQpu){var cSsu=onkt(k53x.Qtsu(63));cSsu[k53x.waEv(64)](AQpu[k53x.UCBv(65)])||(0x75bcd15-0O726746425)!==cSsu[k53x.Qz3v(66)](AQpu[k53x.UCBv(65)])[k53x.waEv(8)]||(onkt(k53x.w42t(45))[k53x.oUSt(46)](k53x.Ahgw(19)),onkt(k53x.w42t(45))[k53x.Qtsu(47)](k53x.waEv(48)))}
+[Proxy $] CALL with args: ["#lalaplay-reCAPTCHA-response"]
+[Proxy $()] GET prop: length
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.ajax_mode .lalaplay_player_option
+[Proxy] => Captured player option click handler!
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.under-poster .under-watchbtn .bsc-gallery
+[Proxy $] CALL with args: ["#watch-list-content"]
+[Proxy $()] GET prop: click
+[Proxy $().click] CALL with args: [null]
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: ready
+[Proxy $().ready] CALL with args: [null]
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.myrem
+[Proxy $] CALL with args: ["#player-option-1"]
+[Proxy $()] GET prop: length
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.play_click
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=#clickfakeplayer
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=#lightsc
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=#downloadsc
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=#commentsc
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: on
+[Proxy $().on] registered: event=click, subSelector=.showdownloadbtn
+[gID called] for id: refreshsc
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: ready
+[Proxy $().ready] CALL with args: [null]
+Player code evaluated successfully.
+Triggering player option click...
+[Proxy $] CALL with args: [".lalaplay_player_option"]
+[Proxy $] CALL with args: [".play_click"]
+[Proxy $()] GET prop: remove
+[Proxy $().remove] CALL with args: []
+[Proxy $] CALL with args: [".playBtn-out"]
+[Proxy $()] GET prop: remove
+[Proxy $().remove] CALL with args: []
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: data
+[Proxy $.data] called for key: type
+[Proxy $] CALL with args: [".section_note"]
+[Proxy $()] GET prop: length
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: data
+[Proxy $.data] called for key: post
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: data
+[Proxy $.data] called for key: nume
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: data
+[Proxy $.data] called for key: type
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: find
+[Proxy $.find] CALL with args: ["ul li"]
+[Proxy $.find()] GET prop: text
+[Proxy $] CALL with args: ["#fakeplayer"]
+[Proxy $()] GET prop: hide
+[Proxy $().hide] CALL with args: []
+[Proxy $] CALL with args: [".player-bg"]
+[Proxy $()] GET prop: remove
+[Proxy $().remove] CALL with args: []
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: hasClass
+[Proxy $.hasClass] called for class: active, returning false
+[Proxy $] CALL with args: [".lalaplay_player_option"]
+[Proxy $()] GET prop: removeClass
+[Proxy $().removeClass] CALL with args: ["active"]
+[Proxy $] CALL with args: ["#player-option-1 > span.loader"]
+[Proxy $()] GET prop: show
+[Proxy $().show] CALL with args: []
+[Proxy $] CALL with args: ["#loadcontainer2"]
+[Proxy $()] GET prop: show
+[Proxy $().show] CALL with args: []
+[Proxy $] CALL with args: [{"location":{"href":"https://m.cimaleek.pw/movies/venom-633705/watch/","origin":"https://m.cimaleek.pw","protocol":"https:","host":"m.cimaleek.pw","hostname":"m.cimaleek.pw","port":"","pathname":"/movies/venom-633705/watch/","search":"","hash":""}}]
+[Proxy $()] GET prop: find
+[Proxy $().find] CALL with args: [".ps__-list .item .btn"]
+[Proxy $().find()] GET prop: addClass
+[Proxy $().find().addClass] CALL with args: ["disabled"]
+[Proxy $()] GET prop: toJSON
+[Proxy $().toJSON] CALL with args: ["0"]
+[Proxy $] CALL with args: [null]
+[Proxy $] ready callback detected, executing...
+[Proxy $()] CALL with args: []
+[Proxy $] GET prop: addClass
+[Proxy $.addClass] CALL with args: ["active"]
+[Proxy $] CALL with args: ["#report-video-server-field"]
+[Proxy $()] GET prop: val
+[Proxy $().val] CALL with args: ["Cloud_V3"]
+[Proxy $] GET prop: ajax
+[generateRandomString called] with length: 16
+[Proxy $.ajax] called with options URL: https://m.cimaleek.pw/wp-json/lalaplayer/v2/
+[Proxy $.ajax] type: GET
+[Proxy $.ajax] data: p=4354&t=Cloud_V3&n=1&ver=undefined&rand=Z0BNQQyqT86aYCMv
+[Proxy $.ajax] headers: {}
+[Proxy $.ajax] Simulating successful response...
+[JSDOM CRITICAL] Message: Uncaught [InvalidCharacterError: The string to be decoded contains invalid characters.]
+[JSDOM CRITICAL] Stack: Error: Uncaught [InvalidCharacterError: The string to be decoded contains invalid characters.]
+    at reportException (C:\Users\alyab\AndroidStudioProjects\cloudstream-standard-v2\omarC\node_modules\jsdom\lib\jsdom\living\helpers\runtime-script-errors.js:66:24)
+    at Timeout.task [as _onTimeout] (C:\Users\alyab\AndroidStudioProjects\cloudstream-standard-v2\omarC\node_modules\jsdom\lib\jsdom\browser\Window.js:557:9)
+    at listOnTimeout (node:internal/timers:588:17)
+    at process.processTimers (node:internal/timers:523:7)

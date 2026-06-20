@@ -32,7 +32,6 @@ class CimaNowWebViewTest(private val activity: android.app.Activity) {
     private var allowedDomains: List<String> = emptyList()
     private var destinationLockPatterns: List<String> = emptyList()
     private var isOnDestination: Boolean = false
-    private var userAgentValue: String = ""
 
     init {
         val pair = createInitialWebView()
@@ -74,14 +73,32 @@ class CimaNowWebViewTest(private val activity: android.app.Activity) {
     }
 
     private fun hideXRequestedWithHeader(wv: WebView) {
-        try {
-            val field = WebView::class.java.getDeclaredField("mXRequestedWithHeader")
-            field.isAccessible = true
-            field.set(wv, "")
-            Log.i("CimaNowTest", "[init] Reflection hid mXRequestedWithHeader")
-        } catch (e: Exception) {
-            Log.w("CimaNowTest", "[init] Reflection failed: ${e.javaClass.simpleName}: ${e.message}")
+        fun tryClear(obj: Any?): Boolean {
+            if (obj == null) return false
+            var cls: Class<*>? = obj.javaClass
+            while (cls != null) {
+                try {
+                    val f = cls.getDeclaredField("mXRequestedWithHeader")
+                    f.isAccessible = true
+                    f.set(obj, "")
+                    Log.i("CimaNowTest", "[init] Cleared mXRequestedWithHeader via ${cls.name}")
+                    return true
+                } catch (_: NoSuchFieldException) {
+                    cls = cls.superclass
+                }
+            }
+            return false
         }
+
+        if (tryClear(wv)) return
+
+        try {
+            val pf = wv.javaClass.getDeclaredField("mProvider")
+            pf.isAccessible = true
+            if (tryClear(pf.get(wv))) return
+        } catch (_: Exception) {}
+
+        Log.w("CimaNowTest", "[init] Reflection failed — X-Requested-With may leak")
     }
 
     fun getContainer(): FrameLayout = container
@@ -103,7 +120,6 @@ class CimaNowWebViewTest(private val activity: android.app.Activity) {
         try {
             this@CimaNowWebViewTest.allowedDomains = allowedDomains
             this@CimaNowWebViewTest.destinationLockPatterns = destinationLockPatterns
-            this@CimaNowWebViewTest.userAgentValue = userAgent
             isOnDestination = false
             ensureWebViewInitialized()
             webView?.settings?.userAgentString = userAgent
@@ -242,34 +258,6 @@ class CimaNowWebViewTest(private val activity: android.app.Activity) {
             override fun onPageFinished(view: WebView?, url: String?) {
                 Log.i("CimaNowTest", "[onPageFinished] $url")
                 super.onPageFinished(view, url)
-            }
-
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): WebResourceResponse? {
-                if (request == null || view == null) return null
-                val scheme = request.url?.scheme?.lowercase()
-                if (scheme != "http" && scheme != "https") return null
-                val path = request.url?.path?.lowercase() ?: ""
-                if (path.endsWith(".css") || path.endsWith(".js")) {
-                    try {
-                        val reqUrl = request.url.toString()
-                        val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
-                        val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        conn.setRequestProperty("User-Agent", userAgentValue)
-                        conn.setRequestProperty("Accept", mimeType)
-                        val cookies = android.webkit.CookieManager.getInstance().getCookie(reqUrl)
-                        if (!cookies.isNullOrBlank()) conn.setRequestProperty("Cookie", cookies)
-                        conn.connectTimeout = 15000
-                        conn.readTimeout = 15000
-                        Log.i("CimaNowTest", "[shouldInterceptRequest] RE-FETCH ${reqUrl.take(100)} as $mimeType")
-                        return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
-                    } catch (e: Exception) {
-                        Log.w("CimaNowTest", "[shouldInterceptRequest] Re-fetch failed: ${e.message}")
-                    }
-                }
-                return null
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {

