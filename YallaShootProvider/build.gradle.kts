@@ -16,7 +16,7 @@ dependencies {
 cloudstream {
     authors = listOf("omarflex")
     language = "ar"
-    status = 3  // Beta
+    status = 0  // Beta
     tvTypes = listOf("TvSeries", "Movie", "Live")
     iconUrl = "https://www.google.com/s2/favicons?domain=shoot-one.com&sz=%size%"
 }

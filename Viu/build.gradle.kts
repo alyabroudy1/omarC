@@ -4,7 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-
+cloudstream {
+    authors = listOf("Cloudburst", "omarflex")
+    language = "ar"
+    description = "Watch content from viu (viu frontend)"
+    status = 0
+    tvTypes = listOf("Others")
+    iconUrl = "https://www.google.com/s2/favicons?domain=viu.io&sz=%size%"
+}
 
 android {
     namespace = "com.viu"

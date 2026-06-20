@@ -27,6 +27,15 @@ android {
 }
 }
 
+cloudstream {
+    authors = listOf("Cloudburst", "omarflex")
+    language = "ar"
+    description = "Watch content from tuniflix (tuniflix frontend)"
+    status = 0
+    tvTypes = listOf("Others")
+    iconUrl = "https://www.google.com/s2/favicons?tuniflix=tuniflix.io&sz=%size%"
+}
+
 dependencies {
 
     val cloudstream by configurations

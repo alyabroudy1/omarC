@@ -9,6 +9,16 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 
+version = 3
+
+cloudstream {
+    authors = listOf("Cloudburst", "omarflex")
+    language = "ar"
+    description = "Watch content from cimatn (cimatn frontend)"
+    status = 0
+    tvTypes = listOf("Others")
+    iconUrl = "https://www.google.com/s2/favicons?domain=cimatn.io&sz=%size%"
+}
 android {
     namespace = "com.youtube"
 
