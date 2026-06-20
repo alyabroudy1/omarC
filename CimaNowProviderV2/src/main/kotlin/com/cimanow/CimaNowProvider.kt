@@ -916,7 +916,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
                 ActivityProvider.initCompat(context)
                 val activity = ActivityProvider.currentActivity
                 if (activity != null) {
-                    val result = runCimaNowTest(activity)
+                    val result = withContext(Dispatchers.Main) { runCimaNowTest(activity) }
                     Log.i(TAG, "Test result: success=${result.success} completed=${result.completedSteps}/${result.totalSteps} finalUrl=${result.finalUrl}")
                     if (result.error != null) {
                         Toast.makeText(context, "Test failed: ${result.error}", Toast.LENGTH_LONG).show()

@@ -94,7 +94,7 @@ class NavigationEngine(
 
             try {
                 webView = createWebView(activity, userAgent)
-                setupWebViewClient(webView, requestInterceptor, allowedDomains, destinationLockPatterns)
+                setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains, destinationLockPatterns)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -262,6 +262,7 @@ class NavigationEngine(
 
     private fun setupWebViewClient(
         webView: WebView,
+        userAgent: String,
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList()
@@ -309,9 +310,31 @@ class NavigationEngine(
                 val reqUrl = request.url?.toString() ?: return null
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
-                if (reqUrl.contains(".js") || reqUrl.contains(".css") || reqUrl.contains(".png") || reqUrl.contains(".jpg")) {
-                    ProviderLogger.d(TAG, "shouldInterceptRequest", "PASS-THROUGH ${reqUrl.take(120)}")
+
+                // Intercept CSS/JS to work around servers that return text/html when
+                // they see X-Requested-With (which WebView can't always clear via reflection).
+                // Re-fetch ourselves via HttpURLConnection which never sends that header.
+                val path = request.url?.path?.lowercase() ?: ""
+                if (path.endsWith(".css") || path.endsWith(".js")) {
+                    try {
+                        val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
+                        val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
+                        conn.setRequestProperty("User-Agent", userAgent)
+                        conn.setRequestProperty("Accept", mimeType)
+                        val cookies = CookieManager.getInstance().getCookie(reqUrl)
+                        if (!cookies.isNullOrBlank()) {
+                            conn.setRequestProperty("Cookie", cookies)
+                        }
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 15000
+                        ProviderLogger.d(TAG, "shouldInterceptRequest", "RE-FETCH ${reqUrl.take(120)} as $mimeType")
+                        return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
+                    } catch (e: Exception) {
+                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Re-fetch failed: ${e.message}")
+                    }
                 }
+
+                ProviderLogger.d(TAG, "shouldInterceptRequest", "PASS-THROUGH ${reqUrl.take(120)}")
                 if (requestInterceptor != null) {
                     return requestInterceptor.invoke(view, request)
                 }
