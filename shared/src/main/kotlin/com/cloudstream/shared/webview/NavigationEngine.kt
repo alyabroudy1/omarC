@@ -328,9 +328,25 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
 
-                // Intercept CSS/JS to work around servers that return text/html when
-                // they see X-Requested-With (which WebView can't always clear via reflection).
-                // Re-fetch ourselves via HttpURLConnection which never sends that header.
+                // cimanow.cc returns text/html for CSS/JS when it sees X-Requested-With.
+                // Re-fetch only affected domain assets via HttpURLConnection (never sends that header).
+                val host = request.url?.host?.lowercase() ?: ""
+                val path = request.url?.path?.lowercase() ?: ""
+                if (host.contains("cimanow.cc") && (path.endsWith(".css") || path.endsWith(".js"))) {
+                    try {
+                        val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
+                        val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
+                        conn.setRequestProperty("User-Agent", webView.settings.userAgentString)
+                        conn.setRequestProperty("Accept", mimeType)
+                        conn.connectTimeout = 15000
+                        conn.readTimeout = 15000
+                        ProviderLogger.d(TAG, "shouldInterceptRequest", "RE-FETCH ${reqUrl.take(120)} as $mimeType")
+                        return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
+                    } catch (e: Exception) {
+                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Re-fetch failed: ${e.message}")
+                    }
+                }
+
                 if (requestInterceptor != null) {
                     return requestInterceptor.invoke(view, request)
                 }

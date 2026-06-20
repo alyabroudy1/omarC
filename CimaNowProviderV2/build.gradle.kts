@@ -1,12 +1,4 @@
-version = 2
-
-android {
-    sourceSets {
-        getByName("main") {
-            kotlin.srcDir("../shared/src/main/kotlin")
-        }
-    }
-}
+version = 1
 
 cloudstream {
     authors = listOf("omarflex")
