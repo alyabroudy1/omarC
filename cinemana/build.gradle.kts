@@ -9,6 +9,15 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 
+cloudstream {
+    authors = listOf("Cloudburst", "omarflex")
+    language = "ar"
+    description = "Watch content from cinemana (cinemana frontend)"
+    status = 0
+    tvTypes = listOf("Others")
+    iconUrl = "https://www.google.com/s2/favicons?domain=cinemana.io&sz=%size%"
+}
+
 android {
     namespace = "com.cinemana"
 

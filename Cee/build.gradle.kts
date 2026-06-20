@@ -30,6 +30,14 @@ kotlin {
     }
 }
 
+cloudstream {
+    authors = listOf("Cloudburst", "omarflex")
+    language = "ar"
+    description = "Watch content from cee (cee frontend)"
+    status = 0
+    tvTypes = listOf("Others")
+    iconUrl = "https://www.google.com/s2/favicons?cee=cee.io&sz=%size%"
+}
 
 dependencies {
 
