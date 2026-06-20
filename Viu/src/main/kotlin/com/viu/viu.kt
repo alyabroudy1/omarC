@@ -17,7 +17,6 @@ class Viu : MainAPI() {
     override var name = "Viu"
     override val hasMainPage = true
     override var lang = "ar"
-    override var status = 0
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.AsianDrama)
 
     private val mobileApiUrl = "https://api-gateway-global.viu.com/api/mobile"
