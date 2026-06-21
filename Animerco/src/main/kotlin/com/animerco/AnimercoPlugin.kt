@@ -1,13 +1,14 @@
 package com.animerco
+
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
+import com.cloudstream.shared.extractors.registerSharedExtractors
 
 @CloudstreamPlugin
-class AnimercoPlugin: Plugin() {
+class AnimercoPlugin : Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(animerco())
-        registerExtractorAPI(VideaExtractor())
-        registerExtractorAPI(MailruExtractor())
+        registerSharedExtractors()
+        registerMainAPI(AnimercoProvider())
     }
 }

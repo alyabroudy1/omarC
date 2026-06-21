@@ -2,6 +2,7 @@ package com.animerco
 
 import android.util.Log
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.AppUtils
 import org.json.JSONObject
 import java.net.URI
 import kotlin.text.RegexOption
