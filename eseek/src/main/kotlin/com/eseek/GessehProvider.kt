@@ -6,31 +6,22 @@ import java.net.URLDecoder
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import org.jsoup.nodes.Element
-import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import java.net.URI
-import kotlin.collections.component1
-import kotlin.collections.component2
-import kotlin.collections.forEach
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 
-class GessehProvider : MainAPI() {
-    override var mainUrl = "https://qeseh.net"
-    override var name = "عشق 2"
-    override val hasMainPage = true
-    override var lang = "ar"
-    override val supportedTypes = setOf(
-        TvType.TvSeries,
-        TvType.Movie,
-    )
+class GessehProvider : BaseProvider() {
+    override val baseDomain get() = "qeseh.net"
+    override val providerName get() = "عشق 2"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/eseek.json"
 
     data class GessehServer(
         val name: String? = null,
@@ -42,6 +33,7 @@ class GessehProvider : MainAPI() {
         val servers: List<GessehServer>? = null,
         val backUrl: String? = null
     )
+
     private val defaultHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36"
     )
@@ -52,63 +44,73 @@ class GessehProvider : MainAPI() {
         "$mainUrl/page/" to "آخر الحلقات",
     )
 
-    private fun Element.toSearchResponse(): SearchResponse? {
-        val linkTag = this.selectFirst("a") ?: return null
-        val href = linkTag.attr("href")
-        val title = linkTag.selectFirst("div.title")?.text()?.trim() ?: return null
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
-        var posterUrl = linkTag.selectFirst("div.imgBg, div.imgSer")?.attr("style")
-            ?.substringAfter("url(")?.substringBefore(")")
-            ?.replace("\"", "")?.replace("'", "")?.trim()
-
-        if (posterUrl.isNullOrBlank()) {
-            val imgTag = linkTag.selectFirst("img")
-            posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotBlank() }
-                ?: imgTag?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                        ?: imgTag?.attr("src")
-        }
-
-        return when {
-            href.contains("/movies/") -> {
-                newMovieSearchResponse(title, href, TvType.Movie) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
-            }
-            else -> {
-                newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
-            }
-        }
+    override fun getParser(): NewBaseParser {
+        return GessehParser()
     }
 
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse {
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        httpService.ensureInitialized()
         val document = app.get(request.data + page, headers = defaultHeaders).document
-
-        val home = document.select("article.post, article.postEp").mapNotNull {
-            it.toSearchResponse()
+        val home = document.select("article.post, article.postEp").mapNotNull { element ->
+            val linkTag = element.selectFirst("a") ?: return@mapNotNull null
+            val href = linkTag.attr("href")
+            val title = linkTag.selectFirst("div.title")?.text()?.trim() ?: return@mapNotNull null
+            var posterUrl = linkTag.selectFirst("div.imgBg, div.imgSer")?.attr("style")
+                ?.substringAfter("url(")?.substringBefore(")")
+                ?.replace("\"", "")?.replace("'", "")?.trim()
+            if (posterUrl.isNullOrBlank()) {
+                val imgTag = linkTag.selectFirst("img")
+                posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotBlank() }
+                    ?: imgTag?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
+                    ?: imgTag?.attr("src")
+            }
+            when {
+                href.contains("/movies/") -> newMovieSearchResponse(title, href, TvType.Movie) {
+                    this.posterUrl = fixUrlNull(posterUrl)
+                }
+                else -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                    this.posterUrl = fixUrlNull(posterUrl)
+                }
+            }
         }
         return newHomePageResponse(request.name, home)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
         val document = app.get("$mainUrl/?s=$query", headers = defaultHeaders).document
-        return document.select("article.post").mapNotNull {
-            it.toSearchResponse()
+        return document.select("article.post").mapNotNull { element ->
+            val linkTag = element.selectFirst("a") ?: return@mapNotNull null
+            val href = linkTag.attr("href")
+            val title = linkTag.selectFirst("div.title")?.text()?.trim() ?: return@mapNotNull null
+            var posterUrl = linkTag.selectFirst("div.imgBg, div.imgSer")?.attr("style")
+                ?.substringAfter("url(")?.substringBefore(")")
+                ?.replace("\"", "")?.replace("'", "")?.trim()
+            if (posterUrl.isNullOrBlank()) {
+                val imgTag = linkTag.selectFirst("img")
+                posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotBlank() }
+                    ?: imgTag?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
+                    ?: imgTag?.attr("src")
+            }
+            when {
+                href.contains("/movies/") -> newMovieSearchResponse(title, href, TvType.Movie) {
+                    this.posterUrl = fixUrlNull(posterUrl)
+                }
+                else -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                    this.posterUrl = fixUrlNull(posterUrl)
+                }
+            }
         }
     }
 
     private fun resolveRealUrl(url: String): String {
         var currentUrl = url
-
         val urlMatch = Regex("[?&]url=([^&]+)").find(currentUrl)
         if (urlMatch != null) {
             try {
                 var extractedUrl = URLDecoder.decode(urlMatch.groupValues[1], "UTF-8")
-
                 if (!extractedUrl.startsWith("http")) {
                     val decodedBytes = Base64.decode(extractedUrl, Base64.DEFAULT)
                     extractedUrl = String(decodedBytes, Charsets.UTF_8).trim()
@@ -116,15 +118,13 @@ class GessehProvider : MainAPI() {
                 if (extractedUrl.startsWith("http")) {
                     currentUrl = extractedUrl
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
-
         val postMatch = Regex("[?&]post=([^&]+)").find(currentUrl)
         if (postMatch != null) {
             try {
                 val encodedPost = URLDecoder.decode(postMatch.groupValues[1], "UTF-8")
                 val jsonStr = String(Base64.decode(encodedPost, Base64.DEFAULT), Charsets.UTF_8)
-
                 val backUrlMatch = Regex("\"backUrl\"\\s*:\\s*\"([^\"]+)\"").find(jsonStr)
                 if (backUrlMatch != null) {
                     val backUrl = backUrlMatch.groupValues[1].replace("\\/", "/")
@@ -132,16 +132,14 @@ class GessehProvider : MainAPI() {
                         currentUrl = backUrl
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
-
         return currentUrl
     }
 
-    override suspend fun load(url: String): LoadResponse {
-
+    override suspend fun load(url: String): LoadResponse? {
+        httpService.ensureInitialized()
         val realUrl = resolveRealUrl(url)
-
         val document = app.get(realUrl, headers = defaultHeaders).document
 
         val seriesUrl = document.selectFirst("div.singleSeries div.info h1 a")?.attr("href")
@@ -150,16 +148,13 @@ class GessehProvider : MainAPI() {
         }
 
         val title = document.selectFirst("div.info h1")?.text()?.trim() ?: ""
-
         var poster = document.selectFirst("div.cover div.img")?.attr("style")
             ?.substringAfter("url(")?.substringBefore(")")
             ?.replace("\"", "")?.replace("'", "")?.trim()
-
         if (poster.isNullOrBlank()) {
             val imgTag = document.selectFirst("div.cover img")
             poster = imgTag?.attr("data-src") ?: imgTag?.attr("src")
         }
-
         val description = document.selectFirst("div.story")?.text()?.trim()
 
         if (realUrl.contains("/movies/")) {
@@ -167,32 +162,29 @@ class GessehProvider : MainAPI() {
                 this.posterUrl = fixUrlNull(poster)
                 this.plot = description
             }
-        } else {
-            val episodes = document.select("article.postEp").mapNotNull {
-                val epUrl = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val epTitle = it.selectFirst("div.title")?.text()?.trim()
-                val epNum = it.selectFirst("div.episodeNum span:last-child")?.text()?.toIntOrNull()
+        }
 
-                var epPoster = it.selectFirst("div.imgSer")?.attr("style")
-                    ?.substringAfter("url(")?.substringBefore(")")
-                    ?.replace("\"", "")?.replace("'", "")?.trim()
-
-                if (epPoster.isNullOrBlank()) {
-                    val imgTag = it.selectFirst("img")
-                    epPoster = imgTag?.attr("data-src") ?: imgTag?.attr("src")
-                }
-
-                newEpisode(epUrl) {
-                    name = epTitle
-                    episode = epNum
-                    posterUrl = fixUrlNull(epPoster)
-                }
-            }.reversed()
-
-            return newTvSeriesLoadResponse(title, realUrl, TvType.TvSeries, episodes) {
-                this.posterUrl = fixUrlNull(poster)
-                this.plot = description
+        val episodes = document.select("article.postEp").mapNotNull {
+            val epUrl = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+            val epTitle = it.selectFirst("div.title")?.text()?.trim()
+            val epNum = it.selectFirst("div.episodeNum span:last-child")?.text()?.toIntOrNull()
+            var epPoster = it.selectFirst("div.imgSer")?.attr("style")
+                ?.substringAfter("url(")?.substringBefore(")")
+                ?.replace("\"", "")?.replace("'", "")?.trim()
+            if (epPoster.isNullOrBlank()) {
+                val imgTag = it.selectFirst("img")
+                epPoster = imgTag?.attr("data-src") ?: imgTag?.attr("src")
             }
+            newEpisode(epUrl) {
+                name = epTitle
+                episode = epNum
+                posterUrl = fixUrlNull(epPoster)
+            }
+        }.reversed()
+
+        return newTvSeriesLoadResponse(title, realUrl, TvType.TvSeries, episodes) {
+            this.posterUrl = fixUrlNull(poster)
+            this.plot = description
         }
     }
 
@@ -203,30 +195,18 @@ class GessehProvider : MainAPI() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            app.get(url,).text
+            app.get(url).text
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
             return null
         }
 
-        val evalRegex =
-            Regex("eval\\s*\\(\\s*function\\s*\\(.*?\\)\\s*\\{.*?\\}\\s*\\((.*)\\)\\s*\\)")
-        val evalMatch = evalRegex.find(pageText)
-        if (evalMatch == null) {
-            logCallback("Custom Extractor ERROR: evalRegex did not find a match.")
-            return null
-        }
-
+        val evalRegex = Regex("eval\\s*\\(\\s*function\\s*\\(.*?\\)\\s*\\{.*?\\}\\s*\\((.*)\\)\\s*\\)")
+        val evalMatch = evalRegex.find(pageText) ?: return null
         val paramsString = evalMatch.groupValues.getOrNull(1) ?: return null
 
-        val paramsRegex =
-            Regex("['\"](.*?)['\"]\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*['\"](.*?)['\"]\\.split\\s*\\(['\"]\\|['\"]\\)")
-        val paramMatch = paramsRegex.find(paramsString)
-        if (paramMatch == null) {
-            logCallback("Custom Extractor ERROR: paramsRegex failed on: '${paramsString.take(100)}...'")
-            return null
-        }
-
+        val paramsRegex = Regex("['\"](.*?)['\"]\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*['\"](.*?)['\"]\\.split\\s*\\(['\"]\\|['\"]\\)")
+        val paramMatch = paramsRegex.find(paramsString) ?: return null
         val (packedCode, baseStr, countStr, dictionaryStr) = paramMatch.destructured
         val base = baseStr.toInt()
         val count = countStr.toInt()
@@ -252,7 +232,6 @@ class GessehProvider : MainAPI() {
                     replaceMap[toBase(i, a)] = keyword
                 }
             }
-
             return Regex("\\b\\w+\\b").replace(p) { matchResult ->
                 replaceMap[matchResult.value] ?: matchResult.value
             }
@@ -263,12 +242,7 @@ class GessehProvider : MainAPI() {
 
         val fileRegex = Regex("[\"']?file[\"']?\\s*:\\s*[\"']([^\"']+)[\"']")
         val fileMatch = fileRegex.find(deobfuscatedJs)
-        if (fileMatch == null) {
-            logCallback("Custom Extractor ERROR: fileRegex did not find a match.")
-            return null
-        }
-
-        val finalUrl = fileMatch.groupValues[1]
+        val finalUrl = fileMatch?.groupValues?.get(1) ?: return null
         val cleanUrl = finalUrl.replace("\\/", "/")
         logCallback("Custom Extractor: Success! Found URL: $cleanUrl")
         return cleanUrl
@@ -281,32 +255,20 @@ class GessehProvider : MainAPI() {
             s.startsWith("http://") || s.startsWith("https://") -> s
             base != null -> try {
                 java.net.URL(java.net.URL(base), s).toString()
-            } catch (e: Exception) {
-                s
-            }
-
+            } catch (_: Exception) { s }
             else -> s
         }
     }
 
-
     private fun extractUrlFromCodeHtml(codeHtml: String?, base: String? = null): String? {
         if (codeHtml.isNullOrBlank()) return null
-        val doc = Jsoup.parse(codeHtml, base ?: "")
+        val doc = org.jsoup.Jsoup.parse(codeHtml, base ?: "")
         doc.selectFirst("iframe[src]")?.attr("abs:src")?.let { return normalizeUrl(it, base) }
         doc.selectFirst("source[src]")?.attr("abs:src")?.let { return normalizeUrl(it, base) }
         doc.selectFirst("a[href]")?.attr("abs:href")?.let { return normalizeUrl(it, base) }
-        Regex("https?:\\/\\/[^\\s\"']+").find(codeHtml)?.value?.let {
-            return normalizeUrl(
-                it,
-                base
-            )
-        }
+        Regex("https?:\\/\\/[^\\s\"']+").find(codeHtml)?.value?.let { return normalizeUrl(it, base) }
         return null
     }
-
-
-
 
     override suspend fun loadLinks(
         data: String,
@@ -314,6 +276,7 @@ class GessehProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        httpService.ensureInitialized()
         val pageUrl = resolveRealUrl(data)
 
         val mainPage = try {
@@ -330,7 +293,7 @@ class GessehProvider : MainAPI() {
         }
 
         var targetUrl = rawExtractorHref
-        var playerReferer = "https://fashny.net/" // قيمة افتراضية للريفرير
+        var playerReferer = "https://fashny.net/"
 
         val urlMatch = Regex("[?&]url=([^&]+)").find(rawExtractorHref)
         if (urlMatch != null) {
@@ -341,12 +304,11 @@ class GessehProvider : MainAPI() {
                     extracted = String(decodedBytes, Charsets.UTF_8).trim()
                 }
                 if (extracted.startsWith("http")) {
-                    targetUrl = extracted // الرابط الداخلي (thenextstop)
-
+                    targetUrl = extracted
                     val uri = java.net.URI(rawExtractorHref)
                     playerReferer = "${uri.scheme}://${uri.host}/"
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         } else {
             playerReferer = pageUrl
         }
@@ -366,7 +328,6 @@ class GessehProvider : MainAPI() {
                 val decodedBytes = android.util.Base64.decode(encodedJson, android.util.Base64.DEFAULT)
                 val jsonString = String(decodedBytes, Charsets.UTF_8)
                 val payload = parseJson<GessehPayload>(jsonString)
-
                 payload.servers?.let { servers ->
                     for (server in servers) {
                         val sName = server.name ?: continue
@@ -383,7 +344,6 @@ class GessehProvider : MainAPI() {
 
         try {
             val htmlPage = app.get(targetUrl, headers = customHeaders).document
-
             htmlPage.select("ul.serversList li").forEach { li ->
                 val serverName = li.attr("data-name").trim().takeIf { it.isNotEmpty() } ?: li.text().trim()
                 val serverId = li.attr("data-server").trim()
@@ -392,16 +352,6 @@ class GessehProvider : MainAPI() {
                 if (serverId.isEmpty()) {
                     val codeHtml = li.selectFirst("code")?.html()
                     embedUrl = extractUrlFromCodeHtml(codeHtml, targetUrl)
-
-                    if (serverName.lowercase().contains("daily")) {
-                        if (!embedUrl.isNullOrBlank()) {
-                            println("[GessehProvider] SUCCESS: Extracted Dailymotion from HTML: $embedUrl")
-                        } else {
-                            println("[GessehProvider] FAILED: Dailymotion found in HTML but couldn't extract URL from code tag")
-                        }
-                    }
-
-
                     if (embedUrl.isNullOrBlank()) {
                         val a = li.selectFirst("a")
                         embedUrl = a?.attr("abs:href")?.takeIf { it.isNotBlank() } ?: a?.attr("href")
@@ -468,12 +418,11 @@ class GessehProvider : MainAPI() {
 
         if (low.contains("dailymotion.com")) {
             try {
-
                 QesehDailymotionExtractor().getUrl(embedUrl, null, subtitleCallback, callback)
             } catch (e: Exception) {
                 println("[GessehProvider] Custom Dailymotion extractor failed: ${e.message}")
             }
-            return // نوقف التنفيذ هنا بعد معالجة Dailymotion
+            return
         }
 
         when {
@@ -505,7 +454,7 @@ class GessehProvider : MainAPI() {
                         })
                         return
                     }
-                } catch (e: Exception) {}
+                } catch (_: Exception) {}
                 try { loadExtractor(embedUrl, playerReferer, subtitleCallback, callback) }
                 catch (e: Exception) {
                     callback(newExtractorLink(this.name, serverName, embedUrl) {
@@ -527,27 +476,23 @@ class GessehProvider : MainAPI() {
         }
     }
 
-
     open class QesehDailymotionExtractor : ExtractorApi() {
         override val mainUrl = "https://www.dailymotion.com"
         override val name = "Dailymotion (Qeseh)"
-        override val requiresReferer = true // مهم لتحديد أن الريفير مطلوب
+        override val requiresReferer = true
         private val baseUrl = "https://www.dailymotion.com"
         private val videoIdRegex = "^[kx][a-zA-Z0-9]+$".toRegex()
 
         override suspend fun getUrl(
             url: String,
-            referer: String?, // سيتم تجاهل هذا الريفير
+            referer: String?,
             subtitleCallback: (SubtitleFile) -> Unit,
             callback: (ExtractorLink) -> Unit
         ) {
             val embedUrl = getEmbedUrl(url) ?: return
             val id = getVideoId(embedUrl) ?: return
             val metaDataUrl = "$baseUrl/player/metadata/video/$id"
-
-
             val response = app.get(metaDataUrl, referer = "https://qeseh.net/").text
-
             val gson = Gson()
             val meta = gson.fromJson(response, MetaData::class.java)
 
@@ -560,12 +505,7 @@ class GessehProvider : MainAPI() {
 
             meta.subtitles?.data?.forEach { (_, subData) ->
                 subData.urls.forEach { subUrl ->
-                    subtitleCallback(
-                        newSubtitleFile(
-                            subData.label,
-                            subUrl
-                        )
-                    )
+                    subtitleCallback(newSubtitleFile(subData.label, subUrl))
                 }
             }
         }
@@ -580,7 +520,7 @@ class GessehProvider : MainAPI() {
         }
 
         private fun getVideoId(url: String): String? {
-            val path = URI(url).path
+            val path = java.net.URI(url).path
             val id = path.substringAfter("/video/")
             return if (id.matches(videoIdRegex)) id else null
         }
@@ -590,7 +530,7 @@ class GessehProvider : MainAPI() {
             name: String,
             callback: (ExtractorLink) -> Unit
         ) {
-            for (link in generateM3u8(name, streamLink, mainUrl)) {
+            for (link in M3u8Helper.generateM3u8(name, streamLink, mainUrl)) {
                 callback(link)
             }
         }
@@ -604,4 +544,3 @@ class GessehProvider : MainAPI() {
         data class SubtitleData(val label: String, val urls: List<String>)
     }
 }
-

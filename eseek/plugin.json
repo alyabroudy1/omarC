@@ -1,0 +1,16 @@
+{
+  "name": "Gesseh",
+  "description": "Eseak arabic movies and series provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/eseek.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["GessehProvider.kt", "GessehParser.kt", "GessehPlugin.kt"],
+  "sources": [
+    {
+      "name": "عشق 2",
+      "url": "https://qeseh.net"
+    }
+  ]
+}

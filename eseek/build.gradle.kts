@@ -1,4 +1,3 @@
-
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -12,30 +11,31 @@ repositories {
 android {
     namespace = "com.eseek"
     compileSdk = 34
-    defaultConfig {
-        minSdk = 21
-    }
+    defaultConfig { minSdk = 21 }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
-    kotlin {
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir("../shared/src/main/kotlin")
+        }
+    }
+}
+
+kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
         freeCompilerArgs.add("-XXLanguage:+BreakContinueInInlineLambdas")
     }
 }
-}
 
 dependencies {
-
     val cloudstream by configurations
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
-        cloudstream("com.lagradost:cloudstream3:pre-release")
+    cloudstream("com.lagradost:cloudstream3:pre-release")
     implementation("com.google.code.gson:gson:2.10.1")
-
-
 }
