@@ -1,19 +1,16 @@
-package com.cimawbas
+package com.cimatn
 
-import com.fasterxml.jackson.annotation.JsonProperty
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
-import android.util.Base64
 
-class CimaTn : MainAPI() {
-    override var mainUrl = "https://www.cimatn.com"
-    override var name = "CimaTn"
-    override val hasMainPage = true
-    override var lang = "ar"
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+class CimaTn : BaseProvider() {
+    override val baseDomain get() = "www.cimatn.com"
+    override val providerName get() = "CimaTn"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimatn.json"
 
     override val mainPage = mainPageOf(
         "$mainUrl/search/label/أحدث الإضافات" to "أحدث الإضافات",
@@ -25,40 +22,21 @@ class CimaTn : MainAPI() {
         "$mainUrl/search/label/أكشن" to "أكشن"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) request.data else "${request.data}?max-results=20"
-        val doc = app.get(url).document
-        val home = doc.select("#holder a.itempost").mapNotNull { toSearchResult(it) }
-        return newHomePageResponse(request.name, home)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+
+    override fun getParser(): NewBaseParser {
+        return CimaTnParser()
     }
 
-    private fun toSearchResult(element: Element): SearchResponse? {
-        val title = element.select("#item-name").text().trim()
-        val url = element.attr("href")
-        var posterUrl = element.select("img").attr("src")
-        posterUrl = fixPoster(posterUrl)
-        val year = element.select(".entry-label").text().trim().toIntOrNull()
-
-        return newMovieSearchResponse(title, url, TvType.Movie) {
-            this.posterUrl = posterUrl
-            this.year = year
-        }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search?q=$query"
-        val doc = app.get(url).document
-        return doc.select("#holder a.itempost").mapNotNull { toSearchResult(it) }
-    }
-
-    override suspend fun load(url: String): LoadResponse {
+    override suspend fun load(url: String): LoadResponse? {
+        httpService.ensureInitialized()
         val cleanUrl = url.substringBefore("?")
 
         if (cleanUrl.contains("film-")) {
             return loadMovieData(cleanUrl)
         }
 
-        val doc = app.get(cleanUrl).document
+        val doc = httpService.getDocument(cleanUrl) ?: return null
         val htmlContent = doc.html()
 
         if (htmlContent.contains("data-secure-url") && !htmlContent.contains("const watchPageSlug")) {
@@ -81,29 +59,25 @@ class CimaTn : MainAPI() {
             var feedUrlSuffix = feedMatch.groupValues[1]
             if (feedUrlSuffix.startsWith("/")) feedUrlSuffix = feedUrlSuffix.substring(1)
             val feedUrl = "$domain/$feedUrlSuffix"
-
             try {
                 val jsonString = app.get(feedUrl).text
                 val cleanJson = if (jsonString.contains("{"))
                     jsonString.substring(jsonString.indexOf("{"), jsonString.lastIndexOf("}") + 1)
                 else jsonString
-
                 val entries = cleanJson.split("\"entry\":[")
                 if (entries.size > 1) {
                     val items = entries[1].split("},{")
                     for (item in items) {
                         val tMatch = Regex(""""\$":"(.*?)"""").find(item.substringAfter("\"title\":"))
                         val sTitle = tMatch?.groupValues?.get(1) ?: "Season"
-
                         val linksPart = item.substringAfter("\"link\":").substringBefore("],")
                         val linkMatch = Regex(""""rel":"alternate".*?"href":"(https:[^"]+)"""").find(linksPart)
                             ?: Regex(""""href":"(https:[^"]+)".*?"rel":"alternate"""").find(linksPart)
-
                         val sUrl = linkMatch?.groupValues?.get(1)?.replace("\\/", "/")
                         if (sUrl != null) seasonsList.add(Pair(sTitle, sUrl))
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
 
         if (seasonsList.isEmpty()) {
@@ -115,9 +89,7 @@ class CimaTn : MainAPI() {
         if (seasonsList.isNotEmpty()) {
             seasonsList.reversed().forEachIndexed { index, (sTitle, sUrl) ->
                 val seasonNum = index + 1
-
                 val (epHtml, epUrl) = if (sUrl.contains(cleanUrl.substringAfterLast("/"))) Pair(htmlContent, cleanUrl) else Pair(app.get(sUrl).text, sUrl)
-
                 val foundEps = getSeriesEpisodes(domain, epHtml, epUrl)
                 for ((epName, epLink) in foundEps) {
                     val epNum = Regex("""(\d+)""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
@@ -129,7 +101,6 @@ class CimaTn : MainAPI() {
                 }
             }
         } else {
-
             val foundEps = getSeriesEpisodes(domain, htmlContent, cleanUrl)
             for ((epName, epLink) in foundEps) {
                 val epNum = Regex("""(\d+)""").find(epName)?.groupValues?.get(1)?.toIntOrNull()
@@ -149,55 +120,37 @@ class CimaTn : MainAPI() {
         }
     }
 
-
-
-
-
-
-
-
-
     private suspend fun loadMovieData(url: String): LoadResponse {
-
         val cleanUrl = url.substringBefore("?")
         val filename = cleanUrl.substringAfterLast("/").replace(".html", "")
         val keyword = if (filename.contains("-")) filename.substringAfterLast("-") else filename
         val domain = "https://${java.net.URI(cleanUrl).host}"
 
         var finalLink: String? = null
-
         try {
             val feedUrl = "$domain/feeds/posts/default?alt=json&max-results=100"
             val jsonString = app.get(feedUrl).text
-
             val cleanJson = if (jsonString.contains("{"))
                 jsonString.substring(jsonString.indexOf("{"), jsonString.lastIndexOf("}") + 1)
             else jsonString
-
             val entries = cleanJson.split("\"entry\":[")
             if (entries.size > 1) {
                 val items = entries[1].split("},{")
                 for (item in items) {
-
                     val linkMatch = Regex(""""rel":"alternate".*?"href":"(https:[^"]+)"""").find(item)
                         ?: Regex(""""href":"(https:[^"]+)".*?"rel":"alternate"""").find(item)
-
                     val href = linkMatch?.groupValues?.get(1)?.replace("\\/", "/")
-
                     if (href != null && href.contains(keyword)) {
                         finalLink = href
                         break
                     }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Exception) {}
 
         val resolvedLink = if (finalLink != null) {
             finalLink.replace("www.cimatn.com", "cimatunisa.blogspot.com")
         } else {
-
             cleanUrl.replace("www.cimatn.com", "cimatunisa.blogspot.com")
         }
 
@@ -215,8 +168,6 @@ class CimaTn : MainAPI() {
             this.year = year
         }
     }
-
-
 
     private suspend fun getSeriesEpisodes(domain: String, html: String, pageUrl: String): List<Pair<String, String>> {
         val episodes = mutableListOf<Pair<String, String>>()
@@ -237,30 +188,26 @@ class CimaTn : MainAPI() {
         if (slugMatch != null && totalEpMatch != null) {
             val watchSlug = slugMatch.groupValues[1]
             val totalEps = totalEpMatch.groupValues[1].toInt()
-
             val feedUrl = "$domain/feeds/pages/default?alt=json&max-results=150&q=$watchSlug"
             try {
                 val jsonString = app.get(feedUrl).text
-                val linkRegex = Regex("""\"rel\":\"alternate\".*?\"href\":\"(https:[^\"]+)\"""")
-
+                val linkRegex = Regex(""""rel":"alternate".*?"href":"(https:[^"]+)"""")
                 val allLinks = linkRegex.findAll(jsonString).map { it.groupValues[1].replace("\\/", "/") }
                 val watchPageUrl = allLinks.find { it.contains(watchSlug) }
-
                 if (watchPageUrl != null) {
                     for (i in 1..totalEps) {
                         episodes.add(Pair("الحلقة $i", "$watchPageUrl?episode=$i"))
                     }
                     return episodes
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
 
         if (totalEpMatch != null) {
             val baseLinkMatch = Regex("""const\s+baseLink\s*=\s*"([^"]+)";""").find(html)
-            if (baseLinkMatch != null && slugMatch == null) { // تأكد أنه ليس FlashBack
+            if (baseLinkMatch != null && slugMatch == null) {
                 val count = totalEpMatch.groupValues[1].toInt()
                 var baseLink = baseLinkMatch.groupValues[1]
-
                 for (i in 1..count) {
                     val fullLink = if (baseLink.startsWith("http")) {
                         "$baseLink$i.html"
@@ -289,39 +236,33 @@ class CimaTn : MainAPI() {
 
         val slug = try {
             pageUrl.substringAfterLast("/").replace(".html", "")
-        } catch (e: Exception) { "" }
+        } catch (_: Exception) { "" }
 
         if (slug.isNotEmpty()) {
-            val feedUrl = "$domain/feeds/pages/default?alt=json&max-results=500" // جلب 500 لضمان الشمولية
+            val feedUrl = "$domain/feeds/pages/default?alt=json&max-results=500"
             try {
                 val jsonString = app.get(feedUrl).text
                 val cleanJson = if (jsonString.contains("{")) jsonString.substring(jsonString.indexOf("{"), jsonString.lastIndexOf("}") + 1) else jsonString
-
                 val targetSlugClean = slug.lowercase().replace("y", "i").replace("-", "").replace("_", "")
-
                 val entries = cleanJson.split("\"entry\":[")
                 if (entries.size > 1) {
                     val items = entries[1].split("},{")
                     for (item in items) {
                         val tMatch = Regex(""""\$":"(.*?)"""").find(item.substringAfter("\"title\":"))
                         val entryTitle = tMatch?.groupValues?.get(1) ?: "Episode"
-
                         val lMatch = Regex(""""rel":"alternate".*?"href":"(https:[^"]+)"""").find(item)
                             ?: Regex(""""href":"(https:[^"]+)".*?"rel":"alternate"""").find(item)
                         val entryLink = lMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: continue
-
                         val linkSlug = entryLink.substringAfterLast("/").replace(".html", "")
                         val linkSlugClean = linkSlug.lowercase().replace("y", "i").replace("-", "").replace("_", "")
-
                         val isMatch = linkSlugClean.contains(targetSlugClean)
                         val isEpisode = entryLink.contains("ep-") || entryLink.contains("-ep") || entryLink.contains("hal9a") || entryLink.contains("episode")
-
                         if (isMatch && isEpisode) {
                             episodes.add(Pair(entryTitle, entryLink))
                         }
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
 
         return episodes.sortedBy {
@@ -329,46 +270,36 @@ class CimaTn : MainAPI() {
         }
     }
 
-
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-
+        httpService.ensureInitialized()
 
         if (data.contains("youtube.com") || data.contains("youtu.be")) {
             loadExtractor(data, "$mainUrl/", subtitleCallback, callback)
             return true
         }
 
-
         val html = app.get(data).text
-
         var foundAnyLink = false
-
-
 
         val serversRegex = Regex("""url:\s*['"](https?://[^'"]+)['"]""")
         val jsLinks = serversRegex.findAll(html).map { it.groupValues[1] }.toSet()
-
         if (jsLinks.isNotEmpty()) {
             jsLinks.forEach { link ->
-
                 val cleanLink = link.replace("\\", "")
                 loadExtractor(cleanLink, "$mainUrl/", subtitleCallback, callback)
             }
             foundAnyLink = true
         }
 
-
         if (!foundAnyLink) {
             val doc = org.jsoup.Jsoup.parse(html)
             doc.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
-
                 if (src.isNotBlank() && !src.contains("facebook.com") && !src.contains("googlesyndication")) {
                     loadExtractor(src, "$mainUrl/", subtitleCallback, callback)
                     foundAnyLink = true
@@ -378,10 +309,4 @@ class CimaTn : MainAPI() {
 
         return foundAnyLink
     }
-    private fun fixPoster(url: String): String {
-        return url.replace(Regex("/s\\d+-c/"), "/w600/")
-            .replace(Regex("/w\\d+/"), "/w600/")
-            .replace(Regex("/s\\d+/"), "/s1600/")
-    }
-
 }

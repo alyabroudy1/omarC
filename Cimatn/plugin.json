@@ -1,0 +1,16 @@
+{
+  "name": "CimaTn",
+  "description": "CimaTn arabic movies and series provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/cimatn.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["CimaTnProvider.kt", "CimaTnParser.kt", "CimaTnPlugin.kt"],
+  "sources": [
+    {
+      "name": "CimaTn",
+      "url": "https://www.cimatn.com"
+    }
+  ]
+}
