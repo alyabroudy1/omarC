@@ -1,11 +1,14 @@
 package com.anime4up
+
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
+import com.cloudstream.shared.extractors.registerSharedExtractors
 
 @CloudstreamPlugin
-class eishkPlugin: Plugin() {
+class Anime4UpPlugin : Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(Anime4up())
+        registerSharedExtractors()
+        registerMainAPI(Anime4Up())
     }
 }

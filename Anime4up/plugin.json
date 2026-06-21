@@ -1,0 +1,16 @@
+{
+  "name": "Anime4Up",
+  "description": "Anime4Up arabic anime provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/anime4up.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["Anime4UpProvider.kt", "Anime4UpParser.kt", "Anime4UpPlugin.kt"],
+  "sources": [
+    {
+      "name": "Anime4Up",
+      "url": "https://w1.anime4up.rest"
+    }
+  ]
+}
