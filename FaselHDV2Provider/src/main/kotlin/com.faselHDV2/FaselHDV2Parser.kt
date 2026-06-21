@@ -102,8 +102,10 @@ class FaselHDV2Parser : NewBaseParser() {
      * Extracts from:
      * 1. iframe[src] elements
      * 2. player_iframe.location.href in onclick attributes
-     * 3. Script URL regex for player/embed URLs
-     * 4. Short link divs (div.shortLink, span#liskSh, a[data-src])
+     * 3. .signleWatch ul.tabs-ul li[onclick] (legacy FaselHD pattern)
+     * 4. ul.WatchList li[data-embed-url] (legacy FaselHD pattern)
+     * 5. Script URL regex for player/embed URLs
+     * 6. Short link divs (div.shortLink, span#liskSh, a[data-src])
      */
     fun extractIframeSources(doc: Document): List<String> {
         val results = mutableSetOf<String>()
@@ -137,7 +139,25 @@ class FaselHDV2Parser : NewBaseParser() {
             }
         }
 
-        // 3. Script URL regex for player/embed URLs
+        // 3. Legacy FaselHD pattern: .signleWatch ul.tabs-ul li[onclick]
+        doc.select(".signleWatch ul.tabs-ul li[onclick], ul.tabs-ul li[onclick]").forEach { li ->
+            val onclick = li.attr("onclick")
+            val urlMatch = Regex("""['"](https?://[^'"]+)['"]""").find(onclick)
+            if (urlMatch != null) {
+                addResult(urlMatch.groupValues[1])
+            } else {
+                val fallback = li.attr("data-url").ifBlank { li.attr("data-link") }
+                if (fallback.isNotBlank()) addResult(fallback)
+            }
+        }
+
+        // 4. Legacy FaselHD pattern: ul.WatchList li[data-embed-url]
+        doc.select("ul.WatchList li[data-embed-url]").forEach { li ->
+            val url = li.attr("data-embed-url")
+            if (url.isNotBlank()) addResult(url)
+        }
+
+        // 5. Script URL regex for player/embed URLs
         val scriptRegex = Regex("""https?://[^\s"'<>]+""")
         doc.select("script").forEach { s ->
             val data = s.data()
@@ -151,7 +171,7 @@ class FaselHDV2Parser : NewBaseParser() {
             }
         }
 
-        // 4. Short link divs
+        // 6. Short link divs
         doc.select("div.shortLink, span#liskSh, a[data-src]").forEach { el ->
             val text = el.text().trim()
             if (text.startsWith("http")) addResult(text)
@@ -173,6 +193,35 @@ class FaselHDV2Parser : NewBaseParser() {
         doc: Document,
         urls: List<String>
     ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        // Map URLs to their corresponding server tab elements for sniffer fallback
+        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
+        if (watchListItems.isNotEmpty()) {
+            return urls.map { url ->
+                val matchingLi = watchListItems.firstOrNull { it.attr("data-embed-url") == url }
+                if (matchingLi != null) {
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = "ul.WatchList li[data-embed-url=\"$url\"]",
+                        attr = "data-embed-url"
+                    )
+                } else null
+            }
+        }
+        val signleItems = doc.select(".signleWatch ul.tabs-ul li[onclick]")
+        if (signleItems.isNotEmpty()) {
+            val urlPattern = Regex("""['"](https?://[^'"]+)['"]""")
+            return urls.map { url ->
+                val matchingLi = signleItems.firstOrNull {
+                    val m = urlPattern.find(it.attr("onclick"))
+                    m?.groupValues?.get(1) == url
+                }
+                if (matchingLi != null) {
+                    com.cloudstream.shared.extractors.SnifferSelector(
+                        query = matchingLi.cssSelector(),
+                        attr = "onclick"
+                    )
+                } else null
+            }
+        }
         return urls.map { null }
     }
 

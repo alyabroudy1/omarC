@@ -196,11 +196,21 @@ class FaselHDV2 : BaseProvider() {
 
         try {
             // Fetch the detail/episode page
-            val doc = httpService.getDocument(data)
+            var doc = httpService.getDocument(data)
             if (doc != null) {
-                // Parse iframe sources using 3rab's extractIframeSources
                 val parser = getParser() as FaselHDV2Parser
-                val iframeUrls = parser.extractIframeSources(doc)
+
+                // Follow player page if it exists (play.php?vid=XXX)
+                val watchPageUrl = parser.getPlayerPageUrl(doc)
+                val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
+                    val fullWatchUrl = if (watchPageUrl.startsWith("http")) watchPageUrl else "$mainUrl/$watchPageUrl"
+                    Log.d(methodTag, "Following player page: $fullWatchUrl")
+                    httpService.getDocument(fullWatchUrl) ?: doc
+                } else {
+                    doc
+                }
+
+                val iframeUrls = parser.extractIframeSources(targetDoc)
                 Log.d(methodTag, "Extracted ${iframeUrls.size} iframe URLs: $iframeUrls")
 
                 if (iframeUrls.isNotEmpty()) {

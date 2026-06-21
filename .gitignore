@@ -12,3 +12,4 @@ local.properties
 .vscode
 log.log
 .node_modules
+.kotlin/errors
