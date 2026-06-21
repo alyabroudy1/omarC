@@ -44,7 +44,8 @@ abstract class BaseProvider : MainAPI() {
 
 
     protected val httpService by lazy {
-        val context = PluginContext.context ?: (com.lagradost.cloudstream3.app as android.content.Context)
+        val context = PluginContext.context
+            ?: throw RuntimeException("PluginContext not initialized. Call PluginContext.init(context) in your Plugin.load() before registerMainAPI().")
 
         val service = ProviderHttpService.create(
             context = context,
