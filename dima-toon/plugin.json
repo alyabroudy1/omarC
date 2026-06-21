@@ -1,0 +1,16 @@
+{
+  "name": "DimaToon",
+  "description": "Dima Toon arabic cartoons provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/dimatoon.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["DimaToonProvider.kt", "DimaToonParser.kt", "DimaToonPlugin.kt"],
+  "sources": [
+    {
+      "name": "Dima Toon",
+      "url": "https://www.dima-toon.com"
+    }
+  ]
+}
