@@ -1,93 +1,85 @@
-
 package com.krmzy
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import org.jsoup.nodes.Element
-import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import okhttp3.Interceptor
-import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import java.net.URI
 
-class krmzyProvider : MainAPI() {
-    override var mainUrl = "https://krmzi.org"
-    override var name = "قرمزي"
-    override val hasMainPage = true
-    override var lang = "ar"
-    override val supportedTypes = setOf(
-        TvType.TvSeries
-    )
+class KrmzyProvider : BaseProvider() {
+    override val baseDomain get() = "krmzi.org"
+    override val providerName get() = "قرمزي"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/krmzy.json"
+
+    private val cloudflareKiller by lazy { CloudflareKiller() }
+    private val cfInterceptor: Interceptor get() = cloudflareKiller
 
     override val mainPage = mainPageOf(
         "$mainUrl/series-list/page/" to "جميع المسلسلات",
     )
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
+    override val supportedTypes = setOf(TvType.TvSeries)
 
-
-    private fun Element.toSearchResponse(): SearchResponse? {
-        val link = this.selectFirst("a") ?: return null
-        val href = link.attr("href")
-        val title = link.selectFirst("div.title")?.text()?.trim() ?: link.attr("title")
-        val posterUrl = link.selectFirst("div.imgSer, div.imgBg")?.attr("style")?.let {
-            Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1)
-        }
-
-        return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-            this.posterUrl = posterUrl
-        }
+    override fun getParser(): NewBaseParser {
+        return KrmzyParser()
     }
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse {
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
+        httpService.ensureInitialized()
         val document = app.get(request.data + page, interceptor = cfInterceptor).document
-        val home = document.select("article.postEp").mapNotNull {
-            it.toSearchResponse()
+        val home = document.select("article.postEp").mapNotNull { element ->
+            val link = element.selectFirst("a") ?: return@mapNotNull null
+            val href = link.attr("href")
+            val title = link.selectFirst("div.title")?.text()?.trim() ?: link.attr("title")
+            val posterUrl = link.selectFirst("div.imgSer, div.imgBg")?.attr("style")?.let {
+                Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1)
+            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            }
         }
         return newHomePageResponse(request.name, home)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
         return search(query, 1)?.items ?: emptyList()
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList? {
-
+        httpService.ensureInitialized()
         val url = if (page > 1) {
-
             "$mainUrl/search/$query/page/$page/"
         } else {
-
             "$mainUrl/?s=$query"
         }
-
         val document = app.get(url, interceptor = cfInterceptor).document
-
-        val items = document.select("div.block-post").mapNotNull {
-            it.toSearchResponse()
+        val items = document.select("div.block-post").mapNotNull { element ->
+            val link = element.selectFirst("a") ?: return@mapNotNull null
+            val href = link.attr("href")
+            val title = link.selectFirst("div.title")?.text()?.trim() ?: link.attr("title")
+            val posterUrl = link.selectFirst("div.imgSer, div.imgBg")?.attr("style")?.let {
+                Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1)
+            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            }
         }
-
-
-
-
-
-
         return newSearchResponseList(items, items.isNotEmpty())
     }
 
-    override suspend fun load(url: String): LoadResponse {
+    override suspend fun load(url: String): LoadResponse? {
+        httpService.ensureInitialized()
         val document = app.get(url, interceptor = cfInterceptor).document
 
         val seriesUrl = document.selectFirst("div.singleSeries div.info h1 a")?.attr("href")
         if (seriesUrl != null) {
-
             return load(seriesUrl)
         }
 
@@ -101,27 +93,25 @@ class krmzyProvider : MainAPI() {
                 this.posterUrl = poster
                 this.plot = description
             }
-        } else {
-            val episodes = document.select("article.postEp").mapNotNull {
-                val epUrl = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val epTitle = it.selectFirst("div.title")?.text()?.trim()
-                val epNum = it.selectFirst("div.episodeNum span:last-child")?.text()?.toIntOrNull()
+        }
 
-                val epPoster = it.selectFirst("div.imgSer")
-                    ?.attr("style")
-                    ?.substringAfter("url(")?.substringBefore(")")
-
-                newEpisode(epUrl) {
-                    name = epTitle
-                    episode = epNum
-                    posterUrl = epPoster // إضافة الصورة لكل حلقة
-                }
-            }.reversed()
-
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.plot = description
+        val episodes = document.select("article.postEp").mapNotNull {
+            val epUrl = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+            val epTitle = it.selectFirst("div.title")?.text()?.trim()
+            val epNum = it.selectFirst("div.episodeNum span:last-child")?.text()?.toIntOrNull()
+            val epPoster = it.selectFirst("div.imgSer")
+                ?.attr("style")
+                ?.substringAfter("url(")?.substringBefore(")")
+            newEpisode(epUrl) {
+                name = epTitle
+                episode = epNum
+                posterUrl = epPoster
             }
+        }.reversed()
+
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+            this.posterUrl = poster
+            this.plot = description
         }
     }
 
@@ -132,7 +122,6 @@ class krmzyProvider : MainAPI() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-
             app.get(url, referer = referer, interceptor = cfInterceptor).text
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
@@ -140,42 +129,30 @@ class krmzyProvider : MainAPI() {
         }
 
         val evalRegex = Regex("""eval\s*\(\s*function\s*\(.*?\)\s*\{.*?\}\s*\((.*)\)\s*\)""")
-        val evalMatch = evalRegex.find(pageText)
-        if (evalMatch == null) {
-            logCallback("Custom Extractor ERROR: evalRegex did not find a match.")
-
-
-            return null
-        }
-
+        val evalMatch = evalRegex.find(pageText) ?: return null
         val paramsString = evalMatch.groupValues.getOrNull(1) ?: return null
 
         val paramsRegex = Regex("""['"](.*?)['"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['"](.*?)['"]\.split\s*\(['"]\|['"]\)""")
-        val paramMatch = paramsRegex.find(paramsString)
-        if (paramMatch == null) {
-            logCallback("Custom Extractor ERROR: paramsRegex failed on: '${paramsString.take(100)}...'")
-            return null
-        }
+        val paramMatch = paramsRegex.find(paramsString) ?: return null
 
         val (packedCode, baseStr, countStr, dictionaryStr) = paramMatch.destructured
         val base = baseStr.toInt()
         val count = countStr.toInt()
         val keywords = dictionaryStr.split('|')
 
-        fun deobfuscate(p: String, a: Int, c: Int, k: List<String>): String {
-
-            fun toBase(num: Int, radix: Int): String {
-                val chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                if (num == 0) return "0"
-                var n = num
-                val sb = StringBuilder()
-                while (n > 0) {
-                    sb.append(chars[n % radix])
-                    n /= radix
-                }
-                return sb.reverse().toString()
+        fun toBase(num: Int, radix: Int): String {
+            val chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            if (num == 0) return "0"
+            var n = num
+            val sb = StringBuilder()
+            while (n > 0) {
+                sb.append(chars[n % radix])
+                n /= radix
             }
+            return sb.reverse().toString()
+        }
 
+        fun deobfuscate(p: String, a: Int, c: Int, k: List<String>): String {
             val replaceMap = mutableMapOf<String, String>()
             for (i in 0 until c) {
                 val keyword = k.getOrNull(i)
@@ -183,52 +160,32 @@ class krmzyProvider : MainAPI() {
                     replaceMap[toBase(i, a)] = keyword
                 }
             }
-
-
             return Regex("""\b\w+\b""").replace(p) { matchResult ->
                 replaceMap[matchResult.value] ?: matchResult.value
             }
         }
 
         val deobfuscatedJs = deobfuscate(packedCode, base, count, keywords)
-
         logCallback("Custom Extractor: Deobfuscated JS start: ${deobfuscatedJs.take(100)}")
 
         val fileRegex = Regex("""["']?file["']?\s*:\s*["']([^"']+)["']""")
         val fileMatch = fileRegex.find(deobfuscatedJs)
-
-        if (fileMatch == null) {
-            logCallback("Custom Extractor ERROR: fileRegex did not find a match.")
-
-            return null
-        }
-
-        val finalUrl = fileMatch.groupValues[1]
-
+        val finalUrl = fileMatch?.groupValues?.get(1) ?: return null
         val cleanUrl = finalUrl.replace("\\/", "/")
-
         logCallback("Custom Extractor: Success! Found URL: $cleanUrl")
         return cleanUrl
     }
 
-
-
-    /**
-     * دالة مساعدة لمحاكاة منطق البايثون في فحص الريفير المناسب للتشغيل.
-     * تتحقق من: رابط الـ Iframe نفسه، ثم qesen، ثم newaat.
-     */
     private suspend fun checkWorkingStreamReferer(
         streamUrl: String,
         originEmbedUrl: String,
         logCallback: (String) -> Unit
     ): String {
-
-
         val iframeHostReferer = try {
             val uri = URI(originEmbedUrl)
             "${uri.scheme}://${uri.host}/"
-        } catch (e: Exception) {
-            "https://qesen.net/" // Fallback
+        } catch (_: Exception) {
+            "https://qesen.net/"
         }
 
         val candidates = listOf(
@@ -241,14 +198,7 @@ class krmzyProvider : MainAPI() {
 
         for (ref in candidates) {
             try {
-
-
-                val code = app.get(
-                    streamUrl,
-                    referer = ref,
-                    interceptor = cfInterceptor
-                ).code
-
+                val code = app.get(streamUrl, referer = ref, interceptor = cfInterceptor).code
                 if (code == 200) {
                     logCallback("Referer works: $ref")
                     return ref
@@ -264,9 +214,6 @@ class krmzyProvider : MainAPI() {
         return iframeHostReferer
     }
 
-    /**
-     * تم تعديل الدالة لتقبل قائمة من الـ Referers وتجربها بالتتابع
-     */
     private suspend fun extractLinkFromObfuscatedPage(
         url: String,
         referers: List<String>,
@@ -278,7 +225,6 @@ class krmzyProvider : MainAPI() {
             try {
                 logCallback("Custom Extractor: Trying to fetch page with referer: $ref")
                 val text = app.get(url, referer = ref, interceptor = cfInterceptor).text
-
                 if (text.contains("eval(function")) {
                     pageText = text
                     logCallback("Success fetching with referer: $ref")
@@ -297,20 +243,11 @@ class krmzyProvider : MainAPI() {
         }
 
         val evalRegex = Regex("""eval\s*\(\s*function\s*\(.*?\)\s*\{.*?\}\s*\((.*)\)\s*\)""")
-        val evalMatch = evalRegex.find(pageText)
-        if (evalMatch == null) {
-            logCallback("Custom Extractor ERROR: evalRegex did not find a match.")
-            return null
-        }
-
+        val evalMatch = evalRegex.find(pageText) ?: return null
         val paramsString = evalMatch.groupValues.getOrNull(1) ?: return null
 
         val paramsRegex = Regex("""['"](.*?)['"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['"](.*?)['"]\.split\s*\(['"]\|['"]\)""")
-        val paramMatch = paramsRegex.find(paramsString)
-        if (paramMatch == null) {
-            logCallback("Custom Extractor ERROR: paramsRegex failed.")
-            return null
-        }
+        val paramMatch = paramsRegex.find(paramsString) ?: return null
 
         val (packedCode, baseStr, countStr, dictionaryStr) = paramMatch.destructured
         val base = baseStr.toInt()
@@ -329,7 +266,6 @@ class krmzyProvider : MainAPI() {
                 }
                 return sb.reverse().toString()
             }
-
             val replaceMap = mutableMapOf<String, String>()
             for (i in 0 until c) {
                 val keyword = k.getOrNull(i)
@@ -337,25 +273,16 @@ class krmzyProvider : MainAPI() {
                     replaceMap[toBase(i, a)] = keyword
                 }
             }
-
             return Regex("""\b\w+\b""").replace(p) { matchResult ->
                 replaceMap[matchResult.value] ?: matchResult.value
             }
         }
 
         val deobfuscatedJs = deobfuscate(packedCode, base, count, keywords)
-
         val fileRegex = Regex("""["']?file["']?\s*:\s*["']([^"']+)["']""")
         val fileMatch = fileRegex.find(deobfuscatedJs)
-
-        if (fileMatch == null) {
-            logCallback("Custom Extractor ERROR: fileRegex did not find a match.")
-            return null
-        }
-
-        val finalUrl = fileMatch.groupValues[1]
+        val finalUrl = fileMatch?.groupValues?.get(1) ?: return null
         val cleanUrl = finalUrl.replace("\\/", "/")
-
         logCallback("Custom Extractor: Success! Found URL: $cleanUrl")
         return cleanUrl
     }
@@ -366,6 +293,7 @@ class krmzyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        httpService.ensureInitialized()
         val logBuilder = StringBuilder()
         fun log(line: String) {
             val ts = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.US)
@@ -381,9 +309,7 @@ class krmzyProvider : MainAPI() {
         val mainPageHostReferer = try {
             val uri = java.net.URI(data)
             "${uri.scheme}://${uri.host}/"
-        } catch (e: Exception) {
-            data
-        }
+        } catch (_: Exception) { data }
 
         val episodePage = try {
             app.get(data, interceptor = cfInterceptor).document
@@ -417,12 +343,11 @@ class krmzyProvider : MainAPI() {
         val serverItems = extractorPage.select("ul.serversList li")
         if (serverItems.isEmpty()) return false
 
-        fun ensureHttp(u: String): String =
-            when {
-                u.startsWith("//") -> "https:$u"
-                u.startsWith("http") -> u
-                else -> "https://$u"
-            }
+        fun ensureHttp(u: String): String = when {
+            u.startsWith("//") -> "https:$u"
+            u.startsWith("http") -> u
+            else -> "https://$u"
+        }
 
         fun dailymotionFromLi(li: org.jsoup.nodes.Element): String? {
             val a = li.selectFirst("code a")
@@ -473,8 +398,7 @@ class krmzyProvider : MainAPI() {
 
                                 if (!extractedM3u8.isNullOrBlank()) {
                                     val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
-
-                                    val qualityLinks = com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
+                                    val qualityLinks = M3u8Helper.generateM3u8(
                                         source = this.name,
                                         streamUrl = extractedM3u8,
                                         referer = workingReferer,
@@ -483,7 +407,6 @@ class krmzyProvider : MainAPI() {
 
                                     if (qualityLinks.isNotEmpty()) {
                                         for (link in qualityLinks) {
-
                                             callback.invoke(
                                                 newExtractorLink(
                                                     source = link.source,
@@ -509,7 +432,6 @@ class krmzyProvider : MainAPI() {
                                 log("Error in custom extraction: ${t.message}")
                             }
                         }
-
                         "youtube" -> {
                             callback.invoke(
                                 newExtractorLink(source = this.name, name = "YouTube", url = embedUrl) {
@@ -517,12 +439,10 @@ class krmzyProvider : MainAPI() {
                                 }
                             )
                         }
-
                         else -> {
                             try {
                                 loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
-                            } catch (t: Throwable) {
-                            }
+                            } catch (_: Throwable) {}
                         }
                     }
                 }
@@ -530,10 +450,6 @@ class krmzyProvider : MainAPI() {
                 log("Exception processing server: ${t.message}")
             }
         }
-
-        try {
-            java.io.File("server_log_${System.currentTimeMillis()}.txt").writeText(logBuilder.toString())
-        } catch (_: Exception) {}
 
         return true
     }

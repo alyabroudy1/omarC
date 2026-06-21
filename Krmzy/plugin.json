@@ -1,0 +1,16 @@
+{
+  "name": "Krmzy",
+  "description": "Krmzy arabic series provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/krmzy.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["KrmzyProvider.kt", "KrmzyParser.kt", "KrmzyPlugin.kt"],
+  "sources": [
+    {
+      "name": "قرمزي",
+      "url": "https://krmzi.org"
+    }
+  ]
+}
