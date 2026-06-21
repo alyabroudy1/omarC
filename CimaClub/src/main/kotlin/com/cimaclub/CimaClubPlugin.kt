@@ -1,12 +1,14 @@
-package com.cimanow
+package com.cimaclub
+
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
-import com.cimaclub.CimaClub
+import com.cloudstream.shared.extractors.registerSharedExtractors
 
 @CloudstreamPlugin
-class CimaClubPlugin: Plugin() {
+class CimaClubPlugin : Plugin() {
     override fun load(context: Context) {
+        registerSharedExtractors()
         registerMainAPI(CimaClub())
     }
 }
