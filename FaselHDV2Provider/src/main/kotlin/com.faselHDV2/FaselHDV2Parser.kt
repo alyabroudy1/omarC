@@ -6,32 +6,36 @@ import com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-
 class FaselHDV2Parser : NewBaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/?s=$query"
     }
     
-    // Selectors ported from old FaselHDv2.kt
+    // Selectors for 3rab FaselHD site layout
     override val mainPageConfig = MainPageConfig(
-        container = "div[id=\"postList\"] div[class=\"col-xl-2 col-lg-2 col-md-3 col-sm-3\"]",
-        title = CssSelector(query = "div.postDiv a div img", attr = "alt"),
-        url = CssSelector(query = "div.postDiv a", attr = "href"),
-        poster = CssSelector(query = "div.postDiv a div img", attr = "data-src, src")
+        container = "div#postList div.postDiv, section#blockList .blockMovie, section#blockList .postDiv, section#blockList .epDivHome",
+        title = CssSelector(query = "a div img", attr = "alt"),
+        url = CssSelector(query = "a", attr = "href"),
+        poster = CssSelector(query = "a div img", attr = "data-src, src")
     )
 
-    override val searchConfig = mainPageConfig
+    override val searchConfig = MainPageConfig(
+        container = "div#postList div.postDiv, div.postDiv, article",
+        title = CssSelector(query = "a div img", attr = "alt"),
+        url = CssSelector(query = "a", attr = "href"),
+        poster = CssSelector(query = "a div img", attr = "data-src, src")
+    )
 
-    // Load page selectors ported from old FaselHDv2.kt
+    // Load page selectors matching 3rab FaselHD site
     override val loadPageConfig = LoadPageConfig(
-        title = CssSelector(query = "div.title h1, h1.postTitle, div.h1-title h1", attr = "text"),
+        title = CssSelector(query = ".singleInfo .title.h1", attr = "text"),
         poster = CssSelector(
-            query = "div.posterDiv img, div.poster img, img.poster, div.single-poster img, div.postDiv a div img, div.postDiv img, .moviePoster img",
-            attr = "data-src, src"
+            query = "meta[itemprop=image], .posterImg img.poster",
+            attr = "content, src"
         ),
         plot = CssSelector(
-            query = "div.singleInfo span:contains(القصة) p, div.singleDesc p, div.story p, div.post__story p, div.postContent p",
+            query = ".singleDesc p, .story p",
             attr = "text"
         ),
         year = CssSelector(
@@ -44,24 +48,22 @@ class FaselHDV2Parser : NewBaseParser() {
             attr = "text"
         ),
         seriesIndicator = CssSelector(
-            query = "div.seasonEpsCont, div.epAll",
+            query = "div.seasonDiv, div.epAll",
             attr = "text"
         )
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = "div.epAll a",
+        container = "div#epAll a",
         title = CssSelector(query = "", attr = "text"),
         url = CssSelector(query = "", attr = "href"),
         episode = CssSelector(query = "", attr = "text", regex = "(\\d+)")
     )
 
-    // Watch server selectors — supports both WatchList (new) and onclick (old) patterns
+    // Watch server selectors — supports iframe + onclick patterns
     override val watchServersSelectors = WatchServerSelector(
-        url = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-url"),
-        id = CssSelector(query = "ul.WatchList li[data-embed-url]", attr = "data-embed-id"),
-        title = CssSelector(query = "ul.WatchList li[data-embed-url] strong", attr = "text"),
-        iframe = CssSelector(query = ".brooks_player iframe, iframe[name=player_iframe]", attr = "src")
+        iframe = CssSelector(query = "iframe[src]", attr = "src"),
+        script = CssSelector(query = "script", attr = "text")
     )
 
     // ================= OVERRIDES =================
@@ -69,30 +71,22 @@ class FaselHDV2Parser : NewBaseParser() {
     override fun parseLoadPage(doc: Document, url: String): ParsedLoadData? {
         val data = super.parseLoadPage(doc, url) ?: return null
 
-        // Title cleaning (from old FaselHD)
+        // Title cleaning (from 3rab FaselHD)
         var title = data.title
-        title = title.replace(Regex("الموسم الأول|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي"), "")
-            .replace("مترجم اون لاين", "")
-            .replace(" - فاصل إعلاني", "")
-            .trim()
+        title = title.replace("\\n", "").replace("\n", "").trim()
+        if (title.isBlank()) return null
 
         // Plot cleaning
         var plot = data.plot
         if (!plot.isNullOrBlank()) {
-            val parts = plot.split(":")
-            if (parts.size > 1 && parts.first().contains("تحميل")) {
-                plot = parts.drop(1).joinToString(":").trim()
-            }
+            plot = plot.replace("\\n", " ").replace("\n", " ").trim()
         }
 
-        // Poster fallback: find first image with /wp-content/uploads/ path
-        var posterUrl = data.posterUrl
+        // Poster fallback from background image
+        var posterUrl: String? = data.posterUrl
         if (posterUrl.isNullOrBlank()) {
-            val contentImg = doc.select("img").firstOrNull { img ->
-                val src = img.attr("data-src").ifBlank { img.attr("src") }
-                src.contains("/wp-content/uploads/") && src.length > 10
-            }
-            posterUrl = contentImg?.let { it.attr("data-src").ifBlank { it.attr("src") } } ?: ""
+            posterUrl = doc.selectFirst("div.singlePage")?.attr("style")
+                ?.let { Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1) }
         }
 
         return data.copy(
@@ -103,66 +97,83 @@ class FaselHDV2Parser : NewBaseParser() {
     }
 
     /**
-     * Extract watch server URLs.
-     * Handles two patterns:
-     * 1. New WatchList: `li[data-embed-url]` attributes
-     * 2. Old onclick: `.signleWatch ul.tabs-ul li[onclick]` with regex extraction
-     * 3. Direct iframes
+     * Extract iframe/player sources from document.
+     * Ported from 3rab Faselhd.kt extractIframeSources().
+     * Extracts from:
+     * 1. iframe[src] elements
+     * 2. player_iframe.location.href in onclick attributes
+     * 3. Script URL regex for player/embed URLs
+     * 4. Short link divs (div.shortLink, span#liskSh, a[data-src])
      */
-    override fun extractWatchServersUrls(doc: Document): List<String> {
-        val urls = mutableListOf<String>()
+    fun extractIframeSources(doc: Document): List<String> {
+        val results = mutableSetOf<String>()
 
-        // 1. New WatchList pattern (data-embed-url)
-        for (li in doc.select("ul.WatchList li[data-embed-url]")) {
-            val embedUrl = li.attr("data-embed-url")
-            if (embedUrl.isNotBlank()) urls.add(embedUrl)
-        }
+        val blockedKeywords = listOf(
+            "google.com/recaptcha",
+            "google.com/ads",
+            "googlesyndication.com",
+            "googletagmanager.com"
+        )
 
-        // 2. Old onclick pattern (.signleWatch ul.tabs-ul li[onclick])
-        val urlRegex = "'.*?'".toRegex()
-        for (li in doc.select(".signleWatch ul.tabs-ul li[onclick], ul.tabs-ul li[onclick]")) {
-            val onclick = li.attr("onclick")
-            val match = urlRegex.find(onclick)
-            if (match != null) {
-                val playerUrl = match.value.replace("'", "")
-                if (playerUrl.isNotBlank()) urls.add(playerUrl)
-            } else {
-                // Fallback: data-url or data-link
-                val fallback = li.attr("data-url").ifBlank { li.attr("data-link") }
-                if (fallback.isNotBlank()) urls.add(fallback)
+        fun addResult(url: String) {
+            val fixedUrl = if (url.startsWith("http")) url else url
+            if (blockedKeywords.none { fixedUrl.contains(it) }) {
+                results.add(fixedUrl)
             }
         }
 
-        // 3. Direct iframes
-        for (iframe in doc.select(".brooks_player iframe[src], iframe[name=player_iframe][src]")) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) urls.add(src)
+        // 1. iframe[src] elements
+        doc.select("iframe[src]").forEach { el ->
+            val src = el.attr("src")
+            if (src.isNotBlank()) addResult(src)
         }
 
-        Log.d("[FaselHDV2Parser]", "extractWatchServersUrls: found ${urls.size} URLs")
-        return urls.distinct()
+        // 2. player_iframe.location.href in onclick attributes
+        val onClickRegex = Regex("""player_iframe\.location\.href\s*=\s*['"]([^'"]+)['"]""")
+        doc.select("[onclick]").forEach { el ->
+            val onclick = el.attr("onclick")
+            onClickRegex.find(onclick)?.let { match ->
+                addResult(match.groupValues[1])
+            }
+        }
+
+        // 3. Script URL regex for player/embed URLs
+        val scriptRegex = Regex("""https?://[^\s"'<>]+""")
+        doc.select("script").forEach { s ->
+            val data = s.data()
+            if (data.isNotBlank()) {
+                scriptRegex.findAll(data).forEach { m ->
+                    val url = m.value
+                    if (url.contains("player") || url.contains("embed")) {
+                        addResult(url)
+                    }
+                }
+            }
+        }
+
+        // 4. Short link divs
+        doc.select("div.shortLink, span#liskSh, a[data-src]").forEach { el ->
+            val text = el.text().trim()
+            if (text.startsWith("http")) addResult(text)
+        }
+
+        Log.d("[FaselHDV2Parser]", "extractIframeSources: found ${results.size} URLs")
+        return results.toList()
     }
 
     /**
-     * Build server selectors for the sniffer to click the correct server tab.
-     * Maps each extracted URL back to its `li[data-embed-url]` element in the WatchList.
+     * Extract watch server URLs using the 3rab approach.
+     * Delegates to extractIframeSources for the player URLs.
      */
+    override fun extractWatchServersUrls(doc: Document): List<String> {
+        return extractIframeSources(doc)
+    }
+
     override fun buildServerSelectors(
         doc: Document,
         urls: List<String>
     ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
-        val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
-        if (watchListItems.isEmpty()) return urls.map { null }
-
-        return urls.map { url ->
-            val matchingLi = watchListItems.firstOrNull { it.attr("data-embed-url") == url }
-            if (matchingLi != null) {
-                com.cloudstream.shared.extractors.SnifferSelector(
-                    query = "ul.WatchList li[data-embed-url=\"$url\"]",
-                    attr = "data-embed-url"
-                )
-            } else null
-        }
+        return urls.map { null }
     }
 
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
@@ -241,15 +252,13 @@ class FaselHDV2Parser : NewBaseParser() {
             return episodes
         }
 
-        // 3. Old FaselHD layout: div.epAll a (with season from seasonDiv)
+        // 3. 3rab FaselHD layout: div#epAll a (with season from seasonDiv)
         val activeSeasonNum = extractActiveSeasonNum(doc) ?: seasonNum ?: 1
-        for (ep in doc.select("div.epAll a")) {
+        for (ep in doc.select("div#epAll a")) {
             val epUrl = ep.attr("href")
-            val epTitle = ep.text().trim()
-            if (epUrl.isNotBlank()) {
-                val epNum = epTitle.replace("الحلقة", "").trim().toIntOrNull()
-                    ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: 0
+            val epTitle = ep.ownText().ifBlank { ep.text() }.replace("\\n", "").replace("\n", "").trim()
+            if (epUrl.isNotBlank() && !epTitle.contains("باقي الحلقات") && !epTitle.contains("المزيد")) {
+                val epNum = Regex("""\d+""").find(epTitle)?.value?.toIntOrNull() ?: 0
                 episodes.add(
                     ParserInterface.ParsedEpisode(
                         name = epTitle,
@@ -270,7 +279,6 @@ class FaselHDV2Parser : NewBaseParser() {
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        // Look for play page link
         val playLink = doc.selectFirst("a[href*='play.php?vid=']")?.attr("href")
             ?: doc.selectFirst("#BiBplayer a[href*='play.php']")?.attr("href")
             ?: doc.selectFirst("#video-wrapper a[href*='play.php']")?.attr("href")
@@ -279,17 +287,13 @@ class FaselHDV2Parser : NewBaseParser() {
         return playLink
     }
 
-    // Series Detection — uses seasonEpsCont presence (from old FaselHDv2.kt)
+    // Series Detection
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
-        // 0. Explicit Movie Checks (Fail-fast)
         if (title.contains("فيلم") || title.contains("film", true) || title.contains("movie", true)) return false
-
-        // 1. Element Context Checks
         if (element != null) {
             if (element is Document) {
-                // Season container exists → definitely a series
-                if (element.select("div.seasonEpsCont").isNotEmpty()) return true
-                if (element.select("div.epAll").isNotEmpty()) return true
+                if (element.select("div.seasonDiv").isNotEmpty()) return true
+                if (element.select("div#epAll").isNotEmpty()) return true
                 if (element.select(episodeConfig.container).isNotEmpty()) return true
                 if (element.extract(loadPageConfig.seriesIndicator) != null) return true
             } else {
@@ -297,17 +301,13 @@ class FaselHDV2Parser : NewBaseParser() {
                 if (categoryText.contains("مسلسلات")) return true
             }
         }
-        
-        // 2. Keyword check (Fallback)
         if (title.contains("مسلسل") || title.contains("حلقة") || title.contains("موسم")) return true
         if (url.contains("/seasons/") || url.contains("/series/") || url.contains("ramadan")) return true
-        
         return false
     }
 
     // ================= HELPERS =================
 
-    /** Extract the active season number from the page (old FaselHD layout) */
     fun extractActiveSeasonNum(doc: Document): Int? {
         val seasonTabs = doc.select("div.seasonDiv")
         if (seasonTabs.isNotEmpty()) {
@@ -316,12 +316,10 @@ class FaselHDV2Parser : NewBaseParser() {
                 return Regex("\\d+").find(activeTab.select(".title").text())?.value?.toIntOrNull()
             }
         }
-        // Fallback
         val text = doc.select("div.seasonDiv.active .title, div.seasonDiv.active div.title").text()
         return Regex("\\d+").find(text)?.value?.toIntOrNull()
     }
 
-    /** Parse season tabs and return (seasonNum, pageUrl) pairs for inactive seasons */
     fun parseSeasonTabs(doc: Document): List<Pair<Int, String>> {
         val results = mutableListOf<Pair<Int, String>>()
         val seasonTabs = doc.select("div.seasonDiv")
@@ -331,13 +329,10 @@ class FaselHDV2Parser : NewBaseParser() {
             val title = tab.select(".title").text()
             val seasonNum = Regex("\\d+").find(title)?.value?.toIntOrNull() ?: continue
             
-            // Extract URL from onclick
             val onclick = tab.attr("onclick")
             
-            // Pattern 1: onclick contains href='...'
             var pageUrl = Regex("""href\s*=\s*['"]([^'"]+)['"]""").find(onclick)?.groupValues?.get(1)
             
-            // Pattern 2: onclick contains ?p=ID
             if (pageUrl == null) {
                 val pId = Regex("""\?p=(\d+)""").find(onclick)?.groupValues?.get(1)
                     ?: onclick.replace(Regex(".*/?p=|'"), "").trim().takeIf { it.isNotBlank() }

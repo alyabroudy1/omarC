@@ -5,6 +5,7 @@ import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
+import com.cloudstream.shared.extractors.FaselHDExtractor
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -156,7 +157,6 @@ class FaselHDV2 : BaseProvider() {
                     "trsearch" to query
                 )
                 
-                // For post requests without fallback, we use executeDirectRequest/executePostRequest directly
                 val result = httpService.postText(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
                 if (result != null) {
                     Log.d(methodTag, "AJAX Lazy response (length: ${result.length}):\n${result.take(2000)}")
@@ -192,60 +192,64 @@ class FaselHDV2 : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val methodTag = "[FaselHDV2] [loadLinks]"
-        Log.i(methodTag, "Explicitly intercepting loadLinks to force FaselHDExtractor execution natively!")
+        Log.i(methodTag, "Intercepting loadLinks for WebView-based FaselHD extraction")
 
         try {
-            // Fetch detail page identically to BaseProvider
+            // Fetch the detail/episode page
             val doc = httpService.getDocument(data)
             if (doc != null) {
-                // Parse URLs dynamically
-                val watchUrls = getParser().extractWatchServersUrls(doc)
-                Log.d(methodTag, "Explicit Extraction intercepted ${watchUrls.size} URLs: $watchUrls")
+                // Parse iframe sources using 3rab's extractIframeSources
+                val parser = getParser() as FaselHDV2Parser
+                val iframeUrls = parser.extractIframeSources(doc)
+                Log.d(methodTag, "Extracted ${iframeUrls.size} iframe URLs: $iframeUrls")
 
-                if (watchUrls.isNotEmpty()) {
-                    val extractor = com.cloudstream.shared.extractors.FaselHDExtractor()
+                if (iframeUrls.isNotEmpty()) {
+                    val extractor = FaselHDExtractor()
 
-                    // Sequential extraction: try each URL one at a time.
-                    // - 10s timeout per URL to avoid getting stuck on WebView hangs
-                    // - Break immediately on first successful extraction (skip remaining URLs)
-                    // - Graceful timeout: log and move to next URL cleanly
+                    // Sequential extraction: try each iframe URL.
+                    // WebView resolution takes up to ~24s (2 attempts × 12s).
+                    // Use 30s timeout per URL.
                     var success = false
-                    for ((index, watchUrl) in watchUrls.withIndex()) {
-                        Log.d(methodTag, "Trying watch URL ${index + 1}/${watchUrls.size}: $watchUrl")
+                    for ((index, iframeUrl) in iframeUrls.withIndex()) {
+                        Log.d(methodTag, "Trying iframe ${index + 1}/${iframeUrls.size}: ${iframeUrl.take(100)}")
                         try {
-                            val found = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                            val found = kotlinx.coroutines.withTimeoutOrNull(30_000L) {
                                 var result = false
-                                val referer = URL(watchUrl).let { "${it.protocol}://${it.host}/" }
-                                extractor.getUrl(watchUrl, referer, subtitleCallback) { link ->
+                                val referer = try {
+                                    URL(iframeUrl).let { "${it.protocol}://${it.host}/" }
+                                } catch (e: Exception) {
+                                    "$mainUrl/"
+                                }
+                                extractor.getUrl(iframeUrl, referer, subtitleCallback) { link ->
+                                    Log.d(methodTag, "Callback received: ${link.name} | ${link.url.take(80)}")
                                     callback(link)
                                     result = true
                                 }
                                 result
                             }
                             if (found == true) {
-                                Log.i(methodTag, "Got result from URL ${index + 1}, breaking loop")
+                                Log.i(methodTag, "Success from iframe ${index + 1}, breaking loop")
                                 success = true
                                 break
                             }
-                            Log.w(methodTag, "URL ${index + 1} ${if (found == null) "timed out (10s)" else "returned no links"}")
+                            Log.w(methodTag, "iframe ${index + 1} ${if (found == null) "timed out (30s)" else "returned no links"}")
                         } catch (e: Exception) {
-                            Log.e(methodTag, "URL ${index + 1} error: ${e.message}")
+                            Log.e(methodTag, "iframe ${index + 1} error: ${e.message}")
                         }
                     }
 
                     if (success) {
-                        Log.i(methodTag, "Explicit FaselHD Headless Extraction achieved successfully! Bypassing VideoSniffer natively.")
+                        Log.i(methodTag, "WebView extraction succeeded!")
                         return true
                     } else {
-                        Log.w(methodTag, "Explicit FaselHD Extractor yielded 0 links. Falling back natively to VideoSniffer.")
+                        Log.w(methodTag, "All iframes yielded 0 links, falling back to super.loadLinks")
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(methodTag, "Explicit loadLinks extraction crashed: ${e.message}. Triggering fallback natively.")
+            Log.e(methodTag, "loadLinks crashed: ${e.message}. Falling back to super.loadLinks")
         }
 
-        // 100% Native BaseProvider VideoSniffer Fallback Architecture
         return super.loadLinks(data, isCasting, subtitleCallback, callback)
     }
 }

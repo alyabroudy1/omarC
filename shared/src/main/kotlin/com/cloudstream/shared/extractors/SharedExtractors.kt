@@ -18,6 +18,12 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VertyuzExtractor())
     registerExtractorAPI(CswruExtractor())
     
+    // Videa.hu extractor (moved from Animerco)
+    registerExtractorAPI(VideaExtractor())
+    
+    // Mail.ru extractor (moved from Animerco)
+    registerExtractorAPI(MailruExtractor())
+    
     // Bysezejataos (API-based extraction with AES decryption)
     registerExtractorAPI(ByseExtractor("bysezejataos.com", "Bysezejataos"))
     registerExtractorAPI(ByseExtractor("bysezezj.com", "Bysezezj"))
