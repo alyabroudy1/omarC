@@ -1,0 +1,16 @@
+{
+  "name": "Asia2Tv",
+  "description": "Asia2Tv arabic asian dramas and movies provider",
+  "author": "cloudstream",
+  "icon": "https://raw.githubusercontent.com/alyabroudy1/omarC/main/icons/asia2tv.png",
+  "tva": false,
+  "version": 1.0,
+  "language": "ar",
+  "files": ["Asia2TvProvider.kt", "Asia2TvParser.kt", "Asia2TvPlugin.kt"],
+  "sources": [
+    {
+      "name": "Asia2Tv",
+      "url": "https://asia2tv.com"
+    }
+  ]
+}

@@ -4,9 +4,8 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 
 @CloudstreamPlugin
-class Asia2tv: Plugin() {
+class Asia2TvPlugin: Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(Asia2tvProvider())
-
+        registerMainAPI(Asia2TvProvider())
     }
 }
