@@ -6,7 +6,7 @@ dependencies {
 
 cloudstream {
     authors = listOf("omarflex")
-    language = "en"
+    language = "ar"
     description = "Standalone YouTube Provider"
     status = 0
     tvTypes = listOf("Movie", "TvSeries")

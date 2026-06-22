@@ -11,4 +11,10 @@ cloudstream {
 
 android {
     namespace = "recloudstream"
+
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir("../shared/src/main/kotlin")
+        }
+    }
 }

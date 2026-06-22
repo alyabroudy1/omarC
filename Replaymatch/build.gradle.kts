@@ -36,6 +36,7 @@ android {
     sourceSets {
         getByName("main") {
             manifest.srcFile("src/main/AndroidManifest.xml")
+            kotlin.srcDir("../shared/src/main/kotlin")
         }
     }
 }

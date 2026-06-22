@@ -25,6 +25,12 @@ android {
         freeCompilerArgs.add("-XXLanguage:+BreakContinueInInlineLambdas")
     }
 }
+
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDir("../shared/src/main/kotlin")
+        }
+    }
 }
 
 dependencies {

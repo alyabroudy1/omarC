@@ -6,9 +6,11 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlin.getValue
 import androidx.preference.PreferenceManager
+import com.cloudstream.shared.android.PluginContext
 @CloudstreamPlugin
 class ReplaymatchProvider : Plugin() {
     override fun load(context: Context) {
+        PluginContext.init(context)
         registerMainAPI(FullMatchShowsProvider(context))
         val prefs by lazy { PreferenceManager.getDefaultSharedPreferences(context) }
 
