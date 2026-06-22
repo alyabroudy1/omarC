@@ -295,84 +295,89 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS] ================")
+        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v5] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
         try {
             Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page...")
-            val moviePageDoc = app.get(data).document
+            val cacheBuster = "?_ts=${System.currentTimeMillis()}"
+            val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
+            val moviePageResp = app.get(fetchUrl)
+            val moviePageDoc = moviePageResp.document
+            val litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
+                ?: moviePageResp.headers?.get("X-Litespeed-Tag")
+            val postId = litespeedTag?.let {
+                Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
+            } ?: throw ErrorLoadingException("Failed to extract post ID from LiteSpeed header")
+            Log.i(TAG, "Extracted post ID: $postId")
 
             Log.i("CimaNowLoadLinks", "[2/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
-
             val preciseLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")
             if (preciseLink != null) {
                 intermediateLink = preciseLink.attr("href")
             }
-
             if (intermediateLink.isNullOrBlank()) {
                 Log.w(TAG, "   - Precise selector failed, trying a general search...")
                 intermediateLink = moviePageDoc.select("a[href*='freex2line']").firstOrNull()?.attr("href")
             }
-
             if (intermediateLink.isNullOrBlank()) {
                 Log.e(TAG, "   - CRITICAL: Could not find any freex2line link.")
                 throw ErrorLoadingException("Failed to find intermediate link.")
             }
-
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
+
             Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
-
             val finalCimaNowUrl = resolveFreex2line(intermediateLink)
-                ?: run {
-                    Log.e(TAG, "   CRITICAL: resolveFreex2line returned null.")
-                    throw ErrorLoadingException("Failed to bypass shortlink.")
-                }
-
+                ?: throw ErrorLoadingException("Failed to bypass shortlink.")
             Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
-            Log.i(TAG, "[4/6] Fetching and decoding watch page...")
 
-            val watchDoc = app.get(finalCimaNowUrl, referer = data).document
-            val decodedDoc = decodeHtml(watchDoc)
-            Log.i(TAG, "[4/6] watchDoc... $watchDoc")
-            Log.i(TAG, "[4/6] decodedDoc... $decodedDoc")
-            val serverElements = decodedDoc.select("ul#watch li[data-index]")
-
-            if (serverElements.isEmpty()) {
-                Log.w(TAG, "   No watch server elements found after decoding.")
-            } else {
-                Log.i(TAG, "   Found ${serverElements.size} watch server elements.")
-            }
-
-            Log.i(TAG, "[5/6] Processing WATCH server elements...")
+            Log.i(TAG, "[4/6] Fetching video links via core.php (bypass watch page)...")
+            val knownIndices = listOf("00", "66", "32", "7", "30", "12")
 
             coroutineScope {
-                serverElements.map { serverElement ->
+                knownIndices.map { index ->
                     async {
-                        processServerElement(serverElement, finalCimaNowUrl, subtitleCallback, callback)
+                        try {
+                            val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$postId"
+                            val playerDoc = app.get(ajaxUrl, referer = finalCimaNowUrl).document
+                            val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
+
+                            if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                val serverName = when (index) {
+                                    "00" -> "CimaNow"
+                                    "66" -> "Upnshare"
+                                    "32" -> "Filemoon"
+                                    "7" -> "OK.ru"
+                                    "30" -> "VK Video"
+                                    "12" -> "Uqload"
+                                    else -> "Server $index"
+                                }
+                                Log.i(TAG, "Valid iframe for index=$index ($serverName): $iframeUrl")
+
+                                if (iframeUrl.contains("cimanowtv", true)) {
+                                    handlecima(iframeUrl, serverName, callback)
+                                } else if (iframeUrl.contains("forafile.com", true)) {
+                                    handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
+                                } else {
+                                    loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing server index=$index: ${e.message}")
+                        }
                     }
                 }.awaitAll()
             }
 
-            Log.i(TAG, "[6/6] Processing DOWNLOAD links...")
-            val downloadLinks = decodedDoc.select("ul#download li a[href]")
-
-            coroutineScope {
-                downloadLinks.map { aTag ->
-                    async {
-                        processDownloadLink(aTag, finalCimaNowUrl, subtitleCallback, callback)
-                    }
-                }.awaitAll()
-            }
-
-            Log.i(TAG, "================ [END LOADLINKS] =================")
+            Log.i(TAG, "================ [END LOADLINKS v5] =================")
             return true
 
         } catch (e: Exception) {
             Log.e(TAG, "FATAL ERROR in loadLinks: ${e.message}")
         }
 
-        Log.i(TAG, "================ [END LOADLINKS] =================")
+        Log.i(TAG, "================ [END LOADLINKS v5] =================")
         return false
     }
 
