@@ -4,19 +4,21 @@ import android.webkit.CookieManager
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class CimaLightProvider : MainAPI() {
+class CimaLightProvider : BaseProvider() {
 
-    override var mainUrl = "https://r.cimalight.co"
-    override var name = "CimaLight"
-    override val hasMainPage = true
-    override var lang = "ar"
-    override val supportedTypes = setOf(
-        TvType.Movie,
-        TvType.TvSeries
-    )
+    override val providerName get() = "CimaLight"
+    override val baseDomain get() = "r.cimalight.co"
+    override val githubConfigUrl get() = ""
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+
+    override fun getParser(): NewBaseParser {
+        return CimaLightParser()
+    }
 
     private val TAG = "CimaLightLog"
 
@@ -169,12 +171,16 @@ class CimaLightProvider : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/search.php?keywords=$query"
         val document = getDocOrSolve(url) ?: return emptyList()
         return document.select("ul#pm-grid li").mapNotNull {
             it.toSearchResult()
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -243,7 +249,7 @@ class CimaLightProvider : MainAPI() {
             .toMutableMap()
             .apply {
                 put("Referer", mainUrl)
-                savedCookies?.let { put("Cookie", it) } // تمرير الكوكيز إذا وجدت
+                savedCookies?.let { put("Cookie", it) }
             }
 
         val intermediateDoc = app.get(intermediateUrl, headers = headersWithReferer).document
