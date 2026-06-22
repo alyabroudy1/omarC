@@ -47,11 +47,28 @@ class KrmzyProvider : BaseProvider() {
         return newHomePageResponse(request.name, home)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
-        return search(query, 1)?.items ?: emptyList()
+        val url = "$mainUrl/?s=$query"
+        val document = app.get(url, interceptor = cfInterceptor).document
+        return document.select("div.block-post").mapNotNull { element ->
+            val link = element.selectFirst("a") ?: return@mapNotNull null
+            val href = link.attr("href")
+            val title = link.selectFirst("div.title")?.text()?.trim() ?: link.attr("title")
+            val posterUrl = link.selectFirst("div.imgSer, div.imgBg")?.attr("style")?.let {
+                Regex("""url\(['"]?(.*?)['"]?\)""").find(it)?.groupValues?.get(1)
+            }
+            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            }
+        }
     }
 
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
+
+    // Two-param paginated search preserved for app pagination use
     override suspend fun search(query: String, page: Int): SearchResponseList? {
         httpService.ensureInitialized()
         val url = if (page > 1) {
