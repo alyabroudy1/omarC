@@ -2,6 +2,8 @@ package com.animewitcher
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -14,12 +16,17 @@ import java.net.URLEncoder
 import java.util.*
 import kotlin.collections.HashMap
 
-class AnimeWitcherProvider : MainAPI() {
-    override var mainUrl = "https://animewitcher.com"
-    override var name = "AnimeWitcher"
+class AnimeWitcherProvider : BaseProvider() {
+    override val providerName get() = "AnimeWitcher"
+    override val baseDomain get() = "animewitcher.com"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return AnimewitcherParser()
+    }
+
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     override var lang = "ar"
-    override val hasMainPage = true
 
 
     private var algoliaAppId = "5UIU27G8CZ"
@@ -128,7 +135,7 @@ class AnimeWitcherProvider : MainAPI() {
         return@withContext newHomePageResponse("أحدث الأنميات", list)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> = withContext(Dispatchers.IO) {
+    override suspend fun searchNormal(query: String): List<SearchResponse> = withContext(Dispatchers.IO) {
 
         refreshAlgoliaKeys()
 
@@ -161,6 +168,9 @@ class AnimeWitcherProvider : MainAPI() {
         return@withContext results
     }
 
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
 
     override suspend fun load(url: String): LoadResponse = withContext(Dispatchers.IO) {
         logd("====== LOAD START ======")

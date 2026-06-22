@@ -6,13 +6,24 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import android.util.Base64 // <-- تم التصحيح: استخدام مكتبة أندرويد
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
+import android.util.Base64
 import android.util.Log
 
-class AnimeiatProvider : MainAPI() {
-    override var mainUrl = "https://api.animeiat.co/v1"
-    override var name = "Animeiat"
-    override val hasMainPage = true
+class AnimeiatProvider : BaseProvider() {
+    override val providerName get() = "Animeiat"
+    override val baseDomain get() = "api.animeiat.co"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return AnimeiatParser()
+    }
+
+    override var mainUrl: String
+        get() = "https://api.animeiat.co/v1"
+        set(value) {}
+
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
 
@@ -63,7 +74,7 @@ class AnimeiatProvider : MainAPI() {
         return newHomePageResponse(lists)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val response = app.get("$mainUrl/anime?q=$query").parsed<AnimeListResponse>()
         return response.data.map {
             newAnimeSearchResponse(it.anime_name, "$mainUrl/anime/${it.slug}") {
@@ -72,7 +83,9 @@ class AnimeiatProvider : MainAPI() {
         }
     }
 
-
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
 
     override suspend fun load(url: String): LoadResponse {
 

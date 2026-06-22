@@ -8,14 +8,21 @@ import java.util.UUID
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils
-import android.R.attr.mimeType
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
-class Viu : MainAPI() {
-    override var mainUrl = "https://www.viu.com"
-    override var name = "Viu"
-    override val hasMainPage = true
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
+
+class Viu : BaseProvider() {
+    override val providerName get() = "Viu"
+    override val baseDomain get() = "www.viu.com"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return ViuParser()
+    }
+
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.AsianDrama)
 
@@ -152,11 +159,17 @@ class Viu : MainAPI() {
         }
 
 
-    }    override suspend fun search(query: String): List<SearchResponse> {
-        return search(query, 1)?.items ?: emptyList()
+    }
+    
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
+        return searchWithPage(query, 1)?.items ?: emptyList()
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList? {
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
+
+    private suspend fun searchWithPage(query: String, page: Int): SearchResponseList? {
         val headers = getAuthenticatedHeaders()
 
         val url =
