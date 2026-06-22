@@ -201,7 +201,7 @@ class IPTVProvider : BaseProvider() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         try {
             val filteredChannels = getFilteredChannels()
             
@@ -215,9 +215,13 @@ class IPTVProvider : BaseProvider() {
                     }
                 }
         } catch (e: Exception) {
-            Log.e("IPTV", "Error in search: ${e.message}")
+            Log.e("IPTV", "Error in searchNormal: ${e.message}")
             return emptyList()
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse {
