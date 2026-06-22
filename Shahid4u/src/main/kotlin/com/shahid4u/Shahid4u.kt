@@ -3,6 +3,8 @@ package com.shahid4u
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -13,11 +15,19 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import java.net.URLEncoder
 
-class Shahid4u : MainAPI() {
-    override var mainUrl = "https://shaahed4u.net/"
-    override var name = "Shahid4u"
-    override val hasMainPage = true
-    override var lang = "ar"
+class Shahid4u : BaseProvider() {
+    override val providerName get() = "Shahid4u"
+    override val baseDomain get() = "shaahed4u.net"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return Shahid4uParser()
+    }
+
+    override var mainUrl: String
+        get() = "https://shaahed4u.net/"
+        set(value) {}
+
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val logTag = "Shahid4uProvider"
@@ -188,7 +198,7 @@ class Shahid4u : MainAPI() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "${mainUrl}search?s=$encoded"
 
@@ -216,6 +226,9 @@ class Shahid4u : MainAPI() {
         }
     }
 
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
 
 
     override suspend fun load(url: String): LoadResponse {
@@ -342,5 +355,3 @@ class Shahid4u : MainAPI() {
         return true
     }
 }
-
-

@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import android.util.Base64
 
 data class ChannelData(
@@ -13,12 +15,16 @@ data class ChannelData(
     @JsonProperty("p") val p: Int?
 )
 
-class OhaTvProvider : MainAPI() {
+class OhaTvProvider : BaseProvider() {
 
-    override var mainUrl = "https://www.oha.to"
+    override val providerName get() = "OHA TV"
+    override val baseDomain get() = "www.oha.to"
+    override val githubConfigUrl get() = ""
 
-    override var name = "OHA TV"
-    override val hasMainPage = true
+    override fun getParser(): NewBaseParser {
+        return OhaParser()
+    }
+
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Movie)
 
@@ -78,7 +84,7 @@ class OhaTvProvider : MainAPI() {
         return newHomePageResponse(homeLists)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val response = getChannels()
 
         return response.filter { ch ->
@@ -106,6 +112,9 @@ class OhaTvProvider : MainAPI() {
         }
     }
 
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
 
     override suspend fun load(url: String): LoadResponse {
 

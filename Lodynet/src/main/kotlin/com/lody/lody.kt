@@ -5,14 +5,20 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
 import com.lody.ExternalEarnVidsExtractor
 
-class LodyNet : MainAPI() {
-    override var mainUrl = "https://lodynet.watch"
-    override var name = "LodyNet"
-    override val hasMainPage = true
-    override var lang = "ar"
+class LodyNet : BaseProvider() {
+    override val providerName get() = "LodyNet"
+    override val baseDomain get() = "lodynet.watch"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return LodyParser()
+    }
+
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -62,7 +68,7 @@ class LodyNet : MainAPI() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$searchApi?value=$query"
         val response = app.get(url).text
 
@@ -98,6 +104,10 @@ class LodyNet : MainAPI() {
             e.printStackTrace()
             emptyList()
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -150,7 +160,7 @@ class LodyNet : MainAPI() {
         if (sliderElements.isNotEmpty()) {
             sliderElements.forEach { element ->
                 val epLink = element.attr("href")
-                val epName = element.text().trim() // "الحلقة 1"
+                val epName = element.text().trim()
 
                 val epNum = element.attr("id").replace("Ep", "").toIntOrNull()
                     ?: Regex("(\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull()
@@ -158,7 +168,7 @@ class LodyNet : MainAPI() {
                 episodes.add(newEpisode(epLink) {
                     this.name = epName
                     this.episode = epNum
-                    this.posterUrl = poster // Force series poster
+                    this.posterUrl = poster
                 })
             }
 

@@ -6,7 +6,7 @@ import android.content.Context
 import com.cloudstream.shared.android.PluginContext
 
 @CloudstreamPlugin
-class eishkPlugin: Plugin() {
+class OhaPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
         registerMainAPI(OhaTvProvider())
