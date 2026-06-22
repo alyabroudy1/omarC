@@ -334,6 +334,8 @@ class CimaNowProvider : BaseProvider() {
 
             val watchDoc = app.get(finalCimaNowUrl, referer = data).document
             val decodedDoc = decodeHtml(watchDoc)
+            Log.i(TAG, "[4/6] watchDoc... $watchDoc")
+            Log.i(TAG, "[4/6] decodedDoc... $decodedDoc")
             val serverElements = decodedDoc.select("ul#watch li[data-index]")
 
             if (serverElements.isEmpty()) {
