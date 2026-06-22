@@ -4,6 +4,8 @@ package com.witanime
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import android.util.Base64
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.network.WebViewResolver
@@ -15,7 +17,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
 import com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -40,10 +41,15 @@ import kotlinx.coroutines.*
 import kotlin.text.RegexOption
 
 
-class WitAnime : MainAPI() {
-    override var mainUrl = "https://witanime.red"
-    override var name = "WitAnime"
-    override val hasMainPage = true
+class WitAnime : BaseProvider() {
+    override val providerName get() = "WitAnime"
+    override val baseDomain get() = "witanime.red"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return WitanimeParser()
+    }
+
     override var lang = "ar"
 
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
@@ -91,7 +97,7 @@ class WitAnime : MainAPI() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/?search_param=animes&s=$query"
 
         val document = app.get(url, headers = mapOf("User-Agent" to userAgent)).document
@@ -108,6 +114,10 @@ class WitAnime : MainAPI() {
                 this.posterUrl = poster
             }
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse {

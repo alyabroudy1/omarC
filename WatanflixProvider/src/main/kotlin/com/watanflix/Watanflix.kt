@@ -57,7 +57,7 @@ class Watanflix : BaseProvider() {
         @JsonProperty("url") val url: String? = null
     )
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/ar/search?q=$query"
         val response = app.get(url).parsedSafe<WatanflixSearchResponse>()
         val items = response?.data ?: return emptyList()
@@ -89,6 +89,10 @@ class Watanflix : BaseProvider() {
                 }
             }
         }.filterNotNull()
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun loadLinks(

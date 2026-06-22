@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -14,12 +16,17 @@ import kotlin.io.encoding.Base64
 
 import com.lagradost.cloudstream3.syncproviders.providers.OpenSubtitlesApi.Companion.headers
 
-class eishk : MainAPI() {
-    override var mainUrl = "https://3esk.onl"
-    override var name = "قصة عشق"
+class eishk : BaseProvider() {
+    override val providerName get() = "قصة عشق"
+    override val baseDomain get() = "3esk.onl"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return EishkParser()
+    }
+
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override var lang = "ar"
-    override val hasMainPage = true
 
 
     private fun Element.toSearchResponse(): SearchResponse? {
@@ -79,7 +86,7 @@ class eishk : MainAPI() {
         return newHomePageResponse(all)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/search/$query/"
 
         val document = app.get(url, headers = headers).document
@@ -89,6 +96,10 @@ class eishk : MainAPI() {
         }
 
         return results
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     private fun decodeBase64Compat(encoded: String): String? {

@@ -6,6 +6,8 @@ import android.widget.Toast
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -17,13 +19,18 @@ import java.util.regex.Pattern
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-class CimaNowProvider(private val context: Context) : MainAPI() {
+class CimaNowProvider : BaseProvider() {
+    lateinit var context: Context
 
-    override var name = "Cimanow"
-    override var mainUrl = "https://cimanow.cc"
+    override val providerName get() = "Cimanow"
+    override val baseDomain get() = "cimanow.cc"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return CimaNowParser()
+    }
+
     override var lang = "ar"
-    override val hasMainPage = true
-    override val usesWebView = false
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
@@ -126,11 +133,15 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
     // ==================== search ====================
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val q = query
         val doc = app.get("$mainUrl/?s=$q", referer = mainUrl).document
         val decodedDoc = decodeHtml(doc)
         return decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     // ==================== getMainPage ====================
@@ -315,7 +326,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
             Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
 
-            val finalCimaNowUrl = resolveFreex2line(intermediateLink, context)
+            val finalCimaNowUrl = resolveFreex2line(intermediateLink)
                 ?: run {
                     Log.e(TAG, "   CRITICAL: resolveFreex2line returned null.")
                     throw ErrorLoadingException("Failed to bypass shortlink.")
@@ -644,7 +655,7 @@ class CimaNowProvider(private val context: Context) : MainAPI() {
 
     // ==================== resolveFreex2line ====================
 
-    private suspend fun resolveFreex2line(url: String, context: Context): String? {
+    private suspend fun resolveFreex2line(url: String): String? {
         Log.i("Freex2lineResolver", "======= [STARTING RESOLVER v3 - DYNAMIC KEY] =======")
 
         try {
