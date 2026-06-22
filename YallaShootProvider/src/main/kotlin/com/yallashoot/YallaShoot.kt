@@ -158,7 +158,7 @@ class YallaShoot : BaseProvider() {
         return newHomePageResponse(homePageList, false)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         val url = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val html = httpService.getText(url, skipRewrite = true) ?: return emptyList()
@@ -168,6 +168,10 @@ class YallaShoot : BaseProvider() {
         return allMatches.filter { match ->
             match.name.contains(query, ignoreCase = true)
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse? {

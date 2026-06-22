@@ -11,7 +11,9 @@ import com.cloudstream.shared.android.PluginContext
 class ReplaymatchProvider : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(FullMatchShowsProvider(context))
+        val provider = FullMatchShowsProvider()
+        provider.context = context
+        registerMainAPI(provider)
         val prefs by lazy { PreferenceManager.getDefaultSharedPreferences(context) }
 
         openSettings = { activityContext ->

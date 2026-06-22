@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlinx.coroutines.async
@@ -17,12 +19,18 @@ import kotlinx.coroutines.coroutineScope
 
 data class MainCategory(val name: String, val url: String, val key: String)
 
-class FullMatchShowsProvider(private val context: Context) : MainAPI() {
+class FullMatchShowsProvider : BaseProvider() {
+    lateinit var context: Context
 
-    override var name = "FullMatchShows"
-    override var mainUrl = "https://fullmatchshows.com"
+    override val providerName get() = "FullMatchShows"
+    override val baseDomain get() = "fullmatchshows.com"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return ReplaymatchParser()
+    }
+
     override var lang = "en"
-    override val hasMainPage = true
     override val supportedTypes = setOf(TvType.Movie)
 
     private val categories = listOf(
@@ -154,11 +162,15 @@ class FullMatchShowsProvider(private val context: Context) : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        return search(query, 1)?.items ?: emptyList()
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
+        return searchWithPage(query, 1)?.items ?: emptyList()
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList? = coroutineScope {
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
+    }
+
+    private suspend fun searchWithPage(query: String, page: Int): SearchResponseList? = coroutineScope {
         val encoded = URLEncoder.encode(query, "utf-8")
 
         val candidates = listOf(
