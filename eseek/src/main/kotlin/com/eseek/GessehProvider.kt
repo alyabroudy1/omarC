@@ -78,7 +78,7 @@ class GessehProvider : BaseProvider() {
         return newHomePageResponse(request.name, home)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         val document = app.get("$mainUrl/?s=$query", headers = defaultHeaders).document
         return document.select("article.post").mapNotNull { element ->
@@ -103,6 +103,10 @@ class GessehProvider : BaseProvider() {
                 }
             }
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     private fun resolveRealUrl(url: String): String {
