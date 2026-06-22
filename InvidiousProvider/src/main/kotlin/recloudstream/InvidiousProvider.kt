@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
-import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
@@ -20,15 +19,19 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 
-class InvidiousProvider : MainAPI() {
-    override var mainUrl = "https://inv.nadeko.net"
-    override var name = "Invidious"
+class InvidiousProvider : BaseProvider() {
+    override val providerName get() = "Invidious"
+    override val baseDomain get() = "inv.nadeko.net"
+    override val githubConfigUrl get() = ""
+    override var lang = "en"
     override val supportedTypes = setOf(TvType.Others)
 
-    override var lang = "en"
-
-    override val hasMainPage = true
+    override fun getParser(): NewBaseParser {
+        return InvidiousParser()
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val popular = tryParseJson<List<SearchEntry>>(
@@ -54,14 +57,16 @@ class InvidiousProvider : MainAPI() {
         )
     }
 
-    override suspend fun search(query: String): List<SearchResponse>? {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         val res = tryParseJson<List<SearchEntry>>(
             app.get("$mainUrl/api/v1/search?q=$encodedQuery&type=video&fields=videoId,title").text
         )
-        return res?.map {
-            it.toSearchResponse(this)
-        }
+        return res?.map { it.toSearchResponse(this) } ?: emptyList()
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -125,13 +130,11 @@ class InvidiousProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Use CloudStream's built-in NewPipe-based YoutubeExtractor
         loadExtractor(
             "https://youtube.com/watch?v=$data",
             subtitleCallback,
             callback
         )
-        // Also provide Invidious DASH manifest as fallback
         callback(
             newExtractorLink(this.name, this.name, "$mainUrl/api/manifest/dash/id/$data") {
                 quality = Qualities.Unknown.value
