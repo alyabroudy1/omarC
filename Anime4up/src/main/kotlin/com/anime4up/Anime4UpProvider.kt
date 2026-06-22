@@ -17,7 +17,7 @@ class Anime4Up : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "/home8/" to "الرئيسية",
-        "/anime-category/الانمي-المدبلج/" to "المدبلج"
+        "/anime-category/الانمي-المدبلج/" to "المدبلج",
         "/anime-type/movie-3/" to "أفلام"
     )
 
