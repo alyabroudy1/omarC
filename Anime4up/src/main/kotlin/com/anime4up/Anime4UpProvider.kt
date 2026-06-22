@@ -16,7 +16,9 @@ class Anime4Up : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/anime4up.json"
 
     override val mainPage = mainPageOf(
-        "$mainUrl" to "الرئيسية"
+        "/home8/" to "الرئيسية",
+        "/anime-category/الانمي-المدبلج/" to "المدبلج"
+        "/anime-type/movie-3/" to "أفلام"
     )
 
     override fun getParser(): NewBaseParser {
