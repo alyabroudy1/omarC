@@ -302,27 +302,43 @@ class CimaNowProvider : BaseProvider() {
             Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page...")
             val cacheBuster = "?_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
+            Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
             val moviePageResp = app.get(fetchUrl)
             val moviePageDoc = moviePageResp.document
+            val movieTitle = moviePageDoc.title()
+            Log.d(TAG, "   Doc title: $movieTitle")
+            val docSize = moviePageDoc.outerHtml().length
+            Log.d(TAG, "   Doc HTML size: $docSize bytes")
+            Log.d(TAG, "   Response status: ${moviePageResp.code}")
+
+            val allHeaders = moviePageResp.headers?.entries?.joinToString { "${it.key}=${it.value}" }
+            Log.d(TAG, "   Response headers: $allHeaders")
+
             val litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
                 ?: moviePageResp.headers?.get("X-Litespeed-Tag")
+            Log.d(TAG, "   x-litespeed-tag header: $litespeedTag")
+
             val postId = litespeedTag?.let {
                 Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
             } ?: throw ErrorLoadingException("Failed to extract post ID from LiteSpeed header")
-            Log.i(TAG, "Extracted post ID: $postId")
+            Log.i(TAG, "   Extracted post ID: $postId")
 
             Log.i("CimaNowLoadLinks", "[2/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
             val preciseLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")
             if (preciseLink != null) {
                 intermediateLink = preciseLink.attr("href")
+                Log.d(TAG, "   Found via precise selector: $intermediateLink")
             }
             if (intermediateLink.isNullOrBlank()) {
                 Log.w(TAG, "   - Precise selector failed, trying a general search...")
-                intermediateLink = moviePageDoc.select("a[href*='freex2line']").firstOrNull()?.attr("href")
+                val allFreex2 = moviePageDoc.select("a[href*='freex2line']")
+                Log.d(TAG, "   Total freex2line links found: ${allFreex2.size}")
+                intermediateLink = allFreex2.firstOrNull()?.attr("href")
             }
             if (intermediateLink.isNullOrBlank()) {
                 Log.e(TAG, "   - CRITICAL: Could not find any freex2line link.")
+                Log.e(TAG, "   - HTML snippet around watch area: ${moviePageDoc.select("ul.btns").text().take(200)}")
                 throw ErrorLoadingException("Failed to find intermediate link.")
             }
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
@@ -334,13 +350,21 @@ class CimaNowProvider : BaseProvider() {
 
             Log.i(TAG, "[4/6] Fetching video links via core.php (bypass watch page)...")
             val knownIndices = listOf("00", "66", "32", "7", "30", "12")
+            Log.d(TAG, "   Known indices to try: $knownIndices")
+            var successCount = 0
+            var failCount = 0
 
             coroutineScope {
                 knownIndices.map { index ->
                     async {
                         try {
                             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$postId"
-                            val playerDoc = app.get(ajaxUrl, referer = finalCimaNowUrl).document
+                            Log.d(TAG, "   core.php GET: $ajaxUrl")
+                            val playerResp = app.get(ajaxUrl, referer = finalCimaNowUrl)
+                            val coreCode = playerResp.code
+                            val coreText = playerResp.text?.take(300)
+                            Log.d(TAG, "   core.php status=$coreCode, body start: $coreText")
+                            val playerDoc = playerResp.document
                             val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
 
                             if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
@@ -353,28 +377,47 @@ class CimaNowProvider : BaseProvider() {
                                     "12" -> "Uqload"
                                     else -> "Server $index"
                                 }
-                                Log.i(TAG, "Valid iframe for index=$index ($serverName): $iframeUrl")
+                                Log.i(TAG, "   ✅ index=$index ($serverName): iframe=$iframeUrl")
+                                successCount++
 
-                                if (iframeUrl.contains("cimanowtv", true)) {
-                                    handlecima(iframeUrl, serverName, callback)
-                                } else if (iframeUrl.contains("forafile.com", true)) {
-                                    handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
-                                } else {
-                                    loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                when {
+                                    iframeUrl.contains("cimanowtv", true) -> {
+                                        Log.d(TAG, "   -> routing to handlecima")
+                                        handlecima(iframeUrl, serverName, callback)
+                                    }
+                                    iframeUrl.contains("forafile.com", true) -> {
+                                        Log.d(TAG, "   -> routing to handleForafile")
+                                        handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
+                                    }
+                                    else -> {
+                                        Log.d(TAG, "   -> routing to loadExtractor")
+                                        loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                    }
                                 }
+                            } else {
+                                val reason = if (iframeUrl.isBlank()) "blank iframe" else "placeholder (123456789)"
+                                Log.w(TAG, "   ❌ index=$index skipped ($reason)")
+                                failCount++
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error processing server index=$index: ${e.message}")
+                            Log.e(TAG, "   💥 Error processing server index=$index: ${e.message}")
+                            failCount++
                         }
                     }
                 }.awaitAll()
             }
 
+            Log.i(TAG, "   core.php results: $successCount succeeded, $failCount failed out of ${knownIndices.size}")
+            if (successCount == 0) {
+                Log.w(TAG, "   No valid servers found via core.php!")
+            }
+
             Log.i(TAG, "================ [END LOADLINKS v5] =================")
-            return true
+            return successCount > 0
 
         } catch (e: Exception) {
             Log.e(TAG, "FATAL ERROR in loadLinks: ${e.message}")
+            Log.e(TAG, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
         }
 
         Log.i(TAG, "================ [END LOADLINKS v5] =================")
@@ -389,12 +432,14 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        val TAG_PS = "ProcessSrvElement"
+        Log.w(TAG_PS, "Called but should be dead code (v5 bypasses watch page)")
         try {
             val dataIndex = serverElement.attr("data-index")
             val dataId = serverElement.attr("data-id")
             val serverName = serverElement.text().trim()
 
-            Log.d(TAG, "Server: name='$serverName', index=$dataIndex, id=$dataId")
+            Log.i(TAG_PS, "Server: name='$serverName', index=$dataIndex, id=$dataId")
 
             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
             val playerDoc = try {
@@ -475,13 +520,18 @@ class CimaNowProvider : BaseProvider() {
         name: String,
         callback: (ExtractorLink) -> Unit
     ) {
+        val TAG_CI = "CimaNowExtractor"
+        Log.i(TAG_CI, "handlecima: iframe=$iframeUrl")
         try {
             val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
+            Log.d(TAG_CI, "Fetching cimanow iframe page: $finalUrl")
             val iframeResponse = app.get(finalUrl, referer = finalUrl).text
+            Log.d(TAG_CI, "Iframe response size: ${iframeResponse.length} bytes")
 
             val regex = Regex("\\[(\\d+p)]\\s+(/uploads/[^\"]+\\.mp4)")
             val baseUrlMatch = Regex("(https?://[^/]+)").find(finalUrl)
             val baseUrl = baseUrlMatch?.groupValues?.get(1) ?: ""
+            Log.d(TAG_CI, "Base URL for mp4: $baseUrl")
 
             val links = mutableListOf<ExtractorLink>()
 
@@ -489,6 +539,7 @@ class CimaNowProvider : BaseProvider() {
                 val qualityStr = match.groupValues[1]
                 val filePath = match.groupValues[2]
                 val videoUrl = baseUrl + filePath
+                Log.d(TAG_CI, "Found quality link: $qualityStr -> $videoUrl")
 
                 val link = newExtractorLink("CimaNow", "CimaNow", videoUrl, type = getLinkType(videoUrl))
                 link.quality = getQualityFromName(qualityStr)
@@ -500,9 +551,16 @@ class CimaNowProvider : BaseProvider() {
                 links.sortByDescending { it.quality }
             }
 
-            links.firstOrNull()?.let { callback(it) }
+            val bestLink = links.firstOrNull()
+            if (bestLink != null) {
+                Log.i(TAG_CI, "Best quality link: ${bestLink.quality}p -> ${bestLink.url}")
+                callback(bestLink)
+            } else {
+                Log.w(TAG_CI, "No quality links found in response. Preview: ${iframeResponse.take(200)}")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "handlecima error: ${e.message}")
+            Log.e(TAG_CI, "handlecima error: ${e.message}")
+            Log.e(TAG_CI, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
         }
     }
 
@@ -660,30 +718,35 @@ class CimaNowProvider : BaseProvider() {
     // ==================== resolveFreex2line ====================
 
     private suspend fun resolveFreex2line(url: String): String? {
-        Log.i("Freex2lineResolver", "======= [STARTING RESOLVER v4 - SIMPLE DECODE] =======")
+        val TAG_FX = "Freex2lineResolver"
+        Log.i(TAG_FX, "======= [START] =======")
+        Log.d(TAG_FX, "Input URL: $url")
 
         try {
             val linkParam = url.substringAfter("link=", "")
+            Log.d(TAG_FX, "Extracted link param (base64): ${linkParam.take(50)}...")
+
             if (linkParam.isBlank()) {
-                Log.e(TAG, "[FATAL ERROR] No 'link' parameter found in URL: $url")
+                Log.e(TAG_FX, "No 'link' parameter found in URL: $url")
                 return null
             }
 
             val decodedBytes = Base64.decode(linkParam, Base64.DEFAULT)
             val decodedUrl = String(decodedBytes, Charsets.UTF_8)
+            Log.d(TAG_FX, "Decoded raw: $decodedUrl")
 
             if (decodedUrl.startsWith("http")) {
-                Log.i(TAG, "[SUCCESS] Resolved URL: $decodedUrl")
+                Log.i(TAG_FX, "[SUCCESS] Resolved URL: $decodedUrl")
                 return decodedUrl
             }
 
-            Log.e(TAG, "[FAILURE] Decoded value is not a valid URL: $decodedUrl")
+            Log.e(TAG_FX, "Decoded value is not a valid URL: $decodedUrl")
         } catch (e: Exception) {
-            Log.e(TAG, "[FATAL ERROR] Exception during resolution: ${e.message}")
-            e.printStackTrace()
+            Log.e(TAG_FX, "Exception: ${e.message}")
+            Log.e(TAG_FX, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
         }
 
-        Log.i(TAG, "======= [RESOLVER FINISHED - FAILED] =======")
+        Log.i(TAG_FX, "======= [FAILED] =======")
         return null
     }
 
