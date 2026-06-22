@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.api.Log
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
 import com.youtube.innertube.InnerTubeParser
@@ -15,20 +17,17 @@ import com.youtube.innertube.YouTubeSearchResult
 import com.youtube.innertube.YouTubeStreamFormat
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-/**
- * YouTube provider powered by InnerTube API.
- *
- * Architecture:
- * - InnerTubeClient: HTTP POST calls to YouTube's internal API
- * - InnerTubeParser: JSON → domain model conversion
- * - YoutubeProvider: orchestrates client + parser, maps to CloudStream types
- */
-class YoutubeProvider : MainAPI() {
-    override var mainUrl = "https://www.youtube.com"
-    override var name = "YoutubeProvider"
+class YoutubeProvider : BaseProvider() {
+    override val providerName get() = "YoutubeProvider"
+    override val baseDomain get() = "www.youtube.com"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return YoutubeParser()
+    }
+
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "ar"
-    override val hasMainPage = true
 
     // Plugin context resources (for YouTubePlayerDialog)
     var resources: android.content.res.Resources? = null
@@ -59,7 +58,7 @@ class YoutubeProvider : MainAPI() {
 
     // ==================== SEARCH ====================
 
-    override suspend fun search(query: String): List<SearchResponse>? {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         Log.d(TAG, "search: query='$query'")
 
         val results = mutableListOf<SearchResponse>()
@@ -78,8 +77,12 @@ class YoutubeProvider : MainAPI() {
             results.addAll(playlistResults.mapNotNull { it.toSearchResponse() })
         }
 
-        Log.d(TAG, "search: ${results.size} total results")
+        Log.d(TAG, "searchNormal: ${results.size} total results")
         return results
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     // ==================== LOAD ====================

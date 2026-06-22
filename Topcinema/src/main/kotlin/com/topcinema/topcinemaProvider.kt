@@ -7,16 +7,23 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import okhttp3.Interceptor
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.component1
 import kotlin.collections.component2
 
-class TopCinemaProvider : MainAPI() {
-    override var mainUrl = "https://web8.topcinema.cam"
-    override var name = "Top Cinema"
-    override val hasMainPage = true
+class TopCinemaProvider : BaseProvider() {
+    override val providerName get() = "Top Cinema"
+    override val baseDomain get() = "web8.topcinema.cam"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return TopCinemaParser()
+    }
+
     override var lang = "ar"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
@@ -120,12 +127,16 @@ class TopCinemaProvider : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/search/?query=$query&type=all"
         val document = httpGet(url)
         return document.select(".Posts--List .Small--Box").mapNotNull {
             toSearchResponse(it)
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse {

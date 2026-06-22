@@ -5,7 +5,7 @@ import android.content.Context
 import com.cloudstream.shared.android.PluginContext
 
 @CloudstreamPlugin
-class eishkPlugin: Plugin() {
+class TopCinemaPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
         registerMainAPI(TopCinemaProvider())

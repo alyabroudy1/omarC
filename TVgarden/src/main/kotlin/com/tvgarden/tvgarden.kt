@@ -6,17 +6,24 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-class FamelackProvider : MainAPI() {
-    override var mainUrl = "https://famelack.com"
-    override var name = "TVgarden(Famelack)"
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
+class FamelackProvider : BaseProvider() {
+    override val providerName get() = "TVgarden(Famelack)"
+    override val baseDomain get() = "famelack.com"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return FamelackParser()
+    }
+
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "en"
-    override val hasMainPage = true
 
     private val allChannelsUrl = "https://raw.githubusercontent.com/famelack/famelack-data/refs/heads/main/tv/raw/categories/all.json"
     private val countriesMetadataUrl = "https://raw.githubusercontent.com/famelack/famelack-data/refs/heads/main/tv/raw/countries_metadata.json"
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         return try {
             val response = app.get(allChannelsUrl).text
             val channels = parseJson<List<RawChannel>>(response)
@@ -43,6 +50,10 @@ class FamelackProvider : MainAPI() {
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {

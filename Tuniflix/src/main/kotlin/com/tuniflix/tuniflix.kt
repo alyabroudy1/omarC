@@ -2,17 +2,24 @@ package com.lagradost.cloudstream3.plugins
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import com.fasterxml.jackson.annotation.JsonProperty
-import java.util.Base64 // قد نحتاجها أحياناً، لكن الاعتماد الأساسي على Hex
+import java.util.Base64
 
-class Tuniflix : MainAPI() {
-    override var mainUrl = "https://tuniflix.site"
-    override var name = "Tuni flix"
-    override val hasMainPage = true
+class Tuniflix : BaseProvider() {
+    override val providerName get() = "Tuni flix"
+    override val baseDomain get() = "tuniflix.site"
+    override val githubConfigUrl get() = ""
+
+    override fun getParser(): NewBaseParser {
+        return TuniflixParser()
+    }
+
     override var lang = "ar"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
@@ -58,12 +65,16 @@ class Tuniflix : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
         val url = "$mainUrl/?s=$query"
         val document = app.get(url).document
         return document.select("article.TPost.B").mapNotNull {
             it.toSearchResponse()
         }
+    }
+
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse {
