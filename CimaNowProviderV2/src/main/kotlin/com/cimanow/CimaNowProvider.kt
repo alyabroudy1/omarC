@@ -13,11 +13,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.ByteArrayOutputStream
-import java.security.InvalidKeyException
-import java.security.NoSuchAlgorithmException
 import java.util.regex.Pattern
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 class CimaNowProvider : BaseProvider() {
     lateinit var context: Context
@@ -89,14 +85,15 @@ class CimaNowProvider : BaseProvider() {
         try {
             val rawHtml = doc.outerHtml()
 
-            val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+)").matcher(rawHtml)
+            val keyMatcher = Pattern.compile("var\\s+_r\\s*=\\s*(\\d+(?:\\s*\\+\\s*\\d+)*)\\s*;").matcher(rawHtml)
             if (!keyMatcher.find()) return doc
-            val dynamicKey = keyMatcher.group(1).toLong()
+            val dynamicKey = keyMatcher.group(1).split("+").sumOf { it.trim().toLong() }
 
             val dataMatcher = Pattern.compile("['\"]([A-Za-z0-9+/=~]{20,})['\"]").matcher(rawHtml)
             val extractedData = StringBuilder(100000)
             while (dataMatcher.find()) {
-                extractedData.append(dataMatcher.group(1))
+                val chunk = dataMatcher.group(1)
+                if (chunk.indexOf('~') >= 0) extractedData.append(chunk)
             }
             if (extractedData.isEmpty()) return doc
 
@@ -656,84 +653,26 @@ class CimaNowProvider : BaseProvider() {
     // ==================== resolveFreex2line ====================
 
     private suspend fun resolveFreex2line(url: String): String? {
-        Log.i("Freex2lineResolver", "======= [STARTING RESOLVER v3 - DYNAMIC KEY] =======")
+        Log.i("Freex2lineResolver", "======= [STARTING RESOLVER v4 - SIMPLE DECODE] =======")
 
         try {
-            (context as? android.app.Activity)?.runOnUiThread {
-                Toast.makeText(context, "قد يستغرق 12 ثانية..", Toast.LENGTH_SHORT).show()
-            }
-        } catch (_: Exception) {}
-
-        val sessionCookies = mutableMapOf<String, String>()
-
-        try {
-            Log.i("Freex2lineResolver", "[1/6] Initializing session...")
-            val baseHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                "Referer" to "https://rm.freex2line.online/"
-            )
-
-            val headResponse = app.get(url, headers = baseHeaders)
-            sessionCookies.putAll(headResponse.cookies)
-
-            Log.i("Freex2lineResolver", "[2/6] Fetching data page...")
-            val pageUrl = "https://rm.freex2line.online/2020/02/blog-post.html/"
-            val res = app.get(pageUrl, headers = baseHeaders, cookies = sessionCookies)
-            val html = res.text
-            sessionCookies.putAll(res.cookies)
-
-            Log.i("Freex2lineResolver", "[3/6] Analyzing dynamic mapping (CFG)...")
-            val cfgText = reMatch(html, "window\\._0x_cfg\\s*=\\s*\\{([^}]+)\\}")
-                ?: throw Exception("CFG object not found")
-
-            val cVarName = reMatch(cfgText, "c:\\s*'([^']+)'") ?: throw Exception("c mapping not found")
-            val rVarName = reMatch(cfgText, "r:\\s*'([^']+)'") ?: throw Exception("r mapping not found")
-            val kVarName = reMatch(cfgText, "k:\\s*'([^']+)'") ?: throw Exception("k (key) mapping not found")
-            val sXorKey = reMatch(cfgText, "s:\\s*'([^']+)'") ?: throw Exception("s (XOR key) not found")
-
-            Log.i("Freex2lineResolver", "[4/6] Extracting dynamic values...")
-            val ch = reMatch(html, "window\\.$cVarName\\s*=\\s*'([^']+)'") ?: throw Exception("ch value not found")
-            val requestId = reMatch(html, "window\\.$rVarName\\s*=\\s*'([^']+)'") ?: throw Exception("requestId value not found")
-            val encryptedKeyB64 = reMatch(html, "window\\.$kVarName\\s*=\\s*'([^']+)'") ?: throw Exception("Encrypted key value not found")
-
-            Log.i("Freex2lineResolver", "[5/6] Decrypting secret key...")
-            val encryptedBytes = Base64.decode(encryptedKeyB64, 0)
-            val decryptedChars = encryptedBytes.mapIndexed { index, byte ->
-                (byte.toInt() xor sXorKey[index % sXorKey.length].code).toChar()
-            }
-            val secretKey = decryptedChars.joinToString("")
-            Log.d(TAG, "   Dynamic Secret Key: $secretKey")
-
-            Log.i("Freex2lineResolver", "[6/6] Generating HMAC signature...")
-            val fpRaw = "Mozilla/5.10"
-            val fpBase64 = Base64.encodeToString(fpRaw.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            val messageToSign = requestId + ch + fpBase64
-            val hmacToken = calculateHmacSha256(messageToSign, secretKey)
-            val hmacTokenEncoded = java.net.URLEncoder.encode(hmacToken, "UTF-8")
-
-            delay(10000)
-
-            Log.i(TAG, "Sending final API request...")
-            val apiUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php?request_id=$requestId&hmac_token=$hmacTokenEncoded&ch=$ch&fp=$fpBase64"
-
-            val cookieHeader = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            val finalHeaders = mapOf(
-                "User-Agent" to baseHeaders["User-Agent"]!!,
-                "Referer" to "https://rm.freex2line.online/",
-                "Cookie" to cookieHeader
-            )
-
-            val finalRes = app.get(apiUrl, headers = finalHeaders)
-            val finalResult = finalRes.text.trim()
-
-            if (finalResult.startsWith("http")) {
-                Log.i(TAG, "[SUCCESS] Watch page URL obtained: $finalResult")
-                return finalResult
+            val linkParam = url.substringAfter("link=", "")
+            if (linkParam.isBlank()) {
+                Log.e(TAG, "[FATAL ERROR] No 'link' parameter found in URL: $url")
+                return null
             }
 
-            Log.e(TAG, "[FAILURE] Server did not return a valid URL. Response: $finalResult")
+            val decodedBytes = Base64.decode(linkParam, Base64.DEFAULT)
+            val decodedUrl = String(decodedBytes, Charsets.UTF_8)
+
+            if (decodedUrl.startsWith("http")) {
+                Log.i(TAG, "[SUCCESS] Resolved URL: $decodedUrl")
+                return decodedUrl
+            }
+
+            Log.e(TAG, "[FAILURE] Decoded value is not a valid URL: $decodedUrl")
         } catch (e: Exception) {
-            Log.e(TAG, "[FATAL ERROR] An exception occurred during resolution: ${e.message}")
+            Log.e(TAG, "[FATAL ERROR] Exception during resolution: ${e.message}")
             e.printStackTrace()
         }
 
@@ -760,12 +699,4 @@ class CimaNowProvider : BaseProvider() {
         }
     }
 
-    @Throws(NoSuchAlgorithmException::class, InvalidKeyException::class)
-    private fun calculateHmacSha256(message: String, secret: String): String {
-        val keySpec = SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256")
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(keySpec)
-        val bytes = mac.doFinal(message.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(bytes, Base64.NO_WRAP)
-    }
 }
