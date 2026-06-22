@@ -311,8 +311,7 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG, "   Doc HTML size: $docSize bytes")
             Log.d(TAG, "   Response status: ${moviePageResp.code}")
 
-            val allHeaders = moviePageResp.headers?.entries?.joinToString { "${it.key}=${it.value}" }
-            Log.d(TAG, "   Response headers: $allHeaders")
+            Log.d(TAG, "   Response headers: ${moviePageResp.headers}")
 
             val litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
                 ?: moviePageResp.headers?.get("X-Litespeed-Tag")
