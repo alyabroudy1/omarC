@@ -15,6 +15,9 @@ import org.jsoup.Jsoup
 
 class AnimercoProvider : BaseProvider() {
     override val providerName = "Animerco"
+    override var name: String
+        get() = providerName
+        set(value) {}
     override val baseDomain = "animerco.org"
     override val githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/animerco.json"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)

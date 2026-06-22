@@ -30,6 +30,9 @@ import kotlin.coroutines.suspendCoroutine
 
 class Anim3rbProvider : BaseProvider() {
     override val providerName = "Anim3rb"
+    override var name: String
+        get() = providerName
+        set(value) {}
     override val baseDomain = "anime3rb.com"
     override val githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/anim3rb.json"
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
@@ -166,7 +169,7 @@ class Anim3rbProvider : BaseProvider() {
         }
     }
 
-    override val mainPage = mainPageOf("$mainUrl/" to "الرئيسية")
+    override val mainPage by lazy { mainPageOf("$mainUrl/" to "الرئيسية") }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val doc = getDocumentSmart(request.data) ?: return null
