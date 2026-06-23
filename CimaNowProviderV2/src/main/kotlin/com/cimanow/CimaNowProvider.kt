@@ -132,9 +132,14 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val doc = httpService.getDocument("$mainUrl/?s=$encoded")
-        val decodedDoc = if (doc != null) decodeHtml(doc) else return emptyList()
-        return decodedDoc.select(searchContainers).mapNotNull { toSearchResponse(it) }.dedupByUrl()
+        val doc = httpService.getDocument("$mainUrl/?s=$encoded") ?: return emptyList()
+        val items = getParser().parseSearch(doc)
+        return items.map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+            }
+        }
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
@@ -145,20 +150,18 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = request.data + page
-        val doc = httpService.getDocument(url)
-        val decodedDoc = if (doc != null) decodeHtml(doc) else return null
-        val elements = decodedDoc.select(mainContainers).mapNotNull { toSearchResponse(it) }.dedupByUrl()
-        return newHomePageResponse(request.name, elements)
+        val doc = httpService.getDocument(url) ?: return null
+        val items = getParser().parseMainPage(doc)
+        return newHomePageResponse(request.name, items.map { item ->
+            val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
+            newMovieSearchResponse(item.title, item.url, type) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+            }
+        })
     }
 
     // ==================== toSearchResponse ====================
-
-    private val mainContainers = "article[aria-label='post'], article, div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6"
-    private val searchContainers = "div.search-page div.item, article[aria-label='post'], article, div.MovieBlock, figure.search-page-item, div.col-md-2"
-
-    private fun <T> List<T>.dedupByUrl(): List<T> = distinctBy {
-        if (it is SearchResponse) (it as SearchResponse).url else it
-    }
 
     private fun selectPosterImg(element: Element): Element? {
         val img = element.selectFirst("img[data-src]")
