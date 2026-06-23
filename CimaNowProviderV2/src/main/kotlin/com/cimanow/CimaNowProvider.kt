@@ -322,7 +322,7 @@ class CimaNowProvider : BaseProvider() {
             val searchTerm = java.net.URLEncoder.encode(movieTitle, "UTF-8")
             val feedUrl = "$mainUrl/feed/?s=$searchTerm"
             Log.d(TAG, "   Feed search URL: $feedUrl")
-            val feedXml = app.get(feedUrl).text
+            val feedXml = httpService.getText(feedUrl) ?: throw ErrorLoadingException("Empty RSS feed response")
             Log.d(TAG, "   Feed response size: ${feedXml.length} bytes")
 
             val guidPattern = Regex("[?&]p=(\\d+)")
@@ -372,7 +372,8 @@ class CimaNowProvider : BaseProvider() {
                             val coreText = playerResp.text?.take(300)
                             Log.d(TAG, "   core.php status=$coreCode, body start: $coreText")
                             val playerDoc = playerResp.document
-                            val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
+                            val rawIframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
+                            val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
 
                             if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
                                 val serverName = when (index) {
@@ -558,12 +559,13 @@ class CimaNowProvider : BaseProvider() {
                 links.sortByDescending { it.quality }
             }
 
-            val bestLink = links.firstOrNull()
-            if (bestLink != null) {
-                Log.i(TAG_CI, "Best quality link: ${bestLink.quality}p -> ${bestLink.url}")
-                callback(bestLink)
-            } else {
+            if (links.isEmpty()) {
                 Log.w(TAG_CI, "No quality links found in response. Preview: ${iframeResponse.take(200)}")
+            } else {
+                for (link in links) {
+                    Log.i(TAG_CI, "Reporting quality link: ${link.quality}p -> ${link.url}")
+                    callback(link)
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG_CI, "handlecima error: ${e.message}")
