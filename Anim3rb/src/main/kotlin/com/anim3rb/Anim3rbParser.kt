@@ -102,47 +102,34 @@ class Anim3rbParser : NewBaseParser() {
 
     override fun extractWatchServersUrls(doc: Document): List<String> {
         Log.i(PARSER_TAG, "extractWatchServersUrls: title=${doc.title()}, html.length=${doc.html().length}")
-        val urls = super.extractWatchServersUrls(doc)
+        val urls = super.extractWatchServersUrls(doc).toMutableList()
+
+        // NOTE: Do NOT extract JSON-LD embedUrl or Livewire video_url here.
+        // They redirect to video.vid3rb.com which triggers onDomainRedirect
+        // (changing session domain and breaking all subsequent getDocument calls).
+        // Those URLs are handled in loadLinks Phase 2 via getRaw().
+
+        // Scan full HTML with normalized content (unescape Livewire escaping)
+        if (urls.isEmpty()) {
+            val html = doc.html().replace("\\/", "/").replace("\\u0026", "&").replace("&amp;", "&")
+            val playerUrls = Regex("""https?://[^\s"'<>`]+/player/[^\s"'<>`]+""", RegexOption.IGNORE_CASE).findAll(html)
+            playerUrls.forEach { m ->
+                val url = m.value
+                if (url.startsWith("http") && !url.contains(".js") && !urls.contains(url) && url.startsWith("https://anime3rb.com")) {
+                    Log.i(PARSER_TAG, "extractWatchServersUrls: found via full HTML scan='${url.take(100)}'")
+                    urls.add(url)
+                }
+            }
+        }
+
         if (urls.isNotEmpty()) {
-            Log.i(PARSER_TAG, "extractWatchServersUrls: found ${urls.size} URLs via selectors")
+            Log.i(PARSER_TAG, "extractWatchServersUrls: returning ${urls.size} URLs: ${urls.map { it.take(60) }}")
             return urls
         }
 
-        Log.w(PARSER_TAG, "extractWatchServersUrls: selectors found 0, scanning full HTML text for player URLs...")
-        val html = doc.html()
-
-        // Scan every <script> tag's text content for player URLs
-        doc.select("script").forEach { script ->
-            val text = script.html()
-            Regex("""https?://[^"'\s\\<>]*/player/[^"'\s\\<>]*""").findAll(text).forEach { m ->
-                Log.w(PARSER_TAG, "extractWatchServersUrls: found player URL in script: ${m.value}")
-            }
-            Regex("""["'](/player/[^"'\s\\<>]*)["']""").findAll(text).forEach { m ->
-                val url = "https://anime3rb.com${m.groupValues[1]}"
-                Log.w(PARSER_TAG, "extractWatchServersUrls: found relative player URL in script: $url")
-            }
-        }
-
-        // Scan attributes of all elements
-        doc.select("[src*='player' i], [href*='player' i], [data-*='player' i], [data-src*='player' i]").forEach { el ->
-            Log.w(PARSER_TAG, "extractWatchServersUrls: player-like element: tag=${el.tagName()}, class=${el.className()}, href=${el.attr("href")}, src=${el.attr("src")}, data-src=${el.attr("data-src")}")
-        }
-
-        // Regex on full HTML for any player URL
-        val fullUrls = Regex("""https?://[^"'\s\\<>`]+/player/[^"'\s\\<>`]+""", RegexOption.IGNORE_CASE).findAll(html).map { it.value }.toList()
-        val relativeUrls = Regex("""["'`](/player/[^"'\s\\<>`]+)["'`]""", RegexOption.IGNORE_CASE).findAll(html).map { "https://anime3rb.com${it.groupValues[1]}" }.toList()
-        val allUrls = (fullUrls + relativeUrls).distinct().filter { !it.contains(".js") } // exclude JS files
-
-        if (allUrls.isNotEmpty()) {
-            Log.i(PARSER_TAG, "extractWatchServersUrls: found ${allUrls.size} URLs via HTML scan: $allUrls")
-            return allUrls
-        }
-
-        // Fallback: try constructing player URL from the page URL
-        // Episode: /episode/one-piece/1167 → try /player/one-piece/1167
+        // Fallback: construct player URL from the page URL
         val pageUrl = doc.location()
         Log.w(PARSER_TAG, "extractWatchServersUrls: no player URLs in HTML, pageUrl='$pageUrl'")
-        Log.w(PARSER_TAG, "extractWatchServersUrls: DUMP all script contents:\n${doc.select("script").joinToString("\n---\n") { it.html().take(500) }}")
         Log.w(PARSER_TAG, "extractWatchServersUrls: all iframe[src]: ${doc.select("iframe[src]").eachAttr("src")}")
         Log.w(PARSER_TAG, "extractWatchServersUrls: all a[href*='player']: ${doc.select("a[href*='player' i]").eachAttr("href")}")
 
@@ -150,42 +137,13 @@ class Anim3rbParser : NewBaseParser() {
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        // Standard selectors
-        val standard = doc.selectFirst("a[href*='play.php'], a[href*='/player/'], a.play-button, a.watch-button")?.attr("href")
+        // Standard selectors only — DO NOT follow JSON-LD embedUrl or Livewire video_url.
+        // Those URLs redirect to video.vid3rb.com which triggers onDomainRedirect,
+        // changing the session domain and breaking ALL subsequent requests.
+        val url = doc.selectFirst("a[href*='play.php'], a[href*='/player/'], a.play-button, a.watch-button")?.attr("href")
             ?: doc.selectFirst("iframe[src*='/player/']")?.attr("src")
-        if (standard != null) {
-            val resolved = resolveUrl(standard, doc.location())
-            Log.i(PARSER_TAG, "getPlayerPageUrl: found via selectors='$resolved'")
-            return resolved
-        }
-
-        // JSON-LD embedUrl
-        val jsonLd = doc.selectFirst("script[type='application/ld+json']")
-        if (jsonLd != null) {
-            val embedUrl = Regex("\"embedUrl\"\\s*:\\s*\"([^\"]+)\"").find(jsonLd.html())?.groupValues?.get(1)
-            if (embedUrl != null) {
-                val cleaned = embedUrl.replace("\\/", "/").replace("&amp;", "&")
-                Log.i(PARSER_TAG, "getPlayerPageUrl: found via JSON-LD='$cleaned'")
-                return cleaned
-            }
-        }
-
-        // Livewire video_url in wire:snapshot
-        val allAttrs = doc.select("[wire\\\\:snapshot]").joinToString(" ") { it.attr("wire:snapshot") }
-        if (allAttrs.isNotBlank()) {
-            val videoUrlMatch = Regex(""""video_url"\s*:\s*"([^"]+)"""").find(allAttrs)
-            if (videoUrlMatch != null) {
-                val raw = videoUrlMatch.groupValues[1]
-                val cleaned = raw.replace("\\/", "/").replace("\\u0026", "&")
-                if (cleaned.startsWith("http")) {
-                    Log.i(PARSER_TAG, "getPlayerPageUrl: found via Livewire='${cleaned.take(100)}'")
-                    return cleaned
-                }
-            }
-        }
-
-        Log.i(PARSER_TAG, "getPlayerPageUrl: found='null'")
-        return null
+        Log.i(PARSER_TAG, "getPlayerPageUrl: found='$url'")
+        return url?.let { resolveUrl(it, doc.location()) }
     }
 
     override fun isSeries(title: String, url: String, element: Element?): Boolean {

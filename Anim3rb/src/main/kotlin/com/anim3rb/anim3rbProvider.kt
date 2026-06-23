@@ -13,6 +13,7 @@ import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import okhttp3.MediaType.Companion.toMediaType
@@ -311,6 +312,123 @@ class Anim3rbProvider : BaseProvider() {
 
     // ==================== LOAD (DETAIL PAGE) ====================
 
+    override suspend fun load(url: String): LoadResponse? {
+        val methodTag = "[$name] [load]"
+        Log.i(methodTag, "START url='$url'")
+
+        try {
+            httpService.ensureInitialized()
+
+            // Use getRaw + Cookie header to bypass domain rewriting in RequestQueue.
+            // The session domain may be video.vid3rb.com (persisted from a previous embed redirect),
+            // causing getDocument() to rewrite anime3rb.com URLs to video.vid3rb.com (→ "Not Found").
+            val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            val headers = mutableMapOf("Referer" to mainUrl)
+            if (cookieStr.isNotBlank()) headers["Cookie"] = cookieStr
+
+            val resp = httpService.getRaw(url, headers = headers)
+            val body = resp?.body?.string()
+            resp?.close()
+            if (body == null) {
+                Log.e(methodTag, "getRaw returned null")
+                return null
+            }
+            Log.i(methodTag, "Fetched via getRaw: ${body.length} bytes, title=${body.substringAfter("<title>").substringBefore("</title>")}")
+
+            var actualDoc = Jsoup.parse(body, url)
+            var actualUrl = url
+
+            // Resolve Meta-Refresh (rare, but handle using getRaw)
+            val refreshMeta = actualDoc.selectFirst("meta[http-equiv=Refresh]")
+            if (refreshMeta != null) {
+                val newUrlMatch = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(refreshMeta.attr("content"))
+                val newUrl = newUrlMatch?.groupValues?.get(1)
+                if (!newUrl.isNullOrBlank()) {
+                    Log.d(methodTag, "Meta-Refresh to: $newUrl")
+                    val refreshResp = httpService.getRaw(newUrl, headers = headers)
+                    val refreshBody = refreshResp?.body?.string()
+                    refreshResp?.close()
+                    if (refreshBody != null) {
+                        actualDoc = Jsoup.parse(refreshBody, newUrl)
+                        actualUrl = newUrl
+                        Log.d(methodTag, "Meta-Refresh resolved")
+                    }
+                }
+            }
+
+            var data = getParser().parseLoadPageData(actualDoc, actualUrl)
+
+            if (data == null) {
+                Log.e(methodTag, "Failed to parse load data")
+                return null
+            }
+
+            // Resolve parent series if needed (episode URL → fetch parent anime page)
+            if (!data.isMovie && data.episodes.isNullOrEmpty() && !data.parentSeriesUrl.isNullOrBlank()) {
+                val parentUrl = data.parentSeriesUrl!!
+                try {
+                    val parentResp = httpService.getRaw(parentUrl, headers = headers)
+                    val parentBody = parentResp?.body?.string()
+                    parentResp?.close()
+                    if (parentBody != null) {
+                        val parentDoc = Jsoup.parse(parentBody, parentUrl)
+                        val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
+                        if (parentData != null) {
+                            Log.d(methodTag, "Swapped to parent series: $parentUrl")
+                            data = parentData
+                            actualDoc = parentDoc
+                            actualUrl = parentUrl
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(methodTag, "Failed fetching parent series: ${e.message}")
+                }
+            }
+
+            val allEpisodes = fetchExtraEpisodes(actualDoc, actualUrl, data)
+                .distinctBy { "${it.season}:${it.episode}" }
+                .sortedWith(compareBy({ it.season }, { it.episode }))
+
+            val finalType = if (data.type == TvType.TvSeries && allEpisodes.isEmpty()) {
+                Log.d(methodTag, "Fallback: 0 episodes → treating as Movie")
+                TvType.Movie
+            } else {
+                data.type
+            }
+
+            Log.d(methodTag, "title='${data.title}', type=$finalType, episodes=${allEpisodes.size}")
+
+            return if (finalType == TvType.Movie) {
+                val movieDataUrl = data.watchUrl ?: data.url
+                newMovieLoadResponse(data.title, data.url, TvType.Movie, movieDataUrl) {
+                    this.posterUrl = data.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
+                }
+            } else {
+                newTvSeriesLoadResponse(data.title, data.url, TvType.TvSeries, allEpisodes.map { ep ->
+                    newEpisode(ep.url) {
+                        this.name = ep.name
+                        this.season = ep.season
+                        this.episode = ep.episode
+                    }
+                }) {
+                    this.posterUrl = data.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                    this.plot = data.plot
+                    this.tags = data.tags
+                    this.year = data.year
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error: ${e.message}")
+            e.printStackTrace()
+            return null
+        }
+    }
+
     override suspend fun fetchExtraEpisodes(
         doc: Document,
         url: String,
@@ -384,20 +502,42 @@ class Anim3rbProvider : BaseProvider() {
             Log.w(TAG, "loadLinks: standard flow exception: ${e.message}")
         }
 
-        // Phase 2: Old pattern — find player URLs, fetch with httpService, parse video_sources
+        // Phase 2: Old pattern — bypass request queue (which rewrites URLs after domain change).
+        // Use getRaw() + Jsoup + manual Cookie header to avoid URL rewriting and domain redirect handling.
         Log.w(TAG, "loadLinks: standard failed, using httpService-based player extraction")
 
-        val detailDoc = httpService.getDocument(data) ?: run {
-            Log.e(TAG, "loadLinks: failed to fetch episode page")
-            return false
-        }
-        Log.i(TAG, "loadLinks: episode page fetched, html.length=${detailDoc.html().length}")
+        val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val reqHeaders = mutableMapOf("Referer" to mainUrl)
+        if (cookieStr.isNotBlank()) reqHeaders["Cookie"] = cookieStr
 
-        // Find all player/server URLs via parser (now with aggressive HTML scanning)
-        val playerUrls = getParser().extractWatchServersUrls(detailDoc)
+        // Fetch episode page via getRaw to bypass request queue URL rewriting
+        val episodeResp = httpService.getRaw(data, headers = reqHeaders)
+        val episodeBody = episodeResp?.body?.string() ?: run { episodeResp?.close(); return false }
+        episodeResp.close()
+        val episodeDoc = Jsoup.parse(episodeBody, data)
+        Log.i(TAG, "loadLinks: episode page fetched via getRaw, html.length=${episodeBody.length}")
+
+        val playerUrls = getParser().extractWatchServersUrls(episodeDoc).toMutableList()
         Log.i(TAG, "loadLinks: parser found ${playerUrls.size} player URLs")
 
-        // Fallback: try constructing player URL from episode URL
+        // Extract Livewire video_url directly from the episode page HTML
+        try {
+            val snapshot = episodeDoc.select("[wire\\\\:snapshot]").joinToString(" ") { it.attr("wire:snapshot") }
+            if (snapshot.isNotBlank()) {
+                Regex(""""video_url"\s*:\s*"([^"]+)"""").findAll(snapshot).forEach { m ->
+                    val raw = m.groupValues[1]
+                    val cleaned = raw.replace("\\/", "/").replace("\\u0026", "&").replace("&amp;", "&")
+                    if (cleaned.startsWith("http") && !playerUrls.contains(cleaned)) {
+                        Log.i(TAG, "loadLinks: found Livewire video_url='${cleaned.take(100)}'")
+                        playerUrls.add(cleaned)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "loadLinks: Livewire extraction error: ${e.message}")
+        }
+
+        // Fallback: construct /player/{slug}/{ep} on the ORIGINAL domain (anime3rb.com)
         val allUrls = if (playerUrls.isNotEmpty()) playerUrls else {
             val constructed = data.replace("/episode/", "/player/")
             Log.w(TAG, "loadLinks: no URLs from parser, trying constructed: $constructed")
@@ -407,51 +547,58 @@ class Anim3rbProvider : BaseProvider() {
         for (playerUrl in allUrls) {
             Log.i(TAG, "loadLinks: trying player URL: $playerUrl")
             try {
-                val playerDoc = httpService.getDocument(playerUrl) ?: continue
-                val playerHtml = playerDoc.html()
-                Log.i(TAG, "loadLinks: player page fetched, html.length=${playerHtml.length}, title=${playerDoc.title()}")
+                val playerResp = httpService.getRaw(playerUrl, headers = reqHeaders)
+                val playerBody = playerResp?.body?.string()
+                playerResp?.close()
+                if (playerBody == null) continue
+                Log.i(TAG, "loadLinks: player page fetched via getRaw, ${playerBody.length} bytes, title=${playerBody.substringAfter("<title>").substringBefore("</title>")}")
 
                 // Parse video_sources from script tags (old pattern)
-                val script = playerDoc.selectFirst("script:containsData(video_sources)")?.html()
-                if (script != null) {
-                    val jsonMatch = Regex("""var\s+video_sources\s*=\s*(\[[^;]+]);""").find(script)
-                    if (jsonMatch != null) {
-                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(jsonMatch.groupValues[1])
+                val scriptMatch = Regex("""var\s+video_sources\s*=\s*(\[[^;]+]);""").find(playerBody)
+                if (scriptMatch != null) {
+                    try {
+                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(scriptMatch.groupValues[1])
                         Log.i(TAG, "loadLinks: found ${sources.size} video sources via video_sources")
                         for (item in sources) {
                             val src = item["src"]?.toString() ?: item["file"]?.toString()
                             val label = item["label"]?.toString() ?: "Default"
                             if (!src.isNullOrBlank()) {
-                                callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://video.vid3rb.com/" })
+                                callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://anime3rb.com/" })
                             }
                         }
                         if (sources.isNotEmpty()) return true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "loadLinks: failed to parse video_sources JSON: ${e.message}")
                     }
                 }
 
-                // Also search for /sources?cf_token= in player page
-                val sourcesUrl = Regex("""/sources\?[^"'\s\\<>]+""").find(playerHtml)?.value
+                // Search for /sources?cf_token= in player page
+                val sourcesUrl = Regex("""/sources\?[^"'\s\\<>]+""").find(playerBody)?.value
                 if (sourcesUrl != null) {
                     val fullSourcesUrl = "https://anime3rb.com$sourcesUrl"
                     Log.i(TAG, "loadLinks: found sources URL: $fullSourcesUrl")
-                    val resp = httpService.getRaw(fullSourcesUrl, headers = mapOf("Referer" to playerUrl))
-                    val rawJson = resp?.body?.string()
-                    resp?.close()
+                    val jsonResp = httpService.getRaw(fullSourcesUrl, headers = reqHeaders)
+                    val rawJson = jsonResp?.body?.string()
+                    jsonResp?.close()
                     if (rawJson != null) {
-                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(rawJson)
-                        Log.i(TAG, "loadLinks: found ${sources.size} video sources via JSON endpoint")
-                        for (item in sources) {
-                            val src = item["src"]?.toString() ?: item["file"]?.toString()
-                            val label = item["label"]?.toString() ?: "Default"
-                            if (!src.isNullOrBlank()) {
-                                callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://video.vid3rb.com/" })
+                        try {
+                            val sources = AppUtils.parseJson<List<Map<String, Any>>>(rawJson)
+                            Log.i(TAG, "loadLinks: found ${sources.size} video sources via JSON endpoint")
+                            for (item in sources) {
+                                val src = item["src"]?.toString() ?: item["file"]?.toString()
+                                val label = item["label"]?.toString() ?: "Default"
+                                if (!src.isNullOrBlank()) {
+                                    callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://anime3rb.com/" })
+                                }
                             }
+                            if (sources.isNotEmpty()) return true
+                        } catch (e: Exception) {
+                            Log.w(TAG, "loadLinks: failed to parse sources JSON: ${e.message}")
                         }
-                        if (sources.isNotEmpty()) return true
                     }
                 }
 
-                // Also try loading through extractors for this URL
+                // Try loading through extractors for player URL
                 Log.d(TAG, "loadLinks: trying extractors for player URL: $playerUrl")
                 var found = false
                 loadExtractor(playerUrl, "https://anime3rb.com/", subtitleCallback) { link ->
