@@ -134,8 +134,7 @@ class CimaNowProvider : BaseProvider() {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val doc = httpService.getDocument("$mainUrl/?s=$encoded")
         val decodedDoc = if (doc != null) decodeHtml(doc) else return emptyList()
-        return decodedDoc.select(containers).mapNotNull { toSearchResponse(it) }
-            .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
+        return decodedDoc.select(searchContainers).mapNotNull { toSearchResponse(it) }.dedupByUrl()
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
@@ -148,14 +147,18 @@ class CimaNowProvider : BaseProvider() {
         val url = request.data + page
         val doc = httpService.getDocument(url)
         val decodedDoc = if (doc != null) decodeHtml(doc) else return null
-        val elements = decodedDoc.select(containers).mapNotNull { toSearchResponse(it) }
-            .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
+        val elements = decodedDoc.select(mainContainers).mapNotNull { toSearchResponse(it) }.dedupByUrl()
         return newHomePageResponse(request.name, elements)
     }
 
     // ==================== toSearchResponse ====================
 
-    private val containers = "article[aria-label='post'], article, div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6"
+    private val mainContainers = "article[aria-label='post'], article, div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6"
+    private val searchContainers = "div.search-page div.item, article[aria-label='post'], article, div.MovieBlock, figure.search-page-item, div.col-md-2"
+
+    private fun <T> List<T>.dedupByUrl(): List<T> = distinctBy {
+        if (it is SearchResponse) (it as SearchResponse).url else it
+    }
 
     private fun selectPosterImg(element: Element): Element? {
         val img = element.selectFirst("img[data-src]")
@@ -415,8 +418,8 @@ class CimaNowProvider : BaseProvider() {
                                         handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
                                     }
                                     else -> {
-                                        Log.d(TAG, "   -> routing to loadExtractor")
-                                        loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
+                                        Log.d(TAG, "   -> routing to fallbackExtractIframe")
+                                        fallbackExtractIframe(iframeUrl, serverName, finalCimaNowUrl, callback)
                                     }
                                 }
                             } else {
@@ -774,6 +777,54 @@ class CimaNowProvider : BaseProvider() {
 
         } catch (e: Exception) {
             Log.e(TAG_FF, "[-] Error in Forafile: ${e.message}")
+        }
+    }
+
+    // ==================== fallbackExtractIframe ====================
+
+    private suspend fun fallbackExtractIframe(
+        iframeUrl: String,
+        serverName: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val TAG_FE = "FallbackExtract"
+        try {
+            var extracted = false
+            val countingCallback: (ExtractorLink) -> Unit = { link ->
+                extracted = true
+                callback(link)
+            }
+            try {
+                loadExtractor(iframeUrl, referer, {}, countingCallback)
+            } catch (_: Exception) {}
+            if (extracted) return
+
+            val doc = httpService.getDocument(iframeUrl, headers = mapOf("Referer" to referer), skipRewrite = true)
+            val html = doc?.outerHtml() ?: return
+
+            val urls = mutableListOf<String>()
+            Regex("""file:\s*["']([^"']+)["']""").findAll(html).forEach { urls.add(it.groupValues[1]) }
+            Regex("""src=["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""").findAll(html).forEach { urls.add(it.groupValues[1]) }
+            doc.select("source[src]").forEach { urls.add(it.attr("src")) }
+            doc.select("video[src]").forEach { urls.add(it.attr("src")) }
+
+            val baseUrl = Regex("(https?://[^/]+)").find(iframeUrl)?.groupValues?.get(1) ?: ""
+            for (url in urls.distinct()) {
+                val finalUrl = when {
+                    url.startsWith("http") -> url
+                    url.startsWith("//") -> "https:$url"
+                    url.startsWith("/") -> "$baseUrl$url"
+                    else -> "$baseUrl/$url"
+                }
+                if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
+                    val link = newExtractorLink(serverName, serverName, finalUrl, type = getLinkType(finalUrl))
+                    link.referer = iframeUrl
+                    callback(link)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG_FE, "Error extracting from $serverName: ${e.message}")
         }
     }
 
