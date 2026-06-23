@@ -164,7 +164,7 @@ class CimaNowProvider : BaseProvider() {
 
         val year = element.select("ul li a[href*='/release-year/']").text().toIntOrNull()
 
-        val quality = Qualities.Unknown.value
+        val quality = Qualities.Unknown
 
         val type = if (category.contains("مسلسلات", true) || category.contains("موسم", true)) {
             TvType.TvSeries
@@ -300,10 +300,11 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG, "   Doc HTML size: ${respBody.length} bytes")
             Log.d(TAG, "   Response status: $respCode")
 
-            Log.d(TAG, "   Movie title for search: $movieTitle")
+            val cleanTitle = movieTitle.substringBefore("|").trim()
+            Log.d(TAG, "   Cleaned title for search: $cleanTitle")
 
             Log.i("CimaNowLoadLinks", "[2/6] Searching RSS feed for post ID...")
-            val searchTerm = java.net.URLEncoder.encode(movieTitle, "UTF-8")
+            val searchTerm = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
             val feedUrl = "$mainUrl/feed/?s=$searchTerm"
             Log.d(TAG, "   Feed search URL: $feedUrl")
             val feedXml = httpService.getText(feedUrl) ?: throw ErrorLoadingException("Empty RSS feed response")
