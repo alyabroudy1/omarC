@@ -45,7 +45,7 @@ class ProviderHttpService private constructor(
     private val sessionStore: SessionStore,
     private val cfBypassEngine: CfBypassEngine,
     private val videoSnifferEngine: VideoSnifferEngine,
-    private val navigationEngine: NavigationEngine,
+    val navigationEngine: NavigationEngine,
     private val domainManager: DomainManager,
     private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface,

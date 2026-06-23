@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.webview.WebViewFlowHelper
 import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -31,6 +32,10 @@ class CimaNowProvider : BaseProvider() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
     private val TAG = "CimaNowDebug"
+
+    private val webViewFlowHelper by lazy {
+        WebViewFlowHelper(httpService.navigationEngine)
+    }
 
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
@@ -474,7 +479,8 @@ class CimaNowProvider : BaseProvider() {
             }
 
             if (postId == null) {
-                throw ErrorLoadingException("Failed to extract post ID — all methods exhausted")
+                Log.w(TAG, "   All HTTP post-ID extraction methods exhausted — trying WebView navigation fallback...")
+                return tryWebViewFallback(data, subtitleCallback, callback)
             }
 
             Log.i("CimaNowLoadLinks", "[3/6] Searching for freex2line intermediate link...")
@@ -562,12 +568,17 @@ class CimaNowProvider : BaseProvider() {
             }
 
             Log.i(TAG, "   core.php results: $successCount succeeded, $failCount failed out of ${knownIndices.size}")
-            if (successCount == 0) {
-                Log.w(TAG, "   No valid servers found via core.php!")
+
+            if (successCount > 0) {
+                Log.i(TAG, "================ [END LOADLINKS v6] =================")
+                return true
             }
 
+            Log.w(TAG, "   No valid servers found via core.php! Trying WebView navigation fallback...")
+            val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
+
             Log.i(TAG, "================ [END LOADLINKS v6] =================")
-            return successCount > 0
+            return webViewResult
 
         } catch (e: Exception) {
             Log.e(TAG, "FATAL ERROR in loadLinks: ${e.message}")
@@ -576,6 +587,102 @@ class CimaNowProvider : BaseProvider() {
 
         Log.i(TAG, "================ [END LOADLINKS v6] =================")
         return false
+    }
+
+    // ==================== WebView Fallback ====================
+
+    private suspend fun tryWebViewFallback(
+        data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val TAG_WV = "CimaNowWebViewFallback"
+        Log.i(TAG_WV, "========== [START] WebView navigation fallback ==========")
+        Log.i(TAG_WV, "URL: $data")
+
+        try {
+            val config = WebViewFlowHelper.Config(
+                allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li"),
+                destinationLockPatterns = listOf("/watching/"),
+                overallTimeoutMs = 120_000L
+            )
+            Log.d(TAG_WV, "Config: allowedDomains=${config.allowedDomains}, destPatterns=${config.destinationLockPatterns}, timeoutMs=${config.overallTimeoutMs}")
+
+            Log.i(TAG_WV, "Invoking WebView navigation (this may take up to ${config.overallTimeoutMs / 1000}s)...")
+            val flowResult = webViewFlowHelper.navigateMovieToWatchPage(data, config)
+
+            if (!flowResult.success) {
+                Log.w(TAG_WV, "WebView flow FAILED: ${flowResult.error}")
+                Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
+                Log.d(TAG_WV, "  completedSteps: ${flowResult.completedSteps}")
+                Log.d(TAG_WV, "  failedAtStep: ${flowResult.failedAtStep}")
+                return false
+            }
+
+            Log.i(TAG_WV, "WebView flow SUCCEEDED")
+            Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
+            Log.d(TAG_WV, "  servers count: ${flowResult.servers.size}")
+            Log.d(TAG_WV, "  downloads count: ${flowResult.downloads.size}")
+
+            flowResult.servers.forEachIndexed { i, s ->
+                Log.d(TAG_WV, "  server[$i]: name='${s.name}' index=${s.index} id=${s.id} hasIframe=${s.iframeUrl.isNotBlank()}")
+                if (s.iframeUrl.isNotBlank()) {
+                    Log.d(TAG_WV, "    iframeUrl: ${s.iframeUrl.take(100)}")
+                }
+            }
+            flowResult.downloads.forEachIndexed { i, d ->
+                Log.d(TAG_WV, "  download[$i]: name='${d.name}' url=${d.url.take(100)}")
+            }
+
+            var found = false
+            val referer = flowResult.finalUrl.ifBlank { data }
+
+            for (server in flowResult.servers) {
+                if (server.iframeUrl.isNotBlank()) {
+                    Log.i(TAG_WV, "Processing server '${server.name}' ...")
+                    try {
+                        val iframeUrl = server.iframeUrl
+                        when {
+                            iframeUrl.contains("cimanowtv", true) -> {
+                                Log.d(TAG_WV, "  -> routing to handlecima")
+                                handlecima(iframeUrl, server.name, callback)
+                            }
+                            iframeUrl.contains("forafile.com", true) -> {
+                                Log.d(TAG_WV, "  -> routing to handleForafile")
+                                handleForafile(iframeUrl, 0, referer, callback)
+                            }
+                            else -> {
+                                Log.d(TAG_WV, "  -> routing to fallbackExtractIframe (referer=$referer)")
+                                fallbackExtractIframe(iframeUrl, server.name, referer, callback)
+                            }
+                        }
+                        found = true
+                    } catch (e: Exception) {
+                        Log.e(TAG_WV, "  ERROR processing server '${server.name}': ${e.message}")
+                    }
+                } else {
+                    Log.d(TAG_WV, "Server '${server.name}' has empty iframeUrl, skipping")
+                }
+            }
+
+            for (download in flowResult.downloads) {
+                if (download.url.isNotBlank()) {
+                    Log.i(TAG_WV, "Processing download '${download.name}' -> ${download.url.take(100)}")
+                    callback(
+                        newExtractorLink(download.name, download.name, download.url, type = getLinkType(download.url))
+                    )
+                    found = true
+                }
+            }
+
+            Log.i(TAG_WV, "========== [END] WebView fallback, found=$found ==========")
+            return found
+
+        } catch (e: Exception) {
+            Log.e(TAG_WV, "WebView fallback EXCEPTION: ${e.message}")
+            Log.e(TAG_WV, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
+            return false
+        }
     }
 
     // ==================== processServerElement ====================
