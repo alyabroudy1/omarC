@@ -303,8 +303,9 @@ class CimaNowProvider : BaseProvider() {
             val cacheBuster = "?_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
             Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
-            val moviePageResp = app.get(fetchUrl)
-            val moviePageDoc = moviePageResp.document
+            val antiCacheHeaders = mapOf("Cache-Control" to "no-cache, no-store, must-revalidate", "Pragma" to "no-cache")
+            var moviePageResp = app.get(fetchUrl, headers = antiCacheHeaders)
+            var moviePageDoc = moviePageResp.document
             val movieTitle = moviePageDoc.title()
             Log.d(TAG, "   Doc title: $movieTitle")
             val docSize = moviePageDoc.outerHtml().length
@@ -313,14 +314,43 @@ class CimaNowProvider : BaseProvider() {
 
             Log.d(TAG, "   Response headers: ${moviePageResp.headers}")
 
-            val litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
+            var litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
                 ?: moviePageResp.headers?.get("X-Litespeed-Tag")
             Log.d(TAG, "   x-litespeed-tag header: $litespeedTag")
 
-            val postId = litespeedTag?.let {
+            var postId: String? = litespeedTag?.let {
                 Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
-            } ?: throw ErrorLoadingException("Failed to extract post ID from LiteSpeed header")
-            Log.i(TAG, "   Extracted post ID: $postId")
+            }
+
+            if (postId == null) {
+                Log.w(TAG, "   LiteSpeed tag not found via GET, retrying with POST to bypass cache...")
+                moviePageResp = app.post(fetchUrl, headers = antiCacheHeaders, data = emptyMap())
+                moviePageDoc = moviePageResp.document
+                Log.d(TAG, "   POST response status: ${moviePageResp.code}")
+                Log.d(TAG, "   POST headers: ${moviePageResp.headers}")
+                litespeedTag = moviePageResp.headers?.get("x-litespeed-tag")
+                    ?: moviePageResp.headers?.get("X-Litespeed-Tag")
+                Log.d(TAG, "   POST x-litespeed-tag header: $litespeedTag")
+                postId = litespeedTag?.let {
+                    Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
+                }
+            }
+
+            if (postId == null) {
+                Log.e(TAG, "   CRITICAL: Could not extract post ID from headers even with POST fallback.")
+                Log.e(TAG, "   Falling back to parsing post ID from HTML body...")
+                val htmlBody = moviePageDoc.outerHtml()
+                val htmlPostId = Regex("/(?:\\?p=|post[-_])(\\d+)").find(htmlBody)?.groupValues?.get(1)
+                    ?: Regex("Po\\.(\\d+)").find(htmlBody)?.groupValues?.get(1)
+                    ?: Regex("postid[=:]\\s*(\\d+)", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.get(1)
+                postId = htmlPostId
+                if (postId == null) {
+                    throw ErrorLoadingException("Failed to extract post ID (LiteSpeed header + HTML fallback)")
+                }
+                Log.i(TAG, "   Extracted post ID from HTML: $postId")
+            } else {
+                Log.i(TAG, "   Extracted post ID: $postId")
+            }
 
             Log.i("CimaNowLoadLinks", "[2/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
