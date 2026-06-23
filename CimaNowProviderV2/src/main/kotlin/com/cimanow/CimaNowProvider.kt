@@ -134,7 +134,7 @@ class CimaNowProvider : BaseProvider() {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val doc = httpService.getDocument("$mainUrl/?s=$encoded")
         val decodedDoc = if (doc != null) decodeHtml(doc) else return emptyList()
-        return decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
+        return decodedDoc.select(containers).mapNotNull { toSearchResponse(it) }
             .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
     }
 
@@ -148,22 +148,51 @@ class CimaNowProvider : BaseProvider() {
         val url = request.data + page
         val doc = httpService.getDocument(url)
         val decodedDoc = if (doc != null) decodeHtml(doc) else return null
-        val elements = decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
+        val elements = decodedDoc.select(containers).mapNotNull { toSearchResponse(it) }
             .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
         return newHomePageResponse(request.name, elements)
     }
 
     // ==================== toSearchResponse ====================
 
-    private fun toSearchResponse(element: Element): SearchResponse? {
-        val link = element.selectFirst("a[href^='http']")
-            ?: element.parent()?.selectFirst("a[href^='http']") ?: return null
-        val href = link.attr("href")
-        val img = link.selectFirst("img[alt!=logo]")
-            ?: element.selectFirst("img[alt!=logo]") ?: return null
+    private val containers = "article[aria-label='post'], article, div.MovieBlock, div.item, figure, div.col-md-2.col-xs-6"
 
-        val posterUrl = img.attr("src")
-        val title = img.attr("alt")
+    private fun selectPosterImg(element: Element): Element? {
+        val img = element.selectFirst("img[data-src]")
+            ?: element.selectFirst("img.lazy")
+            ?: element.selectFirst("img[alt!=logo]")
+            ?: element.selectFirst("img")
+        return img
+    }
+
+    private fun getPosterUrl(img: Element): String {
+        return img.attr("data-src").ifBlank { img.attr("src") }
+    }
+
+    private fun getTitle(element: Element, img: Element?): String? {
+        val fromLi = element.selectFirst("li[aria-label='title']")?.text()
+        if (!fromLi.isNullOrBlank()) return fromLi
+        val fromH3 = element.selectFirst("h3 a")?.text()
+        if (!fromH3.isNullOrBlank()) return fromH3
+        val fromATitle = element.selectFirst("a[title]")?.attr("title")
+        if (!fromATitle.isNullOrBlank()) return fromATitle
+        val fromImgAlt = img?.attr("alt")
+        if (!fromImgAlt.isNullOrBlank() && fromImgAlt != "logo") return fromImgAlt
+        return null
+    }
+
+    private fun getHref(element: Element): String? {
+        val link = element.selectFirst("a[href]")
+            ?: element.parent()?.selectFirst("a[href]") ?: return null
+        return link.attr("href").takeUnless { it.isBlank() || it.startsWith("#") || it.startsWith("javascript:") }
+    }
+
+    private fun toSearchResponse(element: Element): SearchResponse? {
+        val img = selectPosterImg(element) ?: return null
+        val href = getHref(element) ?: return null
+        val title = getTitle(element, img) ?: return null
+
+        val posterUrl = getPosterUrl(img)
 
         val category = element.select("a[href*='/category/']").text()
         val year = element.select("a[href*='/release-year/']").text().toIntOrNull()
@@ -521,7 +550,7 @@ class CimaNowProvider : BaseProvider() {
         try {
             val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
             Log.d(TAG_CI, "Fetching cimanow iframe page: $finalUrl")
-            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl)) ?: ""
+            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl), skipRewrite = true) ?: ""
             Log.d(TAG_CI, "Iframe response size: ${iframeResponse.length} bytes")
 
             val regex = Regex("\\[(\\d+p)]\\s+(/uploads/[^\"]+\\.mp4)")
