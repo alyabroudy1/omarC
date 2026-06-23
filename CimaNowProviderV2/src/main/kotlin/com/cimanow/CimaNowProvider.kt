@@ -348,10 +348,33 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG, "   Feed search URL: $feedUrl")
             val feedXml = httpService.getText(feedUrl) ?: throw ErrorLoadingException("Empty RSS feed response")
             Log.d(TAG, "   Feed response size: ${feedXml.length} bytes")
+            Log.d(TAG, "   Feed content dump:\n${feedXml.take(1000)}")
 
-            val guidPattern = Regex("[?&]p=(\\d+)")
-            val postId = guidPattern.find(feedXml)?.groupValues?.get(1)
-                ?: throw ErrorLoadingException("Failed to extract post ID from RSS feed search")
+            val postId = run {
+                val guidPattern = Regex("[?&]p=(\\d+)")
+                val fromRss = guidPattern.find(feedXml)?.groupValues?.get(1)
+                if (fromRss != null) {
+                    Log.i(TAG, "   Post ID found via RSS: $fromRss")
+                    fromRss
+                } else {
+                    Log.w(TAG, "   RSS feed has no ?p= pattern — trying REST API fallback...")
+                    val slug = data.trimEnd('/').substringAfterLast('/')
+                    Log.d(TAG, "   Extracted slug from URL: $slug")
+                    val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
+                    Log.d(TAG, "   REST API URL: $apiUrl")
+                    val apiResult = httpService.getText(apiUrl, headers = mapOf("Accept" to "application/json"))
+                    Log.d(TAG, "   REST API response (first 1000): ${apiResult?.take(1000)}")
+                    val fromApi = apiResult?.let { json ->
+                        Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
+                    }
+                    if (fromApi != null) {
+                        Log.i(TAG, "   Post ID found via REST API: $fromApi")
+                        fromApi
+                    } else {
+                        throw ErrorLoadingException("Failed to extract post ID from RSS feed search (feed has no ?p=, REST API returned no id)")
+                    }
+                }
+            }
             Log.i(TAG, "   Extracted post ID: $postId")
 
             Log.i("CimaNowLoadLinks", "[3/6] Searching for freex2line intermediate link...")
