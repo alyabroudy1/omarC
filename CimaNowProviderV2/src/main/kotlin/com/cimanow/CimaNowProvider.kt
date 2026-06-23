@@ -342,40 +342,140 @@ class CimaNowProvider : BaseProvider() {
             val cleanTitle = movieTitle.substringBefore("|").trim()
             Log.d(TAG, "   Cleaned title for search: $cleanTitle")
 
-            Log.i("CimaNowLoadLinks", "[2/6] Searching RSS feed for post ID...")
-            val searchTerm = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
-            val feedUrl = "$mainUrl/feed/?s=$searchTerm"
-            Log.d(TAG, "   Feed search URL: $feedUrl")
-            val feedXml = httpService.getText(feedUrl) ?: throw ErrorLoadingException("Empty RSS feed response")
-            Log.d(TAG, "   Feed response size: ${feedXml.length} bytes")
-            Log.d(TAG, "   Feed content dump:\n${feedXml.take(1000)}")
-
-            val postId = run {
-                val guidPattern = Regex("[?&]p=(\\d+)")
-                val fromRss = guidPattern.find(feedXml)?.groupValues?.get(1)
-                if (fromRss != null) {
-                    Log.i(TAG, "   Post ID found via RSS: $fromRss")
-                    fromRss
+            Log.i("CimaNowLoadLinks", "[2/6] Extracting post ID from movie page HTML...")
+            var postId = run {
+                // Scan movie page HTML for WordPress post ID patterns (most reliable)
+                val bodyClass = Regex("""postid[-\s]*(\d+)""", RegexOption.IGNORE_CASE).find(respBody)
+                if (bodyClass != null) {
+                    Log.i(TAG, "   Post ID found via body class: ${bodyClass.groupValues[1]}")
+                    bodyClass.groupValues[1]
                 } else {
-                    Log.w(TAG, "   RSS feed has no ?p= pattern — trying REST API fallback...")
-                    val slug = data.trimEnd('/').substringAfterLast('/')
-                    Log.d(TAG, "   Extracted slug from URL: $slug")
-                    val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
-                    Log.d(TAG, "   REST API URL: $apiUrl")
-                    val apiResult = httpService.getText(apiUrl, headers = mapOf("Accept" to "application/json"))
-                    Log.d(TAG, "   REST API response (first 1000): ${apiResult?.take(1000)}")
-                    val fromApi = apiResult?.let { json ->
-                        Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
-                    }
-                    if (fromApi != null) {
-                        Log.i(TAG, "   Post ID found via REST API: $fromApi")
-                        fromApi
+                    val articleId = Regex("""<article[^>]*\sid\s*=\s*["']post[-\s]*(\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
+                    if (articleId != null) {
+                        Log.i(TAG, "   Post ID found via article id: ${articleId.groupValues[1]}")
+                        articleId.groupValues[1]
                     } else {
-                        throw ErrorLoadingException("Failed to extract post ID from RSS feed search (feed has no ?p=, REST API returned no id)")
+                        val dataPostId = Regex("""data-post-id\s*=\s*["'](\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
+                        if (dataPostId != null) {
+                            Log.i(TAG, "   Post ID found via data-post-id: ${dataPostId.groupValues[1]}")
+                            dataPostId.groupValues[1]
+                        } else {
+                            val jsPostId = Regex("""post_id\s*=\s*(\d+)""", RegexOption.IGNORE_CASE).find(respBody)
+                            if (jsPostId != null) {
+                                Log.i(TAG, "   Post ID found via JS variable: ${jsPostId.groupValues[1]}")
+                                jsPostId.groupValues[1]
+                            } else {
+                                val hiddenInput = Regex("""<input[^>]*name=["']post(?:_id)?["'][^>]*value=["'](\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
+                                if (hiddenInput != null) {
+                                    Log.i(TAG, "   Post ID found via hidden input: ${hiddenInput.groupValues[1]}")
+                                    hiddenInput.groupValues[1]
+                                } else {
+                                    // Fallback: search RSS feed for ?p= pattern
+                                    Log.w(TAG, "   No post ID found in HTML — trying RSS feed fallback...")
+                                    val searchTerm = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
+                                    val feedUrl = "$mainUrl/feed/?s=$searchTerm"
+                                    Log.d(TAG, "   Feed search URL: $feedUrl")
+                                    val feedXml = httpService.getText(feedUrl)
+                                    Log.d(TAG, "   Feed response size: ${feedXml?.length ?: 0} bytes")
+                                    if (feedXml != null) Log.d(TAG, "   Feed content dump:\n${feedXml.take(1000)}")
+
+                                    val fromRss = feedXml?.let { Regex("[?&]p=(\\d+)").find(it)?.groupValues?.get(1) }
+                                    if (fromRss != null) {
+                                        Log.i(TAG, "   Post ID found via RSS: $fromRss")
+                                        fromRss
+                                    } else {
+                                        Log.w(TAG, "   RSS feed has no ?p= — trying REST API fallback...")
+                                        val slug = data.trimEnd('/').substringAfterLast('/')
+                                        Log.d(TAG, "   Extracted slug from URL: $slug")
+                                        val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
+                                        Log.d(TAG, "   REST API URL: $apiUrl")
+                                        val apiResult = httpService.getText(apiUrl, headers = mapOf("Accept" to "application/json"))
+                                        Log.d(TAG, "   REST API response (first 1000): ${apiResult?.take(1000)}")
+                                        val fromApi = apiResult?.let { json ->
+                                            Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
+                                        }
+                                        if (fromApi != null) {
+                                            Log.i(TAG, "   Post ID found via REST API: $fromApi")
+                                            fromApi
+                                        } else {
+                                            Log.w(TAG, "   REST API failed — will try watching page fallback...")
+                                            null
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
             Log.i(TAG, "   Extracted post ID: $postId")
+
+            if (postId == null) {
+                Log.i("CimaNowLoadLinks", "[2b/6] Fallback: fetching watching page for post ID via data-id...")
+                val fxLink = moviePageDoc.selectFirst("a[href*='freex2line']")?.attr("href")
+                if (fxLink != null) {
+                    val linkParam = fxLink.substringAfter("link=", "")
+                    if (linkParam.isNotBlank()) {
+                        val watchPageUrl = try {
+                            String(Base64.decode(linkParam, Base64.DEFAULT), Charsets.UTF_8)
+                        } catch (e: Exception) { null }
+                        if (watchPageUrl != null && watchPageUrl.startsWith("http")) {
+                            Log.d(TAG, "   Watching page URL: $watchPageUrl")
+                            val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                            val watchHeaders = mapOf(
+                                "User-Agent" to httpService.userAgent,
+                                "Referer" to data,
+                                "Cookie" to cookieStr
+                            )
+                            val watchResp = httpService.getRaw(watchPageUrl, headers = watchHeaders)
+                            val watchHtml = watchResp.body?.string() ?: ""
+                            Log.d(TAG, "   Watching page size: ${watchHtml.length} bytes")
+                            val dataIdMatch = Regex("""data-id\s*=\s*["'](\d+)["']""").find(watchHtml)
+                            if (dataIdMatch != null) {
+                                postId = dataIdMatch.groupValues[1]
+                                Log.i(TAG, "   Post ID found via watching page data-id: $postId")
+                            } else {
+                                Log.w(TAG, "   No data-id in watching page; snippet: ${watchHtml.take(300)}")
+                            }
+                        } else {
+                            Log.w(TAG, "   Decoded watch page URL is invalid or null")
+                        }
+                    } else {
+                        Log.w(TAG, "   No link param in freex2line URL")
+                    }
+                } else {
+                    Log.w(TAG, "   No freex2line link for watching page fallback")
+                }
+            }
+
+            if (postId == null) {
+                Log.i("CimaNowLoadLinks", "[2c/6] Fallback: REST API via getRaw with Cloudflare cookies...")
+                val slug = data.trimEnd('/').substringAfterLast('/')
+                val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
+                val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                val apiResp = httpService.getRaw(apiUrl, headers = mapOf(
+                    "User-Agent" to httpService.userAgent,
+                    "Accept" to "application/json",
+                    "Cookie" to cookieStr
+                ))
+                val apiBody = apiResp.body?.string()
+                if (apiBody != null) {
+                    Log.d(TAG, "   REST API body (first 500): ${apiBody.take(500)}")
+                    val fromApi = Regex(""""id"\s*:\s*(\d+)""").find(apiBody)?.groupValues?.get(1)
+                    if (fromApi != null) {
+                        postId = fromApi
+                        Log.i(TAG, "   Post ID found via REST API (getRaw): $postId")
+                    } else {
+                        Log.w(TAG, "   No id field in REST API response")
+                    }
+                } else {
+                    Log.w(TAG, "   REST API response body is null")
+                }
+            }
+
+            if (postId == null) {
+                throw ErrorLoadingException("Failed to extract post ID — all methods exhausted")
+            }
 
             Log.i("CimaNowLoadLinks", "[3/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
