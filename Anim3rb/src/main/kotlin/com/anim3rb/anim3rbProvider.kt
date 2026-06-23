@@ -1,399 +1,395 @@
 package com.anime3rb
 
-import android.annotation.SuppressLint
-import android.app.Activity
-import android.app.Dialog
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.view.Gravity
-import android.view.ViewGroup
-import android.view.Window
-import android.view.WindowManager
-import android.webkit.CookieManager
-import android.webkit.SslErrorHandler
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
-import com.cloudstream.shared.android.PluginContext
+import com.lagradost.cloudstream3.utils.AppUtils
 import com.cloudstream.shared.provider.BaseProvider
-import org.jsoup.Jsoup
+import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.ParserInterface
+import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.NavigationStep
+import com.cloudstream.shared.service.CloudflareBlockedSearchException
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.io.ByteArrayInputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class Anim3rbProvider : BaseProvider() {
-    override val providerName = "Anim3rb"
-    override var name: String
-        get() = providerName
-        set(value) {}
-    override val baseDomain = "anime3rb.com"
-    override val githubConfigUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/anim3rb.json"
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
-    override val hasMainPage = true
 
-    private val context: android.content.Context? get() = PluginContext.context
+    override val providerName get() = "Anim3rb"
+    override val baseDomain get() = "anime3rb.com"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/anim3rb.json"
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
+
+    override val mainPage = mainPageOf(
+        "$mainUrl/" to "الرئيسية"
+    )
+
+    override fun getParser(): NewBaseParser = Anim3rbParser()
 
     companion object {
-        private var savedCookies: String = ""
-        private const val TAG = "Anime3rb_Log"
-        private val NON_DIGITS = Regex("[^0-9]")
-        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        private val TITLE_EP_REGEX = Regex("الحلقة \\d+")
+        private const val TAG = "Anim3rb"
     }
 
-    override fun getParser(): com.cloudstream.shared.parsing.NewBaseParser {
-        return object : com.cloudstream.shared.parsing.NewBaseParser() {
-            override val mainPageConfig = com.cloudstream.shared.parsing.MainPageConfig(
-                container = "a.video-card",
-                title = com.cloudstream.shared.parsing.CssSelector(query = "h3.title-name", attr = "text"),
-                url = com.cloudstream.shared.parsing.CssSelector(query = "", attr = "href"),
-                poster = com.cloudstream.shared.parsing.CssSelector(query = "img", attr = "src")
-            )
-            override val loadPageConfig = com.cloudstream.shared.parsing.LoadPageConfig(
-                title = com.cloudstream.shared.parsing.CssSelector(query = "h1", attr = "text"),
-                poster = com.cloudstream.shared.parsing.CssSelector(query = "img[alt*='بوستر']", attr = "src"),
-                plot = com.cloudstream.shared.parsing.CssSelector(query = "div.py-4.flex.flex-col.gap-2 p", attr = "text")
-            )
-            override val episodeConfig = com.cloudstream.shared.parsing.EpisodeConfig(
-                container = ".video-list a, .episodes-list a",
-                title = com.cloudstream.shared.parsing.CssSelector(query = ".video-data p", attr = "text", regex = "(.+)"),
-                url = com.cloudstream.shared.parsing.CssSelector(query = "", attr = "href"),
-                episode = com.cloudstream.shared.parsing.CssSelector(query = ".video-data span", attr = "text", regex = "(\\d+)")
-            )
-            override val watchServersSelectors = com.cloudstream.shared.parsing.WatchServerSelector()
-        }
-    }
-
-    private fun toAbsoluteUrl(url: String): String {
-        return when {
-            url.startsWith("http") -> url
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("/") -> "$mainUrl$url"
-            else -> "$mainUrl/$url"
-        }
-    }
-
-    private suspend fun getDocumentSmart(url: String): Document? {
-        val ctx = context ?: return httpService.getDocument(url)
-        val result = loadVisibleWebViewCheck(url, ctx)
-        return when (result) {
-            is SmartResult.Success -> result.document
-            is SmartResult.NeedsCaptcha -> CloudflareSolver.solve(ctx as? Activity, url, USER_AGENT)
-            else -> httpService.getDocument(url)
-        }
-    }
-
-    sealed class SmartResult {
-        data class Success(val document: Document) : SmartResult()
-        object NeedsCaptcha : SmartResult()
-        object Error : SmartResult()
-    }
-
-    private suspend fun loadVisibleWebViewCheck(url: String, ctx: android.content.Context): SmartResult {
-        return suspendCoroutine { continuation ->
-            Handler(Looper.getMainLooper()).post {
-                val activity = ctx as? Activity
-                if (activity == null || activity.isFinishing) {
-                    continuation.resume(SmartResult.Error); return@post
-                }
-                val dialog = Dialog(activity)
-                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-                dialog.setCancelable(false)
-                dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-                dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-                dialog.window?.setDimAmount(0f)
-                val params = WindowManager.LayoutParams().apply {
-                    copyFrom(dialog.window?.attributes)
-                    width = 1; height = 1
-                    gravity = Gravity.TOP or Gravity.START
-                    x = -10; y = -10
-                }
-                dialog.window?.attributes = params
-                val webView = WebView(activity)
-                dialog.setContentView(webView, ViewGroup.LayoutParams(1, 1))
-                try {
-                    webView.settings.apply {
-                        javaScriptEnabled = true; domStorageEnabled = true; databaseEnabled = true
-                        userAgentString = USER_AGENT; blockNetworkImage = true
-                    }
-                } catch (_: Exception) {}
-                val cookieManager = CookieManager.getInstance()
-                cookieManager.setAcceptCookie(true); cookieManager.setAcceptThirdPartyCookies(webView, true)
-                var isFinished = false
-                val handler = Handler(Looper.getMainLooper())
-                fun finish(result: SmartResult) {
-                    if (isFinished) return; isFinished = true
-                    handler.removeCallbacksAndMessages(null)
-                    try { if (dialog.isShowing) dialog.dismiss() } catch (_: Exception) {}
-                    try { webView.destroy() } catch (_: Exception) {}
-                    if (result is SmartResult.Success) { cookieManager.flush(); savedCookies = cookieManager.getCookie(url) ?: "" }
-                    continuation.resume(result)
-                }
-                val poller = object : Runnable {
-                    override fun run() {
-                        if (isFinished) return
-                        webView.evaluateJavascript("""
-                            (function() {
-                                const html = document.documentElement.innerHTML;
-                                if (html.includes('challenge-platform') || html.includes('cf-turnstile') || document.getElementById('cf-wrapper')) return 'CAPTCHA';
-                                if (document.querySelector('.video-card, .main-content')) return 'SUCCESS::' + html;
-                                return 'POLLING';
-                            })();
-                        """) { result ->
-                            if (isFinished) return@evaluateJavascript
-                            when (result?.removeSurrounding("\"")) {
-                                "CAPTCHA" -> finish(SmartResult.NeedsCaptcha)
-                                else -> {
-                                    val cleanResult = result?.removeSurrounding("\"")
-                                    if (cleanResult?.startsWith("SUCCESS::") == true) {
-                                        val html = cleanResult.substringAfter("SUCCESS::").replace("\\u003C", "<").replace("\\u003E", ">").replace("\\\"", "\"").replace("\\\\", "\\")
-                                        finish(SmartResult.Success(Jsoup.parse(html)))
-                                    } else handler.postDelayed(this, 1000)
-                                }
-                            }
-                        }
-                    }
-                }
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) { handler?.proceed() }
-                }
-                try { dialog.show(); webView.loadUrl(url); handler.postDelayed(poller, 1000); handler.postDelayed({ if (!isFinished) finish(SmartResult.Error) }, 20000) } catch (_: Exception) { finish(SmartResult.Error) }
-            }
-        }
-    }
-
-    override val mainPage by lazy { mainPageOf("$mainUrl/" to "الرئيسية") }
+    // ==================== MAIN PAGE ====================
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val doc = getDocumentSmart(request.data) ?: return null
+        Log.i(TAG, "getMainPage: START page=$page, data=${request.data}, name=${request.name}")
+        if (page > 1) return null
+
+        val doc = httpService.getDocument(request.data, checkDomainChange = true) ?: run {
+            Log.e(TAG, "getMainPage: doc is null")
+            return null
+        }
+        Log.i(TAG, "getMainPage: title='${doc.title()}', body.length=${doc.body()?.html()?.length ?: 0}")
+
         val homeSets = mutableListOf<HomePageList>()
+
+        // Section 1 — pinned anime
         try {
-            doc.select("h2:contains(الأنميات المثبتة)").firstOrNull()?.let { header ->
-                header.parent()?.parent()?.parent()?.select(".glide__slide:not(.glide__slide--clone) a.video-card")?.mapNotNull { toSearchResult(it) }
-                    ?.let { if (it.isNotEmpty()) homeSets.add(HomePageList("الأنميات المثبتة", it)) }
+            val pinnedHeader = doc.selectFirst("h2:contains(الأنميات المثبتة)")
+            if (pinnedHeader != null) {
+                val parentContainer = pinnedHeader.parent()?.parent()?.parent()
+                val items = parentContainer
+                    ?.select(".glide__slide:not(.glide__slide--clone) a.video-card")
+                    ?.mapNotNull { toSearchResult(it) }
+                if (!items.isNullOrEmpty()) {
+                    Log.i(TAG, "getMainPage: section 'الأنميات المثبتة' → ${items.size} items")
+                    homeSets.add(HomePageList("الأنميات المثبتة", items))
+                } else {
+                    Log.w(TAG, "getMainPage: pinned section selectors matched 0 items")
+                }
+            } else {
+                Log.w(TAG, "getMainPage: pinned header 'الأنميات المثبتة' not found")
+                Log.w(TAG, "getMainPage: all h2 text: ${doc.select("h2").eachText()}")
             }
-            doc.select("#videos a.video-card").mapNotNull { toSearchResult(it) }.let { if (it.isNotEmpty()) homeSets.add(HomePageList("أحدث الحلقات", it)) }
-            doc.select("h3:contains(آخر الأنميات المضافة)").firstOrNull()?.let { header ->
-                header.parent()?.parent()?.parent()?.select(".glide__slide:not(.glide__slide--clone) a.video-card")?.mapNotNull { toSearchResult(it) }
-                    ?.let { if (it.isNotEmpty()) homeSets.add(HomePageList("آخر الأنميات المضافة", it)) }
+        } catch (e: Exception) {
+            Log.e(TAG, "getMainPage: pinned section error: ${e.message}")
+        }
+
+        // Section 2 — latest episodes
+        try {
+            val latestItems = doc.select("#videos a.video-card").mapNotNull { toSearchResult(it) }
+            if (latestItems.isNotEmpty()) {
+                Log.i(TAG, "getMainPage: section 'أحدث الحلقات' → ${latestItems.size} items")
+                homeSets.add(HomePageList("أحدث الحلقات", latestItems))
+            } else {
+                Log.w(TAG, "getMainPage: '#videos a.video-card' matched 0 elements")
+                val videoCards = doc.select("a.video-card")
+                Log.w(TAG, "getMainPage: total a.video-card on page: ${videoCards.size}")
+                videoCards.firstOrNull()?.let { el ->
+                    Log.w(TAG, "getMainPage: first card html: ${el.html().take(200)}")
+                }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "getMainPage: latest episodes error: ${e.message}")
+        }
+
+        // Section 3 — latest added anime
+        try {
+            val addedHeader = doc.selectFirst("h3:contains(آخر الأنميات المضافة)")
+            if (addedHeader != null) {
+                val parentContainer = addedHeader.parent()?.parent()?.parent()
+                val items = parentContainer
+                    ?.select(".glide__slide:not(.glide__slide--clone) a.video-card")
+                    ?.mapNotNull { toSearchResult(it) }
+                if (!items.isNullOrEmpty()) {
+                    Log.i(TAG, "getMainPage: section 'آخر الأنميات المضافة' → ${items.size} items")
+                    homeSets.add(HomePageList("آخر الأنميات المضافة", items))
+                } else {
+                    Log.w(TAG, "getMainPage: added section selectors matched 0 items")
+                }
+            } else {
+                Log.w(TAG, "getMainPage: added header 'آخر الأنميات المضافة' not found")
+                Log.w(TAG, "getMainPage: all h3 text: ${doc.select("h3").eachText()}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "getMainPage: latest added error: ${e.message}")
+        }
+
+        if (homeSets.isEmpty()) {
+            Log.e(TAG, "getMainPage: NO sections found — dumping <body> HTML:\n${doc.body()?.html()?.take(3000)}")
+        }
+
+        Log.i(TAG, "getMainPage: returning ${homeSets.size} sections")
         return newHomePageResponse(homeSets)
     }
 
-    private fun toSearchResult(element: Element): SearchResponse? {
-        return try {
-            val rawTitle = element.select("h3.title-name").text()
-            val title = cleanTitleText(rawTitle)
-            val href = toAbsoluteUrl(element.attr("href"))
-            val posterUrl = element.select("img").attr("src")
-            val episodeNum = cleanTitleText(element.select("p.number").text()).filter { it.isDigit() }.toIntOrNull()
-            newAnimeSearchResponse(title, href, TvType.Anime) { this.posterUrl = posterUrl; addDubStatus(false, episodeNum) }
-        } catch (_: Exception) { null }
-    }
+    // ==================== SEARCH ====================
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = false)
+        Log.i(TAG, "searchNormal: START query='$query'")
+        val standard = standardSearch(query, useNoFallback = false)
+        if (standard.isNotEmpty()) {
+            Log.i(TAG, "searchNormal: standard search returned ${standard.size} results")
+            return standard
+        }
+        Log.w(TAG, "searchNormal: standard search empty, falling back to Livewire")
+        return livewireSearch(query)
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = true)
+        Log.i(TAG, "searchLazy: START query='$query'")
+        return standardSearch(query, useNoFallback = true)
     }
 
-    private suspend fun searchImpl(query: String, useNoFallback: Boolean): List<SearchResponse> {
-        val mainDoc = if (useNoFallback) httpService.getDocumentNoFallback(mainUrl) else getDocumentSmart(mainUrl)
-        mainDoc ?: return emptyList()
-        val scriptTag = mainDoc.selectFirst("script[src*=livewire.min.js]") ?: return emptyList()
-        val csrfToken = scriptTag.attr("data-csrf").ifBlank { return emptyList() }
-        val form = mainDoc.selectFirst("form[wire:id]") ?: return emptyList()
-        val snapshotRaw = form.attr("wire:snapshot").ifBlank { return emptyList() }
+    private suspend fun standardSearch(query: String, useNoFallback: Boolean): List<SearchResponse> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = getParser().getSearchUrl(mainUrl, encoded)
+        Log.i(TAG, "standardSearch: url=$url, useNoFallback=$useNoFallback")
+
+        val doc = try {
+            if (useNoFallback) {
+                httpService.getDocumentNoFallback(url, checkDomainChange = true)
+            } else {
+                httpService.getDocument(url, checkDomainChange = true)
+            }
+        } catch (e: CloudflareBlockedSearchException) {
+            Log.w(TAG, "standardSearch: CF blocked in lazy mode — rethrowing")
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "standardSearch: error: ${e.message}")
+            return emptyList()
+        }
+
+        if (doc == null) {
+            Log.w(TAG, "standardSearch: doc is null")
+            return emptyList()
+        }
+
+        Log.i(TAG, "standardSearch: title='${doc.title()}', body.length=${doc.body()?.html()?.length ?: 0}")
+        Log.d(TAG, "standardSearch: URL after fetch: ${doc.location()}")
+
+        val items = getParser().parseSearch(doc)
+        Log.i(TAG, "standardSearch: parser returned ${items.size} items")
+
+        if (items.isEmpty()) {
+            val cardCount = doc.select("a.simple-title-card, a.video-card, div.item").size
+            Log.w(TAG, "standardSearch: 0 items parsed. card-like elements found: $cardCount")
+        }
+
+        return items.map { item ->
+            val type = if (item.isMovie) TvType.AnimeMovie else TvType.Anime
+            newAnimeSearchResponse(item.title, item.url, type) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+            }
+        }
+    }
+
+    private suspend fun livewireSearch(query: String): List<SearchResponse> {
+        Log.i(TAG, "livewireSearch: START query='$query'")
+
+        val mainDoc = httpService.getDocument(mainUrl) ?: run {
+            Log.e(TAG, "livewireSearch: failed to fetch main page")
+            return emptyList()
+        }
+        Log.i(TAG, "livewireSearch: main page title='${mainDoc.title()}'")
+
+        val scriptTag = mainDoc.selectFirst("script[src*=livewire.min.js]")
+        if (scriptTag == null) {
+            Log.e(TAG, "livewireSearch: <script src=*livewire.min.js> not found")
+            Log.w(TAG, "livewireSearch: all external scripts: ${mainDoc.select("script[src]").eachAttr("src")}")
+            return emptyList()
+        }
+        val csrfToken = scriptTag.attr("data-csrf")
+        if (csrfToken.isBlank()) {
+            Log.e(TAG, "livewireSearch: data-csrf blank on livewire script")
+            Log.w(TAG, "livewireSearch: script attrs: ${scriptTag.attributes()}")
+            return emptyList()
+        }
+        Log.d(TAG, "livewireSearch: csrf=$csrfToken")
+
+        val form = mainDoc.selectFirst("form[wire\\\\:id]")
+        if (form == null) {
+            Log.e(TAG, "livewireSearch: form[wire:id] not found")
+            Log.w(TAG, "livewireSearch: forms on page: ${mainDoc.select("form").size}")
+            val wireElements = mainDoc.select("[wire\\\\:id]")
+            Log.w(TAG, "livewireSearch: elements with wire:id: ${wireElements.size}, first: ${wireElements.firstOrNull()?.html()?.take(200)}")
+            return emptyList()
+        }
+
+        val snapshotRaw = form.attr("wire:snapshot")
+        if (snapshotRaw.isBlank()) {
+            Log.e(TAG, "livewireSearch: wire:snapshot blank")
+            return emptyList()
+        }
         val snapshotStr = org.jsoup.parser.Parser.unescapeEntities(snapshotRaw, true)
+        Log.d(TAG, "livewireSearch: snapshot (first 300): ${snapshotStr.take(300)}")
+
         val updateUrl = "$mainUrl/livewire/update"
-        val payload = mapOf("_token" to csrfToken, "components" to listOf(mapOf("snapshot" to snapshotStr, "updates" to mapOf("query" to query), "calls" to emptyList<Any>())))
-        val headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "*/*", "Content-Type" to "application/json", "Origin" to mainUrl, "Referer" to "$mainUrl/", "Cookie" to savedCookies)
-        val postRes = app.post(updateUrl, headers = headers, json = payload)
-        val responseJson = AppUtils.parseJson<Map<String, Any>>(postRes.text)
-        val components = responseJson["components"] as? List<Map<String, Any>> ?: return emptyList()
-        val htmlContent = (components.firstOrNull()?.get("effects") as? Map<String, Any>)?.get("html") as? String ?: return emptyList()
-        return Jsoup.parse(htmlContent).select("a.simple-title-card").mapNotNull { item ->
-            val rawTitle = item.selectFirst("h4")?.text()?.trim() ?: return@mapNotNull null
-            val link = toAbsoluteUrl(item.attr("href"))
-            val rating = item.selectFirst(".badge")?.text()?.trim() ?: "N/A"
-            val type = if (rating.contains("Movie") || rating.contains("Film") || rawTitle.contains("فيلم")) TvType.AnimeMovie else TvType.Anime
-            newAnimeSearchResponse(cleanTitleText(rawTitle), link, type) { posterUrl = item.selectFirst("img")?.attr("src") }
-        }
-    }
+        val safeQuery = query.replace("\"", "\\\"")
+        val jsonBody = """{"_token":"$csrfToken","components":[{"snapshot":$snapshotStr,"updates":{"query":"$safeQuery"},"calls":[]}]}"""
+        Log.d(TAG, "livewireSearch: POST $updateUrl body.length=${jsonBody.length}")
 
-    private fun cleanTitleText(text: String): String {
-        return text.replace("\\n", " ").replace("\n", " ").replace(Regex("بترجمة.*"), "").replace(Regex("\\s+"), " ").trim()
-    }
-
-    private suspend fun forceLoadAllEpisodes(url: String, timeoutMs: Long = 20000L): Document? {
-        val ctx = context ?: return httpService.getDocument(url)
-        return suspendCoroutine { cont ->
-            Handler(Looper.getMainLooper()).post {
-                val webView = WebView(ctx)
-                webView.settings.apply {
-                    javaScriptEnabled = true; domStorageEnabled = true; databaseEnabled = false
-                    userAgentString = USER_AGENT; blockNetworkImage = true; loadsImagesAutomatically = false
-                    mediaPlaybackRequiresUserGesture = true; javaScriptCanOpenWindowsAutomatically = false
-                    cacheMode = WebSettings.LOAD_DEFAULT
-                }
-                val cookieManager = CookieManager.getInstance()
-                cookieManager.setAcceptCookie(true); cookieManager.setAcceptThirdPartyCookies(webView, true)
-                var finished = false
-                fun finish(doc: Document?) {
-                    if (finished) return; finished = true
-                    try { webView.stopLoading(); webView.destroy() } catch (_: Exception) {}
-                    try { cookieManager.flush(); val newCookies = cookieManager.getCookie(url); if (!newCookies.isNullOrEmpty()) savedCookies = newCookies } catch (_: Exception) {}
-                    cont.resume(doc)
-                }
-                webView.webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                        super.onPageFinished(view, loadedUrl)
-                        var attempts = 0
-                        val handler = Handler(Looper.getMainLooper())
-                        val checkRunnable = object : Runnable {
-                            override fun run() {
-                                if (finished) return
-                                view?.evaluateJavascript("(function() { var count = document.querySelectorAll('.video-list a, .episodes-list a').length; if (count > 0) return document.documentElement.outerHTML; return null; })()") { html ->
-                                    if (html != null && html != "null" && html.length > 100) {
-                                        var cleanHtml = html
-                                        if (cleanHtml.startsWith("\"") && cleanHtml.endsWith("\"")) cleanHtml = cleanHtml.substring(1, cleanHtml.length - 1)
-                                        cleanHtml = cleanHtml.replace("\\u003C", "<").replace("\\u003E", ">").replace("\\\"", "\"").replace("\\\\", "\\")
-                                        finish(Jsoup.parse(cleanHtml))
-                                    } else { attempts++; if (attempts < 40) handler.postDelayed(this, 250) else finish(null) }
-                                }
-                            }
-                        }
-                        checkRunnable.run()
-                    }
-                }
-                webView.loadUrl(url)
-                Handler(Looper.getMainLooper()).postDelayed({ finish(null) }, timeoutMs)
-            }
-        }
-    }
-
-    override suspend fun load(url: String): LoadResponse? {
-        val fullUrl = toAbsoluteUrl(url)
-        val doc = forceLoadAllEpisodes(fullUrl) ?: return null
         return try {
-            var rawTitle = doc.selectFirst("h1")?.text() ?: ""
-            rawTitle = cleanTitleText(rawTitle)
-            val title = TITLE_EP_REGEX.replace(rawTitle, "").replace("( مسلسل )", "").replace("( فيلم )", "").trim()
-            val poster = doc.selectFirst("img[alt*='بوستر']")?.attr("src") ?: ""
-            var episodes = doc.select(".video-list a, .episodes-list a").mapNotNull { element ->
-                val href = toAbsoluteUrl(element.attr("href").ifBlank { return@mapNotNull null })
-                val videoData = element.selectFirst(".video-data")
-                val epText = cleanTitleText(videoData?.selectFirst("span")?.text() ?: videoData?.children()?.getOrNull(0)?.text() ?: "")
-                val epNum = NON_DIGITS.replace(epText, "").toIntOrNull()
-                val epName = cleanTitleText(videoData?.selectFirst("p")?.text() ?: videoData?.children()?.getOrNull(1)?.text() ?: "")
-                newEpisode(href) { name = if (epName.isNotBlank()) epName else epText; episode = epNum; posterUrl = element.selectFirst("img")?.attr("src").orEmpty() }
-            }
-            if (episodes.size > 1) {
-                val firstEpNum = episodes.first().episode ?: 0; val lastEpNum = episodes.last().episode ?: 0
-                if (firstEpNum > lastEpNum && lastEpNum != 0) episodes = episodes.reversed()
-            }
-            var desc = ""
-            if (episodes.isNotEmpty()) {
-                try {
-                    val epDoc = httpService.getDocument(episodes.first().data)
-                    desc = epDoc?.select("div.py-4.flex.flex-col.gap-2 p, p.synopsis")?.joinToString("\n") { it.text().trim() } ?: ""
-                    if (desc.isBlank()) desc = epDoc?.select("meta[name=description]")?.attr("content")?.trim() ?: ""
-                } catch (_: Exception) {}
-            }
-            if (desc.isBlank()) desc = doc.select("div.py-4.flex.flex-col.gap-2 p, p.synopsis").joinToString("\n") { it.text().trim() }
-            newTvSeriesLoadResponse(title, fullUrl, TvType.Anime, episodes) { this.posterUrl = poster; this.plot = desc }
-        } catch (_: Exception) { null }
-    }
+            val cookies = httpService.cookies
+            val cookieStr = if (cookies.isNotEmpty()) {
+                cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            } else ""
+            Log.d(TAG, "livewireSearch: cookies=${cookies.size}")
 
-    private suspend fun hijackAndExtractRaw(url: String, timeoutMs: Long = 60000L): List<Pair<String, String>> {
-        val ctx = context ?: return emptyList()
-        return suspendCoroutine { cont ->
-            Handler(Looper.getMainLooper()).post {
-                val webView = WebView(ctx)
-                webView.settings.apply {
-                    javaScriptEnabled = true; domStorageEnabled = true; userAgentString = USER_AGENT
-                    blockNetworkImage = false; mediaPlaybackRequiresUserGesture = false
-                }
-                CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-                val extractedRaw = mutableListOf<Pair<String, String>>()
-                var isDone = false
-                val handler = Handler(Looper.getMainLooper())
-                fun finish() {
-                    if (isDone) return; isDone = true
-                    try { handler.removeCallbacksAndMessages(null); (webView.parent as? ViewGroup)?.removeView(webView); webView.destroy() } catch (_: Exception) {}
-                    cont.resume(extractedRaw.distinctBy { it.first })
-                }
-                handler.postDelayed({ finish() }, timeoutMs)
-                webView.webViewClient = object : WebViewClient() {
-                    @SuppressLint("WebViewClientOnReceivedSslError")
-                    override fun onReceivedSslError(v: WebView?, h: SslErrorHandler?, e: android.net.http.SslError?) = h!!.proceed()
-                    override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
-                        val reqUrl = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                        if (reqUrl.contains("/player/") && !reqUrl.contains("cf_token=")) {
-                            Thread {
-                                try {
-                                    val connection = URL(reqUrl).openConnection() as HttpURLConnection
-                                    connection.requestMethod = "GET"
-                                    request.requestHeaders?.forEach { (k, v) -> if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v) }
-                                    CookieManager.getInstance().getCookie(url)?.let { connection.setRequestProperty("Cookie", it) }
-                                    connection.setRequestProperty("Referer", url)
-                                    val playerHtml = (if (connection.responseCode < 400) connection.inputStream else connection.errorStream).bufferedReader().readText()
-                                    Regex("""var\s+video_sources\s*=\s*(\[[^;]+]);""").find(playerHtml)?.let { m ->
-                                        AppUtils.parseJson<List<Map<String, Any?>>>(m.groupValues[1]).forEach { item ->
-                                            val src = item["src"]?.toString() ?: item["file"]?.toString()
-                                            val label = item["label"]?.toString() ?: "Default"
-                                            if (!src.isNullOrBlank()) extractedRaw.add(src to label)
-                                        }
-                                        if (extractedRaw.isNotEmpty()) handler.post { finish() }
-                                    }
-                                } catch (_: Exception) {}
-                            }.start()
-                            return super.shouldInterceptRequest(view, request)
-                        }
-                        if (reqUrl.contains("/sources") && reqUrl.contains("cf_token=")) {
-                            try {
-                                val connection = URL(reqUrl).openConnection() as HttpURLConnection
-                                connection.requestMethod = "GET"
-                                request.requestHeaders?.forEach { (k, v) -> if (!k.equals("Accept-Encoding", true)) connection.setRequestProperty(k, v) }
-                                CookieManager.getInstance().getCookie(reqUrl)?.let { connection.setRequestProperty("Cookie", it) }
-                                val jsonString = String((if (connection.responseCode < 400) connection.inputStream else connection.errorStream).readBytes(), Charsets.UTF_8)
-                                AppUtils.parseJson<List<Map<String, Any?>>>(jsonString).forEach { item ->
-                                    val src = item["src"]?.toString() ?: item["file"]?.toString()
-                                    val label = item["label"]?.toString() ?: "Default"
-                                    if (!src.isNullOrBlank()) extractedRaw.add(src to label)
-                                }
-                                if (extractedRaw.isNotEmpty()) handler.post { finish() }
-                                return android.webkit.WebResourceResponse(connection.contentType?.split(";")?.get(0) ?: "application/json", "UTF-8", ByteArrayInputStream(jsonString.toByteArray())).apply {
-                                    responseHeaders = mutableMapOf("Access-Control-Allow-Origin" to "*")
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        return super.shouldInterceptRequest(view, request)
-                    }
-                }
-                webView.loadUrl(url)
+            val body = jsonBody.toRequestBody("application/json".toMediaType())
+
+            val request = okhttp3.Request.Builder()
+                .url(updateUrl)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .header("Referer", "$mainUrl/")
+                .apply { if (cookieStr.isNotBlank()) header("Cookie", cookieStr) }
+                .post(body)
+                .build()
+
+            val client = app.baseClient.newBuilder().build()
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+            Log.d(TAG, "livewireSearch: HTTP ${response.code}, body.length=${responseBody.length}")
+
+            if (response.code != 200) {
+                Log.e(TAG, "livewireSearch: HTTP ${response.code}, body=${responseBody.take(800)}")
+                return emptyList()
             }
+
+            val json = try {
+                AppUtils.parseJson<Map<String, Any>>(responseBody)
+            } catch (e: Exception) {
+                Log.e(TAG, "livewireSearch: JSON parse error: ${e.message}, body=${responseBody.take(500)}")
+                return emptyList()
+            }
+
+            val components = json["components"] as? List<Map<String, Any>>
+            if (components.isNullOrEmpty()) {
+                Log.e(TAG, "livewireSearch: no components in response, top-level keys=${json.keys}")
+                return emptyList()
+            }
+
+            val effects = components.firstOrNull()?.get("effects") as? Map<String, Any>
+            val htmlContent = effects?.get("html") as? String
+            if (htmlContent.isNullOrBlank()) {
+                Log.e(TAG, "livewireSearch: effects.html is blank/null, component keys=${components.firstOrNull()?.keys}")
+                return emptyList()
+            }
+            Log.d(TAG, "livewireSearch: effects.html length=${htmlContent.length}")
+
+            val htmlDoc = org.jsoup.Jsoup.parse(htmlContent)
+            val items = getParser().parseSearch(htmlDoc)
+            Log.i(TAG, "livewireSearch: parser returned ${items.size} items")
+
+            items.map { item ->
+                val type = if (item.isMovie) TvType.AnimeMovie else TvType.Anime
+                newAnimeSearchResponse(item.title, item.url, type) {
+                    this.posterUrl = item.posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "livewireSearch: exception: ${e.message}")
+            emptyList()
         }
     }
 
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val rawLinks = hijackAndExtractRaw(data)
-        if (rawLinks.isEmpty()) return false
-        for ((src, label) in rawLinks) {
-            try {
-                callback(newExtractorLink(source = this.name, name = "$name $label", url = src, type = ExtractorLinkType.VIDEO) { referer = "https://video.vid3rb.com/" })
-            } catch (_: Exception) {}
+    // ==================== LOAD (DETAIL PAGE) ====================
+
+    override suspend fun fetchExtraEpisodes(
+        doc: Document,
+        url: String,
+        data: ParserInterface.ParsedLoadData
+    ): List<ParserInterface.ParsedEpisode> {
+        val existing = data.episodes ?: emptyList()
+        if (existing.isNotEmpty()) {
+            Log.i(TAG, "fetchExtraEpisodes: ${existing.size} episodes from static HTML — using them")
+            return existing
         }
-        return true
+
+        Log.w(TAG, "fetchExtraEpisodes: 0 episodes in static HTML, launching WebView render for $url")
+
+        return try {
+            val result = httpService.navigateWithSteps(
+                steps = listOf(
+                    NavigationStep.LoadUrl(url, referer = mainUrl),
+                    NavigationStep.WaitForSelector(
+                        selector = ".video-list a, .episodes-list a",
+                        timeoutMs = 20000L,
+                        abortOnFailure = false
+                    ),
+                    NavigationStep.ExtractHtml(key = "rendered_episodes")
+                ),
+                mode = Mode.HEADLESS,
+                overallTimeoutMs = 30000L
+            )
+
+            Log.i(TAG, "fetchExtraEpisodes: navigateWithSteps success=${result.success}, completedSteps=${result.completedSteps}, finalUrl=${result.finalUrl}")
+
+            val renderedDoc = result.extractedHtml["rendered_episodes"]?.let { html ->
+                Log.d(TAG, "fetchExtraEpisodes: rendered HTML length=${html.length}")
+                org.jsoup.Jsoup.parse(html)
+            }
+
+            if (renderedDoc != null) {
+                val episodes = getParser().parseEpisodes(renderedDoc, null)
+                if (episodes.isNotEmpty()) {
+                    Log.i(TAG, "fetchExtraEpisodes: WebView parsed ${episodes.size} episodes")
+                    return episodes
+                }
+                Log.w(TAG, "fetchExtraEpisodes: WebView returned 0 episodes")
+                Log.w(TAG, "fetchExtraEpisodes: rendered doc selector match count: ${renderedDoc.select(".video-list a, .episodes-list a").size}")
+            } else {
+                Log.w(TAG, "fetchExtraEpisodes: extractedHtml keys=${result.extractedHtml.keys}")
+                if (!result.success) Log.e(TAG, "fetchExtraEpisodes: navigation failed at step ${result.failedAtStep}: ${result.error}")
+            }
+
+            emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchExtraEpisodes: exception: ${e.message}")
+            emptyList()
+        }
+    }
+
+    override suspend fun resolveServerUrl(url: String, referer: String): String? {
+        Log.d(TAG, "resolveServerUrl: url=${url.take(100)}, referer=$referer")
+        return super.resolveServerUrl(url, referer)
+    }
+
+    // ==================== HELPERS ====================
+
+    private fun toSearchResult(element: Element): SearchResponse? {
+        return try {
+            val rawTitle = element.selectFirst("h3.title-name")?.text()?.trim()
+            if (rawTitle.isNullOrBlank()) {
+                Log.w(TAG, "toSearchResult: no title, html=${element.html().take(150)}")
+                return null
+            }
+            val title = rawTitle
+                .replace("\\n", " ")
+                .replace("\n", " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            val href = element.attr("href").let { url ->
+                when {
+                    url.startsWith("http") -> url
+                    url.startsWith("//") -> "https:$url"
+                    url.startsWith("/") -> "$mainUrl$url"
+                    else -> "$mainUrl/$url"
+                }
+            }
+            if (href.isBlank() || href == mainUrl) return null
+
+            val img = element.selectFirst("img")
+            val posterUrl = img?.attr("data-src")?.ifBlank { img.attr("src") }.orEmpty()
+
+            val episodeNum = element.selectFirst("p.number")?.text()?.filter { it.isDigit() }?.toIntOrNull()
+
+            newAnimeSearchResponse(title, href, TvType.Anime) {
+                this.posterUrl = posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
+                if (episodeNum != null) addDubStatus(false, episodeNum)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "toSearchResult: error: ${e.message}")
+            null
+        }
     }
 }
