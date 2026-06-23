@@ -131,9 +131,9 @@ class CimaNowProvider : BaseProvider() {
     // ==================== search ====================
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
-        val q = query
-        val doc = app.get("$mainUrl/?s=$q", referer = mainUrl).document
-        val decodedDoc = decodeHtml(doc)
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val doc = httpService.getDocument("$mainUrl/?s=$encoded")
+        val decodedDoc = if (doc != null) decodeHtml(doc) else return emptyList()
         return decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
     }
 
@@ -145,8 +145,8 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = request.data + page
-        val doc = app.get(url, referer = mainUrl).document
-        val decodedDoc = decodeHtml(doc)
+        val doc = httpService.getDocument(url)
+        val decodedDoc = if (doc != null) decodeHtml(doc) else return null
         val elements = decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
         return newHomePageResponse(request.name, elements)
     }
@@ -154,8 +154,9 @@ class CimaNowProvider : BaseProvider() {
     // ==================== toSearchResponse ====================
 
     private fun toSearchResponse(element: Element): SearchResponse? {
-        val img = element.selectFirst("picture img") ?: return null
-        val href = element.selectFirst("picture a")?.attr("href") ?: return null
+        val link = element.selectFirst("ul li a[href^='http']") ?: return null
+        val href = link.attr("href")
+        val img = link.selectFirst("img[alt!=logo]") ?: return null
 
         val posterUrl = img.attr("src")
         val title = img.attr("alt")
@@ -182,7 +183,7 @@ class CimaNowProvider : BaseProvider() {
     // ==================== load ====================
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = app.get(url, referer = mainUrl).document
+        val doc = httpService.getDocument(url) ?: return null
         val decodedDoc = decodeHtml(doc)
 
         val isMovie = decodedDoc.title().contains("فيلم")
@@ -226,7 +227,7 @@ class CimaNowProvider : BaseProvider() {
                 val deferredEpisodes = seasonElements.map { seasonElement ->
                     async {
                         val seasonDoc = try {
-                            app.get(seasonElement.attr("href"), referer = url).document
+                            httpService.getDocument(seasonElement.attr("href"))
                         } catch (_: Exception) { null }
                         if (seasonDoc != null) {
                             val decodedSeason = decodeHtml(seasonDoc)
@@ -288,7 +289,7 @@ class CimaNowProvider : BaseProvider() {
             val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
             Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
             val rawHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                "User-Agent" to httpService.userAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             )
             val rawResp = httpService.getRaw(fetchUrl, headers = rawHeaders)
@@ -352,11 +353,10 @@ class CimaNowProvider : BaseProvider() {
                         try {
                             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$postId"
                             Log.d(TAG, "   core.php GET: $ajaxUrl")
-                            val playerResp = app.get(ajaxUrl, referer = finalCimaNowUrl)
-                            val coreCode = playerResp.code
-                            val coreText = playerResp.text?.take(300)
-                            Log.d(TAG, "   core.php status=$coreCode, body start: $coreText")
-                            val playerDoc = playerResp.document
+                            val coreHeaders = mapOf("Referer" to finalCimaNowUrl, "X-Requested-With" to "XMLHttpRequest")
+                            val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                            Log.d(TAG, "   core.php body start: ${coreText.take(300)}")
+                            val playerDoc = Jsoup.parse(coreText, ajaxUrl)
                             val rawIframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
                             val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
 
@@ -436,7 +436,7 @@ class CimaNowProvider : BaseProvider() {
 
             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
             val playerDoc = try {
-                app.get(ajaxUrl, referer = finalCimaNowUrl).document
+                httpService.getDocument(ajaxUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
             } catch (_: Exception) { null }
 
             val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
@@ -518,7 +518,7 @@ class CimaNowProvider : BaseProvider() {
         try {
             val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
             Log.d(TAG_CI, "Fetching cimanow iframe page: $finalUrl")
-            val iframeResponse = app.get(finalUrl, referer = finalUrl).text
+            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl)) ?: ""
             Log.d(TAG_CI, "Iframe response size: ${iframeResponse.length} bytes")
 
             val regex = Regex("\\[(\\d+p)]\\s+(/uploads/[^\"]+\\.mp4)")
@@ -612,20 +612,38 @@ class CimaNowProvider : BaseProvider() {
     ) {
         val TAG_JL = "JetloadExtractor"
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to httpService.userAgent,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language" to "ar-EG,ar;q=0.9"
         )
 
         try {
-            val res1 = app.get(url, headers = headers)
-            val sessionCookies = res1.cookies.toMutableMap()
+            val res1 = httpService.getRaw(url, headers = headers)
+            res1.close()
+            val sessionCookies = mutableMapOf<String, String>()
+            for (header in res1.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    sessionCookies[header.substring(0, eqIdx)] = value
+                }
+            }
 
             val headers2 = headers + ("Referer" to url)
             val targetUrl = "https://jetload.pp.ua/Jetload4/"
-            val res2 = app.get(targetUrl, headers = headers2, cookies = sessionCookies)
-            val html = res2.text
-            sessionCookies.putAll(res2.cookies)
+            val cookieHeader = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            val res2 = httpService.getRaw(targetUrl, headers = headers2 + ("Cookie" to cookieHeader))
+            val html = res2.body?.string() ?: return
+            res2.close()
+            for (header in res2.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    sessionCookies[header.substring(0, eqIdx)] = value
+                }
+            }
 
             val extraToken = Regex("window\\.extraToken\\s*=\\s*'([^']+)'").find(html)?.groupValues?.get(1)
             val dataToken = Regex("data-token=\"([^\"]+)\"").find(html)?.groupValues?.get(1)
@@ -642,8 +660,10 @@ class CimaNowProvider : BaseProvider() {
                 "X-Requested-With" to "XMLHttpRequest",
                 "Referer" to targetUrl
             )
-            val finalResp = app.get(ajaxUrl, headers = ajaxHeaders, cookies = sessionCookies)
-            val rawLink = finalResp.text.trim()
+            val cookieHdr = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            val finalResp = httpService.getRaw(ajaxUrl, headers = ajaxHeaders + ("Cookie" to cookieHdr))
+            val rawLink = finalResp.body?.string()?.trim() ?: return
+            finalResp.close()
 
             if (!rawLink.startsWith("http")) {
                 Log.e(TAG_JL, "[-] Invalid server response: $rawLink")
@@ -678,8 +698,8 @@ class CimaNowProvider : BaseProvider() {
             val fileId = match.groupValues[2]
 
             val headers = mapOf(
-                "user-agent" to "Mozilla/5.0 (Linux; Android 13)",
-                "referer" to url
+                "User-Agent" to httpService.userAgent,
+                "Referer" to url
             )
             val data = mapOf(
                 "op" to "download2",
@@ -691,8 +711,24 @@ class CimaNowProvider : BaseProvider() {
                 "adblock_detected" to "0"
             )
 
-            val response = app.post(baseUrl, headers = headers, data = data)
-            val location = response.headers["location"] ?: response.headers["Location"]
+            val formBody = okhttp3.FormBody.Builder().apply {
+                for ((k, v) in data) { add(k, v) }
+            }.build()
+            val headerBuilder = okhttp3.Headers.Builder()
+            for ((k, v) in headers) { headerBuilder.add(k, v) }
+            val okRequest = okhttp3.Request.Builder()
+                .url(baseUrl)
+                .headers(headerBuilder.build())
+                .post(formBody)
+                .build()
+            val client = app.baseClient.newBuilder()
+                .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+            val response = client.newCall(okRequest).execute()
+            val location = response.header("location") ?: response.header("Location")
+            response.close()
 
             if (location.isNullOrBlank()) {
                 Log.e(TAG_FF, "[-] No redirect location found.")
