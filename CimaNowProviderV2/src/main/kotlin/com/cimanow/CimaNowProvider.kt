@@ -800,8 +800,8 @@ class CimaNowProvider : BaseProvider() {
             } catch (_: Exception) {}
             if (extracted) return
 
-            val doc = httpService.getDocument(iframeUrl, headers = mapOf("Referer" to referer), skipRewrite = true)
-            val html = doc?.outerHtml() ?: return
+            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), skipRewrite = true) ?: return
+            val doc = Jsoup.parse(html, iframeUrl)
 
             val urls = mutableListOf<String>()
             Regex("""file:\s*["']([^"']+)["']""").findAll(html).forEach { urls.add(it.groupValues[1]) }
