@@ -164,7 +164,7 @@ class CimaNowProvider : BaseProvider() {
 
         val year = element.select("ul li a[href*='/release-year/']").text().toIntOrNull()
 
-        val quality = Qualities.Unknown
+        val quality = null
 
         val type = if (category.contains("مسلسلات", true) || category.contains("موسم", true)) {
             TvType.TvSeries
