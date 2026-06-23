@@ -154,30 +154,17 @@ class CimaNowProvider : BaseProvider() {
     // ==================== toSearchResponse ====================
 
     private fun toSearchResponse(element: Element): SearchResponse? {
-        if (element.select("a").text().contains("الكل")) return null
+        val img = element.selectFirst("picture img") ?: return null
+        val href = element.selectFirst("picture a")?.attr("href") ?: return null
 
-        val urlElement = element.selectFirst("a") ?: return null
-        val href = urlElement.attr("href")
+        val posterUrl = img.attr("src")
+        val title = img.attr("alt")
 
-        var posterUrl = element.select("img.lazy").attr("data-src")
-        if (posterUrl.isBlank()) {
-            posterUrl = element.select("img.lazy").attr("src")
-        }
+        val category = element.select("ul li a[href*='/category/']").text()
 
-        val category = element.select("ul.info li[aria-label=tab]").text()
-        val titleElement = element.selectFirst("li[aria-label=title]")
-        var title = ""
-        if (titleElement != null) {
-            titleElement.select("em").remove()
-            title = titleElement.text().ifBlank { "" }
-        }
+        val year = element.select("ul li a[href*='/release-year/']").text().toIntOrNull()
 
-        val year = element.select("li[aria-label=year]").text().toIntOrNull()
-
-        val qualities = element.select("li[aria-label=ribbon]")
-            .map { it.text() }
-            .filter { Regex("\\d+").containsMatchIn(it) }
-        val quality = getQualityFromString(qualities.joinToString(" "))
+        val quality = Qualities.Unknown.value
 
         val type = if (category.contains("مسلسلات", true) || category.contains("موسم", true)) {
             TvType.TvSeries
@@ -185,10 +172,7 @@ class CimaNowProvider : BaseProvider() {
             TvType.Movie
         }
 
-        val cleanTitle = Regex("$category|موسم 1|برنامج|فيلم|مترجم|اون لاين|مسلسل|مشاهدة|انمي|أنمي|\\||")
-            .replace(title, "")
-
-        return newMovieSearchResponse(cleanTitle, href, type) {
+        return newMovieSearchResponse(title, href, type) {
             this.posterUrl = posterUrl
             this.year = year
             this.quality = quality
