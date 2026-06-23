@@ -31,10 +31,10 @@ class Anim3rbParser : NewBaseParser() {
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = ".video-list a, .episodes-list a",
-        title = CssSelector(query = ".video-data p", attr = "text"),
+        container = "a[href*='/episode/']",
+        title = CssSelector(query = "", attr = "text"),
         url = CssSelector(query = "", attr = "href"),
-        episode = CssSelector(query = ".video-data span", attr = "text", regex = "(\\d+)")
+        episode = CssSelector(query = "", attr = "href", regex = "/(\\d+)$")
     )
 
     override val watchServersSelectors = WatchServerSelector(

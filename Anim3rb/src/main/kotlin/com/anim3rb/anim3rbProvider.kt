@@ -440,43 +440,27 @@ class Anim3rbProvider : BaseProvider() {
             return existing
         }
 
-        Log.w(TAG, "fetchExtraEpisodes: 0 episodes in static HTML, launching WebView render for $url")
+        Log.w(TAG, "fetchExtraEpisodes: 0 episodes in static HTML — trying direct fetch with getRaw for $url")
+
+        val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val headers = mutableMapOf("Referer" to mainUrl)
+        if (cookieStr.isNotBlank()) headers["Cookie"] = cookieStr
 
         return try {
-            val result = httpService.navigateWithSteps(
-                steps = listOf(
-                    NavigationStep.LoadUrl(url, referer = mainUrl),
-                    NavigationStep.WaitForSelector(
-                        selector = ".video-list a, .episodes-list a",
-                        timeoutMs = 20000L,
-                        abortOnFailure = false
-                    ),
-                    NavigationStep.ExtractHtml(key = "rendered_episodes")
-                ),
-                mode = Mode.HEADLESS,
-                overallTimeoutMs = 30000L
-            )
-
-            Log.i(TAG, "fetchExtraEpisodes: navigateWithSteps success=${result.success}, completedSteps=${result.completedSteps}, finalUrl=${result.finalUrl}")
-
-            val renderedDoc = result.extractedHtml["rendered_episodes"]?.let { html ->
-                Log.d(TAG, "fetchExtraEpisodes: rendered HTML length=${html.length}")
-                org.jsoup.Jsoup.parse(html)
-            }
-
-            if (renderedDoc != null) {
-                val episodes = getParser().parseEpisodes(renderedDoc, null)
+            val resp = httpService.getRaw(url, headers = headers)
+            val body = resp?.body?.string()
+            resp?.close()
+            if (body != null) {
+                val fetchedDoc = org.jsoup.Jsoup.parse(body, url)
+                val episodes = getParser().parseEpisodes(fetchedDoc, null)
                 if (episodes.isNotEmpty()) {
-                    Log.i(TAG, "fetchExtraEpisodes: WebView parsed ${episodes.size} episodes")
+                    Log.i(TAG, "fetchExtraEpisodes: getRaw parsed ${episodes.size} episodes")
                     return episodes
                 }
-                Log.w(TAG, "fetchExtraEpisodes: WebView returned 0 episodes")
-                Log.w(TAG, "fetchExtraEpisodes: rendered doc selector match count: ${renderedDoc.select(".video-list a, .episodes-list a").size}")
+                Log.w(TAG, "fetchExtraEpisodes: getRaw returned 0 episodes")
             } else {
-                Log.w(TAG, "fetchExtraEpisodes: extractedHtml keys=${result.extractedHtml.keys}")
-                if (!result.success) Log.e(TAG, "fetchExtraEpisodes: navigation failed at step ${result.failedAtStep}: ${result.error}")
+                Log.w(TAG, "fetchExtraEpisodes: getRaw response body is null")
             }
-
             emptyList()
         } catch (e: Exception) {
             Log.e(TAG, "fetchExtraEpisodes: exception: ${e.message}")
