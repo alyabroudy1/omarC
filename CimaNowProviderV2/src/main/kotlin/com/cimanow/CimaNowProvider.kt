@@ -9,10 +9,13 @@ import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import kotlinx.coroutines.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 class CimaNowProvider : BaseProvider() {
@@ -299,31 +302,59 @@ class CimaNowProvider : BaseProvider() {
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
         try {
-            Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page via httpService.getRaw...")
+            Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page with standalone OkHttp...")
             val cacheBuster = "?_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
             Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
-            val rawHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            val rawResp = httpService.getRaw(fetchUrl, headers = rawHeaders)
-            val respCode = rawResp.code
-            val respBody = rawResp.body?.string() ?: throw ErrorLoadingException("Empty response body")
+
+            val standaloneClient = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .build()
+            val okRequest = Request.Builder()
+                .url(fetchUrl)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .build()
+            val okResponse = standaloneClient.newCall(okRequest).execute()
+            val respCode = okResponse.code
+            val respBody = okResponse.body?.string() ?: throw ErrorLoadingException("Empty response body")
+            okResponse.close()
             val moviePageDoc = Jsoup.parse(respBody, fetchUrl)
             val movieTitle = moviePageDoc.title()
             Log.d(TAG, "   Doc title: $movieTitle")
-            Log.d(TAG, "   Doc HTML size: $respBody.length bytes")
+            Log.d(TAG, "   Doc HTML size: ${respBody.length} bytes")
             Log.d(TAG, "   Response status: $respCode")
 
-            val litespeedTag = rawResp.header("x-litespeed-tag")
-                ?: rawResp.header("X-Litespeed-Tag")
+            val litespeedTag = okResponse.header("x-litespeed-tag")
+                ?: okResponse.header("X-Litespeed-Tag")
             Log.d(TAG, "   x-litespeed-tag header: $litespeedTag")
 
-            val postId = litespeedTag?.let {
+            var postId: String? = litespeedTag?.let {
                 Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
-            } ?: throw ErrorLoadingException("Failed to extract post ID from LiteSpeed header")
-            Log.i(TAG, "   Extracted post ID: $postId")
+            }
+
+            if (postId == null) {
+                Log.w(TAG, "   LiteSpeed header not found or empty, parsing post ID from HTML body...")
+                val htmlBody = moviePageDoc.outerHtml()
+                postId = Regex("""/\?p=(\d+)""").find(htmlBody)?.groupValues?.get(1)
+                    ?: Regex(""""postid"\s*:\s*(\d+)""", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.get(1)
+                    ?: Regex("""postid[-=]\s*(\d+)""", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.get(1)
+                Log.d(TAG, "   Post ID from HTML: $postId")
+                if (postId == null) {
+                    Log.e(TAG, "   - Shortlink presence: ${htmlBody.contains("/?p=")}")
+                    Log.e(TAG, "   - postid JSON presence: ${htmlBody.contains("postid", true)}")
+                    Log.e(TAG, "   - HTML snippet (mid page): ${htmlBody.substring(htmlBody.length / 2, (htmlBody.length / 2) + 500)}")
+                }
+            } else {
+                Log.i(TAG, "   Extracted post ID from LiteSpeed header: $postId")
+            }
+
+            if (postId == null) {
+                throw ErrorLoadingException("Failed to extract post ID from HTML or headers")
+            }
+            Log.i(TAG, "   Using post ID: $postId")
 
             Log.i("CimaNowLoadLinks", "[2/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
