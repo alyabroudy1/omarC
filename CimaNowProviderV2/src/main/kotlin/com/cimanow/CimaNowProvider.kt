@@ -9,13 +9,10 @@ import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import kotlinx.coroutines.*
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 class CimaNowProvider : BaseProvider() {
@@ -298,65 +295,42 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v5] ================")
+        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v6] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
         try {
-            Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page with standalone OkHttp...")
+            Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page via httpService.getRaw...")
             val cacheBuster = "?_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
             Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
-
-            val standaloneClient = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .followRedirects(true)
-                .build()
-            val okRequest = Request.Builder()
-                .url(fetchUrl)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .build()
-            val okResponse = standaloneClient.newCall(okRequest).execute()
-            val respCode = okResponse.code
-            val respBody = okResponse.body?.string() ?: throw ErrorLoadingException("Empty response body")
-            okResponse.close()
+            val rawHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            val rawResp = httpService.getRaw(fetchUrl, headers = rawHeaders)
+            val respCode = rawResp.code
+            val respBody = rawResp.body?.string() ?: throw ErrorLoadingException("Empty response body")
             val moviePageDoc = Jsoup.parse(respBody, fetchUrl)
             val movieTitle = moviePageDoc.title()
             Log.d(TAG, "   Doc title: $movieTitle")
             Log.d(TAG, "   Doc HTML size: ${respBody.length} bytes")
             Log.d(TAG, "   Response status: $respCode")
 
-            val litespeedTag = okResponse.header("x-litespeed-tag")
-                ?: okResponse.header("X-Litespeed-Tag")
-            Log.d(TAG, "   x-litespeed-tag header: $litespeedTag")
+            Log.d(TAG, "   Movie title for search: $movieTitle")
 
-            var postId: String? = litespeedTag?.let {
-                Regex("904_Po\\.(\\d+)").find(it)?.groupValues?.get(1)
-            }
+            Log.i("CimaNowLoadLinks", "[2/6] Searching RSS feed for post ID...")
+            val searchTerm = java.net.URLEncoder.encode(movieTitle, "UTF-8")
+            val feedUrl = "$mainUrl/feed/?s=$searchTerm"
+            Log.d(TAG, "   Feed search URL: $feedUrl")
+            val feedXml = app.get(feedUrl).text
+            Log.d(TAG, "   Feed response size: ${feedXml.length} bytes")
 
-            if (postId == null) {
-                Log.w(TAG, "   LiteSpeed header not found or empty, parsing post ID from HTML body...")
-                val htmlBody = moviePageDoc.outerHtml()
-                postId = Regex("""/\?p=(\d+)""").find(htmlBody)?.groupValues?.get(1)
-                    ?: Regex(""""postid"\s*:\s*(\d+)""", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.get(1)
-                    ?: Regex("""postid[-=]\s*(\d+)""", RegexOption.IGNORE_CASE).find(htmlBody)?.groupValues?.get(1)
-                Log.d(TAG, "   Post ID from HTML: $postId")
-                if (postId == null) {
-                    Log.e(TAG, "   - Shortlink presence: ${htmlBody.contains("/?p=")}")
-                    Log.e(TAG, "   - postid JSON presence: ${htmlBody.contains("postid", true)}")
-                    Log.e(TAG, "   - HTML snippet (mid page): ${htmlBody.substring(htmlBody.length / 2, (htmlBody.length / 2) + 500)}")
-                }
-            } else {
-                Log.i(TAG, "   Extracted post ID from LiteSpeed header: $postId")
-            }
+            val guidPattern = Regex("[?&]p=(\\d+)")
+            val postId = guidPattern.find(feedXml)?.groupValues?.get(1)
+                ?: throw ErrorLoadingException("Failed to extract post ID from RSS feed search")
+            Log.i(TAG, "   Extracted post ID: $postId")
 
-            if (postId == null) {
-                throw ErrorLoadingException("Failed to extract post ID from HTML or headers")
-            }
-            Log.i(TAG, "   Using post ID: $postId")
-
-            Log.i("CimaNowLoadLinks", "[2/6] Searching for freex2line intermediate link...")
+            Log.i("CimaNowLoadLinks", "[3/6] Searching for freex2line intermediate link...")
             var intermediateLink: String? = null
             val preciseLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")
             if (preciseLink != null) {
@@ -376,12 +350,12 @@ class CimaNowProvider : BaseProvider() {
             }
             Log.d(TAG, "   Found intermediate link: $intermediateLink")
 
-            Log.i(TAG, "[3/6] Resolving shortlink via resolveFreex2line...")
+            Log.i(TAG, "[4/6] Resolving shortlink via resolveFreex2line...")
             val finalCimaNowUrl = resolveFreex2line(intermediateLink)
                 ?: throw ErrorLoadingException("Failed to bypass shortlink.")
             Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
 
-            Log.i(TAG, "[4/6] Fetching video links via core.php (bypass watch page)...")
+            Log.i(TAG, "[5/6] Fetching video links via core.php (bypass watch page)...")
             val knownIndices = listOf("00", "66", "32", "7", "30", "12")
             Log.d(TAG, "   Known indices to try: $knownIndices")
             var successCount = 0
@@ -445,7 +419,7 @@ class CimaNowProvider : BaseProvider() {
                 Log.w(TAG, "   No valid servers found via core.php!")
             }
 
-            Log.i(TAG, "================ [END LOADLINKS v5] =================")
+            Log.i(TAG, "================ [END LOADLINKS v6] =================")
             return successCount > 0
 
         } catch (e: Exception) {
@@ -453,7 +427,7 @@ class CimaNowProvider : BaseProvider() {
             Log.e(TAG, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
         }
 
-        Log.i(TAG, "================ [END LOADLINKS v5] =================")
+        Log.i(TAG, "================ [END LOADLINKS v6] =================")
         return false
     }
 
