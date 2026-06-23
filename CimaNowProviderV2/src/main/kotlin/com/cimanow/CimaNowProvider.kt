@@ -614,8 +614,7 @@ class CimaNowProvider : BaseProvider() {
             if (!flowResult.success) {
                 Log.w(TAG_WV, "WebView flow FAILED: ${flowResult.error}")
                 Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
-                Log.d(TAG_WV, "  completedSteps: ${flowResult.completedSteps}")
-                Log.d(TAG_WV, "  failedAtStep: ${flowResult.failedAtStep}")
+                Log.d(TAG_WV, "  servers extracted: ${flowResult.servers.size}")
                 return false
             }
 
