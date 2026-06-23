@@ -44,7 +44,7 @@ class Anim3rbParser : NewBaseParser() {
     )
 
     override fun getSearchUrl(domain: String, query: String): String {
-        val url = "$domain/?s=$query"
+        val url = "$domain/search?q=$query"
         Log.i(PARSER_TAG, "getSearchUrl: $url")
         return url
     }
@@ -103,20 +103,89 @@ class Anim3rbParser : NewBaseParser() {
     override fun extractWatchServersUrls(doc: Document): List<String> {
         Log.i(PARSER_TAG, "extractWatchServersUrls: title=${doc.title()}, html.length=${doc.html().length}")
         val urls = super.extractWatchServersUrls(doc)
-        Log.i(PARSER_TAG, "extractWatchServersUrls: found ${urls.size} URLs")
-        if (urls.isEmpty()) {
-            doc.select("iframe[src]").forEach { Log.w(PARSER_TAG, "extractWatchServersUrls: iframe src=${it.attr("src")}") }
-            doc.select("a[href*='player' i]").forEach { Log.w(PARSER_TAG, "extractWatchServersUrls: player link href=${it.attr("href")} text=${it.text()}") }
-            Log.w(PARSER_TAG, "extractWatchServersUrls: DUMP body (first 3000):\n${doc.body()?.html()?.take(3000)}")
+        if (urls.isNotEmpty()) {
+            Log.i(PARSER_TAG, "extractWatchServersUrls: found ${urls.size} URLs via selectors")
+            return urls
         }
+
+        Log.w(PARSER_TAG, "extractWatchServersUrls: selectors found 0, scanning full HTML text for player URLs...")
+        val html = doc.html()
+
+        // Scan every <script> tag's text content for player URLs
+        doc.select("script").forEach { script ->
+            val text = script.html()
+            Regex("""https?://[^"'\s\\<>]*/player/[^"'\s\\<>]*""").findAll(text).forEach { m ->
+                Log.w(PARSER_TAG, "extractWatchServersUrls: found player URL in script: ${m.value}")
+            }
+            Regex("""["'](/player/[^"'\s\\<>]*)["']""").findAll(text).forEach { m ->
+                val url = "https://anime3rb.com${m.groupValues[1]}"
+                Log.w(PARSER_TAG, "extractWatchServersUrls: found relative player URL in script: $url")
+            }
+        }
+
+        // Scan attributes of all elements
+        doc.select("[src*='player' i], [href*='player' i], [data-*='player' i], [data-src*='player' i]").forEach { el ->
+            Log.w(PARSER_TAG, "extractWatchServersUrls: player-like element: tag=${el.tagName()}, class=${el.className()}, href=${el.attr("href")}, src=${el.attr("src")}, data-src=${el.attr("data-src")}")
+        }
+
+        // Regex on full HTML for any player URL
+        val fullUrls = Regex("""https?://[^"'\s\\<>`]+/player/[^"'\s\\<>`]+""", RegexOption.IGNORE_CASE).findAll(html).map { it.value }.toList()
+        val relativeUrls = Regex("""["'`](/player/[^"'\s\\<>`]+)["'`]""", RegexOption.IGNORE_CASE).findAll(html).map { "https://anime3rb.com${it.groupValues[1]}" }.toList()
+        val allUrls = (fullUrls + relativeUrls).distinct().filter { !it.contains(".js") } // exclude JS files
+
+        if (allUrls.isNotEmpty()) {
+            Log.i(PARSER_TAG, "extractWatchServersUrls: found ${allUrls.size} URLs via HTML scan: $allUrls")
+            return allUrls
+        }
+
+        // Fallback: try constructing player URL from the page URL
+        // Episode: /episode/one-piece/1167 → try /player/one-piece/1167
+        val pageUrl = doc.location()
+        Log.w(PARSER_TAG, "extractWatchServersUrls: no player URLs in HTML, pageUrl='$pageUrl'")
+        Log.w(PARSER_TAG, "extractWatchServersUrls: DUMP all script contents:\n${doc.select("script").joinToString("\n---\n") { it.html().take(500) }}")
+        Log.w(PARSER_TAG, "extractWatchServersUrls: all iframe[src]: ${doc.select("iframe[src]").eachAttr("src")}")
+        Log.w(PARSER_TAG, "extractWatchServersUrls: all a[href*='player']: ${doc.select("a[href*='player' i]").eachAttr("href")}")
+
         return urls
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        val url = doc.selectFirst("a[href*='play.php'], a[href*='/player/'], a.play-button, a.watch-button")?.attr("href")
+        // Standard selectors
+        val standard = doc.selectFirst("a[href*='play.php'], a[href*='/player/'], a.play-button, a.watch-button")?.attr("href")
             ?: doc.selectFirst("iframe[src*='/player/']")?.attr("src")
-        Log.i(PARSER_TAG, "getPlayerPageUrl: found='$url'")
-        return url?.let { resolveUrl(it, doc.location()) }
+        if (standard != null) {
+            val resolved = resolveUrl(standard, doc.location())
+            Log.i(PARSER_TAG, "getPlayerPageUrl: found via selectors='$resolved'")
+            return resolved
+        }
+
+        // JSON-LD embedUrl
+        val jsonLd = doc.selectFirst("script[type='application/ld+json']")
+        if (jsonLd != null) {
+            val embedUrl = Regex("\"embedUrl\"\\s*:\\s*\"([^\"]+)\"").find(jsonLd.html())?.groupValues?.get(1)
+            if (embedUrl != null) {
+                val cleaned = embedUrl.replace("\\/", "/").replace("&amp;", "&")
+                Log.i(PARSER_TAG, "getPlayerPageUrl: found via JSON-LD='$cleaned'")
+                return cleaned
+            }
+        }
+
+        // Livewire video_url in wire:snapshot
+        val allAttrs = doc.select("[wire\\\\:snapshot]").joinToString(" ") { it.attr("wire:snapshot") }
+        if (allAttrs.isNotBlank()) {
+            val videoUrlMatch = Regex(""""video_url"\s*:\s*"([^"]+)"""").find(allAttrs)
+            if (videoUrlMatch != null) {
+                val raw = videoUrlMatch.groupValues[1]
+                val cleaned = raw.replace("\\/", "/").replace("\\u0026", "&")
+                if (cleaned.startsWith("http")) {
+                    Log.i(PARSER_TAG, "getPlayerPageUrl: found via Livewire='${cleaned.take(100)}'")
+                    return cleaned
+                }
+            }
+        }
+
+        Log.i(PARSER_TAG, "getPlayerPageUrl: found='null'")
+        return null
     }
 
     override fun isSeries(title: String, url: String, element: Element?): Boolean {

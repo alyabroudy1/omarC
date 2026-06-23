@@ -3,6 +3,10 @@ package com.anime3rb
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
@@ -121,11 +125,11 @@ class Anim3rbProvider : BaseProvider() {
         Log.i(TAG, "searchNormal: START query='$query'")
         val standard = standardSearch(query, useNoFallback = false)
         if (standard.isNotEmpty()) {
-            Log.i(TAG, "searchNormal: standard search returned ${standard.size} results")
+            Log.i(TAG, "searchNormal: standard returned ${standard.size} results")
             return standard
         }
-        Log.w(TAG, "searchNormal: standard search empty, falling back to Livewire")
-        return livewireSearch(query)
+        Log.w(TAG, "searchNormal: standard empty, falling back to Livewire")
+        return livewireSearch(query, useNoFallback = false)
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
@@ -158,13 +162,12 @@ class Anim3rbProvider : BaseProvider() {
         }
 
         Log.i(TAG, "standardSearch: title='${doc.title()}', body.length=${doc.body()?.html()?.length ?: 0}")
-        Log.d(TAG, "standardSearch: URL after fetch: ${doc.location()}")
 
         val items = getParser().parseSearch(doc)
         Log.i(TAG, "standardSearch: parser returned ${items.size} items")
 
         if (items.isEmpty()) {
-            val cardCount = doc.select("a.simple-title-card, a.video-card, div.item").size
+            val cardCount = doc.select("a.simple-title-card, a.video-card").size
             Log.w(TAG, "standardSearch: 0 items parsed. card-like elements found: $cardCount")
         }
 
@@ -177,10 +180,24 @@ class Anim3rbProvider : BaseProvider() {
         }
     }
 
-    private suspend fun livewireSearch(query: String): List<SearchResponse> {
-        Log.i(TAG, "livewireSearch: START query='$query'")
+    private suspend fun livewireSearch(query: String, useNoFallback: Boolean): List<SearchResponse> {
+        Log.i(TAG, "livewireSearch: START query='$query', useNoFallback=$useNoFallback")
 
-        val mainDoc = httpService.getDocument(mainUrl) ?: run {
+        val mainDoc = try {
+            if (useNoFallback) {
+                httpService.getDocumentNoFallback(mainUrl)
+            } else {
+                httpService.getDocument(mainUrl)
+            }
+        } catch (e: CloudflareBlockedSearchException) {
+            Log.w(TAG, "livewireSearch: CF blocked in lazy mode — rethrowing")
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "livewireSearch: error fetching main page: ${e.message}")
+            return emptyList()
+        }
+
+        if (mainDoc == null) {
             Log.e(TAG, "livewireSearch: failed to fetch main page")
             return emptyList()
         }
@@ -345,6 +362,109 @@ class Anim3rbProvider : BaseProvider() {
             Log.e(TAG, "fetchExtraEpisodes: exception: ${e.message}")
             emptyList()
         }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        Log.i(TAG, "loadLinks: START data='$data'")
+
+        // Phase 1: Try standard flow (BaseProvider handles parser selectors → sniffers → extractors)
+        try {
+            if (super.loadLinks(data, isCasting, subtitleCallback, callback)) {
+                Log.i(TAG, "loadLinks: standard flow succeeded")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "loadLinks: standard flow exception: ${e.message}")
+        }
+
+        // Phase 2: Old pattern — find player URLs, fetch with httpService, parse video_sources
+        Log.w(TAG, "loadLinks: standard failed, using httpService-based player extraction")
+
+        val detailDoc = httpService.getDocument(data) ?: run {
+            Log.e(TAG, "loadLinks: failed to fetch episode page")
+            return false
+        }
+        Log.i(TAG, "loadLinks: episode page fetched, html.length=${detailDoc.html().length}")
+
+        // Find all player/server URLs via parser (now with aggressive HTML scanning)
+        val playerUrls = getParser().extractWatchServersUrls(detailDoc)
+        Log.i(TAG, "loadLinks: parser found ${playerUrls.size} player URLs")
+
+        // Fallback: try constructing player URL from episode URL
+        val allUrls = if (playerUrls.isNotEmpty()) playerUrls else {
+            val constructed = data.replace("/episode/", "/player/")
+            Log.w(TAG, "loadLinks: no URLs from parser, trying constructed: $constructed")
+            listOf(constructed)
+        }
+
+        for (playerUrl in allUrls) {
+            Log.i(TAG, "loadLinks: trying player URL: $playerUrl")
+            try {
+                val playerDoc = httpService.getDocument(playerUrl) ?: continue
+                val playerHtml = playerDoc.html()
+                Log.i(TAG, "loadLinks: player page fetched, html.length=${playerHtml.length}, title=${playerDoc.title()}")
+
+                // Parse video_sources from script tags (old pattern)
+                val script = playerDoc.selectFirst("script:containsData(video_sources)")?.html()
+                if (script != null) {
+                    val jsonMatch = Regex("""var\s+video_sources\s*=\s*(\[[^;]+]);""").find(script)
+                    if (jsonMatch != null) {
+                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(jsonMatch.groupValues[1])
+                        Log.i(TAG, "loadLinks: found ${sources.size} video sources via video_sources")
+                        for (item in sources) {
+                            val src = item["src"]?.toString() ?: item["file"]?.toString()
+                            val label = item["label"]?.toString() ?: "Default"
+                            if (!src.isNullOrBlank()) {
+                                callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://video.vid3rb.com/" })
+                            }
+                        }
+                        if (sources.isNotEmpty()) return true
+                    }
+                }
+
+                // Also search for /sources?cf_token= in player page
+                val sourcesUrl = Regex("""/sources\?[^"'\s\\<>]+""").find(playerHtml)?.value
+                if (sourcesUrl != null) {
+                    val fullSourcesUrl = "https://anime3rb.com$sourcesUrl"
+                    Log.i(TAG, "loadLinks: found sources URL: $fullSourcesUrl")
+                    val resp = httpService.getRaw(fullSourcesUrl, headers = mapOf("Referer" to playerUrl))
+                    val rawJson = resp?.body?.string()
+                    resp?.close()
+                    if (rawJson != null) {
+                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(rawJson)
+                        Log.i(TAG, "loadLinks: found ${sources.size} video sources via JSON endpoint")
+                        for (item in sources) {
+                            val src = item["src"]?.toString() ?: item["file"]?.toString()
+                            val label = item["label"]?.toString() ?: "Default"
+                            if (!src.isNullOrBlank()) {
+                                callback(newExtractorLink(this.name, "$name $label", src, ExtractorLinkType.VIDEO) { referer = "https://video.vid3rb.com/" })
+                            }
+                        }
+                        if (sources.isNotEmpty()) return true
+                    }
+                }
+
+                // Also try loading through extractors for this URL
+                Log.d(TAG, "loadLinks: trying extractors for player URL: $playerUrl")
+                var found = false
+                loadExtractor(playerUrl, "https://anime3rb.com/", subtitleCallback) { link ->
+                    callback(link)
+                    found = true
+                }
+                if (found) return true
+
+            } catch (e: Exception) {
+                Log.w(TAG, "loadLinks: player URL failed: ${e.message}")
+            }
+        }
+
+        Log.w(TAG, "loadLinks: all methods exhausted — no video sources found")
+        return false
     }
 
     override suspend fun resolveServerUrl(url: String, referer: String): String? {
