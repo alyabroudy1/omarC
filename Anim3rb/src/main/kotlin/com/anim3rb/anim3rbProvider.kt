@@ -41,6 +41,8 @@ class Anim3rbProvider : BaseProvider() {
         Log.i(TAG, "getMainPage: START page=$page, data=${request.data}, name=${request.name}")
         if (page > 1) return null
 
+        httpService.ensureInitialized()
+
         val doc = httpService.getDocument(request.data, checkDomainChange = true) ?: run {
             Log.e(TAG, "getMainPage: doc is null")
             return null
