@@ -135,6 +135,7 @@ class CimaNowProvider : BaseProvider() {
         val doc = httpService.getDocument("$mainUrl/?s=$encoded")
         val decodedDoc = if (doc != null) decodeHtml(doc) else return emptyList()
         return decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
+            .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
     }
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
@@ -148,22 +149,24 @@ class CimaNowProvider : BaseProvider() {
         val doc = httpService.getDocument(url)
         val decodedDoc = if (doc != null) decodeHtml(doc) else return null
         val elements = decodedDoc.select("article").mapNotNull { toSearchResponse(it) }
+            .ifEmpty { decodedDoc.select("li img[alt!=logo]").mapNotNull { img -> toSearchResponse(img.closest("li") ?: return@mapNotNull null) } }
         return newHomePageResponse(request.name, elements)
     }
 
     // ==================== toSearchResponse ====================
 
     private fun toSearchResponse(element: Element): SearchResponse? {
-        val link = element.selectFirst("ul li a[href^='http']") ?: return null
+        val link = element.selectFirst("a[href^='http']")
+            ?: element.parent()?.selectFirst("a[href^='http']") ?: return null
         val href = link.attr("href")
-        val img = link.selectFirst("img[alt!=logo]") ?: return null
+        val img = link.selectFirst("img[alt!=logo]")
+            ?: element.selectFirst("img[alt!=logo]") ?: return null
 
         val posterUrl = img.attr("src")
         val title = img.attr("alt")
 
-        val category = element.select("ul li a[href*='/category/']").text()
-
-        val year = element.select("ul li a[href*='/release-year/']").text().toIntOrNull()
+        val category = element.select("a[href*='/category/']").text()
+        val year = element.select("a[href*='/release-year/']").text().toIntOrNull()
 
         val quality = null
 
