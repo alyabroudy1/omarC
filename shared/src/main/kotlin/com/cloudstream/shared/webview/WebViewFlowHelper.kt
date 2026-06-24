@@ -115,24 +115,35 @@ class WebViewFlowHelper(
     private var movieUrl: String = ""
 
     private fun buildStepList(): List<NavigationStep> {
+        val targetWatchUrl = movieUrl.trimEnd('/') + "/watching/"
         return listOf(
             NavigationStep.LoadUrl(movieUrl),
-            // abortOnFailure=false so if an overlay ad blocks the auto click, the flow doesn't die.
-            // You can manually click it in the dialog if the auto-click fails.
-            NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 45_000L, abortOnFailure = false),
+
+            // Try to auto-click the button. abortOnFailure=false so if an invisible ad overlay
+            // eats the first click, it doesn't crash the flow. The user can manually click it
+            // if the auto-click fails to trigger the redirect.
+            NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 15_000L, abortOnFailure = false),
             NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L, abortOnFailure = false),
-            NavigationStep.WaitForUrl("freex2line.online", timeoutMs = 20_000L, abortOnFailure = true),
-            // Wait 12s to ensure the 10s countdown on freex2line finishes
-            NavigationStep.WaitForDelay(12_000L),
-            NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent"),
-            NavigationStep.WaitForDelay(2_000L),
-            NavigationStep.WaitForDomCondition(
-                jsCondition = JS_VISIBLE_SERVER_LINK_CONDITION,
-                timeoutMs = 15_000L,
-                pollIntervalMs = 1000L
-            ),
-            NavigationStep.ExecuteJs(javascript = JS_FIND_SERVER_LINK, key = "server_link_click"),
-            NavigationStep.WaitForUrl("/watching/", timeoutMs = 15_000L),
+
+            // Wait until we land on freex2line.online (either via auto-click or manual click)
+            NavigationStep.WaitForUrl("freex2line.online", timeoutMs = 45_000L, abortOnFailure = true),
+
+            // Bypass the freex2line countdown entirely.
+            // The countdown script is often broken by Cloudflare in WebView environments.
+            // We know the final destination is just the movie URL + /watching/.
+            // By using window.location.href, the browser natively sends the Referer header
+            // from freex2line.online, satisfying CimaNow's anti-leech protection.
+            NavigationStep.ExecuteJs(javascript = """
+                (function() {
+                    var targetUrl = '$targetWatchUrl';
+                    console.log('[Nav] Bypassing freex2line countdown, jumping to: ' + targetUrl);
+                    window.location.href = targetUrl;
+                })();
+            """.trimIndent(), key = "bypass_freex"),
+
+            // Wait for CimaNow to accept the Referer and load the watching page
+            NavigationStep.WaitForUrl("/watching/", timeoutMs = 15_000L, abortOnFailure = true),
+
             NavigationStep.WaitForDelay(8_000L),
             NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
@@ -199,101 +210,6 @@ class WebViewFlowHelper(
     }
 
     companion object {
-        val JS_DISMISS_CONSENT = """
-(function() {
-    var found = false;
-    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button');
-    var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق'];
-    for (var i = 0; i < candidates.length; i++) {
-        var el = candidates[i];
-        var text = (el.innerText || el.textContent || '').trim().toLowerCase();
-        if (text.length === 0 || text.length > 30) continue;
-        for (var k = 0; k < keywords.length; k++) {
-            if (text.indexOf(keywords[k]) !== -1) {
-                var rect = el.getBoundingClientRect();
-                var visible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
-                console.log('[Nav] consent candidate:', el.tagName, 'text="' + text + '" visible=' + visible);
-                if (visible) {
-                    try { el.click(); console.log('[Nav] clicked consent:', text); found = true; } catch(e) {}
-                }
-                break;
-            }
-        }
-    }
-    if (!found) {
-        var closeSelectors = ['.close', '.close-btn', '.modal-close', '.popup-close', '[onclick*="close"]', '.fc-cta-consent', '.fc-button', '.cc-btn', '.agree-btn', '#continue', '.continue', '.accept-btn'];
-        for (var i = 0; i < closeSelectors.length; i++) {
-            var els = document.querySelectorAll(closeSelectors[i]);
-            for (var j = 0; j < els.length; j++) {
-                var rect = els[j].getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0 && els[j].offsetParent !== null) {
-                    try { els[j].click(); console.log('[Nav] clicked close btn:', closeSelectors[i]); found = true; } catch(e) {}
-                    break;
-                }
-            }
-            if (found) break;
-        }
-    }
-    return found ? 'consent_dismissed' : 'no_consent';
-})();
-        """.trimIndent()
-
-        val JS_VISIBLE_SERVER_LINK_CONDITION = """
-(function(){
-    try {
-        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-        for (var i = 0; i < links.length; i++) {
-            var r = links[i].getBoundingClientRect();
-            var href = links[i].href || '';
-            var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
-            
-            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null && !isDisabled
-                && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-                console.log('[Nav] found visible & enabled server link:', href);
-                return true;
-            }
-        }
-        return false;
-    } catch(e) { return false; }
-})()
-        """.trimIndent()
-
-        val JS_FIND_SERVER_LINK = """
-(function() {
-    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-    for (var i = 0; i < links.length; i++) {
-        var rect = links[i].getBoundingClientRect();
-        var visible = rect.width > 0 && rect.height > 0 && links[i].offsetParent !== null;
-        var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
-        
-        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible, 'disabled=' + isDisabled);
-        
-        if (visible && !isDisabled) {
-            var href = links[i].href || '';
-            if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) {
-                console.log('[Nav] skipping ad link:', href);
-                continue;
-            }
-            console.log('[Nav] clicking server link:', href);
-            try { links[i].click(); return 'clicked:' + href; } catch(e) { return 'error:' + e.message; }
-        }
-    }
-    var allLinks = document.querySelectorAll('a[href]:not([href=""]):not([href^="javascript"])');
-    for (var i = 0; i < allLinks.length; i++) {
-        var rect = allLinks[i].getBoundingClientRect();
-        var href = allLinks[i].href || '';
-        var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || (allLinks[i].style.pointerEvents === 'none');
-        
-        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled 
-            && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-            console.log('[Nav] fallback clicking:', href);
-            try { allLinks[i].click(); return 'clicked_fallback:' + href; } catch(e) {}
-        }
-    }
-    return 'no_server_link';
-})();
-        """.trimIndent()
-
         val JS_DEBUG_DOM = """
 (function(){
     var uls = document.querySelectorAll('ul');
