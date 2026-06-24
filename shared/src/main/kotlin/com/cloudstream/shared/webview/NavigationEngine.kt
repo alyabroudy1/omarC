@@ -220,37 +220,7 @@ class NavigationEngine(
                 javaScriptCanOpenWindowsAutomatically = false
                 setSupportMultipleWindows(false)
             }
-            hideXRequestedWithHeader(this)
         }
-    }
-
-    private fun hideXRequestedWithHeader(webView: android.webkit.WebView) {
-        fun tryClear(obj: Any?): Boolean {
-            if (obj == null) return false
-            var cls: Class<*>? = obj.javaClass
-            while (cls != null) {
-                try {
-                    val f = cls.getDeclaredField("mXRequestedWithHeader")
-                    f.isAccessible = true
-                    f.set(obj, "")
-                    ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via ${cls.name}")
-                    return true
-                } catch (_: NoSuchFieldException) {
-                    cls = cls.superclass
-                }
-            }
-            return false
-        }
-
-        if (tryClear(webView)) return
-
-        try {
-            val pf = webView.javaClass.getDeclaredField("mProvider")
-            pf.isAccessible = true
-            if (tryClear(pf.get(webView))) return
-        } catch (_: Exception) {}
-
-        ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak")
     }
 
     private fun setupWebViewClient(
@@ -266,6 +236,7 @@ class NavigationEngine(
         }
 
         var isOnDestination = false
+        var isManualLoad = false // Prevent infinite loops in shouldOverrideUrlLoading
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -303,16 +274,18 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
 
+                // CRITICAL: Never intercept Main Frame. We must let Android WebView natively load
+                // the main HTML so it can execute Cloudflare JS challenges and get the cf_clearance cookie.
+                if (request.isForMainFrame) return null
+
                 val host = request.url?.host?.lowercase() ?: ""
                 val path = request.url?.path?.lowercase() ?: ""
-                val accept = request.requestHeaders?.get("Accept") ?: ""
 
-                // STRICTLY ONLY cimanow.cc.
-                // freex2line.online MUST be handled purely by the native WebView so it can solve Cloudflare JS challenges.
-                val isProtectedDomain = host.contains("cimanow.cc")
-                val isAssetOrDoc = accept.contains("text/html") || path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".htm")
+                // Intercept sub-resources (JS/CSS) to strip the X-Requested-With package name leak.
+                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
+                val isAsset = path.endsWith(".js") || path.endsWith(".css")
 
-                if (isProtectedDomain && isAssetOrDoc) {
+                if (isProtectedDomain && isAsset) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = true
@@ -322,8 +295,9 @@ class NavigationEngine(
                                 conn.setRequestProperty(key, value)
                             }
                         }
-                        conn.setRequestProperty("X-Requested-With", "")
+                        conn.setRequestProperty("X-Requested-With", "") // Strip package name
 
+                        // Pass the Cloudflare cookie that the main frame acquired
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
                         if (!cookies.isNullOrBlank()) {
                             conn.setRequestProperty("Cookie", cookies)
@@ -331,25 +305,19 @@ class NavigationEngine(
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
 
-                        val defaultMime = when {
-                            path.endsWith(".css") -> "text/css"
-                            path.endsWith(".js") -> "application/javascript"
-                            else -> "text/html"
-                        }
-
-                        ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPT ${reqUrl.take(100)}")
                         if (conn.responseCode == 200) {
-                            val ct = conn.contentType ?: defaultMime
-                            val mime = ct.substringBefore(";").trim().ifEmpty { defaultMime }
+                            val ct = conn.contentType ?: "application/octet-stream"
+                            val mime = ct.substringBefore(";").trim()
                             val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
                             val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
+                            ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPT ASSET ${reqUrl.take(100)}")
                             return WebResourceResponse(mime, charset.name(), conn.inputStream)
                         } else {
-                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
+                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Asset intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
                             return null
                         }
                     } catch (e: Exception) {
-                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept failed: ${e.message}")
+                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Asset intercept failed: ${e.message}")
                     }
                 }
 
@@ -363,11 +331,17 @@ class NavigationEngine(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
+                // If we triggered this load manually to strip headers, let it pass natively.
+                if (isManualLoad) {
+                    isManualLoad = false
+                    return false
+                }
+
                 val nextUrl = request?.url?.toString() ?: return super.shouldOverrideUrlLoading(view, request)
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != null && scheme != "http" && scheme != "https") return true
 
-                val isMainFrame = request?.isForMainFrame == true
+                val isMainFrame = request.isForMainFrame
                 val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
 
                 if (isMainFrame && isOnDestination) {
@@ -383,6 +357,24 @@ class NavigationEngine(
                         ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DOMAIN BLOCK", "url" to nextUrl, "host" to nextHost, "allowed" to allowedDomains.joinToString(","))
                         return true
                     }
+                }
+
+                // NUCLEAR SOLUTION FOR MAIN FRAME LEAKS:
+                // If a JS redirect or native click tries to load a protected domain, intercept it,
+                // cancel it, and manually reload it with X-Requested-With stripped.
+                if (isMainFrame && (nextHost.contains("cimanow.cc") || nextHost.contains("freex2line.online"))) {
+                    ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "Stripping X-Requested-With on main frame redirect", "url" to nextUrl.take(100))
+
+                    val headers = mutableMapOf<String, String>()
+                    headers["X-Requested-With"] = ""
+                    val referer = view?.url
+                    if (referer != null && referer != nextUrl) {
+                        headers["Referer"] = referer
+                    }
+
+                    isManualLoad = true
+                    view?.loadUrl(nextUrl, headers)
+                    return true
                 }
 
                 ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "ALLOWED", "url" to nextUrl.take(120), "host" to nextHost, "mainFrame" to isMainFrame.toString())
