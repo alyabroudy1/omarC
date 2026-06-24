@@ -347,7 +347,8 @@ class NavigationEngine(
                 // CimaNow uses freex2line.online as an ad-gateway shortlink.
                 // It passes the final destination URL as a base64 string in the 'link' parameter.
                 // Cloudflare blocks this domain in WebView due to X-Requested-With leaking.
-                // We bypass it entirely by decoding the base64 and navigating directly.
+                // We bypass it entirely by decoding the base64 and navigating directly,
+                // faking the Referer header so cimanow.cc thinks we came from freex2line.
                 if (nextUrl.contains("freex2line.online/loadon")) {
                     val linkParam = request.url?.getQueryParameter("link")
                     if (linkParam != null) {
@@ -359,6 +360,7 @@ class NavigationEngine(
 
                             val headers = mutableMapOf<String, String>()
                             headers["X-Requested-With"] = ""
+                            headers["Referer"] = nextUrl // Fake the referer to satisfy cimanow.cc anti-leech
                             view?.loadUrl(decodedUrl, headers)
                             return true
                         } catch (e: Exception) {
