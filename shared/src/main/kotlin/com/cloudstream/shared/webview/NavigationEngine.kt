@@ -17,6 +17,10 @@ class NavigationEngine(
 ) {
     private val sessionMutex = Mutex()
 
+    /** Set by the request interceptor when get-link.php returns the watching URL */
+    @Volatile
+    var interceptedWatchingUrl: String? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -31,6 +35,9 @@ class NavigationEngine(
         destinationLockPatterns: List<Regex> = emptyList()
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
+            // Reset intercepted state for this session
+            interceptedWatchingUrl = null
+
             val activity = activityProvider()
             if (activity == null) {
                 ProviderLogger.e(TAG, "execute", "No Activity available")
@@ -152,6 +159,40 @@ class NavigationEngine(
                                 val key = step.key.ifBlank { step.selector ?: "full_page_${index}" }
                                 extractedHtml[key] = html ?: ""
                                 ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> ${html?.length ?: 0} chars")
+                            }
+                            is NavigationStep.NavigateToWatchingUrl -> {
+                                val watchUrl = this@NavigationEngine.interceptedWatchingUrl
+                                if (!watchUrl.isNullOrBlank()) {
+                                    ProviderLogger.w(TAG, "execute", "Step $index: Navigating to watching URL: ${watchUrl.take(120)}")
+                                    // Use the current page URL (blog-post.html) as Referer to prevent hotlink blocking
+                                    val referer = currentUrl.takeIf { it.isNotBlank() }
+                                    loadUrlInWebView(webView, watchUrl, referer, emptyMap())
+                                    currentUrl = watchUrl
+                                } else {
+                                    ProviderLogger.w(TAG, "execute", "Step $index: No watching URL captured yet, polling...")
+                                    val deadline = System.currentTimeMillis() + 15_000L
+                                    var polled = false
+                                    while (System.currentTimeMillis() < deadline) {
+                                        val url = this@NavigationEngine.interceptedWatchingUrl
+                                        if (!url.isNullOrBlank()) {
+                                            ProviderLogger.w(TAG, "execute", "Step $index: Watching URL appeared after polling: ${url.take(120)}")
+                                            val referer = currentUrl.takeIf { it.isNotBlank() }
+                                            loadUrlInWebView(webView, url, referer, emptyMap())
+                                            currentUrl = url
+                                            polled = true
+                                            break
+                                        }
+                                        delay(500)
+                                    }
+                                    if (!polled) {
+                                        ProviderLogger.w(TAG, "execute", "Step $index: No watching URL captured within timeout")
+                                        if (step.abortOnFailure) {
+                                            failedStep = index
+                                            errorMsg = "No watching URL captured"
+                                            break
+                                        }
+                                    }
+                                }
                             }
                         }
                         completedSteps = index + 1
@@ -365,10 +406,14 @@ class NavigationEngine(
                 val path = request.url?.path?.lowercase() ?: ""
                 val reqHeaders = request.requestHeaders ?: emptyMap()
 
+                // NEVER intercept Cloudflare challenge scripts — they must execute in the
+                // original WebView context to properly solve the JS challenge and set cookies.
+                val isCfChallenge = path.contains("/cdn-cgi/")
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
-                val isAjaxEndpoint = path.contains("core.php")
-                val isAsset = path.endsWith(".js") || path.endsWith(".css")
+                val isGetLink = path.contains("get-link.php") && !isCfChallenge
+                val isAjaxEndpoint = (path.contains("core.php") || isGetLink) && !isCfChallenge
+                val isAsset = (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
 
                 val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
 
@@ -412,6 +457,19 @@ class NavigationEngine(
                             val reportedMime = ct.substringBefore(";").trim()
                             val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
                             val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
+
+                            // Special handling for get-link.php — capture the watching URL
+                            // from the response body, then return an empty response so the
+                            // page's fetch() completes but can't shadow the URL.
+                            if (isGetLink) {
+                                val body = try { conn.inputStream.bufferedReader(charset).readText() } catch (_: Exception) { "" }
+                                if (body.isNotBlank() && (body.startsWith("http://") || body.startsWith("https://"))) {
+                                    interceptedWatchingUrl = body
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "Captured watching URL: ${body.take(120)}")
+                                }
+                                val emptyBytes = "@".toByteArray()
+                                return WebResourceResponse("text/plain", "utf-8", emptyBytes.size.toLong(), "", emptyMap(), java.io.ByteArrayInputStream(emptyBytes))
+                            }
 
                             // Override wrong MIME types — server may return text/html for JS/CSS
                             // to block scrapers. Force correct type based on file extension.

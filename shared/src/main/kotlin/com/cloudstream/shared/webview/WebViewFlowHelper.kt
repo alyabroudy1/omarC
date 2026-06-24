@@ -119,58 +119,63 @@ class WebViewFlowHelper(
             // Step 0: Load the movie page
             NavigationStep.LoadUrl(movieUrl),
 
-            // Step 1: Wait for the freex2line button to appear (may be JS-injected)
-            NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 45_000L, abortOnFailure = false),
+            // Step 1: Wait for the JS on the movie page to auto-navigate to freex2line.online
+            // (v6 auto-redirects; no manual button click needed)
+            NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 45_000L, abortOnFailure = false),
 
-            // Step 2: Click the freex2line button — this triggers the full redirect chain:
-            //   freex2line.online/loadon → href.li → redirectingfree → blog-post.html → get-link.php → /watching/?token=...
-            NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L, abortOnFailure = false),
+            // Step 2: If auto-navigation didn't happen, try clicking the button manually
+            NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 5_000L, abortOnFailure = false),
+            NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 3_000L, abortOnFailure = false),
 
-            // Step 3: Try to dismiss any consent/interstitial popups (href.li, etc.)
-            NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent_early"),
+            // Step 3: Wait for freex2line.online (should be navigating now)
+            NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15_000L, abortOnFailure = false),
 
-            // Step 4: Wait for the chain to finish at blog-post.html
-            // (the final landing page before the get-link.php call)
+            // Step 4: Let Cloudflare challenge solve + full redirect chain play out:
+            //   freex2line.online → CF challenge → href.li → redirectingfree → blog-post.html
+            //   (CF JS challenge takes 5-15s, then redirects happen)
+            NavigationStep.WaitForDelay(20_000L),
+
+            // Step 5: Wait for blog-post.html (the final landing before get-link.php)
             NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60_000L, abortOnFailure = false),
 
-            // Step 5: Give time for blog-post.html's JS to execute:
-            //   - Gather browser fingerprint (UA, screen, etc.)
+            // Step 6: Give time for blog-post.html's JS to:
+            //   - Gather browser fingerprint
             //   - Call get-link.php?request_id=...&hmac_token=...&ch=...&fp=...
-            //   - Receive the watching URL with token
             //   - Navigate to /watching/?token=...
             NavigationStep.WaitForDelay(10_000L),
 
-            // Step 6: Dismiss any remaining consent popups before extracting
+            // Step 7: Dismiss any consent popups
             NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent"),
 
-            // Step 7: Wait for the watching page URL (with or without token)
-            NavigationStep.WaitForUrl("/watching/", timeoutMs = 45_000L, abortOnFailure = true),
+            // Step 8: Navigate to the watching URL captured from get-link.php
+            // (get-link.php returns the watching page URL; the interceptor captures and stores it)
+            NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-            // Step 8: Let the watching page DOM fully render
+            // Step 9: Let the watching page render
             NavigationStep.WaitForDelay(8_000L),
 
-            // Step 9: Debug: dump DOM state for troubleshooting
+            // Step 10: Debug DOM
             NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
 
-            // Step 10: Extract server list from #watch li[data-index]
+            // Step 11: Extract server list
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
 
-            // Step 11: Fetch iframe URLs via core.php for each server
+            // Step 12: Fetch iframes via core.php
             NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
 
-            // Step 12: Wait for all fetch() calls to complete
+            // Step 13: Wait for fetches
             NavigationStep.WaitForDelay(5_000L),
 
-            // Step 13: Collect the iframe results
+            // Step 14: Collect iframe results
             NavigationStep.ExecuteJs(
                 javascript = "(function(){ return window._serverResults || '[]'; })();",
                 key = "iframe_results"
             ),
 
-            // Step 14: Extract download links
+            // Step 15: Extract download links
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
-            // Step 15: Save raw watch page HTML for debugging
+            // Step 16: Save watch page HTML
             NavigationStep.ExtractHtml(key = "watch_page_raw")
         )
     }

@@ -121,6 +121,11 @@ sealed class NavigationStep {
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
+    /** Navigate to the watching URL captured by the request interceptor from get-link.php */
+    data class NavigateToWatchingUrl(
+        val abortOnFailure: Boolean = true
+    ) : NavigationStep()
+
     data class ExtractHtml(
         val selector: String? = null,
         val key: String = ""
