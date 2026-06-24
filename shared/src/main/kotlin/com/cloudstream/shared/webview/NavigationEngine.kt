@@ -314,24 +314,31 @@ class NavigationEngine(
 
                 val host = request.url?.host?.lowercase() ?: ""
                 val path = request.url?.path?.lowercase() ?: ""
+                val reqHeaders = request.requestHeaders ?: emptyMap()
 
-                // As a fallback for sub-resources (JS/CSS) if the reflection failed to hide the package name,
-                // we strip it here to prevent MIME type errors on cimanow.cc assets.
-                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
+                // Identify requests that will leak the package name or are blocked AJAX endpoints
+                val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
+                val isAjaxEndpoint = path.contains("core.php")
                 val isAsset = path.endsWith(".js") || path.endsWith(".css")
 
-                if (isProtectedDomain && isAsset) {
+                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
+
+                // Intercept if it's an asset, an AJAX call, OR if the header leaked on any sub-resource
+                if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = true
 
-                        request.requestHeaders?.forEach { (key, value) ->
+                        // Copy all headers EXCEPT X-Requested-With
+                        reqHeaders.forEach { (key, value) ->
                             if (!key.equals("X-Requested-With", true)) {
                                 conn.setRequestProperty(key, value)
                             }
                         }
+                        // Explicitly send an empty string to overwrite the package name
                         conn.setRequestProperty("X-Requested-With", "")
 
+                        // Pass the Cloudflare cookie that the main frame acquired
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
                         if (!cookies.isNullOrBlank()) {
                             conn.setRequestProperty("Cookie", cookies)
@@ -344,14 +351,14 @@ class NavigationEngine(
                             val mime = ct.substringBefore(";").trim()
                             val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
                             val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
-                            ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPT ASSET ${reqUrl.take(100)}")
+                            ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED CLEAN ${reqUrl.take(100)}")
                             return WebResourceResponse(mime, charset.name(), conn.inputStream)
                         } else {
-                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Asset intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
+                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
                             return null
                         }
                     } catch (e: Exception) {
-                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Asset intercept failed: ${e.message}")
+                        ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept failed: ${e.message}")
                     }
                 }
 
