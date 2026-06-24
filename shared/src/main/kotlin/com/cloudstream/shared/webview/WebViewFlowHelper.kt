@@ -116,41 +116,61 @@ class WebViewFlowHelper(
 
     private fun buildStepList(): List<NavigationStep> {
         return listOf(
+            // Step 0: Load the movie page
             NavigationStep.LoadUrl(movieUrl),
+
+            // Step 1: Wait for the freex2line button to appear (may be JS-injected)
             NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 45_000L, abortOnFailure = false),
+
+            // Step 2: Click the freex2line button — this triggers the full redirect chain:
+            //   freex2line.online/loadon → href.li → redirectingfree → blog-post.html → get-link.php → /watching/?token=...
             NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L, abortOnFailure = false),
 
-            // Wait until we land on freex2line.online
-            NavigationStep.WaitForUrl("freex2line.online", timeoutMs = 30_000L, abortOnFailure = true),
+            // Step 3: Try to dismiss any consent/interstitial popups (href.li, etc.)
+            NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent_early"),
 
-            // Wait 3s for our injected countdown360 mock to trigger the site's native onComplete callback,
-            // which will enable the hidden "Get Link" button.
-            NavigationStep.WaitForDelay(3_000L),
+            // Step 4: Wait for the chain to finish at blog-post.html
+            // (the final landing page before the get-link.php call)
+            NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60_000L, abortOnFailure = false),
+
+            // Step 5: Give time for blog-post.html's JS to execute:
+            //   - Gather browser fingerprint (UA, screen, etc.)
+            //   - Call get-link.php?request_id=...&hmac_token=...&ch=...&fp=...
+            //   - Receive the watching URL with token
+            //   - Navigate to /watching/?token=...
+            NavigationStep.WaitForDelay(10_000L),
+
+            // Step 6: Dismiss any remaining consent popups before extracting
             NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent"),
 
-            // Wait for the button to become visible & enabled
-            NavigationStep.WaitForDomCondition(
-                jsCondition = JS_VISIBLE_SERVER_LINK_CONDITION,
-                timeoutMs = 15_000L,
-                pollIntervalMs = 1000L
-            ),
+            // Step 7: Wait for the watching page URL (with or without token)
+            NavigationStep.WaitForUrl("/watching/", timeoutMs = 45_000L, abortOnFailure = true),
 
-            // Click the button natively
-            NavigationStep.ExecuteJs(javascript = JS_FIND_SERVER_LINK, key = "server_link_click"),
-
-            // Wait for CimaNow to accept the native redirect and load the watching page
-            NavigationStep.WaitForUrl("/watching/", timeoutMs = 30_000L, abortOnFailure = true),
-
+            // Step 8: Let the watching page DOM fully render
             NavigationStep.WaitForDelay(8_000L),
+
+            // Step 9: Debug: dump DOM state for troubleshooting
             NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
+
+            // Step 10: Extract server list from #watch li[data-index]
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
+
+            // Step 11: Fetch iframe URLs via core.php for each server
             NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
+
+            // Step 12: Wait for all fetch() calls to complete
             NavigationStep.WaitForDelay(5_000L),
+
+            // Step 13: Collect the iframe results
             NavigationStep.ExecuteJs(
                 javascript = "(function(){ return window._serverResults || '[]'; })();",
                 key = "iframe_results"
             ),
+
+            // Step 14: Extract download links
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
+
+            // Step 15: Save raw watch page HTML for debugging
             NavigationStep.ExtractHtml(key = "watch_page_raw")
         )
     }

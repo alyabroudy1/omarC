@@ -459,31 +459,6 @@ class NavigationEngine(
                 val isMainFrame = request.isForMainFrame
                 val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
 
-                // NUCLEAR BYPASS FOR freex2line.online
-                // We intercept the redirect to freex2line, decode the base64 link, and jump straight to cimanow/watching/
-                // We fake the Referer header so CimaNow's anti-leech protection thinks we came from freex2line.
-                if (isMainFrame && nextUrl.contains("freex2line.online/loadon")) {
-                    val linkParam = request.url?.getQueryParameter("link")
-                    if (linkParam != null) {
-                        try {
-                            val decodedBytes = android.util.Base64.decode(linkParam, android.util.Base64.DEFAULT)
-                            val decodedUrl = String(decodedBytes, Charsets.UTF_8)
-
-                            ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "Bypassing freex2line -> decoded URL: ${decodedUrl.take(80)}")
-
-                            val headers = mutableMapOf<String, String>()
-                            headers["X-Requested-With"] = ""
-                            // THE MAGIC TRICK: Fake the referer so CimaNow accepts us
-                            headers["Referer"] = nextUrl
-
-                            view?.loadUrl(decodedUrl, headers)
-                            return true
-                        } catch (e: Exception) {
-                            ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "Base64 decode failed, falling back", "error" to e.message)
-                        }
-                    }
-                }
-
                 if (isMainFrame && isOnDestination) {
                     ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK", "url" to nextUrl, "host" to nextHost)
                     return true
