@@ -10,6 +10,7 @@ import com.cloudstream.shared.logging.ProviderLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.nio.charset.Charset
 
 class NavigationEngine(
     private val activityProvider: () -> android.app.Activity?
@@ -306,7 +307,6 @@ class NavigationEngine(
                 val path = request.url?.path?.lowercase() ?: ""
                 val accept = request.requestHeaders?.get("Accept") ?: ""
 
-                // Intercept HTML, JS, and CSS for Cloudflare protected domains to strip X-Requested-With
                 val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
                 val isAssetOrDoc = accept.contains("text/html") || path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".htm")
 
@@ -315,13 +315,12 @@ class NavigationEngine(
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = true
 
-                        // Copy original headers except X-Requested-With
                         request.requestHeaders?.forEach { (key, value) ->
                             if (!key.equals("X-Requested-With", true)) {
                                 conn.setRequestProperty(key, value)
                             }
                         }
-                        conn.setRequestProperty("X-Requested-With", "") // Bypass Cloudflare WAF
+                        conn.setRequestProperty("X-Requested-With", "")
 
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
                         if (!cookies.isNullOrBlank()) {
@@ -340,8 +339,39 @@ class NavigationEngine(
                         if (conn.responseCode == 200) {
                             val ct = conn.contentType ?: defaultMime
                             val mime = ct.substringBefore(";").trim().ifEmpty { defaultMime }
-                            val encoding = ct.substringAfter("charset=", "utf-8").trim()
-                            return WebResourceResponse(mime, encoding, conn.inputStream)
+                            val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
+                            val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
+
+                            var inputStream = conn.inputStream
+
+                            // Inject countdown360 mock for freex2line.online to fix the broken timer
+                            if (mime == "text/html" && host.contains("freex2line.online")) {
+                                val htmlText = inputStream.bufferedReader(charset).use { it.readText() }
+                                val mockScript = """
+                                <script>
+                                (function() {
+                                    var checkJq = setInterval(function() {
+                                        if (window.jQuery) {
+                                            clearInterval(checkJq);
+                                            jQuery.fn.countdown360 = function(opts) {
+                                                console.log('[Nav] Mocked countdown360 triggered, calling onComplete');
+                                                setTimeout(function() {
+                                                    if (opts && typeof opts.onComplete === 'function') {
+                                                        opts.onComplete();
+                                                    }
+                                                }, 1500);
+                                                return { start: function() {}, stop: function() {} };
+                                            };
+                                        }
+                                    }, 10);
+                                })();
+                                </script>
+                                """.trimIndent()
+                                val modifiedHtml = htmlText.replaceFirst("(?i)<head[^>]*>", "$0" + mockScript)
+                                return WebResourceResponse(mime, charset.name(), java.io.ByteArrayInputStream(modifiedHtml.toByteArray(charset)))
+                            }
+
+                            return WebResourceResponse(mime, charset.name(), inputStream)
                         } else {
                             ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
                             return null
