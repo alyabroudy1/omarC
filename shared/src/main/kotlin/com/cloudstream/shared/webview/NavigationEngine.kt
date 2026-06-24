@@ -94,7 +94,7 @@ class NavigationEngine(
 
             try {
                 webView = createWebView(activity, userAgent)
-                setupWebViewClient(webView, requestInterceptor, allowedDomains, destinationLockPatterns)
+                setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains, destinationLockPatterns)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -280,6 +280,7 @@ class NavigationEngine(
 
     private fun setupWebViewClient(
         webView: WebView,
+        userAgent: String, // Passed in to avoid calling webView.settings on background thread
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList()
@@ -323,31 +324,48 @@ class NavigationEngine(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                if (request == null || view == null) return null
+                if (request == null) return null
                 val reqUrl = request.url?.toString() ?: return null
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
 
-                // cimanow.cc returns text/html for CSS/JS when it sees X-Requested-With.
-                // Re-fetch only affected domain assets via HttpURLConnection (never sends that header).
+                // cimanow.cc returns text/html for CSS/JS when it sees X-Requested-With or lacks CF cookies.
+                // Re-fetch only affected domain assets via HttpURLConnection.
                 val host = request.url?.host?.lowercase() ?: ""
                 val path = request.url?.path?.lowercase() ?: ""
                 if (host.contains("cimanow.cc") && (path.endsWith(".css") || path.endsWith(".js"))) {
                     try {
                         val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        conn.setRequestProperty("User-Agent", webView.settings.userAgentString)
+
+                        // Use the passed 'userAgent' instead of view.settings.userAgentString
+                        conn.setRequestProperty("User-Agent", userAgent)
                         conn.setRequestProperty("Accept", mimeType)
+                        conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9,ar;q=0.8")
+                        conn.setRequestProperty("X-Requested-With", "") // Must be explicitly cleared
+
+                        // CookieManager is thread-safe, so we can call it here to inject Cloudflare cookies
+                        val cookies = CookieManager.getInstance().getCookie(reqUrl)
+                        if (!cookies.isNullOrBlank()) {
+                            conn.setRequestProperty("Cookie", cookies)
+                        }
+
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
                         ProviderLogger.d(TAG, "shouldInterceptRequest", "RE-FETCH ${reqUrl.take(120)} as $mimeType")
-                        return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
+
+                        if (conn.responseCode == 200) {
+                            return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
+                        } else {
+                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Re-fetch non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
+                            return null
+                        }
                     } catch (e: Exception) {
                         ProviderLogger.w(TAG, "shouldInterceptRequest", "Re-fetch failed: ${e.message}")
                     }
                 }
 
-                if (requestInterceptor != null) {
+                if (requestInterceptor != null && view != null) {
                     return requestInterceptor.invoke(view, request)
                 }
                 return null
@@ -772,13 +790,13 @@ class NavigationEngine(
             window?.let { w ->
                 @Suppress("DEPRECATION")
                 w.decorView.systemUiVisibility = (
-                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-                        or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    )
+                        android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                                or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                                or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        )
                 w.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
