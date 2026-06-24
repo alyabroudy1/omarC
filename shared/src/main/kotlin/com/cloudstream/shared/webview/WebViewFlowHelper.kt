@@ -5,25 +5,6 @@ import org.json.JSONObject
 import org.json.JSONArray
 import org.json.JSONTokener
 
-/**
- * Direct port of the working WebView navigation flow from the demo project.
- *
- * Starts at the CimaNow movie page, navigates through freex2line redirect chain
- * (with consent dismissal and anti-ad filtering), arrives at the watching page,
- * then extracts server metadata, AJAX-fetches iframe URLs, and extracts download links.
- *
- * ## Usage
- * ```kotlin
- * val helper = WebViewFlowHelper(navigationEngine)
- * val result = helper.navigateMovieToWatchPage(
- *     movieUrl = "https://cimanow.cc/some-movie/",
- *     config = Config(
- *         allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li"),
- *         destinationLockPatterns = listOf("/watching/")
- *     )
- * )
- * ```
- */
 class WebViewFlowHelper(
     private val navigationEngine: NavigationEngine
 ) {
@@ -69,7 +50,7 @@ class WebViewFlowHelper(
 
         val destinationLockRegexes = config.destinationLockPatterns.map { Regex(it) }
 
-        this.movieUrl = movieUrl  // set the field so buildStepList() can use it
+        this.movieUrl = movieUrl
         val steps = buildStepList()
 
         val navResult = navigationEngine.execute(
@@ -100,7 +81,6 @@ class WebViewFlowHelper(
             )
         }
 
-        // Parse servers from extracted HTML results
         val servers = parseServers(navResult)
         val iframeResults = fetchIframeUrls(navResult, config)
         val serversWithIframes = servers.mapIndexed { index, server ->
@@ -137,20 +117,15 @@ class WebViewFlowHelper(
     private fun buildStepList(): List<NavigationStep> {
         return listOf(
             NavigationStep.LoadUrl(movieUrl),
-            NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 45_000L),
-            NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L),
-            NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60_000L),
-            // Wait 12s to ensure the 10s countdown on freex2line finishes
-            NavigationStep.WaitForDelay(12_000L),
-            NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent"),
-            NavigationStep.WaitForDelay(2_000L),
-            NavigationStep.WaitForDomCondition(
-                jsCondition = JS_VISIBLE_SERVER_LINK_CONDITION,
-                timeoutMs = 15_000L,
-                pollIntervalMs = 1000L
-            ),
-            NavigationStep.ExecuteJs(javascript = JS_FIND_SERVER_LINK, key = "server_link_click"),
-            NavigationStep.WaitForUrl("/watching/", timeoutMs = 15_000L),
+            // Wait for the CimaNow watch button to appear. abortOnFailure=false in case the site auto-redirects before we find it.
+            NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 15_000L, abortOnFailure = false),
+            // Click it to trigger the freex2line redirect (which NavigationEngine will intercept and decode)
+            NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 2_000L, abortOnFailure = false),
+
+            // We bypass freex2line entirely in NavigationEngine, so we just wait until we land on the /watching/ page
+            NavigationStep.WaitForUrl("/watching/", timeoutMs = 30_000L, abortOnFailure = true),
+
+            // Give the /watching/ page a moment to render its DOM
             NavigationStep.WaitForDelay(8_000L),
             NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
@@ -217,101 +192,6 @@ class WebViewFlowHelper(
     }
 
     companion object {
-        val JS_DISMISS_CONSENT = """
-(function() {
-    var found = false;
-    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button');
-    var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق'];
-    for (var i = 0; i < candidates.length; i++) {
-        var el = candidates[i];
-        var text = (el.innerText || el.textContent || '').trim().toLowerCase();
-        if (text.length === 0 || text.length > 30) continue;
-        for (var k = 0; k < keywords.length; k++) {
-            if (text.indexOf(keywords[k]) !== -1) {
-                var rect = el.getBoundingClientRect();
-                var visible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
-                console.log('[Nav] consent candidate:', el.tagName, 'text="' + text + '" visible=' + visible);
-                if (visible) {
-                    try { el.click(); console.log('[Nav] clicked consent:', text); found = true; } catch(e) {}
-                }
-                break;
-            }
-        }
-    }
-    if (!found) {
-        var closeSelectors = ['.close', '.close-btn', '.modal-close', '.popup-close', '[onclick*="close"]', '.fc-cta-consent', '.fc-button', '.cc-btn', '.agree-btn', '#continue', '.continue', '.accept-btn'];
-        for (var i = 0; i < closeSelectors.length; i++) {
-            var els = document.querySelectorAll(closeSelectors[i]);
-            for (var j = 0; j < els.length; j++) {
-                var rect = els[j].getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0 && els[j].offsetParent !== null) {
-                    try { els[j].click(); console.log('[Nav] clicked close btn:', closeSelectors[i]); found = true; } catch(e) {}
-                    break;
-                }
-            }
-            if (found) break;
-        }
-    }
-    return found ? 'consent_dismissed' : 'no_consent';
-})();
-        """.trimIndent()
-
-        val JS_VISIBLE_SERVER_LINK_CONDITION = """
-(function(){
-    try {
-        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-        for (var i = 0; i < links.length; i++) {
-            var r = links[i].getBoundingClientRect();
-            var href = links[i].href || '';
-            var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
-            
-            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null && !isDisabled
-                && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-                console.log('[Nav] found visible & enabled server link:', href);
-                return true;
-            }
-        }
-        return false;
-    } catch(e) { return false; }
-})()
-        """.trimIndent()
-
-        val JS_FIND_SERVER_LINK = """
-(function() {
-    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-    for (var i = 0; i < links.length; i++) {
-        var rect = links[i].getBoundingClientRect();
-        var visible = rect.width > 0 && rect.height > 0 && links[i].offsetParent !== null;
-        var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
-        
-        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible, 'disabled=' + isDisabled);
-        
-        if (visible && !isDisabled) {
-            var href = links[i].href || '';
-            if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) {
-                console.log('[Nav] skipping ad link:', href);
-                continue;
-            }
-            console.log('[Nav] clicking server link:', href);
-            try { links[i].click(); return 'clicked:' + href; } catch(e) { return 'error:' + e.message; }
-        }
-    }
-    var allLinks = document.querySelectorAll('a[href]:not([href=""]):not([href^="javascript"])');
-    for (var i = 0; i < allLinks.length; i++) {
-        var rect = allLinks[i].getBoundingClientRect();
-        var href = allLinks[i].href || '';
-        var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || (allLinks[i].style.pointerEvents === 'none');
-        
-        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled 
-            && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-            console.log('[Nav] fallback clicking:', href);
-            try { allLinks[i].click(); return 'clicked_fallback:' + href; } catch(e) {}
-        }
-    }
-    return 'no_server_link';
-})();
-        """.trimIndent()
-
         val JS_DEBUG_DOM = """
 (function(){
     var uls = document.querySelectorAll('ul');

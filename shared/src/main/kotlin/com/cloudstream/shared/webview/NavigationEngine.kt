@@ -11,29 +11,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/**
- * Multi-step WebView navigation engine with trusted touch simulation.
- *
- * Simulates real user interactions (load page, click elements, wait for
- * conditions, extract HTML) in a headless or fullscreen WebView.
- * Each step produces isTrusted=true touch events via dispatchTouchEvent,
- * which anti-bot scripts cannot distinguish from real user input.
- *
- * Architecture mirrors [CfBypassEngine] and [VideoSnifferEngine]:
- * - No stored state (cookies returned to caller)
- * - Activity obtained via [activityProvider]
- * - Runs on [Dispatchers.Main] for WebView thread safety
- *
- * Typical flow for CimaNow:
- *   1. LoadUrl(movieDetailPage)        — open the movie page
- *   2. WaitForSelector("a.shine")      — wait for watch button
- *   3. ClickElement("a.shine")         — click watch (trusted touch)
- *   4. WaitForUrl("freex2line")         — wait for redirect to shortlink
- *   5. WaitForDomCondition(btnEnabled)  — wait for 10s counter
- *   6. ClickElement("#watch-btn")       — click watch+download
- *   7. WaitForUrl("cimanow.cc/watching")— wait for watch page
- *   8. ExtractHtml()                   — grab rendered server HTML
- */
 class NavigationEngine(
     private val activityProvider: () -> android.app.Activity?
 ) {
@@ -49,9 +26,7 @@ class NavigationEngine(
             view: WebView,
             request: WebResourceRequest
         ) -> WebResourceResponse?)? = null,
-        /** Only navigation to these domains (or subdomains) is allowed. Empty = allow all. */
         allowedDomains: Set<String> = emptySet(),
-        /** Once the URL matches one of these regex patterns, all main-frame navigation away is blocked. */
         destinationLockPatterns: List<Regex> = emptyList()
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
@@ -244,7 +219,6 @@ class NavigationEngine(
                 javaScriptCanOpenWindowsAutomatically = false
                 setSupportMultipleWindows(false)
             }
-            // Use reflection to clear X-Requested-With header for ALL requests (not just loadUrl)
             hideXRequestedWithHeader(this)
         }
     }
@@ -280,7 +254,7 @@ class NavigationEngine(
 
     private fun setupWebViewClient(
         webView: WebView,
-        userAgent: String, // Passed in to avoid calling webView.settings on background thread
+        userAgent: String,
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList()
@@ -296,7 +270,6 @@ class NavigationEngine(
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url != null) {
                     ProviderLogger.i(TAG, "onPageStarted", "URL=${url}")
-                    // Update destination lock state
                     if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
                         if (!isOnDestination) {
                             ProviderLogger.i(TAG, "onPageStarted", "Destination lock engaged for URL matching pattern", "url" to url)
@@ -329,31 +302,23 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
 
-                // cimanow.cc returns text/html for CSS/JS when it sees X-Requested-With or lacks CF cookies.
-                // Re-fetch only affected domain assets via HttpURLConnection.
                 val host = request.url?.host?.lowercase() ?: ""
                 val path = request.url?.path?.lowercase() ?: ""
                 if (host.contains("cimanow.cc") && (path.endsWith(".css") || path.endsWith(".js"))) {
                     try {
                         val mimeType = if (path.endsWith(".css")) "text/css" else "application/javascript"
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-
-                        // Use the passed 'userAgent' instead of view.settings.userAgentString
                         conn.setRequestProperty("User-Agent", userAgent)
                         conn.setRequestProperty("Accept", mimeType)
                         conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9,ar;q=0.8")
-                        conn.setRequestProperty("X-Requested-With", "") // Must be explicitly cleared
-
-                        // CookieManager is thread-safe, so we can call it here to inject Cloudflare cookies
+                        conn.setRequestProperty("X-Requested-With", "")
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
                         if (!cookies.isNullOrBlank()) {
                             conn.setRequestProperty("Cookie", cookies)
                         }
-
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
                         ProviderLogger.d(TAG, "shouldInterceptRequest", "RE-FETCH ${reqUrl.take(120)} as $mimeType")
-
                         if (conn.responseCode == 200) {
                             return WebResourceResponse(mimeType, "UTF-8", conn.inputStream)
                         } else {
@@ -379,16 +344,37 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != null && scheme != "http" && scheme != "https") return true
 
+                // CimaNow uses freex2line.online as an ad-gateway shortlink.
+                // It passes the final destination URL as a base64 string in the 'link' parameter.
+                // Cloudflare blocks this domain in WebView due to X-Requested-With leaking.
+                // We bypass it entirely by decoding the base64 and navigating directly.
+                if (nextUrl.contains("freex2line.online/loadon")) {
+                    val linkParam = request.url?.getQueryParameter("link")
+                    if (linkParam != null) {
+                        try {
+                            val decodedBytes = android.util.Base64.decode(linkParam, android.util.Base64.DEFAULT)
+                            val decodedUrl = String(decodedBytes, Charsets.UTF_8)
+
+                            ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "Bypassing freex2line shortlink -> navigating directly to decoded URL", "decoded" to decodedUrl.take(120))
+
+                            val headers = mutableMapOf<String, String>()
+                            headers["X-Requested-With"] = ""
+                            view?.loadUrl(decodedUrl, headers)
+                            return true
+                        } catch (e: Exception) {
+                            ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "Failed to decode freex2line link, falling back", "error" to e.message)
+                        }
+                    }
+                }
+
                 val isMainFrame = request?.isForMainFrame == true
                 val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
 
-                // Destination lock: once on destination, block all main-frame nav away
                 if (isMainFrame && isOnDestination) {
                     ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK", "url" to nextUrl, "host" to nextHost)
                     return true
                 }
 
-                // Domain allowlist: if non-empty, only allow navigations to allowed domains
                 if (allowedDomains.isNotEmpty()) {
                     val allowed = allowedDomains.any { allowedDomain ->
                         nextHost == allowedDomain || nextHost.endsWith(".$allowedDomain")
@@ -446,11 +432,6 @@ class NavigationEngine(
         webView.loadUrl(url, headers)
     }
 
-    /**
-     * Click an element found by CSS selector.
-     * First tries native touch event at element coordinates.
-     * If element has zero bounding rect (hidden/detached), falls back to JS click.
-     */
     private suspend fun clickElementInWebView(
         webView: WebView,
         selector: String,
@@ -464,7 +445,6 @@ class NavigationEngine(
                 ProviderLogger.i(TAG, "clickElement", "Native click $selector at (${coords.first}, ${coords.second})")
                 return true
             }
-            // Try JS click fallback (handles display:none / zero-rect elements)
             val jsClicked = jsClickElement(webView, selector)
             if (jsClicked) {
                 ProviderLogger.i(TAG, "clickElement", "JS click fallback $selector")
@@ -476,10 +456,6 @@ class NavigationEngine(
         return false
     }
 
-    /**
-     * Fallback click using JavaScript's el.click().
-     * Works on elements with zero bounding rect that can't receive native touch events.
-     */
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun jsClickElement(webView: WebView, selector: String): Boolean {
         return suspendCancellableCoroutine { cont ->
@@ -516,10 +492,6 @@ class NavigationEngine(
         }
     }
 
-    /**
-     * Find an element's center coordinates in physical pixels via JS.
-     * Returns null if the element is not found or not visible.
-     */
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun findElementCoordinates(webView: WebView, selector: String): Pair<Float, Float>? {
         return suspendCancellableCoroutine { cont ->
@@ -578,10 +550,6 @@ class NavigationEngine(
         }
     }
 
-    /**
-     * Dispatch a trusted native touch event (ACTION_DOWN + ACTION_UP) at physical pixel coordinates.
-     * The browser treats this as a real user touch (isTrusted=true in JS).
-     */
     private fun dispatchNativeClick(webView: WebView, x: Float, y: Float) {
         Handler(Looper.getMainLooper()).post {
             val downTime = SystemClock.uptimeMillis()
