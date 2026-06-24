@@ -227,35 +227,84 @@ class NavigationEngine(
 
     private fun hideXRequestedWithHeader(webView: WebView) {
         try {
-            val providerField = WebView::class.java.getDeclaredField("mProvider")
-            providerField.isAccessible = true
-            val provider = providerField.get(webView)
-
-            // Try calling the hidden method setXRequestedWithHeader
+            // Approach 1: Direct method on WebView itself (newer Chrome WebViews)
             try {
-                val method = provider.javaClass.getMethod("setXRequestedWithHeader", String::class.java)
-                method.invoke(provider, "")
-                ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via setXRequestedWithHeader method")
+                val method = WebView::class.java.getMethod("setXRequestedWithHeader", String::class.java)
+                method.invoke(webView, "")
+                ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via WebView.setXRequestedWithHeader method")
                 return
             } catch (_: NoSuchMethodException) {}
 
-            // Fallback: try setting the field directly on the provider
-            var cls: Class<*>? = provider.javaClass
-            while (cls != null) {
+            // Approach 2: Method on mProvider
+            try {
+                val providerField = WebView::class.java.getDeclaredField("mProvider")
+                providerField.isAccessible = true
+                val provider = providerField.get(webView)
                 try {
-                    val f = cls.getDeclaredField("mXRequestedWithHeader")
-                    f.isAccessible = true
-                    f.set(provider, "")
-                    ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via field on provider")
+                    val method = provider.javaClass.getMethod("setXRequestedWithHeader", String::class.java)
+                    method.invoke(provider, "")
+                    ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via provider.setXRequestedWithHeader method")
                     return
-                } catch (_: NoSuchFieldException) {
-                    cls = cls.superclass
+                } catch (_: NoSuchMethodException) {}
+
+                // Approach 3: Field mXRequestedWithHeader on provider hierarchy
+                var cls: Class<*>? = provider.javaClass
+                while (cls != null) {
+                    try {
+                        val f = cls.getDeclaredField("mXRequestedWithHeader")
+                        f.isAccessible = true
+                        f.set(provider, "")
+                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via field mXRequestedWithHeader on provider")
+                        return
+                    } catch (_: NoSuchFieldException) {
+                        cls = cls.superclass
+                    }
                 }
+
+                // Approach 4: Field xRequestedWithHeader (camelCase, no m-prefix)
+                cls = provider.javaClass
+                while (cls != null) {
+                    try {
+                        val f = cls.getDeclaredField("xRequestedWithHeader")
+                        f.isAccessible = true
+                        f.set(provider, "")
+                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via field xRequestedWithHeader on provider")
+                        return
+                    } catch (_: NoSuchFieldException) {
+                        cls = cls.superclass
+                    }
+                }
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Provider access failed: ${e.message}")
+            }
+
+            // Approach 5: Try AwContents fields through WebViewChromium
+            try {
+                val providerField = WebView::class.java.getDeclaredField("mProvider")
+                providerField.isAccessible = true
+                val provider = providerField.get(webView)
+                val awContentsField = provider.javaClass.getDeclaredField("mAwContents")
+                awContentsField.isAccessible = true
+                val awContents = awContentsField.get(provider)
+                var cls2: Class<*>? = awContents.javaClass
+                while (cls2 != null) {
+                    try {
+                        val f = cls2.getDeclaredField("mXRequestedWithHeader")
+                        f.isAccessible = true
+                        f.set(awContents, "")
+                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via AwContents.mXRequestedWithHeader")
+                        return
+                    } catch (_: NoSuchFieldException) {
+                        cls2 = cls2.superclass
+                    }
+                }
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG, "hideXRequestedWithHeader", "AwContents approach failed: ${e.message}")
             }
         } catch (e: Exception) {
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Provider reflection failed: ${e.message}")
+            ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Reflection failed: ${e.message}")
         }
-        ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak")
+        ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak — using interceptor as fallback")
     }
 
     private fun setupWebViewClient(
@@ -338,6 +387,18 @@ class NavigationEngine(
                         // Explicitly send an empty string to overwrite the package name
                         conn.setRequestProperty("X-Requested-With", "")
 
+                        // CRITICAL: Set a proper browser User-Agent — HttpURLConnection defaults to "Java/1.x"
+                        conn.setRequestProperty("User-Agent", userAgent)
+
+                        // Set Referer if the original request had one (anti-hotlink protection)
+                        val originalReferer = reqHeaders["Referer"]
+                        if (!originalReferer.isNullOrBlank()) {
+                            conn.setRequestProperty("Referer", originalReferer)
+                        }
+
+                        // Standard browser accept header
+                        conn.setRequestProperty("Accept", "*/*")
+
                         // Pass the Cloudflare cookie that the main frame acquired
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
                         if (!cookies.isNullOrBlank()) {
@@ -348,10 +409,29 @@ class NavigationEngine(
 
                         if (conn.responseCode == 200) {
                             val ct = conn.contentType ?: "application/octet-stream"
-                            val mime = ct.substringBefore(";").trim()
+                            val reportedMime = ct.substringBefore(";").trim()
                             val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
                             val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
-                            ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED CLEAN ${reqUrl.take(100)}")
+
+                            // Override wrong MIME types — server may return text/html for JS/CSS
+                            // to block scrapers. Force correct type based on file extension.
+                            val mime = when {
+                                reportedMime == "text/html" && path.endsWith(".js") -> "application/javascript"
+                                reportedMime == "text/html" && path.endsWith(".css") -> "text/css"
+                                reportedMime == "text/html" && path.endsWith(".json") -> "application/json"
+                                reportedMime == "text/html" && path.endsWith(".svg") -> "image/svg+xml"
+                                reportedMime == "text/html" && path.endsWith(".woff2") -> "font/woff2"
+                                reportedMime == "text/html" && path.endsWith(".woff") -> "font/woff"
+                                reportedMime == "text/html" && path.endsWith(".png") -> "image/png"
+                                reportedMime == "text/html" && path.endsWith(".jpg") -> "image/jpeg"
+                                reportedMime == "text/html" && path.endsWith(".jpeg") -> "image/jpeg"
+                                reportedMime == "text/html" && path.endsWith(".gif") -> "image/gif"
+                                reportedMime == "text/html" && path.endsWith(".webp") -> "image/webp"
+                                else -> reportedMime
+                            }
+
+                            val mimeLog = if (mime != reportedMime) "$reportedMime -> $mime" else mime
+                            ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED ${reqUrl.take(80)} ($mimeLog)")
                             return WebResourceResponse(mime, charset.name(), conn.inputStream)
                         } else {
                             ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
