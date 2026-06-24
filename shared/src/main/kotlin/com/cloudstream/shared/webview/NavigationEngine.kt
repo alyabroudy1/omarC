@@ -468,7 +468,7 @@ class NavigationEngine(
                                     ProviderLogger.w(TAG, "shouldInterceptRequest", "Captured watching URL: ${body.take(120)}")
                                 }
                                 val emptyBytes = "@".toByteArray()
-                                return WebResourceResponse("text/plain", "utf-8", emptyBytes.size.toLong(), "", emptyMap(), java.io.ByteArrayInputStream(emptyBytes))
+                                return WebResourceResponse("text/plain", "utf-8", emptyBytes.size, "", emptyMap(), java.io.ByteArrayInputStream(emptyBytes))
                             }
 
                             // Override wrong MIME types — server may return text/html for JS/CSS
