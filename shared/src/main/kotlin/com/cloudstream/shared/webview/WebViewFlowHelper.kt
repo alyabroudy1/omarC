@@ -140,7 +140,8 @@ class WebViewFlowHelper(
             NavigationStep.WaitForSelector("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 45_000L),
             NavigationStep.ClickElement("a.shine[href*='freex2line'], a[href*='freex2line']", timeoutMs = 5_000L),
             NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60_000L),
-            NavigationStep.WaitForDelay(8_000L),
+            // Wait 12s to ensure the 10s countdown on freex2line finishes
+            NavigationStep.WaitForDelay(12_000L),
             NavigationStep.ExecuteJs(javascript = JS_DISMISS_CONSENT, key = "consent"),
             NavigationStep.WaitForDelay(2_000L),
             NavigationStep.WaitForDomCondition(
@@ -258,13 +259,15 @@ class WebViewFlowHelper(
         val JS_VISIBLE_SERVER_LINK_CONDITION = """
 (function(){
     try {
-        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"]');
+        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
         for (var i = 0; i < links.length; i++) {
             var r = links[i].getBoundingClientRect();
             var href = links[i].href || '';
-            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null
+            var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
+            
+            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null && !isDisabled
                 && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-                console.log('[Nav] found visible server link:', href);
+                console.log('[Nav] found visible & enabled server link:', href);
                 return true;
             }
         }
@@ -275,12 +278,15 @@ class WebViewFlowHelper(
 
         val JS_FIND_SERVER_LINK = """
 (function() {
-    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"]');
+    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
     for (var i = 0; i < links.length; i++) {
         var rect = links[i].getBoundingClientRect();
         var visible = rect.width > 0 && rect.height > 0 && links[i].offsetParent !== null;
-        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible);
-        if (visible) {
+        var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
+        
+        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible, 'disabled=' + isDisabled);
+        
+        if (visible && !isDisabled) {
             var href = links[i].href || '';
             if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) {
                 console.log('[Nav] skipping ad link:', href);
@@ -294,7 +300,10 @@ class WebViewFlowHelper(
     for (var i = 0; i < allLinks.length; i++) {
         var rect = allLinks[i].getBoundingClientRect();
         var href = allLinks[i].href || '';
-        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
+        var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || (allLinks[i].style.pointerEvents === 'none');
+        
+        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled 
+            && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
             console.log('[Nav] fallback clicking:', href);
             try { allLinks[i].click(); return 'clicked_fallback:' + href; } catch(e) {}
         }
