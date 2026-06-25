@@ -26,13 +26,16 @@ class Laroza : BaseProvider() {
     override val baseDomain get() = "laroza.cfd"
     override val providerName get() = "Laroza"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
-
+    override val paginationFormat get() = "?&page=%d"
 
 
     override val mainPage = mainPageOf(
-        "/category.php?cat=ramadan-2026" to "رمضان 2026",
-        "/category.php?cat=arabic-movies33" to "أفلام",
-        "/category.php?cat=arabic-series46" to "مسلسلات"
+        "/newvideos1.php" to "أحدث الاضافات",
+        "/category.php?cat=all_movies_13" to "افلام اجنبي",
+        "/category.php?cat=7-aflammdblgh" to "افلام مدبلجة",
+        "/moslslat4.php" to "مسلسلات",
+        "/category.php?cat=arabic-series46" to "مسلسلات عربية",
+        "/category.php?cat=tv-programs12" to "برامج تلفزيونية"
     )
 
     override fun getParser(): NewBaseParser {
