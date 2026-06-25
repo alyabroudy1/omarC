@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.app
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -385,11 +385,22 @@ class ByseExtractor(
             val apiUrl = buildApiUrl(host, videoId, "playback")
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
-            // Use app.get() directly — NOT ProviderHttpService.
-            // The Byse CDN token is tied to the client's ASN (network identifier).
-            // ProviderHttpService routes through a CF session proxy with a different ASN,
-            // causing a token mismatch → 404 when ExoPlayer tries to play from the phone's network.
-            val response = com.lagradost.cloudstream3.app.get(apiUrl).text
+            val http = ProviderHttpServiceHolder.getInstance()
+            val response = if (http != null) {
+                // Use ProviderHttpService with desktop UA headers
+                val resp = http.getText(
+                    apiUrl,
+                    headers = mapOf(
+                        "Referer" to "https://$host/",
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Origin" to "https://$host"
+                    ),
+                    skipRewrite = true
+                )
+                resp
+            } else {
+                com.lagradost.cloudstream3.app.get(apiUrl).text
+            }
             
             val responseStr = response ?: ""
             

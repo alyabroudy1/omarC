@@ -48,4 +48,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
 
+    // Luluvid
+    registerExtractorAPI(LuluvidExtractor())
+
 }

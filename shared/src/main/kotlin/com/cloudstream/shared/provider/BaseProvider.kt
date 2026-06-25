@@ -550,19 +550,16 @@ abstract class BaseProvider : MainAPI() {
         val collected = java.util.concurrent.CopyOnWriteArrayList<ExtractorLink>()
         
         try {
-            val matched = withTimeoutOrNull(timeoutMs) {
+            withTimeoutOrNull(timeoutMs) {
                 loadExtractor(targetUrl, referer, subtitleCallback) { link ->
                     collected.add(link)
                 }
-            }
-            if (matched != true) {
-                Log.d("[$name] [collectExtractorLinks]", "loadExtractor returned false for: ${targetUrl.take(80)}")
             }
         } catch (e: Exception) {
             Log.w("[$name] [collectExtractorLinks]", "Exception: ${e.message}")
         }
         
-        Log.d("BaseProvider", "collectExtractorLinks finished. Found ${collected.size} links from $targetUrl")
+        Log.d("BaseProvider", "collectExtractorLinks finished. Found ${collected.size} links")
         return collected.toList()
     }
     
