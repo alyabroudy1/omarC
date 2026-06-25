@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 
 class Cimanow : BaseProvider() {
 
+    override var name = "سيما ناو"
     override val providerName get() = "Cimanow"
     override val baseDomain get() = "cimanow.cc"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimanow.json"

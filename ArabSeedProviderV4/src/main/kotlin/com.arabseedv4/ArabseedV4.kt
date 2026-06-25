@@ -9,6 +9,7 @@ import org.jsoup.nodes.Document
 
 class ArabseedV4 : BaseProvider() {
 
+    override var name = "عرب سيد"
     override val baseDomain get() = "arabseed.show"
     override val providerName get() = "ArabseedV4"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"

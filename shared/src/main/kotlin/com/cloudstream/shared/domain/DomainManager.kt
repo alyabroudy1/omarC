@@ -100,7 +100,7 @@ class DomainManager(
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val configName = "${providerName.lowercase()}.json"
+                val configName = githubConfigUrl?.substringAfterLast("/") ?: "${providerName.lowercase()}.json"
                 val payload = JSONObject().apply {
                     put("provider", providerName.lowercase())
                     put("configFile", configName)
