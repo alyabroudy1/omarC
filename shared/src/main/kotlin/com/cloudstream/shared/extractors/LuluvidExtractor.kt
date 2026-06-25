@@ -1,7 +1,7 @@
 package com.cloudstream.shared.extractors
 
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 
 class LuluvidExtractor : ExtractorApi() {
@@ -15,15 +15,15 @@ class LuluvidExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val http = ProviderHttpServiceHolder.getInstance() ?: return
-        val html = http.getText(url, headers = mapOf("Referer" to (referer ?: mainUrl)), skipRewrite = true) ?: return
+        val actualReferer = referer ?: mainUrl
+        val html = app.get(url, referer = actualReferer).document.outerHtml()
 
         val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
             ?: Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
 
         if (videoUrl != null) {
             callback(newExtractorLink(name, name, videoUrl, type = getLinkType(videoUrl)) {
-                this.referer = referer ?: mainUrl
+                this.referer = actualReferer
                 this.quality = Qualities.Unknown.value
             })
         }

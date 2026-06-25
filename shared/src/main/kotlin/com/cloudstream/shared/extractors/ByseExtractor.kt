@@ -385,10 +385,12 @@ class ByseExtractor(
             val apiUrl = buildApiUrl(host, videoId, "playback")
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
-            val http = ProviderHttpServiceHolder.getInstance()
-            val response = if (http != null) {
-                // Use ProviderHttpService with desktop UA headers
-                val resp = http.getText(
+            val responseStr = try {
+                com.lagradost.cloudstream3.app.get(apiUrl).text ?: ""
+            } catch (e: Exception) {
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "app.get failed, trying ProviderHttpService", "error" to e.message)
+                val http = ProviderHttpServiceHolder.getInstance()
+                http?.getText(
                     apiUrl,
                     headers = mapOf(
                         "Referer" to "https://$host/",
@@ -396,13 +398,8 @@ class ByseExtractor(
                         "Origin" to "https://$host"
                     ),
                     skipRewrite = true
-                )
-                resp
-            } else {
-                com.lagradost.cloudstream3.app.get(apiUrl).text
+                ) ?: ""
             }
-            
-            val responseStr = response ?: ""
             
             if (responseStr.isBlank()) {
                 ProviderLogger.w(EXTRACTOR_TAG, methodName, "Empty API response")
@@ -410,6 +407,12 @@ class ByseExtractor(
             }
             
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Raw API response length: ${responseStr.length}")
+            
+            // Try to extract from embed page if API returned "method not allowed"
+            if (responseStr.contains("method not allowed", ignoreCase = true)) {
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "API rejected, falling back to embed page extraction")
+                return tryEmbedExtraction(host, videoId)
+            }
             
             val result = decryptFromJson(responseStr)
             
@@ -435,6 +438,61 @@ class ByseExtractor(
         }
     }
     
+    private suspend fun tryEmbedExtraction(host: String, videoId: String): DecryptionResult? {
+        val methodName = "tryEmbedExtraction"
+        try {
+            val embedUrl = "https://$host/e/$videoId"
+            ProviderLogger.d(EXTRACTOR_TAG, methodName, "Fetching embed page: $embedUrl")
+            
+            val html = com.lagradost.cloudstream3.app.get(
+                embedUrl,
+                referer = "https://$host/"
+            ).document.outerHtml()
+            
+            ProviderLogger.d(EXTRACTOR_TAG, methodName, "Embed page length: ${html.length}")
+            
+            val sources = mutableListOf<VideoSource>()
+            Regex("""sources:\s*\[\s*\{[^}]*file:\s*["']([^"']+)["'][^}]*\}""").findAll(html).forEach { match ->
+                val url = match.groupValues[1].replace("\\/", "/")
+                if (url.startsWith("http")) {
+                    sources.add(VideoSource(
+                        url = url,
+                        qualityLabel = "",
+                        mimeType = if (url.contains(".m3u8")) "application/x-mpegURL" else null,
+                        height = null,
+                        bitrateKbps = null
+                    ))
+                }
+            }
+            
+            if (sources.isEmpty()) {
+                Regex("""file:\s*["']([^"']+\.(?:m3u8|mp4))["']""").findAll(html).forEach { match ->
+                    val url = match.groupValues[1].replace("\\/", "/")
+                    if (url.startsWith("http")) {
+                        sources.add(VideoSource(
+                            url = url,
+                            qualityLabel = "",
+                            mimeType = if (url.contains(".m3u8")) "application/x-mpegURL" else null,
+                            height = null,
+                            bitrateKbps = null
+                        ))
+                    }
+                }
+            }
+            
+            if (sources.isEmpty()) {
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "No video sources found in embed page")
+                return null
+            }
+            
+            ProviderLogger.i(EXTRACTOR_TAG, methodName, "Extracted ${sources.size} sources from embed page")
+            return DecryptionResult(sources = sources, posterUrl = null, tracks = emptyList())
+        } catch (e: Exception) {
+            ProviderLogger.e(EXTRACTOR_TAG, methodName, "Embed extraction error", e)
+            return null
+        }
+    }
+
     private suspend fun tryWebViewExtraction(
         host: String,
         videoId: String,
