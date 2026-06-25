@@ -151,7 +151,12 @@ class LarozaParser : NewBaseParser() {
     )
 
     override fun extractWatchServersUrls(doc: Document): List<String> {
-        return super.extractWatchServersUrls(doc).reversed()
+        val urls = super.extractWatchServersUrls(doc).reversed()
+        Log.d("LarozaParser", "extractWatchServersUrls: found ${urls.size} embed URL(s)")
+        urls.forEachIndexed { i, url ->
+            Log.d("LarozaParser", "  embed[$i]: $url")
+        }
+        return urls
     }
 
     // Unified Series Detection Logic
