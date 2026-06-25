@@ -23,6 +23,7 @@ import com.cloudstream.shared.provider.BaseProvider
 
 class Laroza : BaseProvider() {
 
+    override var name = "لاروزا"
     override val baseDomain get() = "laroza.cfd"
     override val providerName get() = "Laroza"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/laroza.json"
