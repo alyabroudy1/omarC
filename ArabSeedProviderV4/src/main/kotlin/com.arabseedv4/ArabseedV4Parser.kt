@@ -14,10 +14,10 @@ class ArabseedV4Parser : NewBaseParser() {
     }
     
     override val mainPageConfig = MainPageConfig(
-        container = ".movie__block",
-        title = CssSelector(query = "h3", attr = "text"),
-        url = CssSelector(query = "", attr = "href"),
-        poster = CssSelector(query = "img", attr = "data-src, src")
+        container = "div.MovieBlock, div.item__contents, div.poster__single, div.BlockItem, div.series__box",
+        title = CssSelector(query = "a.movie__block, h4, h3, div.title, div.title___", attr = "title, text"),
+        url = CssSelector(query = "a.movie__block, a", attr = "href"),
+        poster = CssSelector(query = "div.post__image img, img.imgOptimzer, div.Poster img, img", attr = "data-src, data-image, src")
     )
 
     override val searchConfig = mainPageConfig
