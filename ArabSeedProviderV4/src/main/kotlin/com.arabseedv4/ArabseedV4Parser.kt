@@ -30,8 +30,11 @@ class ArabseedV4Parser : NewBaseParser() {
             attr = "text, content"
         ),
         year = CssSelector(query = "div.singleInfo span:contains(السنة) a, div.info__area li:has(span:contains(سنة العرض)) ul.tags__list a", attr = "text", regex = "(\\d{4})"),
-        tags = CssSelector(query = "div.singleInfo span:contains(النوع) a, div.info__area li:has(span:contains(نوع العرض)) ul.tags__list a", attr = "text"),
-        seriesIndicator = CssSelector(query = "div.post__category, span.category", attr = "text") // Logic check needed in isSeries
+        tags = CssSelector(
+            query = "div.singleInfo span:contains(النوع) a, div.info__area li:has(span:contains(نوع العرض)) ul.tags__list a, div.rating__box span, .rating span, .imdbRate span, .imdbS strong",
+            attr = "text"
+        ),
+        seriesIndicator = CssSelector(query = "div.post__category, span.category", attr = "text")
     )
 
     override val episodeConfig = EpisodeConfig(

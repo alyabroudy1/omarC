@@ -1,8 +1,8 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 
 /**
@@ -46,13 +46,21 @@ class ReviewRateExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing ReviewRate URL", "url" to url.take(80))
         
         try {
-            val html = app.get(
+            val http = ProviderHttpServiceHolder.getInstance() ?: run {
+                ProviderLogger.w(TAG, "getUrl", "ProviderHttpService not initialized")
+                return
+            }
+            val html = http.getText(
                 url,
                 headers = mapOf(
                     "Referer" to actualReferer,
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                )
-            ).text
+                ),
+                skipRewrite = true
+            ) ?: run {
+                ProviderLogger.w(TAG, "getUrl", "getText returned null for URL: ${url.take(80)}")
+                return
+            }
             
             // Extract ALL video URLs found in the page
             val videoSources = extractAllVideoSources(html)
@@ -170,13 +178,15 @@ class ReviewRateExtractor : ExtractorApi() {
      */
     private suspend fun extractM3u8Qualities(m3u8Url: String, pageUrl: String): List<ExtractorLink> {
         return try {
-            val m3u8Content = app.get(
+            val http = ProviderHttpServiceHolder.getInstance() ?: return emptyList()
+            val m3u8Content = http.getText(
                 m3u8Url,
                 headers = mapOf(
                     "Referer" to pageUrl,
                     "Accept" to "*/*"
-                )
-            ).text
+                ),
+                skipRewrite = true
+            ) ?: return emptyList()
             
             ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content", 
                 "url" to m3u8Url.take(60), "length" to m3u8Content.length)

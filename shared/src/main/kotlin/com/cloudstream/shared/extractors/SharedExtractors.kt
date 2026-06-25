@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.plugins.Plugin
  */
 fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ReviewRateExtractor())
+    registerExtractorAPI(GameHubExtractor())
     registerExtractorAPI(SavefilesExtractor())
     registerExtractorAPI(OkPrimeExtractor())
     registerExtractorAPI(Up4FunExtractor())

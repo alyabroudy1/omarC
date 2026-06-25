@@ -231,9 +231,9 @@ class ProviderHttpService private constructor(
         return result.html?.let { Jsoup.parse(it, fullUrl) }
     }
 
-    suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): String? {
+    suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), skipRewrite: Boolean = true): String? {
         val fullUrl = buildUrl(url)
-        val result = executePostRequest(fullUrl, data, referer, headers)
+        val result = executePostRequest(fullUrl, data, referer, headers, skipRewrite)
         return result.html
     }
     
