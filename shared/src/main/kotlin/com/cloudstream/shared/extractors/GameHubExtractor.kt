@@ -19,6 +19,17 @@ class GameHubExtractor : ExtractorApi() {
             Regex("""source:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE),
             Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|mkv))""", RegexOption.IGNORE_CASE)
         )
+        private fun detectQualityFromUrl(url: String): String? {
+            val lower = url.lowercase()
+            return when {
+                lower.contains("1080") -> "1080p"
+                lower.contains("720") -> "720p"
+                lower.contains("480") -> "480p"
+                lower.contains("360") -> "360p"
+                lower.contains("240") -> "240p"
+                else -> null
+            }
+        }
     }
 
     override suspend fun getUrl(
@@ -51,15 +62,19 @@ class GameHubExtractor : ExtractorApi() {
                     if (videoUrl.contains(".m3u8", ignoreCase = true)) {
                         parseM3u8(videoUrl, cleanUrl, qualityStr, displayName).forEach { callback(it) }
                     } else {
+                        val labelQuality = m.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
+                        val urlQuality = detectQualityFromUrl(videoUrl)
+                        val linkQuality = qualityStr.ifBlank { labelQuality ?: urlQuality ?: "" }
+                        val linkName = if (linkQuality.isNotBlank()) "$displayName - $linkQuality" else displayName
                         callback(
                             newExtractorLink(
                                 source = name,
-                                name = displayName,
+                                name = linkName,
                                 url = videoUrl,
                                 type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = cleanUrl
-                                if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
+                                if (linkQuality.isNotBlank()) this.quality = getQualityFromName(linkQuality)
                             }
                         )
                     }
@@ -92,17 +107,7 @@ class GameHubExtractor : ExtractorApi() {
 
         Regex("""(https?://[^\s"']+\.m3u8)""", RegexOption.IGNORE_CASE).findAll(postResponse).forEach { m ->
             val m3u8 = m.groupValues[1]
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = "$displayName M3U8",
-                    url = m3u8,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = cleanUrl
-                    if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
-                }
-            )
+            parseM3u8(m3u8, cleanUrl, qualityStr, displayName).forEach { callback(it) }
         }
     }
 
