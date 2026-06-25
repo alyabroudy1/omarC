@@ -53,7 +53,7 @@ class WitAnime : BaseProvider() {
     override var lang = "ar"
 
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-    private val userAgent =
+    override val userAgent =
         "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36"
 
 

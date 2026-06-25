@@ -22,7 +22,7 @@ class CimaLightProvider : BaseProvider() {
 
     private val TAG = "CimaLightLog"
 
-    private val userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
+    override val userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
 
     override val mainPage = mainPageOf(
         "$mainUrl/main16" to "الرئيسية",
