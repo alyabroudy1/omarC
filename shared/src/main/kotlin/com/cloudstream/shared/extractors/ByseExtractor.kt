@@ -48,10 +48,6 @@ class ByseExtractor(
         private const val GCM_TAG_LENGTH = 128
         private const val GCM_IV_LENGTH = 12
         
-        private fun buildApiUrl(host: String, videoId: String, endpoint: String = "playback"): String {
-            return "https://$host/api/videos/$videoId/$endpoint"
-        }
-        
         private fun parseQuality(height: Int?): Int {
             return when (height) {
                 2160 -> Qualities.P2160.value
@@ -382,7 +378,7 @@ class ByseExtractor(
         val methodName = "tryApiExtraction"
         
         try {
-            val apiUrl = buildApiUrl(host, videoId, "playback")
+            val apiUrl = "https://$host/api/videos/$videoId"
             ProviderLogger.d(EXTRACTOR_TAG, methodName, "Calling API: $apiUrl")
             
             val responseStr = try {
