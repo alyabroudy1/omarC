@@ -12,10 +12,19 @@ class ArabseedV4 : BaseProvider() {
     override val baseDomain get() = "arabseed.show"
     override val providerName get() = "ArabseedV4"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
+    override val userAgent get() = USER_AGENT
+    override val paginationFormat get() = "page/%d/"
 
     override val mainPage = mainPageOf(
-        "/movies-5/" to "أفلام",
-        "/series-5/" to "مسلسلات"
+        "$mainUrl/main0/" to "الرئيسية",
+        "$mainUrl/main0/" to "الرئيسية",
+        "$mainUrl/recently/" to "مضاف حديثا",
+        "$mainUrl/movies/" to "أفلام",
+        "$mainUrl/main0/" to "المسلسلات",
+        "$mainUrl/category/افلام-انيميشن/" to "افلام انيميشن",
+        "$mainUrl/category/cartoon-series/" to "مسلسلات كرتون",
+        "$mainUrl/category/arabic-series-2/" to "مسلسلات عربي",
+        "$mainUrl/category/arabic-movies-6/" to "افلام عربي",
     )
 
     override fun getParser(): NewBaseParser {
@@ -178,6 +187,6 @@ class ArabseedV4 : BaseProvider() {
             embedUrl = serverDoc.select("iframe").attr("src")
         }
         
-        return if (embedUrl.isNotBlank()) embedUrl else null
+        return if (embedUrl.isNotBlank()) "$embedUrl#quality=$quality" else null
     }
 }

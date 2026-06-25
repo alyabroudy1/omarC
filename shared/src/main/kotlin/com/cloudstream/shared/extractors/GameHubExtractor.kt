@@ -17,7 +17,7 @@ class GameHubExtractor : ExtractorApi() {
             Regex("""<source[^>]+src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE),
             Regex("""(?:var|let|const)\s+(?:url|source|file|stream|video_url)\s*=\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE),
             Regex("""source:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE),
-            Regex("""https?://[^\s"']+\.(m3u8|mp4|mkv)""", RegexOption.IGNORE_CASE)
+            Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|mkv))""", RegexOption.IGNORE_CASE)
         )
     }
 
@@ -39,21 +39,24 @@ class GameHubExtractor : ExtractorApi() {
             skipRewrite = true
         ) ?: return
 
-        val csrfToken = html.let { Regex("""['"]csrf_token['"]\s*:\s*['"]([^'"]+)['"]""").find(it)?.groupValues?.get(1) }
+        val csrfToken = Regex("""['"]csrf_token['"]\s*:\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
 
         if (csrfToken.isNullOrBlank()) {
-            val found = mutableSetOf<String>()
+            val seen = mutableSetOf<String>()
             for (pattern in VIDEO_PATTERNS) {
                 pattern.findAll(html).forEach { m ->
                     val videoUrl = m.groupValues[1].replace("\\/", "/")
-                    if (videoUrl.startsWith("http") && found.add(videoUrl)) {
-                        val isM3U8 = videoUrl.contains(".m3u8", ignoreCase = true)
+                    if (!videoUrl.startsWith("http") || !seen.add(videoUrl)) return@forEach
+
+                    if (videoUrl.contains(".m3u8", ignoreCase = true)) {
+                        parseM3u8(videoUrl, cleanUrl, qualityStr, displayName).forEach { callback(it) }
+                    } else {
                         callback(
                             newExtractorLink(
                                 source = name,
-                                name = if (isM3U8) "$displayName M3U8" else displayName,
+                                name = displayName,
                                 url = videoUrl,
-                                type = if (isM3U8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = cleanUrl
                                 if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
@@ -84,12 +87,11 @@ class GameHubExtractor : ExtractorApi() {
         ) ?: return
 
         Regex("""src=["'](https?://[^"']+)["']""").findAll(postResponse).forEach { match ->
-            val iframeUrl = match.groupValues[1]
-            loadExtractor(iframeUrl, cleanUrl, subtitleCallback, callback)
+            loadExtractor(match.groupValues[1], cleanUrl, subtitleCallback, callback)
         }
 
-        Regex("""https?://[^\s"']+\.m3u8""").findAll(postResponse).forEach { m ->
-            val m3u8 = m.value
+        Regex("""(https?://[^\s"']+\.m3u8)""", RegexOption.IGNORE_CASE).findAll(postResponse).forEach { m ->
+            val m3u8 = m.groupValues[1]
             callback(
                 newExtractorLink(
                     source = name,
@@ -101,6 +103,72 @@ class GameHubExtractor : ExtractorApi() {
                     if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
                 }
             )
+        }
+    }
+
+    private suspend fun parseM3u8(
+        m3u8Url: String,
+        pageUrl: String,
+        qualityStr: String,
+        displayName: String
+    ): List<ExtractorLink> {
+        val http = ProviderHttpServiceHolder.getInstance() ?: return emptyList()
+        val m3u8Content = http.getText(
+            m3u8Url,
+            headers = mapOf("Referer" to pageUrl, "Accept" to "*/*"),
+            skipRewrite = true
+        ) ?: return emptyList()
+
+        if (!m3u8Content.contains("#EXT-X-STREAM-INF")) {
+            return listOf(
+                newExtractorLink(
+                    source = name, name = "$displayName M3U8", url = m3u8Url, type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = pageUrl
+                    if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
+                }
+            )
+        }
+
+        val links = mutableListOf<ExtractorLink>()
+        val lines = m3u8Content.lines()
+        val baseUrl = m3u8Url.substringBeforeLast("/")
+
+        lines.forEachIndexed { index, line ->
+            if (line.startsWith("#EXT-X-STREAM-INF")) {
+                val height = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)?.groupValues?.get(2)?.toIntOrNull()
+                val bandwidth = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toLongOrNull()
+
+                for (i in index + 1 until lines.size) {
+                    val nextLine = lines[i].trim()
+                    if (nextLine.isNotEmpty() && !nextLine.startsWith("#")) {
+                        val streamUrl = if (nextLine.startsWith("http")) nextLine else "$baseUrl/$nextLine"
+                        val label = height?.let { "${it}p" } ?: bandwidth?.let { "${it / 1000}kbps" } ?: "Auto"
+                        links.add(
+                            newExtractorLink(
+                                source = name, name = "$displayName - $label", url = streamUrl, type = ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = pageUrl
+                                this.quality = height ?: (bandwidth?.div(1000)?.toInt()) ?: Qualities.Unknown.value
+                            }
+                        )
+                        break
+                    }
+                }
+            }
+        }
+
+        return if (links.isEmpty()) {
+            listOf(
+                newExtractorLink(
+                    source = name, name = "$displayName M3U8", url = m3u8Url, type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = pageUrl
+                    if (qualityStr.isNotBlank()) this.quality = getQualityFromName(qualityStr)
+                }
+            )
+        } else {
+            links.sortedByDescending { it.quality }
         }
     }
 }

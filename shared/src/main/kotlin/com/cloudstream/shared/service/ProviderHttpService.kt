@@ -7,6 +7,7 @@ import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
+import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 import com.cloudstream.shared.network.ChromiumFetcher
 import com.cloudstream.shared.network.MediaUrlValidator
 import com.cloudstream.shared.network.ValidatedSource
@@ -98,7 +99,7 @@ class ProviderHttpService private constructor(
             // This prevents repetitive disk reads and "Session initialized" logging
             if (!SessionProvider.hasValidSession()) {
                 val persisted = sessionStore.load(config.fallbackDomain)
-                sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
+                sessionState = persisted ?: SessionState.initial(config.fallbackDomain, config.userAgent ?: UNIFIED_USER_AGENT)
                 SessionProvider.initialize(sessionState)
             }
             
