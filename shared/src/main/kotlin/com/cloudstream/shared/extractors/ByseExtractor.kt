@@ -88,9 +88,7 @@ class ByseExtractor(
         val iv: String,
         val payload: String,
         val keyParts: List<String>,
-        val decryptKeys: Map<String, String>,
-        val iv2: String?,
-        val payload2: String?,
+        val version: Int?,
         val expiresAt: String
     )
     
@@ -115,23 +113,20 @@ class ByseExtractor(
             }
             ProviderLogger.d(TAG, "parsePlaybackResponse", "key_parts count: ${keyParts.size}")
             
-            val decryptKeysObj = playback.optJSONObject("decrypt_keys")
-            val decryptKeys = mutableMapOf<String, String>()
-            decryptKeysObj?.let {
-                it.keys().forEach { key ->
-                    decryptKeys[key] = it.getString(key)
-                }
+            val versionRaw = playback.opt("version")
+            val version = when (versionRaw) {
+                is Number -> versionRaw.toInt()
+                is String -> versionRaw.toIntOrNull()
+                else -> null
             }
-            ProviderLogger.d(TAG, "parsePlaybackResponse", "decrypt_keys count: ${decryptKeys.size}, keys: ${decryptKeys.keys}")
+            ProviderLogger.d(TAG, "parsePlaybackResponse", "version: $version")
             
             val response = PlaybackResponse(
                 algorithm = playback.optString("algorithm"),
                 iv = playback.optString("iv"),
                 payload = playback.optString("payload"),
                 keyParts = keyParts,
-                decryptKeys = decryptKeys,
-                iv2 = playback.optString("iv2").takeIf { it.isNotEmpty() },
-                payload2 = playback.optString("payload2").takeIf { it.isNotEmpty() },
+                version = version,
                 expiresAt = playback.optString("expires_at")
             )
             
@@ -173,50 +168,10 @@ class ByseExtractor(
         }
         ProviderLogger.d(TAG, "decrypt", "IV decoded successfully, size: ${ivBytes.size}")
         
-        val part1Base64 = playback.keyParts[0]
-        val part2Base64 = playback.keyParts[1]
-        ProviderLogger.d(TAG, "decrypt", "key_part0 length: ${part1Base64.length}, key_part1 length: ${part2Base64.length}")
-        
-        var part1: ByteArray? = null
-        var part2: ByteArray? = null
-        
-        try {
-            part1 = decodeBase64Safe(part1Base64)
-            part2 = decodeBase64Safe(part2Base64)
-        } catch (e: Exception) {
-            ProviderLogger.e(TAG, "decrypt", "Failed to decode key parts", e)
-            return null
-        }
-        
-        if (part1 == null || part2 == null) {
-            ProviderLogger.e(TAG, "decrypt", "Failed to decode key parts")
-            return null
-        }
-        
-        val part1Arr = part1!!
-        val part2Arr = part2!!
-        
-        ProviderLogger.d(TAG, "decrypt", "Key parts decoded: part1=${part1Arr.size}, part2=${part2Arr.size}")
-        
-        // Combine key parts into 32-byte key
-        val combinedSize = part1Arr.size + part2Arr.size
-        val combined = ByteArray(combinedSize)
-        var idx = 0
-        for (b in part1Arr) { combined[idx] = b; idx++ }
-        for (b in part2Arr) { combined[idx] = b; idx++ }
-        
-        // Ensure exactly 32 bytes
-        val keyBytes: ByteArray
-        if (combinedSize < 32) {
-            keyBytes = ByteArray(32)
-            for (i in combined.indices) keyBytes[i] = combined[i]
-        } else if (combinedSize > 32) {
-            keyBytes = combined.copyOf(32)
-        } else {
-            keyBytes = combined
-        }
-        
-        ProviderLogger.d(TAG, "decrypt", "Key constructed, size: ${keyBytes.size}")
+        // Derive AES key from key_parts using version-based selection
+        // JS equivalent: Mo(yo(e)) where yo selects key_parts[version-1] and key_parts[30-version]
+        val keyBytes = deriveKey(playback.version, playback.keyParts)
+        ProviderLogger.d(TAG, "decrypt", "Key derived, size: ${keyBytes.size}")
         
         val payloadBytes = try {
             decodeBase64Safe(playback.payload)
@@ -235,54 +190,55 @@ class ByseExtractor(
         // The payload string encoded in base64 is already exactly ciphertext + authTag!
         val ciphertextWithTag = payloadBytes
         
-        // Try decryption with main key (built from key_parts) - no need for decryptKeys
-        ProviderLogger.d(TAG, "decrypt", "Trying decryption with main key")
+        // Decrypt AES-256-GCM payload
+        ProviderLogger.d(TAG, "decrypt", "Decrypting with AES-256-GCM")
         try {
-            val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertextWithTag, null)
-            if (result != null) {
-                ProviderLogger.i(TAG, "decrypt", "SUCCESS with main key, decrypted length: ${result.length}")
-                return parseDecryptedJson(result)
-            }
+            val cipher = Cipher.getInstance(AES_GCM_ALGORITHM)
+            val keySpec = SecretKeySpec(keyBytes, "AES")
+            val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH, ivBytes)
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+            val decrypted = cipher.doFinal(ciphertextWithTag)
+            val decryptedStr = String(decrypted, Charsets.UTF_8)
+            ProviderLogger.i(TAG, "decrypt", "SUCCESS, decrypted length: ${decryptedStr.length}")
+            return parseDecryptedJson(decryptedStr)
         } catch (e: Exception) {
-            ProviderLogger.d(TAG, "decrypt", "Main key failed: ${e.message}")
+            ProviderLogger.e(TAG, "decrypt", "Decryption failed: ${e.message}", e)
+            return null
         }
-        
-        // Fallback: try decryptKeys if main key fails (for edge cases)
-        for ((keyName, keyBase64) in playback.decryptKeys) {
-            ProviderLogger.d(TAG, "decrypt", "Trying decrypt key fallback: $keyName")
-            try {
-                val result = tryDecryptWithKey(keyBytes, ivBytes, ciphertextWithTag, keyBase64)
-                if (result != null) {
-                    ProviderLogger.i(TAG, "decrypt", "SUCCESS with key: $keyName, decrypted length: ${result.length}")
-                    return parseDecryptedJson(result)
-                }
-            } catch (e: Exception) {
-                ProviderLogger.d(TAG, "decrypt", "Key $keyName failed: ${e.message}")
-            }
-        }
-        
-        ProviderLogger.e(TAG, "decrypt", "All decryption attempts failed")
-        return null
     }
     
-    private fun tryDecryptWithKey(
-        mainKeyBytes: ByteArray,
-        ivBytes: ByteArray,
-        ciphertextWithTag: ByteArray,
-        extraKeyBase64: String?
-    ): String? {
-        // Use mainKeyBytes directly - the decrypt_keys are not needed
-        val keyBytes = mainKeyBytes
+    /**
+     * Derives AES key from key_parts using version-based selection.
+     * JS equivalent: Mo(yo(e))
+     * - Positions selected: [version, 31-version] (1-indexed)
+     * - Fallback to ALL key_parts if version is null or positions out of bounds
+     */
+    private fun deriveKey(version: Int?, keyParts: List<String>): ByteArray {
+        val selectedParts: List<String>
+        if (version != null && version in 1..20) {
+            val pos1 = version
+            val pos2 = 31 - version
+            if (pos1 in 1..keyParts.size && pos2 in 1..keyParts.size) {
+                selectedParts = listOf(keyParts[pos1 - 1], keyParts[pos2 - 1])
+                ProviderLogger.d(TAG, "deriveKey", "Version=$version, selected positions (1-indexed): [$pos1, $pos2]")
+            } else {
+                ProviderLogger.d(TAG, "deriveKey", "Version=$version positions [$pos1, $pos2] out of bounds [1, ${keyParts.size}], using ALL parts")
+                selectedParts = keyParts
+            }
+        } else {
+            ProviderLogger.d(TAG, "deriveKey", "Version=$version is null or out of range, using ALL key_parts")
+            selectedParts = keyParts
+        }
         
-        val cipher = Cipher.getInstance(AES_GCM_ALGORITHM)
-        val keySpec = SecretKeySpec(keyBytes, "AES")
-        val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH, ivBytes)
-        
-        cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
-        
-        val decrypted = cipher.doFinal(ciphertextWithTag)
-        
-        return String(decrypted, Charsets.UTF_8)
+        val decoded = selectedParts.map { decodeBase64Safe(it) }
+        val totalSize = decoded.sumOf { it.size }
+        val result = ByteArray(totalSize)
+        var offset = 0
+        for (part in decoded) {
+            part.copyInto(result, offset)
+            offset += part.size
+        }
+        return result
     }
     
     private fun parseDecryptedJson(json: String): DecryptionResult? {

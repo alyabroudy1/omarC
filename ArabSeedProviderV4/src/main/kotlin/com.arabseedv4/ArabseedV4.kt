@@ -13,7 +13,6 @@ class ArabseedV4 : BaseProvider() {
     override val baseDomain get() = "arabseed.show"
     override val providerName get() = "ArabseedV4"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
-    override val userAgent get() = USER_AGENT
     override val paginationFormat get() = "page/%d/"
 
     override val mainPage = mainPageOf(
