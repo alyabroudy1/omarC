@@ -187,6 +187,6 @@ class ArabseedV4 : BaseProvider() {
             embedUrl = serverDoc.select("iframe").attr("src")
         }
         
-        return if (embedUrl.isNotBlank()) "$embedUrl#quality=$quality" else null
+        return if (embedUrl.isNotBlank()) embedUrl else null
     }
 }

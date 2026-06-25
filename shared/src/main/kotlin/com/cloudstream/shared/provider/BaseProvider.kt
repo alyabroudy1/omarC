@@ -17,6 +17,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 abstract class BaseProvider : MainAPI() {
@@ -462,45 +463,38 @@ abstract class BaseProvider : MainAPI() {
             }
             
             // ========================================
-            // PHASE 2: Try standard extractors on ALL resolved URLs in parallel
+            // PHASE 2: Run extractors on ALL resolved URLs in parallel, streaming results as they arrive
             // ========================================
             Log.i(methodTag, "PHASE 2: Trying standard extractors on ${resolvedServers.size} URLs in parallel...")
             
-            val allExtractorLinks: List<ExtractorLink> = coroutineScope {
+            val anyLinksFound = java.util.concurrent.atomic.AtomicBoolean(false)
+            coroutineScope {
                 resolvedServers.map { (_, resolvedUrl, serverIndex) ->
-                    async {
+                    launch {
                         try {
                             val links = collectExtractorLinks(resolvedUrl, referer, subtitleCallback, timeoutMs = 8000L)
                             if (links.isNotEmpty()) {
                                 Log.i(methodTag, "PHASE 2: Extractor found ${links.size} links for [$serverIndex]: ${resolvedUrl.take(60)}")
+                                anyLinksFound.set(true)
                             }
-                            links
+                            links.forEach { link ->
+                                Log.d(methodTag, "PHASE 2: Delivering link: ${link.name} | ${link.url.take(80)}")
+                                callback(link)
+                            }
                         } catch (e: Exception) {
                             Log.w(methodTag, "PHASE 2: Exception for [$serverIndex]: ${e.message}")
-                            emptyList()
                         }
                     }
-                }.awaitAll().flatten()
-            }
-            
-            // ========================================
-            // PHASE 3: Deliver all found links to callback (quality picker)
-            // ========================================
-            if (allExtractorLinks.isNotEmpty()) {
-                Log.i(methodTag, "PHASE 3: Delivering ${allExtractorLinks.size} links to callback (quality picker)")
-                
-                // Deduplicate by URL
-                val uniqueLinks = allExtractorLinks.distinctBy { it.url }
-                uniqueLinks.forEach { link ->
-                    Log.d(methodTag, "PHASE 3: Delivering link: ${link.name} | ${link.url.take(80)}")
-                    callback(link)
                 }
-                
-                Log.i(methodTag, "PHASE 3 complete: Delivered ${uniqueLinks.size} unique links")
+            }
+            // All launches completed — coroutineScope waited for all children
+            
+            if (anyLinksFound.get()) {
+                Log.i(methodTag, "PHASE 2 complete: Links delivered incrementally as extractors completed")
                 return true
             }
             
-            Log.w(methodTag, "PHASE 2-3: No standard extractors succeeded for any URL")
+            Log.w(methodTag, "PHASE 2: No standard extractors succeeded for any URL")
             
             // ========================================
             // PHASE 4: Sniffer fallback — try servers one-by-one until one works
