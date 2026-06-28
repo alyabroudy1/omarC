@@ -93,7 +93,7 @@ abstract class BaseProvider : MainAPI() {
             val pageUrl = if (page > 1 && fmt != null) "${fullUrl}${fmt.format(page)}" else fullUrl
             Log.d(methodTag, "Fetching URL: $pageUrl")
             
-            val doc = httpService.getDocument(pageUrl, checkDomainChange = true)
+            val doc = httpService.getDocument(pageUrl, checkDomainChange = true, rewriteDomain = true)
             
             if (doc != null) {
                 Log.d(methodTag, "Document fetched successfully. Parsing...")
@@ -136,7 +136,7 @@ abstract class BaseProvider : MainAPI() {
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching search URL: $url")
             
-            val doc = httpService.getDocument(url, checkDomainChange = true)
+            val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch search document")
                 return emptyList()
@@ -210,7 +210,7 @@ abstract class BaseProvider : MainAPI() {
         Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
 
         // This throws CloudflareBlockedSearchException if CF is detected
-        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true)
+        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
         if (doc == null) {
             Log.e(methodTag, "Failed to fetch search document (no CF)")
             return emptyList()
@@ -258,7 +258,7 @@ abstract class BaseProvider : MainAPI() {
             // Check if URL domain differs from main domain (subdomain case)
             // e.g., mainUrl=https://laroza.cfd/ but url=https://qq.laroza.cfd/vid-...
             
-            val doc = httpService.getDocument(url)
+            val doc = httpService.getDocument(url, rewriteDomain = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch load document")
                 return null
@@ -378,7 +378,7 @@ abstract class BaseProvider : MainAPI() {
             httpService.ensureInitialized()
             
             // Step 1: Fetch detail page
-            val detailDoc = httpService.getDocument(data)
+            val detailDoc = httpService.getDocument(data, rewriteDomain = true)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch loadLinks document")
                 return false
@@ -396,7 +396,7 @@ abstract class BaseProvider : MainAPI() {
                     "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
                 }
                 Log.d(methodTag, "Following watch page: $actualWatchUrl")
-                httpService.getDocument(actualWatchUrl) ?: detailDoc
+                httpService.getDocument(actualWatchUrl, rewriteDomain = true) ?: detailDoc
             } else {
                 Log.d(methodTag, "No watch page found, using detail page")
                 detailDoc
@@ -637,7 +637,7 @@ abstract class BaseProvider : MainAPI() {
 
             if (!newUrl.isNullOrBlank()) {
                 Log.d(methodTag, "Found Meta-Refresh to: $newUrl")
-                val newDoc = httpService.getDocument(newUrl)
+                val newDoc = httpService.getDocument(newUrl, rewriteDomain = true)
                 if (newDoc != null) {
                     Log.d(methodTag, "Swapped to Meta-Refresh document.")
                     return Pair(newDoc, newUrl)
@@ -655,7 +655,7 @@ abstract class BaseProvider : MainAPI() {
         if (!data.isMovie && data.episodes.isNullOrEmpty() && !data.parentSeriesUrl.isNullOrBlank()) {
             val parentUrl = data.parentSeriesUrl!!
             try {
-                val parentDoc = httpService.getDocument(parentUrl)
+                val parentDoc = httpService.getDocument(parentUrl, rewriteDomain = true)
                 if (parentDoc != null) {
                     val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
                     if (parentData != null) {

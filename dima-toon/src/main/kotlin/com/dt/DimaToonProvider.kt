@@ -28,7 +28,7 @@ class DimaToon : BaseProvider() {
         if (page > 1) return newHomePageResponse(request.name, emptyList(), hasNext = false)
 
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl) ?: return null
+        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
 
         val home = when (request.data) {
             "series" -> {
@@ -63,7 +63,7 @@ class DimaToon : BaseProvider() {
         httpService.ensureInitialized()
 
         if (url.contains("/cartoon-episode/")) {
-            val doc = httpService.getDocument(url) ?: return null
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
             val title = doc.selectFirst("h1.xpro-post-title")?.text()?.trim()
                 ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim() ?: return null
             val poster = doc.selectFirst("div.elementor-element-e7ee95b img")?.attr("src")
@@ -74,7 +74,7 @@ class DimaToon : BaseProvider() {
             }
         }
 
-        val doc = httpService.getDocument(url) ?: return null
+        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
         val title = doc.selectFirst("h1.anime-title")?.text()?.trim() ?: return null
         val poster = doc.selectFirst("div.cartoon-image img")?.attr("src")
         val plot = doc.selectFirst("div.brief-story p")?.text()?.trim()
@@ -102,7 +102,7 @@ class DimaToon : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(data) ?: return false
+        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
         val videoSource = doc.selectFirst("video.easy-video-player > source")
             ?.attr("src")
             ?.takeIf { it.isNotBlank() }

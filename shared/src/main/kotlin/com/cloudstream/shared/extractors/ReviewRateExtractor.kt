@@ -56,7 +56,7 @@ class ReviewRateExtractor : ExtractorApi() {
                     "Referer" to actualReferer,
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                 ),
-                skipRewrite = true
+                rewriteDomain = false
             ) ?: run {
                 ProviderLogger.w(TAG, "getUrl", "getText returned null for URL: ${url.take(80)}")
                 return
@@ -185,7 +185,7 @@ class ReviewRateExtractor : ExtractorApi() {
                     "Referer" to pageUrl,
                     "Accept" to "*/*"
                 ),
-                skipRewrite = true
+                rewriteDomain = false
             ) ?: return emptyList()
             
             ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content", 

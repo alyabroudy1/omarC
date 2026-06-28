@@ -96,7 +96,7 @@ class Cimanow : BaseProvider() {
             }
             
             // Fetch the first season page to get the season list
-            val firstSeasonDoc = httpService.getDocument(firstSeasonUrl)
+            val firstSeasonDoc = httpService.getDocument(firstSeasonUrl, rewriteDomain = true)
             if (firstSeasonDoc == null) {
                 Log.e(methodTag, "fetchExtraEpisodes: Failed to fetch first season page")
                 return episodes
@@ -117,7 +117,7 @@ class Cimanow : BaseProvider() {
                     val seasonDoc = if (seasonIndex == 0) {
                         decodedFirstSeason
                     } else {
-                        val fetchedDoc = httpService.getDocument(seasonUrl)
+                        val fetchedDoc = httpService.getDocument(seasonUrl, rewriteDomain = true)
                         if (fetchedDoc != null) decodeObfuscatedHtml(fetchedDoc) else null
                     }
                     
@@ -400,7 +400,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleVidPro(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val packed = html.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
@@ -425,7 +425,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleGovid(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -444,7 +444,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleVidlook(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val packed = html.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
@@ -469,7 +469,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleStreamwish(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -488,7 +488,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleStreamfile(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -507,7 +507,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleLuluvid(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -526,7 +526,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleVadbam(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val packed = html.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
@@ -551,7 +551,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleViidshare(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -570,7 +570,7 @@ class Cimanow : BaseProvider() {
 
     private suspend fun handleNet(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url) ?: return
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
             val html = doc.outerHtml()
             
             val scriptWithEval = html.substringAfter("eval(", "").substringBefore("</script>")
@@ -597,7 +597,7 @@ class Cimanow : BaseProvider() {
             val domain = "https://" + java.net.URL(iframeUrl).host
             val referer = "https://$baseDomain/"
             
-            val doc = httpService.getDocument(iframeUrl, headers = mapOf("Referer" to referer)) ?: return
+            val doc = httpService.getDocument(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = true) ?: return
             Log.d("Cimanow", "handleCima doc fetched")
             
             // Original Braflix selects <source> elements for direct video links

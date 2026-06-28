@@ -78,7 +78,7 @@ class Wecima : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val document = httpService.getDocument(data) ?: return false
+        val document = httpService.getDocument(data, rewriteDomain = true) ?: return false
         
         document.select("ul.WatchServersList li btn").forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))

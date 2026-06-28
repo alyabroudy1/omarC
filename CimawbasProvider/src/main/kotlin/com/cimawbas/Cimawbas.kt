@@ -30,13 +30,13 @@ class Cimawbas : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val doc = httpService.getDocument(data) ?: return false
+        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
         
         // 1. Check if watch button exists and points to embed index
         val watchButtonUrl = doc.selectFirst("a.watch")?.attr("href")
         
         val targetDoc = if (!watchButtonUrl.isNullOrBlank()) {
-            httpService.getDocument(watchButtonUrl) ?: return false
+            httpService.getDocument(watchButtonUrl, rewriteDomain = true) ?: return false
         } else {
             doc
         }

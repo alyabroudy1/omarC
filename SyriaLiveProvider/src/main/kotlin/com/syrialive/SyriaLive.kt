@@ -62,7 +62,7 @@ class SyriaLive : BaseProvider() {
     ): HomePageResponse? {
         // Ensure HTTP service is ready
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl) ?: return null
+        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
 
         val homePageList = mutableListOf<HomePageList>()
 
@@ -153,7 +153,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to "https://www.google.com/"
         )
-        val doc = httpService.getDocument(data, reqHeaders) ?: return false
+        val doc = httpService.getDocument(data, reqHeaders, rewriteDomain = true) ?: return false
         
         val iframeElement = doc.selectFirst(".entry-content iframe")
         val iframeSrc = iframeElement?.attr("src")
@@ -178,7 +178,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = httpService.getText(playerUrl, pHeaders, skipRewrite = true) ?: return foundLinks
+        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false) ?: return foundLinks
         
         // Check for AlbaPlayerControl base64 packed stream
         val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")

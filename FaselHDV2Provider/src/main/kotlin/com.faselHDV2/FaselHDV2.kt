@@ -62,7 +62,7 @@ class FaselHDV2 : BaseProvider() {
                         val fullUrl = if (pageUrl.startsWith("http")) pageUrl else "$mainUrl$pageUrl"
                         Log.d("[FaselHDV2]", "fetchExtraEpisodes: fetching season $seasonNum from $fullUrl")
                         
-                        val seasonDoc = httpService.getDocument(fullUrl) ?: return@async emptyList()
+                        val seasonDoc = httpService.getDocument(fullUrl, rewriteDomain = true) ?: return@async emptyList()
                         val episodes = parser.parseEpisodes(seasonDoc, seasonNum)
                         
                         Log.d("[FaselHDV2]", "fetchExtraEpisodes: season $seasonNum -> ${episodes.size} episodes")
@@ -88,7 +88,7 @@ class FaselHDV2 : BaseProvider() {
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching normal search URL: $url")
             
-            var doc = httpService.getDocument(url, checkDomainChange = true)
+            var doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
             var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
             
             if (items.isEmpty()) {
@@ -105,7 +105,7 @@ class FaselHDV2 : BaseProvider() {
                     "trsearch" to query
                 )
                 
-                doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
+                doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers, rewriteDomain = true)
                 if (doc != null) {
                     val rawHtml = doc.html()
                     Log.d(methodTag, "AJAX response HTML (length: ${rawHtml.length}):\n${rawHtml.take(2000)}")
@@ -140,7 +140,7 @@ class FaselHDV2 : BaseProvider() {
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching lazy search URL: $url")
             
-            var doc = httpService.getDocumentNoFallback(url, checkDomainChange = true)
+            var doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
             var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
             
             if (items.isEmpty()) {
@@ -196,7 +196,7 @@ class FaselHDV2 : BaseProvider() {
 
         try {
             // Fetch the detail/episode page
-            var doc = httpService.getDocument(data)
+            var doc = httpService.getDocument(data, rewriteDomain = true)
             if (doc != null) {
                 val parser = getParser() as FaselHDV2Parser
 
@@ -205,7 +205,7 @@ class FaselHDV2 : BaseProvider() {
                 val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
                     val fullWatchUrl = if (watchPageUrl.startsWith("http")) watchPageUrl else "$mainUrl/$watchPageUrl"
                     Log.d(methodTag, "Following player page: $fullWatchUrl")
-                    httpService.getDocument(fullWatchUrl) ?: doc
+                    httpService.getDocument(fullWatchUrl, rewriteDomain = true) ?: doc
                 } else {
                     doc
                 }

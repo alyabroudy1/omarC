@@ -64,7 +64,7 @@ class ProviderHttpService private constructor(
     val mediaValidator = MediaUrlValidator()
 
     private val requestQueue = RequestQueue(
-        executeRequest = { url, headers -> executeDirectRequest(url, headers) },
+        executeRequest = { url, headers -> executeDirectRequest(url, headers, rewriteDomain = true) },
         solveCfAndRequest = { url, allowedDomains -> solveCloudflareThenRequest(url, allowedDomains) },
         onDomainRedirect = { oldDomain, newDomain ->
             updateDomain(newDomain)
@@ -192,20 +192,20 @@ class ProviderHttpService private constructor(
     
     suspend fun getMainPage(path: String): List<ParserInterface.ParsedItem> {
         val url = buildUrl(path)
-        val doc = getDocument(url, checkDomainChange = true)
+        val doc = getDocument(url, checkDomainChange = true, rewriteDomain = true)
         return doc?.let { parser.parseMainPage(it) }.orEmpty()
     }
     
     suspend fun search(query: String): List<ParserInterface.ParsedItem> {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = buildUrl("/?s=$encoded")
-        val doc = getDocument(url, checkDomainChange = true)
+        val doc = getDocument(url, checkDomainChange = true, rewriteDomain = true)
         return doc?.let { parser.parseSearch(it) }.orEmpty()
     }
     
-    suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): String? {
+    suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
         val fullUrl = buildUrl(url)
-        val result = executeDirectRequest(fullUrl, headers, skipRewrite)
+        val result = executeDirectRequest(fullUrl, headers, rewriteDomain)
         return result.html
     }
 
@@ -226,24 +226,24 @@ class ProviderHttpService private constructor(
         return directClient.newCall(request).execute()
     }
 
-    suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): Document? {
+    suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): Document? {
         val fullUrl = buildUrl(url)
-        val result = executePostRequest(fullUrl, data, referer, headers)
+        val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
         return result.html?.let { Jsoup.parse(it, fullUrl) }
     }
 
-    suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), skipRewrite: Boolean = true): String? {
+    suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
         val fullUrl = buildUrl(url)
-        val result = executePostRequest(fullUrl, data, referer, headers, skipRewrite)
+        val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
         return result.html
     }
     
     /**
      * DEBUG: Post request with full result details for troubleshooting
      */
-    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap()): RequestResult {
+    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
         val fullUrl = buildUrl(url)
-        return executePostRequest(fullUrl, data, referer, headers)
+        return executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
     }
 
     suspend fun sniffVideos(url: String): List<VideoSource> {
@@ -410,8 +410,12 @@ class ProviderHttpService private constructor(
     
     // ==================== LOW LEVEL ====================
 
-    suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false): Document? {
-        val result = requestQueue.enqueue(url, headers)
+    suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false, rewriteDomain: Boolean = false): Document? {
+        val result = if (rewriteDomain) {
+            requestQueue.enqueue(url, headers)
+        } else {
+            requestQueue.enqueueAction(url) { executeDirectRequest(url, headers, rewriteDomain = false) }
+        }
         
         if (result.success && checkDomainChange) {
             checkAndUpdateDomain(url, result.finalUrl)
@@ -470,9 +474,9 @@ class ProviderHttpService private constructor(
      * Instead, throws [CloudflareBlockedSearchException] if CF is detected.
      * Used by lazy search to avoid WebView popups during global search.
      */
-    suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false): Document? {
+    suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false, rewriteDomain: Boolean = false): Document? {
         // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
-        val result = executeDirectRequest(url, headers)
+        val result = executeDirectRequest(url, headers, rewriteDomain)
         
         // Detect domain redirects from ALL responses (including CF-blocked ones).
         // Previously, redirects from CF-blocked responses were discarded, losing
@@ -532,9 +536,9 @@ class ProviderHttpService private constructor(
 
     // ==================== INTERNAL ====================
 
-    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): RequestResult {
+    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
         return try {
-            val targetUrl = if (skipRewrite) url else rewriteUrlIfNeeded(url)
+            val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
             
             // Check if URL domain is an alias and get appropriate cookies
             val urlDomain = try {
@@ -642,9 +646,9 @@ class ProviderHttpService private constructor(
         }
     }
 
-    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), skipRewrite: Boolean = false): RequestResult {
+    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
         return try {
-            val targetUrl = if (skipRewrite) url else rewriteUrlIfNeeded(url)
+            val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
             val headers = sessionState.buildHeaders().toMutableMap()
             if (referer != null) headers["Referer"] = referer
             for ((k, v) in customHeaders) {
@@ -723,11 +727,11 @@ class ProviderHttpService private constructor(
         // Guard: if valid cookies already exist from a very recent solve (< 10s),
         // skip re-invalidation — a concurrent solve likely just succeeded.
         val cookieAge = System.currentTimeMillis() - sessionState.cookieTimestamp
-        if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
+            if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
             ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
                 "Skipping CF solve — fresh cookies exist (${cookieAge}ms old), retrying HTTP",
                 "domain" to sessionState.domain)
-            val retryResult = executeDirectRequest(targetUrl)
+            val retryResult = executeDirectRequest(targetUrl, rewriteDomain = true)
             if (retryResult.success) return retryResult
             // If retry still fails (cookies expired or invalid), fall through to full CF solve
             ProviderLogger.d(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",

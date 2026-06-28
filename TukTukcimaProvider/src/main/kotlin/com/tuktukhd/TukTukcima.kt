@@ -64,7 +64,7 @@ class TukTukcima : BaseProvider() {
                     val seasonName = seasonEl.select("h3").text()
                     val seasonNum = seasonName.filter { it.isDigit() }.toIntOrNull() ?: 1
 
-                    val seasonDoc = httpService.getDocument(seasonUrl) ?: return@async emptyList<ParserInterface.ParsedEpisode>()
+                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true) ?: return@async emptyList<ParserInterface.ParsedEpisode>()
                     
                     getParser().parseEpisodes(seasonDoc, seasonNum)
                 }
@@ -81,7 +81,7 @@ class TukTukcima : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(data) ?: return false
+        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
 
         val iframeCrypt = doc.selectFirst("iframe#main-video-frame")?.attr("data-crypt")
         if (iframeCrypt.isNullOrBlank()) return false

@@ -137,7 +137,7 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val doc = httpService.getDocument("$mainUrl/?s=$encoded") ?: return emptyList()
+        val doc = httpService.getDocument("$mainUrl/?s=$encoded", rewriteDomain = true) ?: return emptyList()
         val items = getParser().parseSearch(doc)
         return items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -155,7 +155,7 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = request.data + page
-        val doc = httpService.getDocument(url) ?: return null
+        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
         val items = getParser().parseMainPage(doc)
         return newHomePageResponse(request.name, items.map { item ->
             val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
@@ -226,7 +226,7 @@ class CimaNowProvider : BaseProvider() {
     // ==================== load ====================
 
     override suspend fun load(url: String): LoadResponse? {
-        val doc = httpService.getDocument(url) ?: return null
+        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
         val decodedDoc = decodeHtml(doc)
 
         val isMovie = decodedDoc.title().contains("فيلم")
@@ -270,7 +270,7 @@ class CimaNowProvider : BaseProvider() {
                 val deferredEpisodes = seasonElements.map { seasonElement ->
                     async {
                         val seasonDoc = try {
-                            httpService.getDocument(seasonElement.attr("href"))
+                            httpService.getDocument(seasonElement.attr("href"), rewriteDomain = true)
                         } catch (_: Exception) { null }
                         if (seasonDoc != null) {
                             val decodedSeason = decodeHtml(seasonDoc)
@@ -703,7 +703,7 @@ class CimaNowProvider : BaseProvider() {
 
             val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
             val playerDoc = try {
-                httpService.getDocument(ajaxUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
+                httpService.getDocument(ajaxUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"), rewriteDomain = true)
             } catch (_: Exception) { null }
 
             val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
@@ -785,7 +785,7 @@ class CimaNowProvider : BaseProvider() {
         try {
             val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
             Log.d(TAG_CI, "Fetching cimanow iframe page: $finalUrl")
-            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl), skipRewrite = true) ?: ""
+            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl), rewriteDomain = false) ?: ""
             Log.d(TAG_CI, "Iframe response size: ${iframeResponse.length} bytes")
 
             val regex = Regex("\\[(\\d+p)]\\s+(/uploads/[^\"]+\\.mp4)")
@@ -1032,7 +1032,7 @@ class CimaNowProvider : BaseProvider() {
             } catch (_: Exception) {}
             if (extracted) return
 
-            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), skipRewrite = true) ?: return
+            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = false) ?: return
             val doc = Jsoup.parse(html, iframeUrl)
 
             val urls = mutableListOf<String>()

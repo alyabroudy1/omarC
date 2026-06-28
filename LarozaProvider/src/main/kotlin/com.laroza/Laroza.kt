@@ -94,7 +94,7 @@ class Laroza : BaseProvider() {
         val methodTag = "[Laroza][newStrategy]"
         try {
             // Fetch the detail page
-            val doc = httpService.getDocument(data) ?: return false
+            val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
             Log.d(methodTag, "Fetched detail page: ${doc.location()}")
 
             // Try to find a play/watch page URL
@@ -110,7 +110,7 @@ class Laroza : BaseProvider() {
             } else null
 
             val targetDoc = if (targetUrl != null) {
-                httpService.getDocument(targetUrl)
+                httpService.getDocument(targetUrl, rewriteDomain = true)
             } else doc
 
             if (targetDoc == null) {

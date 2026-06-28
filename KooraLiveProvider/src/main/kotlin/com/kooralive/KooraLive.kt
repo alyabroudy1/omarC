@@ -104,7 +104,7 @@ class KooraLive : BaseProvider() {
         request: MainPageRequest
     ): HomePageResponse? {
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl) ?: return null
+        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
         val homePageList = mutableListOf<HomePageList>()
         
         val todayMatches = parseMatchesFromDocument(doc)
@@ -118,7 +118,7 @@ class KooraLive : BaseProvider() {
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         val url = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val html = httpService.getText(url, skipRewrite = true) ?: return emptyList()
+        val html = httpService.getText(url, rewriteDomain = false) ?: return emptyList()
         val doc = org.jsoup.Jsoup.parse(html, url)
         
         val allMatches = parseMatchesFromDocument(doc)
@@ -132,7 +132,7 @@ class KooraLive : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val html = httpService.getText(url, skipRewrite = true) ?: return null
+        val html = httpService.getText(url, rewriteDomain = false) ?: return null
         val doc = org.jsoup.Jsoup.parse(html, url)
         
         val titleNode = doc.selectFirst("meta[property='og:title']")
@@ -160,7 +160,7 @@ class KooraLive : BaseProvider() {
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent
 
-        val html = httpService.getText(data, skipRewrite = true) ?: return false
+        val html = httpService.getText(data, rewriteDomain = false) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst("iframe[src*='albaplayer'], .video-con iframe, iframe")
@@ -179,7 +179,7 @@ class KooraLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = httpService.getText(playerUrl, pHeaders, skipRewrite = true)
+        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false)
         
         val menuLinks = mutableListOf<String>()
         if (playerResponse != null) {
@@ -203,7 +203,7 @@ class KooraLive : BaseProvider() {
                             val pResponse = if (targetPlayerUrl == playerUrl) {
                                 playerResponse
                             } else {
-                                httpService.getText(targetPlayerUrl, pHeaders, skipRewrite = true)
+                                httpService.getText(targetPlayerUrl, pHeaders, rewriteDomain = false)
                             }
                             
                             if (pResponse != null) {

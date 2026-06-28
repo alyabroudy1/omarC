@@ -349,7 +349,7 @@ class ByseExtractor(
                         "X-Requested-With" to "XMLHttpRequest",
                         "Origin" to "https://$host"
                     ),
-                    skipRewrite = true
+                    rewriteDomain = false
                 ) ?: ""
             }
             

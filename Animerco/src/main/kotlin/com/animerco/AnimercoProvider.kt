@@ -30,7 +30,7 @@ class AnimercoProvider : BaseProvider() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val document = httpService.getDocument(mainUrl) ?: return null
+        val document = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
         val items = ArrayList<HomePageList>()
 
         fun toSearchResponse(element: org.jsoup.nodes.Element): AnimeSearchResponse? {
@@ -73,7 +73,7 @@ class AnimercoProvider : BaseProvider() {
         for (page in 1..3) {
             val url = if (page == 1) "$mainUrl/?s=$encoded" else "$mainUrl/page/$page/?s=$encoded"
             try {
-                val doc = if (useNoFallback) httpService.getDocumentNoFallback(url) else httpService.getDocument(url)
+                val doc = if (useNoFallback) httpService.getDocumentNoFallback(url, rewriteDomain = true) else httpService.getDocument(url, rewriteDomain = true)
                 doc ?: break
                 val cards = doc.select("div.search-card")
                 if (cards.isEmpty()) break
@@ -117,7 +117,7 @@ class AnimercoProvider : BaseProvider() {
         }
 
         try {
-            val doc = httpService.getDocument(url) ?: return null
+            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
             val title = doc.selectFirst("div.media-title h1")?.text()?.trim().orEmpty()
             val poster = posterUrl(doc, "div.anime-card div.image")
             val plot = doc.selectFirst("div.media-story div.content p")?.text()
@@ -159,7 +159,7 @@ class AnimercoProvider : BaseProvider() {
             seasonNodes.forEach { season ->
                 val seasonUrl = normalizeUrl(season.selectFirst("a.title")?.attr("href") ?: return@forEach) ?: return@forEach
                 try {
-                    val seasonDoc = httpService.getDocument(seasonUrl)
+                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true)
                     val seasonNum = seasonDoc?.selectFirst("div.media-title h1")?.text()?.trim()
                         ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
                     fetchEpisodesFromDoc(seasonDoc ?: return@forEach).forEach { ep -> ep.season = seasonNum ?: 1; episodes.add(ep) }

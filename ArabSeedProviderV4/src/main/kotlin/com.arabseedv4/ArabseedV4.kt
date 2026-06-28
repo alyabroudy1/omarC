@@ -43,7 +43,7 @@ class ArabseedV4 : BaseProvider() {
                     val url = "$mainUrl/find/?word=$encoded&type=$type"
                     android.util.Log.d("ArabseedV4", "searchLazy: requesting $url")
                     try {
-                        val doc = httpService.getDocumentNoFallback(url)
+                        val doc = httpService.getDocumentNoFallback(url, rewriteDomain = true)
                         if (doc != null) getParser().parseSearch(doc) else emptyList()
                     } catch (e: Exception) {
                         android.util.Log.e("ArabseedV4", "searchLazy: throwing $e")
@@ -68,7 +68,7 @@ class ArabseedV4 : BaseProvider() {
             listOf("movies", "series").map { type ->
                 async {
                     val url = "$mainUrl/find/?word=$encoded&type=$type"
-                    val doc = httpService.getDocument(url)
+                    val doc = httpService.getDocument(url, rewriteDomain = true)
                     if (doc != null) getParser().parseSearch(doc) else emptyList()
                 }
             }.awaitAll().flatten().distinctBy { it.url }.map { item ->

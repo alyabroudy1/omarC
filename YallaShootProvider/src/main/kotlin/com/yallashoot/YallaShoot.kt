@@ -147,7 +147,7 @@ class YallaShoot : BaseProvider() {
         request: MainPageRequest
     ): HomePageResponse? {
         httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl) ?: return null
+        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
         val homePageList = mutableListOf<HomePageList>()
         
         val todayMatches = parseMatchesFromDocument(doc)
@@ -161,7 +161,7 @@ class YallaShoot : BaseProvider() {
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         val url = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val html = httpService.getText(url, skipRewrite = true) ?: return emptyList()
+        val html = httpService.getText(url, rewriteDomain = false) ?: return emptyList()
         val doc = org.jsoup.Jsoup.parse(html, url)
         
         val allMatches = parseMatchesFromDocument(doc)
@@ -196,7 +196,7 @@ class YallaShoot : BaseProvider() {
         val isMatch = url.contains("yallashoooty") || url.contains("/sport") || url.contains("/https") || url.contains(".html") || url.contains("/matches/")
         
         if (isMatch) {
-            val html = httpService.getText(url, skipRewrite = true) ?: return null
+            val html = httpService.getText(url, rewriteDomain = false) ?: return null
             val doc = org.jsoup.Jsoup.parse(html, url)
             
             val titleNode = doc.selectFirst(".EntryTitle")
@@ -233,7 +233,7 @@ class YallaShoot : BaseProvider() {
         val userAgent = httpService.userAgent
 
         // Bypass BaseProvider rewrite strictly using getText
-        val html = httpService.getText(data, skipRewrite = true) ?: return false
+        val html = httpService.getText(data, rewriteDomain = false) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst(".entry-content iframe, .posts-body iframe, iframe.cf, iframe")
@@ -264,7 +264,7 @@ class YallaShoot : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = httpService.getText(playerUrl, pHeaders, skipRewrite = true) ?: return foundLinks
+        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false) ?: return foundLinks
         Log.d("YallaShoot", "Fetched base player HTML snippet: ${playerResponse}")
         
         // 1. Process default page directly
@@ -280,7 +280,7 @@ class YallaShoot : BaseProvider() {
         // Use apmap if possible, or sequential robust loop
         menuLinks.forEach { serverUrl ->
             val fixedServer = fixYallaUrl(serverUrl)
-            val serverHtml = httpService.getText(fixedServer, pHeaders, skipRewrite = true)
+            val serverHtml = httpService.getText(fixedServer, pHeaders, rewriteDomain = false)
             if (serverHtml != null) {
                 Log.d("YallaShoot", "Fetched secondary server payload HTML from \$fixedServer: \${serverHtml}")
                 val (fA, fG) = processMultiIframe(serverHtml, fixedServer, userAgent, subtitleCallback, callback)
@@ -419,7 +419,7 @@ class YallaShoot : BaseProvider() {
                 // We recursively fetch them here to manually intercept AlbaPlayer/Clappr payloads natively!
                 try {
                     val pHeaders = mapOf("Referer" to referer, "User-Agent" to userAgent)
-                    val innerHtml = httpService.getText(src, pHeaders, skipRewrite = true)
+                    val innerHtml = httpService.getText(src, pHeaders, rewriteDomain = false)
                     if (innerHtml != null) {
                         Log.d("YallaShoot", "Nested iframe successfully fetched from $src, recursively attempting manual extraction...")
                         val (nestedAlba, nestedGeneric) = processMultiIframe(innerHtml, src, userAgent, subtitleCallback, callback, depth + 1)

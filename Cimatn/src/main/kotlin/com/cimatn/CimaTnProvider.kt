@@ -36,7 +36,7 @@ class CimaTn : BaseProvider() {
             return loadMovieData(cleanUrl)
         }
 
-        val doc = httpService.getDocument(cleanUrl) ?: return null
+        val doc = httpService.getDocument(cleanUrl, rewriteDomain = true) ?: return null
         val htmlContent = doc.html()
 
         if (htmlContent.contains("data-secure-url") && !htmlContent.contains("const watchPageSlug")) {

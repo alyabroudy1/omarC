@@ -26,7 +26,7 @@ class Asia2TvProvider : BaseProvider() {
         httpService.ensureInitialized()
         val pageUrl = url.substringBefore("#")
 
-        val doc = httpService.getDocument(pageUrl) ?: return null
+        val doc = httpService.getDocument(pageUrl, rewriteDomain = true) ?: return null
         val title = doc.selectFirst("h1.mb-0")?.text()?.trim() ?: "Unknown"
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val posterImg = doc.selectFirst("div.single-thumb-bg img")
@@ -119,7 +119,7 @@ class Asia2TvProvider : BaseProvider() {
     ): Boolean {
         httpService.ensureInitialized()
 
-        val doc = httpService.getDocument(data) ?: return false
+        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: return false
 
         val serverElements = doc.select("li.getplay")

@@ -44,7 +44,7 @@ class Anim3rbProvider : BaseProvider() {
 
         httpService.ensureInitialized()
 
-        val doc = httpService.getDocument(request.data, checkDomainChange = true) ?: run {
+        val doc = httpService.getDocument(request.data, checkDomainChange = true, rewriteDomain = true) ?: run {
             Log.e(TAG, "getMainPage: doc is null")
             return null
         }
@@ -147,9 +147,9 @@ class Anim3rbProvider : BaseProvider() {
 
         val doc = try {
             if (useNoFallback) {
-                httpService.getDocumentNoFallback(url, checkDomainChange = true)
+                httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
             } else {
-                httpService.getDocument(url, checkDomainChange = true)
+                httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
             }
         } catch (e: CloudflareBlockedSearchException) {
             Log.w(TAG, "standardSearch: CF blocked in lazy mode — rethrowing")
@@ -188,9 +188,9 @@ class Anim3rbProvider : BaseProvider() {
 
         val mainDoc = try {
             if (useNoFallback) {
-                httpService.getDocumentNoFallback(mainUrl)
+                httpService.getDocumentNoFallback(mainUrl, rewriteDomain = true)
             } else {
-                httpService.getDocument(mainUrl)
+                httpService.getDocument(mainUrl, rewriteDomain = true)
             }
         } catch (e: CloudflareBlockedSearchException) {
             Log.w(TAG, "livewireSearch: CF blocked in lazy mode — rethrowing")

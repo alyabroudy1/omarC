@@ -47,7 +47,7 @@ class GameHubExtractor : ExtractorApi() {
         val html = http.getText(
             cleanUrl,
             headers = mapOf("Referer" to actualReferer),
-            skipRewrite = true
+            rewriteDomain = false
         ) ?: return
 
         val csrfToken = Regex("""['"]csrf_token['"]\s*:\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
@@ -98,7 +98,7 @@ class GameHubExtractor : ExtractorApi() {
                 "X-Requested-With" to "XMLHttpRequest",
                 "Origin" to mainUrl
             ),
-            skipRewrite = true
+            rewriteDomain = false
         ) ?: return
 
         Regex("""src=["'](https?://[^"']+)["']""").findAll(postResponse).forEach { match ->
@@ -121,7 +121,7 @@ class GameHubExtractor : ExtractorApi() {
         val m3u8Content = http.getText(
             m3u8Url,
             headers = mapOf("Referer" to pageUrl, "Accept" to "*/*"),
-            skipRewrite = true
+            rewriteDomain = false
         ) ?: return emptyList()
 
         if (!m3u8Content.contains("#EXT-X-STREAM-INF")) {

@@ -28,13 +28,13 @@ class Anime4Up : BaseProvider() {
     override suspend fun load(url: String): LoadResponse? {
         httpService.ensureInitialized()
         var animeUrl = url
-        var animeDoc = httpService.getDocument(url) ?: return null
+        var animeDoc = httpService.getDocument(url, rewriteDomain = true) ?: return null
 
         if (url.contains("/episode/")) {
             val parentAnimeLink = animeDoc.selectFirst(".anime-page-link a")?.attr("href")
             if (!parentAnimeLink.isNullOrBlank()) {
                 animeUrl = parentAnimeLink
-                animeDoc = httpService.getDocument(animeUrl) ?: return null
+                animeDoc = httpService.getDocument(animeUrl, rewriteDomain = true) ?: return null
             }
         }
 
@@ -71,7 +71,7 @@ class Anime4Up : BaseProvider() {
             ?: animeDoc.selectFirst("#episodesList .themexblock a")?.attr("href")
 
         if (!firstEpLink.isNullOrBlank()) {
-            val epDoc = httpService.getDocument(firstEpLink)
+            val epDoc = httpService.getDocument(firstEpLink, rewriteDomain = true)
             if (epDoc != null) {
                 val sidebarEpisodes = epDoc.select("ul.all-episodes-list li a")
                 if (sidebarEpisodes.isNotEmpty()) {
@@ -113,7 +113,7 @@ class Anime4Up : BaseProvider() {
     ): Boolean {
         httpService.ensureInitialized()
 
-        val doc = httpService.getDocument(data) ?: return false
+        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
         val seenLinks = mutableSetOf<String>()
 
         for (li in doc.select("ul#episode-servers li[data-watch]")) {
