@@ -300,7 +300,36 @@ class eishk : BaseProvider() {
             val headers = mapOf<String, String>()
             val foundAllMediaLinks = mutableMapOf<String, MutableSet<String>>()
 
-            // ── Strategy 1 (preferred): a.single-watch-btn → aa.3isk.icu → JS vars → POST → iframe ──
+            // ── Strategy 0 (direct): construct embed URLs from page data, bypass proxy ──
+            try {
+                val pageHtml = soup0.html()
+                val postId = soup0.selectFirst("input#comment_post_ID")?.attr("value")?.toIntOrNull()
+                val seMatch = Regex("""cl_se_eps\s*=\s*\{[^}]*"se"\s*:\s*"(\d+)"[^}]*\}""").find(pageHtml)
+                val embedBase = Regex(""""embed"\s*:\s*"([^"]+)""").find(pageHtml)?.groupValues?.get(1)?.trimEnd('/')
+                    ?: soup0.baseUri()?.let { Regex("""https?://[^/]+""").find(it)?.value }
+                    ?: mainUrl
+                if (postId != null && seMatch != null) {
+                    val season = seMatch.groupValues[1]
+                    Log.d(TAG, "Strategy 0: direct embed (post=$postId, season=$season, base=$embedBase)")
+                    coroutineScope {
+                        val deferreds = (1..5).map { serverNum ->
+                            async {
+                                val url = "$embedBase/embed/$serverNum/$postId/$season/"
+                                processSingleEmbedServer(url, data, headers, "s0-s$serverNum")
+                            }
+                        }
+                        for (deferred in deferreds) {
+                            deferred.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("s0") }
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "Strategy 0 skipped: postId=$postId, seMatch=${seMatch != null}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Strategy 0 failed: ${e.message}")
+            }
+
+            // ── Strategy 1 (proxy): a.single-watch-btn → aa.3isk.icu → JS vars → POST → iframe ──
             val watchAnchor = soup0.selectFirst("a.single-watch-btn")
             if (watchAnchor != null) {
                 val redirectUrl = watchAnchor.attr("href").ifBlank { watchAnchor.attr("abs:href") }
@@ -337,8 +366,8 @@ class eishk : BaseProvider() {
                                             async { processSingleEmbedServer(url, redirectUrl, headers, label) to label }
                                         }
                                     }
-                                    deferreds.forEach { (links, label) ->
-                                        links.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
+                                    for ((deferred, label) in deferreds) {
+                                        deferred.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
                                     }
                                 }
                             }
@@ -395,8 +424,8 @@ class eishk : BaseProvider() {
                                             async { processSingleEmbedServer(url, data, headers, label) to label }
                                         }
                                     }
-                                    deferreds.forEach { (links, label) ->
-                                        links.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
+                                    for ((deferred, label) in deferreds) {
+                                        deferred.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
                                     }
                                 }
                             }
