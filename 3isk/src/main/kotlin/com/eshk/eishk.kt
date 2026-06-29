@@ -1,6 +1,7 @@
 package com.eshk
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.api.Log
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -63,7 +64,8 @@ class eishk : BaseProvider() {
     ): Boolean {
         httpService.ensureInitialized()
 
-        val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true) ?: return false
+        val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true)
+        if (r0 == null) { Log.w("EshkLinks", "r0 getDocument returned null"); return false }
         var watchForm = r0.selectFirst("button.single-watch-btn")?.parent()
         if (watchForm == null) {
             for (f in r0.select("form")) {
@@ -73,7 +75,8 @@ class eishk : BaseProvider() {
                 }
             }
         }
-        if (watchForm == null) return false
+        if (watchForm == null) { Log.w("EshkLinks", "no watchForm found"); return false }
+        Log.w("EshkLinks", "watchForm action='${watchForm.attr("action")}'")
 
         val firstPostUrl = resolveUrlFromForm(watchForm)
         val firstFormData = watchForm.select("input[type=hidden]")
@@ -85,27 +88,33 @@ class eishk : BaseProvider() {
         }
 
         val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data)
-            ?: return false
+        if (r1Text == null) { Log.w("EshkLinks", "first POST returned null"); return false }
+        Log.w("EshkLinks", "r1Text len=${r1Text.length}, preview=${r1Text.take(200)}")
 
         val myUrlMatch = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
         val newsMatch = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
-        if (myUrlMatch == null || newsMatch == null) return false
+        if (myUrlMatch == null) { Log.w("EshkLinks", "myUrl regex not found"); return false }
+        if (newsMatch == null) { Log.w("EshkLinks", "news regex not found"); return false }
+        Log.w("EshkLinks", "myUrl=${myUrlMatch.groupValues[1]}, news=${newsMatch.groupValues[1]}")
 
         val nextPost = myUrlMatch.groupValues[1]
         val newsVal = newsMatch.groupValues[1]
 
         val r2Text = httpService.postText(nextPost, mapOf("news" to newsVal, "u" to "", "submit" to "submit"), referer = nextPost)
-            ?: return false
+        if (r2Text == null) { Log.w("EshkLinks", "second POST returned null"); return false }
+        Log.w("EshkLinks", "r2Text len=${r2Text.length}, preview=${r2Text.take(200)}")
 
         val r2Doc = org.jsoup.Jsoup.parse(r2Text)
         val iframeSrc = r2Doc.select("iframe").firstNotNullOfOrNull { it.attr("src").ifBlank { null } }
-            ?: return false
+        if (iframeSrc == null) { Log.w("EshkLinks", "no iframe found"); return false }
+        Log.w("EshkLinks", "iframeSrc=$iframeSrc")
 
         var foundAny = false
         loadExtractor(iframeSrc, nextPost, subtitleCallback) { link ->
             callback(link)
             foundAny = true
         }
+        Log.w("EshkLinks", "foundAny=$foundAny")
         return foundAny
     }
 
