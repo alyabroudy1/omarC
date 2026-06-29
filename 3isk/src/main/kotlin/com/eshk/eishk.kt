@@ -264,7 +264,7 @@ class eishk : BaseProvider() {
             val r0 = try {
                 httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true)
             } catch (e: Exception) {
-                Log.e(TAG, "Initial GET failed", e); return false
+                Log.e(TAG, "Initial GET failed: ${e.message}"); return false
             }
             if (r0 == null) {
                 Log.e(TAG, "Initial GET returned null")
@@ -298,7 +298,7 @@ class eishk : BaseProvider() {
             val r1Text = try {
                 httpService.postText(firstPostUrl, firstFormData, referer = data, headers = headers)
             } catch (e: Exception) {
-                Log.e(TAG, "POST first failed to $firstPostUrl", e); return false
+                Log.e(TAG, "POST first failed to $firstPostUrl: ${e.message}"); return false
             }
             if (r1Text == null) {
                 Log.e(TAG, "POST first returned null")
@@ -317,7 +317,7 @@ class eishk : BaseProvider() {
             val r2Text = try {
                 httpService.postText(nextPost, post2Data, referer = data, headers = headers)
             } catch (e: Exception) {
-                Log.e(TAG, "POST2 failed to $nextPost", e); return false
+                Log.e(TAG, "POST2 failed to $nextPost: ${e.message}"); return false
             }
             if (r2Text == null) {
                 Log.e(TAG, "POST2 returned null")
