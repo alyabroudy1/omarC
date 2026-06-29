@@ -272,86 +272,110 @@ class eishk : BaseProvider() {
             }
 
             val soup0 = r0
-            var watchForm = soup0.selectFirst("button.single-watch-btn")?.let { it.parent() }
-            if (watchForm == null) {
-                for (f in soup0.select("form")) {
-                    val act = f.attr("action")
-                    if (act.contains("3isk") || act.contains("aa.3isk") || act.contains("watch")) {
-                        watchForm = f; break
-                    }
-                }
-            }
-            if (watchForm == null) {
-                return false
-            }
-            val firstPostUrl = watchForm.attr("action")
-            val firstFormData = watchForm.select("input[type=hidden]")
-                .associate { it.attr("name") to it.attr("value") }.toMutableMap()
-
-            val watchBtn = soup0.selectFirst("button.single-watch-btn")
-            if (watchBtn != null) {
-                val btnName = watchBtn.attr("name")
-                if (btnName.isNotBlank()) firstFormData[btnName] = watchBtn.attr("value")
-            }
-
             val headers = mapOf<String, String>()
-            val r1Text = try {
-                httpService.postText(firstPostUrl, firstFormData, referer = data, headers = headers)
-            } catch (e: Exception) {
-                Log.e(TAG, "POST first failed to $firstPostUrl: ${e.message}"); return false
-            }
-            if (r1Text == null) {
-                Log.e(TAG, "POST first returned null")
-                return false
-            }
-
-            val mMyurl = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
-            val mNews = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
-            if (mMyurl == null || mNews == null) {
-                return false
-            }
-            val nextPost = mMyurl.groupValues[1]
-            val newsVal = mNews.groupValues[1]
-
-            val post2Data = mapOf("news" to newsVal, "u" to "", "submit" to "submit")
-            val r2Text = try {
-                httpService.postText(nextPost, post2Data, referer = data, headers = headers)
-            } catch (e: Exception) {
-                Log.e(TAG, "POST2 failed to $nextPost: ${e.message}"); return false
-            }
-            if (r2Text == null) {
-                Log.e(TAG, "POST2 returned null")
-                return false
-            }
-
-            val soup2 = org.jsoup.Jsoup.parse(r2Text)
-            val iframeSrcsOnR2 = getAllIframeSrcs(soup2)
-            if (iframeSrcsOnR2.isEmpty()) {
-                return false
-            }
-            val baseIframeSrc = iframeSrcsOnR2[0]
-
             val foundAllMediaLinks = mutableMapOf<String, MutableSet<String>>()
 
-            val embedMatch = Regex("""(https://3esk\.onl/embed/)(\d+)/(.*)""").find(baseIframeSrc)
-            if (embedMatch != null) {
-                val baseUrlPrefix = embedMatch.groupValues[1]
-                val trailingPart = embedMatch.groupValues[3]
-
-                val maxServersToCheck = 5
-                for (serverNum in 1..maxServersToCheck) {
-                    val currentEmbedUrl = "$baseUrlPrefix$serverNum/$trailingPart"
-                    val mediaLinks = processSingleEmbedServer(currentEmbedUrl, data, headers, serverLabel = serverNum.toString())
-                    if (mediaLinks.isNotEmpty()) {
-                        mediaLinks.forEach { link ->
-                            foundAllMediaLinks.getOrPut(link) { mutableSetOf() }.add(serverNum.toString())
+            // ── Strategy 1 (preferred): a.single-watch-btn → aa.3isk.icu → JS vars → POST → iframe ──
+            val watchAnchor = soup0.selectFirst("a.single-watch-btn")
+            if (watchAnchor != null) {
+                val redirectUrl = watchAnchor.attr("href").ifBlank { watchAnchor.attr("abs:href") }
+                if (redirectUrl.isNotBlank()) {
+                    Log.d(TAG, "Strategy 1: following a.single-watch-btn → $redirectUrl")
+                    val aaDoc = try {
+                        httpService.getDocument(redirectUrl, headers = headers)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Strategy 1: GET failed: ${e.message}"); null
+                    }
+                    if (aaDoc != null) {
+                        val aaHtml = aaDoc.html()
+                        val mMyurl = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(aaHtml)
+                        val mInputVal = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(aaHtml)
+                        val mMydUrl = Regex("""var\s+mydUrl\s*=\s*["']([^"']*)["']""").find(aaHtml)
+                        if (mMyurl != null && mInputVal != null) {
+                            val postUrl = mMyurl.groupValues[1]
+                            val inputVal = mInputVal.groupValues[1]
+                            val uVal = mMydUrl?.groupValues?.get(1) ?: ""
+                            val postData = mapOf("news" to inputVal, "u" to uVal, "submit" to "submit")
+                            Log.d(TAG, "Strategy 1: POST to $postUrl")
+                            val r2Text = try {
+                                httpService.postText(postUrl, postData, referer = redirectUrl, headers = headers)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Strategy 1: POST failed: ${e.message}"); null
+                            }
+                            if (r2Text != null) {
+                                val soup2 = org.jsoup.Jsoup.parse(r2Text)
+                                val iframeUrls = getAllIframeSrcs(soup2)
+                                Log.d(TAG, "Strategy 1: found ${iframeUrls.size} iframes in POST response")
+                                for (ifr in iframeUrls) {
+                                    val links = processSingleEmbedServer(ifr, redirectUrl, headers, "aa")
+                                    links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("aa") }
+                                }
+                            }
                         }
                     }
                 }
-            } else {
-                val mediaLinks = processSingleEmbedServer(baseIframeSrc, data, headers, serverLabel = "base")
-                if (mediaLinks.isNotEmpty()) {
-                    mediaLinks.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("base") }
+            }
+
+            // ── Strategy 2 (fallback): form-based POST flow (legacy) ──
+            if (foundAllMediaLinks.isEmpty()) {
+                Log.d(TAG, "Strategy 2: legacy form-based POST flow")
+                var watchForm = soup0.selectFirst("button.single-watch-btn")?.let { it.parent() }
+                if (watchForm == null) {
+                    for (f in soup0.select("form")) {
+                        val act = f.attr("action")
+                        if (act.contains("3isk") || act.contains("aa.3isk") || act.contains("watch")) {
+                            watchForm = f; break
+                        }
+                    }
+                }
+                if (watchForm != null) {
+                    val firstPostUrl = watchForm.attr("action")
+                    val firstFormData = watchForm.select("input[type=hidden]")
+                        .associate { it.attr("name") to it.attr("value") }.toMutableMap()
+                    val watchBtn = soup0.selectFirst("button.single-watch-btn")
+                    if (watchBtn != null) {
+                        val btnName = watchBtn.attr("name")
+                        if (btnName.isNotBlank()) firstFormData[btnName] = watchBtn.attr("value")
+                    }
+                    val r1Text = try {
+                        httpService.postText(firstPostUrl, firstFormData, referer = data, headers = headers)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Strategy 2: POST failed: ${e.message}"); null
+                    }
+                    if (r1Text != null) {
+                        val mMyurl = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
+                        val mNews = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
+                        if (mMyurl != null && mNews != null) {
+                            val nextPost = mMyurl.groupValues[1]
+                            val newsVal = mNews.groupValues[1]
+                            val post2Data = mapOf("news" to newsVal, "u" to "", "submit" to "submit")
+                            val r2Text = try {
+                                httpService.postText(nextPost, post2Data, referer = data, headers = headers)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Strategy 2: POST2 failed: ${e.message}"); null
+                            }
+                            if (r2Text != null) {
+                                val soup2 = org.jsoup.Jsoup.parse(r2Text)
+                                val iframeSrcs = getAllIframeSrcs(soup2)
+                                Log.d(TAG, "Strategy 2: found ${iframeSrcs.size} iframes in POST2 response")
+                                for (baseIframeSrc in iframeSrcs) {
+                                    val embedMatch = Regex("""(https://3esk\.onl/embed/)(\d+)/(.*)""").find(baseIframeSrc)
+                                    if (embedMatch != null) {
+                                        val baseUrlPrefix = embedMatch.groupValues[1]
+                                        val trailingPart = embedMatch.groupValues[3]
+                                        for (serverNum in 1..5) {
+                                            val currentEmbedUrl = "$baseUrlPrefix$serverNum/$trailingPart"
+                                            val links = processSingleEmbedServer(currentEmbedUrl, data, headers, serverNum.toString())
+                                            links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(serverNum.toString()) }
+                                        }
+                                    } else {
+                                        val links = processSingleEmbedServer(baseIframeSrc, data, headers, "base")
+                                        links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("base") }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
