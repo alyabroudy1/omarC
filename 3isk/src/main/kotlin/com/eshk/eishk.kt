@@ -6,6 +6,7 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class eishk : BaseProvider() {
@@ -66,6 +67,18 @@ class eishk : BaseProvider() {
 
         val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true)
         if (r0 == null) { Log.w("EshkLinks", "r0 getDocument returned null"); return false }
+
+        if (tryDirectExtract(r0, data, subtitleCallback, callback)) return true
+
+        Log.w("EshkLinks", "direct extraction failed, trying POST workflow fallback")
+        return tryPostWorkflow(r0, data, subtitleCallback, callback)
+    }
+
+    private suspend fun tryPostWorkflow(
+        r0: Document, data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         var watchForm = r0.selectFirst("button.single-watch-btn")?.parent()
         if (watchForm == null) {
             for (f in r0.select("form")) {
@@ -89,33 +102,57 @@ class eishk : BaseProvider() {
 
         val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data)
         if (r1Text == null) { Log.w("EshkLinks", "first POST returned null"); return false }
-        Log.w("EshkLinks", "r1Text len=${r1Text.length}, preview=${r1Text.take(200)}")
 
         val myUrlMatch = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
         val newsMatch = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
-        if (myUrlMatch == null) { Log.w("EshkLinks", "myUrl regex not found"); return false }
-        if (newsMatch == null) { Log.w("EshkLinks", "news regex not found"); return false }
-        Log.w("EshkLinks", "myUrl=${myUrlMatch.groupValues[1]}, news=${newsMatch.groupValues[1]}")
+        if (myUrlMatch == null || newsMatch == null) { Log.w("EshkLinks", "myUrl/news regex not found"); return false }
 
         val nextPost = myUrlMatch.groupValues[1]
         val newsVal = newsMatch.groupValues[1]
 
         val r2Text = httpService.postText(nextPost, mapOf("news" to newsVal, "u" to "", "submit" to "submit"), referer = nextPost)
         if (r2Text == null) { Log.w("EshkLinks", "second POST returned null"); return false }
-        Log.w("EshkLinks", "r2Text len=${r2Text.length}, preview=${r2Text.take(200)}")
 
         val r2Doc = org.jsoup.Jsoup.parse(r2Text)
         val iframeSrc = r2Doc.select("iframe").firstNotNullOfOrNull { it.attr("src").ifBlank { null } }
-        if (iframeSrc == null) { Log.w("EshkLinks", "no iframe found"); return false }
+        if (iframeSrc == null) { Log.w("EshkLinks", "no iframe in second POST response"); return false }
         Log.w("EshkLinks", "iframeSrc=$iframeSrc")
 
         var foundAny = false
         loadExtractor(iframeSrc, nextPost, subtitleCallback) { link ->
-            callback(link)
-            foundAny = true
+            callback(link); foundAny = true
         }
-        Log.w("EshkLinks", "foundAny=$foundAny")
         return foundAny
+    }
+
+    private suspend fun tryDirectExtract(
+        r0: Document, data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        for (iframe in r0.select("iframe")) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank()) {
+                Log.w("EshkLinks", "fallback iframe=$src")
+                var found = false
+                loadExtractor(src, data, subtitleCallback) { link ->
+                    callback(link); found = true
+                }
+                if (found) return true
+            }
+        }
+        val mediaRegex = Regex("""(?i)(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""")
+        for (match in mediaRegex.findAll(r0.html())) {
+            val url = match.groupValues[1]
+            Log.w("EshkLinks", "fallback direct media=$url")
+            var found = false
+            loadExtractor(url, data, subtitleCallback) { link ->
+                callback(link); found = true
+            }
+            if (found) return true
+        }
+        Log.w("EshkLinks", "fallback found nothing")
+        return false
     }
 
     private fun resolveUrlFromForm(form: Element): String {
