@@ -92,19 +92,48 @@ class eishk : BaseProvider() {
         return tryDirectExtract(r0, data, subtitleCallback, callback)
     }
 
-    private fun logChunked(tag: String, label: String, text: String) {
-        Log.d(tag, "=== $label === (${text.length} chars)")
-        text.chunked(3000).forEachIndexed { i, chunk ->
-            Log.d(tag, "$label chunk ${i + 1}/${(text.length + 2999) / 3000}: $chunk")
-        }
-    }
-
     private suspend fun resolveIframeViaPostHandshake(r0: Document, data: String): String? {
-        // Step 1: Find watch form (exact re-3arabi logic)
-        logChunked("EshkLinks", "r0 html", r0.html())
+        // =============================================
+        // PATH 1: Direct <a> tag approach (current site uses this)
+        // The page has <a class="single-watch-btn" href="https://aa.3isk.icu/..."> 
+        // Following this href redirects to the actual embed page
+        // =============================================
+        val directLink = r0.selectFirst("a.single-watch-btn")
+        if (directLink != null) {
+            val href = directLink.attr("href")
+            if (href.isNotBlank()) {
+                Log.w("EshkLinks", "Found a.single-watch-btn href=$href")
+                try {
+                    // Follow redirect to get the embed page
+                    val redirectDoc = httpService.getDocument(href, headers = mapOf("Referer" to data))
+                    if (redirectDoc != null) {
+                        val finalUrl = redirectDoc.location()
+                        Log.w("EshkLinks", "Redirect landed at: $finalUrl")
+                        // Final URL is likely the embed page itself (e.g., https://3esk.onl/embed/N/xxx)
+                        if (finalUrl.isNotBlank() && finalUrl != href) {
+                            return finalUrl
+                        }
+                        // Or the page has an iframe leading to the embed
+                        val iframeSrc = redirectDoc.select("iframe").firstNotNullOfOrNull {
+                            it.attr("src").ifBlank { null }
+                        }
+                        if (iframeSrc != null) {
+                            Log.w("EshkLinks", "Found iframe in redirect page: $iframeSrc")
+                            return iframeSrc
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("EshkLinks", "Failed to follow redirect: ${e.message}")
+                }
+            }
+        }
+
+        // =============================================
+        // PATH 2: <button> inside <form> (old POST handshake)
+        // =============================================
+        Log.w("EshkLinks", "a.single-watch-btn not found, trying form-based approach")
         var watchForm = r0.selectFirst("button.single-watch-btn")?.let { it.parent() }
         if (watchForm == null) {
-            Log.w("EshkLinks", "button.single-watch-btn not found, trying fallback form selectors")
             for (f in r0.select("form")) {
                 val act = f.attr("action")
                 if (act.contains("3isk") || act.contains("aa.3isk") || act.contains("watch")) {
@@ -118,7 +147,6 @@ class eishk : BaseProvider() {
         }
         Log.w("EshkLinks", "watchForm action='${watchForm.attr("action")}'")
 
-        // Step 2: First POST — submit the form with hidden inputs + button value
         val firstPostUrl = watchForm.attr("action")
         val firstFormData = watchForm.select("input[type=hidden]")
             .associate { it.attr("name") to it.attr("value") }.toMutableMap()
@@ -128,14 +156,8 @@ class eishk : BaseProvider() {
         }
         Log.w("EshkLinks", "POST1 url=$firstPostUrl data=$firstFormData")
 
-        val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data)
-        if (r1Text == null) {
-            Log.w("EshkLinks", "POST1 returned null")
-            return null
-        }
-        logChunked("EshkLinks", "r1 post1 response", r1Text)
+        val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data) ?: return null
 
-        // Step 3: Extract myUrl + news from response JS
         val myUrlMatch = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
         val newsMatch = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
         if (myUrlMatch == null || newsMatch == null) {
@@ -146,19 +168,12 @@ class eishk : BaseProvider() {
         val newsVal = newsMatch.groupValues[1]
         Log.w("EshkLinks", "myUrl=$nextPost news=$newsVal")
 
-        // Step 4: Second POST — submit news value to get the embed page
         val r2Text = httpService.postText(
             nextPost,
             mapOf("news" to newsVal, "u" to "", "submit" to "submit"),
             referer = nextPost
-        )
-        if (r2Text == null) {
-            Log.w("EshkLinks", "POST2 returned null")
-            return null
-        }
-        logChunked("EshkLinks", "r2 post2 response", r2Text)
+        ) ?: return null
 
-        // Step 5: Extract iframe src from embed page
         val r2Doc = org.jsoup.Jsoup.parse(r2Text)
         val iframeSrc = r2Doc.select("iframe").firstNotNullOfOrNull { it.attr("src").ifBlank { null } }
         Log.w("EshkLinks", "iframe from post2: $iframeSrc")
