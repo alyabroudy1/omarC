@@ -90,7 +90,7 @@ class AkwamParser : NewBaseParser() {
         }
     }
 
-    private fun getSeasonNumber(text: String): Int? {
+    internal fun getSeasonNumber(text: String): Int? {
         val map = mapOf(
             "الاول" to 1, "الأول" to 1, "الثاني" to 2, "الثالث" to 3, "الرابع" to 4,
             "الخامس" to 5, "السادس" to 6, "السابع" to 7, "الثامن" to 8, "التاسع" to 9,

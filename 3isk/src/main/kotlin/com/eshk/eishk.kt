@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Document
 
 class eishk : BaseProvider() {
@@ -33,8 +35,7 @@ class eishk : BaseProvider() {
 
         doc.select("section.home-items-sec").forEach { section ->
             val sectionTitle = section.selectFirst(".sec-title")?.text() ?: return@forEach
-            val sectionDoc = org.jsoup.Jsoup.parse(section.html())
-            val items = getParser().parseMainPage(sectionDoc).mapNotNull { item ->
+            val items = getParser().parseSection(section).mapNotNull { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                 }
@@ -65,6 +66,7 @@ class eishk : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val TAG = "Qesat3eshqProvider"
+        val MEDIA_REGEX = Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""", RegexOption.IGNORE_CASE)
 
         fun jsStringUnescape(s: String): String {
             val regex = Regex("""\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|\\.|\\n|\\r|\\t""")
@@ -208,14 +210,14 @@ class eishk : BaseProvider() {
                             val sample = if (content.length > start + 10000) content.substring(start, start + 10000) else content.substring(start)
                             val (unpacked, err) = unpackPackerFromEval(sample)
                             if (unpacked != null) {
-                                val mediaRegex = Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""", RegexOption.IGNORE_CASE)
-                                mediaRegex.findAll(unpacked).forEach { found.add(it.groupValues[1]) }
+                                MEDIA_REGEX.findAll(unpacked).forEach { found.add(it.groupValues[1]) }
                             }
                         }
                     }
                 }
                 return found
             } catch (e: Exception) {
+                Log.w(TAG, "analyzeAndSaveEvalScripts failed: ${e.message}")
                 return emptyList()
             }
         }
@@ -237,8 +239,7 @@ class eishk : BaseProvider() {
                 val docIf1 = httpService.getDocument(embedUrl, headers = hdrs) ?: return result
                 val text1 = docIf1.html()
 
-                Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""", RegexOption.IGNORE_CASE)
-                    .findAll(text1).forEach { result.add(it.groupValues[1]) }
+                MEDIA_REGEX.findAll(text1).forEach { result.add(it.groupValues[1]) }
 
                 analyzeAndSaveEvalScripts(text1).forEach { result.add(it) }
 
@@ -250,12 +251,12 @@ class eishk : BaseProvider() {
                     val docFinal = httpService.getDocument(iframe2Src, headers = hdrs2)
                     if (docFinal != null) {
                         val t = docFinal.html()
-                        Regex("""(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""", RegexOption.IGNORE_CASE)
-                            .findAll(t).forEach { result.add(it.groupValues[1]) }
+                        MEDIA_REGEX.findAll(t).forEach { result.add(it.groupValues[1]) }
                         analyzeAndSaveEvalScripts(t).forEach { result.add(it) }
                     }
                 }
             } catch (e: Exception) {
+                Log.w(TAG, "processSingleEmbedServer($serverLabel) failed: ${e.message}")
             }
             return result
         }
@@ -306,9 +307,23 @@ class eishk : BaseProvider() {
                                 val soup2 = org.jsoup.Jsoup.parse(r2Text)
                                 val iframeUrls = getAllIframeSrcs(soup2)
                                 Log.d(TAG, "Strategy 1: found ${iframeUrls.size} iframes in POST response")
-                                for (ifr in iframeUrls) {
-                                    val links = processSingleEmbedServer(ifr, redirectUrl, headers, "aa")
-                                    links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("aa") }
+                                coroutineScope {
+                                    val deferreds = iframeUrls.flatMap { ifr ->
+                                        val embedMatch = Regex("""(https?://[^/]+/embed/)(\d+)/(.*)""").find(ifr)
+                                        if (embedMatch != null) {
+                                            val basePrefix = embedMatch.groupValues[1]
+                                            val trailingPart = embedMatch.groupValues[3]
+                                            (1..5).map { serverNum ->
+                                                val url = "$basePrefix$serverNum/$trailingPart"
+                                                async { processSingleEmbedServer(url, redirectUrl, headers, "s1-s$serverNum") to serverNum.toString() }
+                                            }
+                                        } else {
+                                            listOf(async { processSingleEmbedServer(ifr, redirectUrl, headers, "s1") to "s1" })
+                                        }
+                                    }
+                                    deferreds.forEach { (links, label) ->
+                                        links.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
+                                    }
                                 }
                             }
                         }
@@ -358,19 +373,22 @@ class eishk : BaseProvider() {
                                 val soup2 = org.jsoup.Jsoup.parse(r2Text)
                                 val iframeSrcs = getAllIframeSrcs(soup2)
                                 Log.d(TAG, "Strategy 2: found ${iframeSrcs.size} iframes in POST2 response")
-                                for (baseIframeSrc in iframeSrcs) {
-                                    val embedMatch = Regex("""(https://3esk\.onl/embed/)(\d+)/(.*)""").find(baseIframeSrc)
-                                    if (embedMatch != null) {
-                                        val baseUrlPrefix = embedMatch.groupValues[1]
-                                        val trailingPart = embedMatch.groupValues[3]
-                                        for (serverNum in 1..5) {
-                                            val currentEmbedUrl = "$baseUrlPrefix$serverNum/$trailingPart"
-                                            val links = processSingleEmbedServer(currentEmbedUrl, data, headers, serverNum.toString())
-                                            links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(serverNum.toString()) }
+                                coroutineScope {
+                                    val deferreds = iframeSrcs.flatMap { baseIframeSrc ->
+                                        val embedMatch = Regex("""(https?://[^/]+/embed/)(\d+)/(.*)""").find(baseIframeSrc)
+                                        if (embedMatch != null) {
+                                            val basePrefix = embedMatch.groupValues[1]
+                                            val trailingPart = embedMatch.groupValues[3]
+                                            (1..5).map { serverNum ->
+                                                val url = "$basePrefix$serverNum/$trailingPart"
+                                                async { processSingleEmbedServer(url, data, headers, "s2-s$serverNum") to serverNum.toString() }
+                                            }
+                                        } else {
+                                            listOf(async { processSingleEmbedServer(baseIframeSrc, data, headers, "s2") to "s2" })
                                         }
-                                    } else {
-                                        val links = processSingleEmbedServer(baseIframeSrc, data, headers, "base")
-                                        links.forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add("base") }
+                                    }
+                                    deferreds.forEach { (links, label) ->
+                                        links.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
                                     }
                                 }
                             }
@@ -396,12 +414,14 @@ class eishk : BaseProvider() {
                         }
                     )
                 } catch (e: Exception) {
+                    Log.w(TAG, "Failed to invoke callback for a link: ${e.message}")
                 }
             }
 
             return true
 
         } catch (e: Exception) {
+            Log.e(TAG, "loadLinks top-level error: ${e.message}")
             return false
         }
     }

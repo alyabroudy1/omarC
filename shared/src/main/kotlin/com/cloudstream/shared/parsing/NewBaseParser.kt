@@ -82,6 +82,17 @@ abstract class NewBaseParser : ParserInterface {
         return parseItems(doc, mainPageConfig)
     }
 
+    fun parseSection(section: Element): List<ParserInterface.ParsedItem> {
+        val items = mutableListOf<ParserInterface.ParsedItem>()
+        for (element in section.select(mainPageConfig.container)) {
+            val itemElement = if (mainPageConfig.item != null) element.selectFirst(mainPageConfig.item) else element
+            if (itemElement != null) {
+                parseItem(itemElement, mainPageConfig)?.let { items.add(it) }
+            }
+        }
+        return items
+    }
+
     override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
         val items = parseItems(doc, searchConfig)
         if (items.isEmpty() && searchConfig === mainPageConfig) {

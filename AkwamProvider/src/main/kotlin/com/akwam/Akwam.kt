@@ -3,15 +3,14 @@ package com.akwam
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.provider.BaseProvider
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 
 class Akwam : BaseProvider() {
 
@@ -177,7 +176,7 @@ class Akwam : BaseProvider() {
                 val seasonDoc = httpService.getDocument(absoluteSeasonUrl, rewriteDomain = true)
                 if (seasonDoc != null) {
                     val seasonName = link.text()
-                    val seasonNum = getSeasonNumber(seasonName) ?: 1
+                    val seasonNum = AkwamParser().getSeasonNumber(seasonName) ?: 1
                     val episodes = getParser().parseEpisodes(seasonDoc, seasonNum)
                     Log.d(methodTag, "Parsed ${episodes.size} episodes from season $seasonNum")
                     allEpisodes.addAll(episodes)
@@ -191,26 +190,4 @@ class Akwam : BaseProvider() {
             .sortedWith(compareBy({ it.season }, { it.episode }))
     }
 
-    private fun getSeasonNumber(text: String): Int? {
-        val map = mapOf(
-            "الاول" to 1, "الأول" to 1, "الثاني" to 2, "الثالث" to 3, "الرابع" to 4,
-            "الخامس" to 5, "السادس" to 6, "السابع" to 7, "الثامن" to 8, "التاسع" to 9,
-            "العاشر" to 10
-        )
-        for ((key, value) in map) {
-            if (text.contains(key)) return value
-        }
-        return Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    private fun getQualityFromName(qualityName: String): Int {
-        return when {
-            qualityName.contains("4k", true) || qualityName.contains("2160") -> Qualities.P2160.value
-            qualityName.contains("1080") -> Qualities.P1080.value
-            qualityName.contains("720") -> Qualities.P720.value
-            qualityName.contains("480") -> Qualities.P480.value
-            qualityName.contains("360") -> Qualities.P360.value
-            else -> Qualities.Unknown.value
-        }
-    }
 }
