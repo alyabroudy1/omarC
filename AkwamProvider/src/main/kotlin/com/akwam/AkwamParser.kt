@@ -134,27 +134,34 @@ class AkwamParser : NewBaseParser() {
 
     override fun getPlayerPageUrl(doc: Document): String? {
         val watchPathElement = doc.selectFirst("a.link-show")
+            ?: return null.also { Log.d("AkwamParser", "watchPathElement is null") }
+
+        val href = watchPathElement.attr("href").ifBlank { watchPathElement.attr("abs:href") }
+        if (href.isBlank()) {
+            Log.d("AkwamParser", "watchPath href is blank")
+            return null
+        }
+
+        // Strategy 1 (preferred): absolute href — use as-is (site now provides full URL)
+        if (href.startsWith("http")) {
+            Log.d("AkwamParser", "getPlayerPageUrl: using absolute href='$href'")
+            return href
+        }
+
+        // Strategy 2 (fallback): relative href — construct with pageId (legacy format)
         val pageIdElement = doc.selectFirst("input#page_id")
-        
-        if (watchPathElement == null || pageIdElement == null) {
-            Log.d("AkwamParser", "watchPathElement or pageIdElement is null")
-            return null
+        if (pageIdElement != null) {
+            val pageId = pageIdElement.attr("value").ifBlank { pageIdElement.attr("data-value") }
+            if (pageId.isNotBlank()) {
+                val cleanPath = href.substringAfter("/watch").trimEnd('/')
+                val watchUrl = "/watch$cleanPath/$pageId"
+                Log.d("AkwamParser", "getPlayerPageUrl: constructed watchUrl='$watchUrl'")
+                return watchUrl
+            }
         }
-        
-        val watchPath = watchPathElement.attr("href").ifBlank { watchPathElement.attr("abs:href") }
-        val pageId = pageIdElement.attr("value").ifBlank { pageIdElement.attr("data-value") }
-        
-        if (watchPath.isBlank() || pageId.isBlank()) {
-            Log.d("AkwamParser", "watchPath or pageId is blank")
-            return null
-        }
-        
-        // Logic from decompiled code to construct watch URL
-        val cleanPath = watchPath.substringAfter("/watch").trimEnd('/')
-        val watchUrl = "/watch$cleanPath/$pageId"
-        
-        Log.d("AkwamParser", "getPlayerPageUrl: constructed watchUrl='$watchUrl'")
-        return watchUrl
+
+        Log.d("AkwamParser", "getPlayerPageUrl: all strategies failed")
+        return null
     }
 
     override fun extractWatchServersUrls(doc: Document): List<String> {

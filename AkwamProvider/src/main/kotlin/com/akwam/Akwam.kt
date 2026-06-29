@@ -8,6 +8,7 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -90,32 +91,32 @@ class Akwam : BaseProvider() {
             val sources = watchDoc.select("source[src]")
             Log.d(methodTag, "Found ${sources.size} direct video sources")
 
-            sources.forEach { src ->
-                var videoUrl = src.attr("abs:src").ifBlank { src.attr("src") }
-                if (videoUrl.isNotBlank()) {
-                    // Normalize URL
-                    videoUrl = videoUrl.replace("https://", "http://").replace(" ", "%20")
-
-                    val qualityStr = src.attr("size").ifBlank { src.attr("label") }.ifBlank { "direct" }
-                    val quality = getQualityFromName(qualityStr)
-
-                    Log.d(methodTag, "Delivering link: quality='$qualityStr', url='${videoUrl.take(100)}'")
-
-                    callback(
-                        newExtractorLink(
-                            source = providerName,
-                            name = providerName,
-                            url = videoUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = data
-                            this.quality = quality
-                        }
-                    )
+            if (sources.isNotEmpty()) {
+                sources.forEach { src ->
+                    var videoUrl = src.attr("abs:src").ifBlank { src.attr("src") }
+                    if (videoUrl.isNotBlank()) {
+                        videoUrl = videoUrl.replace("https://", "http://").replace(" ", "%20")
+                        val qualityStr = src.attr("size").ifBlank { src.attr("label") }.ifBlank { "direct" }
+                        val quality = getQualityFromName(qualityStr)
+                        Log.d(methodTag, "Delivering link: quality='$qualityStr', url='${videoUrl.take(100)}'")
+                        callback(
+                            newExtractorLink(
+                                source = providerName,
+                                name = providerName,
+                                url = videoUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = data
+                                this.quality = quality
+                            }
+                        )
+                    }
                 }
+                return true
             }
 
-            return sources.isNotEmpty()
+            Log.d(methodTag, "No direct sources, falling back to loadExtractor on watch page")
+            return loadExtractor(actualWatchUrl, data, subtitleCallback, callback)
         } catch (e: Exception) {
             Log.e(methodTag, "Error in loadLinks: ${e.message}")
             e.printStackTrace()
