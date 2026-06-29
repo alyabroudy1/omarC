@@ -7,7 +7,6 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 
 class eishk : BaseProvider() {
     override val providerName get() = "قصة عشق"
@@ -65,21 +64,25 @@ class eishk : BaseProvider() {
     ): Boolean {
         httpService.ensureInitialized()
 
-        val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true)
-        if (r0 == null) { Log.w("EshkLinks", "r0 getDocument returned null"); return false }
+        val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true) ?: return false
 
-        if (tryDirectExtract(r0, data, subtitleCallback, callback)) return true
+        // Primary: POST handshake → iframe → loadExtractor (EshkEmbedExtractor handles server enum + JS unpack)
+        val iframeUrl = resolveIframeViaPostHandshake(r0, data)
+        if (iframeUrl != null) {
+            var foundAny = false
+            loadExtractor(iframeUrl, data, subtitleCallback) { link ->
+                callback(link); foundAny = true
+            }
+            if (foundAny) return true
+        }
 
-        Log.w("EshkLinks", "direct extraction failed, trying POST workflow fallback")
-        return tryPostWorkflow(r0, data, subtitleCallback, callback)
+        // Fallback: direct iframe/media extraction from the episode page itself
+        return tryDirectExtract(r0, data, subtitleCallback, callback)
     }
 
-    private suspend fun tryPostWorkflow(
-        r0: Document, data: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var watchForm = r0.selectFirst("button.single-watch-btn")?.parent()
+    private suspend fun resolveIframeViaPostHandshake(r0: Document, data: String): String? {
+        // Step 1: Find watch form (exact re-3arabi logic)
+        var watchForm = r0.selectFirst("button.single-watch-btn")?.let { it.parent() }
         if (watchForm == null) {
             for (f in r0.select("form")) {
                 val act = f.attr("action")
@@ -88,41 +91,35 @@ class eishk : BaseProvider() {
                 }
             }
         }
-        if (watchForm == null) { Log.w("EshkLinks", "no watchForm found"); return false }
-        Log.w("EshkLinks", "watchForm action='${watchForm.attr("action")}'")
+        if (watchForm == null) return null
 
-        val firstPostUrl = resolveUrlFromForm(watchForm)
+        // Step 2: First POST — submit the form with hidden inputs + button value
+        val firstPostUrl = watchForm.attr("action")
         val firstFormData = watchForm.select("input[type=hidden]")
             .associate { it.attr("name") to it.attr("value") }.toMutableMap()
-        val watchBtn = r0.selectFirst("button.single-watch-btn")
-        if (watchBtn != null) {
-            val btnName = watchBtn.attr("name")
-            if (btnName.isNotBlank()) firstFormData[btnName] = watchBtn.attr("value")
+        r0.selectFirst("button.single-watch-btn")?.let { btn ->
+            val btnName = btn.attr("name")
+            if (btnName.isNotBlank()) firstFormData[btnName] = btn.attr("value")
         }
 
-        val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data)
-        if (r1Text == null) { Log.w("EshkLinks", "first POST returned null"); return false }
+        val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data) ?: return null
 
-        val myUrlMatch = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text)
-        val newsMatch = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text)
-        if (myUrlMatch == null || newsMatch == null) { Log.w("EshkLinks", "myUrl/news regex not found"); return false }
-
+        // Step 3: Extract myUrl + news from response JS
+        val myUrlMatch = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(r1Text) ?: return null
+        val newsMatch = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(r1Text) ?: return null
         val nextPost = myUrlMatch.groupValues[1]
         val newsVal = newsMatch.groupValues[1]
 
-        val r2Text = httpService.postText(nextPost, mapOf("news" to newsVal, "u" to "", "submit" to "submit"), referer = nextPost)
-        if (r2Text == null) { Log.w("EshkLinks", "second POST returned null"); return false }
+        // Step 4: Second POST — submit news value to get the embed page
+        val r2Text = httpService.postText(
+            nextPost,
+            mapOf("news" to newsVal, "u" to "", "submit" to "submit"),
+            referer = nextPost
+        ) ?: return null
 
+        // Step 5: Extract iframe src from embed page
         val r2Doc = org.jsoup.Jsoup.parse(r2Text)
-        val iframeSrc = r2Doc.select("iframe").firstNotNullOfOrNull { it.attr("src").ifBlank { null } }
-        if (iframeSrc == null) { Log.w("EshkLinks", "no iframe in second POST response"); return false }
-        Log.w("EshkLinks", "iframeSrc=$iframeSrc")
-
-        var foundAny = false
-        loadExtractor(iframeSrc, nextPost, subtitleCallback) { link ->
-            callback(link); foundAny = true
-        }
-        return foundAny
+        return r2Doc.select("iframe").firstNotNullOfOrNull { it.attr("src").ifBlank { null } }
     }
 
     private suspend fun tryDirectExtract(
@@ -133,31 +130,18 @@ class eishk : BaseProvider() {
         for (iframe in r0.select("iframe")) {
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
-                Log.w("EshkLinks", "fallback iframe=$src")
                 var found = false
-                loadExtractor(src, data, subtitleCallback) { link ->
-                    callback(link); found = true
-                }
+                loadExtractor(src, data, subtitleCallback) { link -> callback(link); found = true }
                 if (found) return true
             }
         }
         val mediaRegex = Regex("""(?i)(https?://[^\s"']+\.(?:m3u8|mp4|webm|mov)[^\s"']*)""")
         for (match in mediaRegex.findAll(r0.html())) {
             val url = match.groupValues[1]
-            Log.w("EshkLinks", "fallback direct media=$url")
             var found = false
-            loadExtractor(url, data, subtitleCallback) { link ->
-                callback(link); found = true
-            }
+            loadExtractor(url, data, subtitleCallback) { link -> callback(link); found = true }
             if (found) return true
         }
-        Log.w("EshkLinks", "fallback found nothing")
         return false
-    }
-
-    private fun resolveUrlFromForm(form: Element): String {
-        val action = form.attr("action")
-        if (action.startsWith("http")) return action
-        return "$mainUrl/$action".replace("//", "/").replace("https:/", "https://")
     }
 }
