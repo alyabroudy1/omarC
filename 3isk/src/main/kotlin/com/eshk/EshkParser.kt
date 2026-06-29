@@ -1,5 +1,6 @@
 package com.eshk
 
+import com.lagradost.api.Log
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -108,8 +109,16 @@ class EshkParser : NewBaseParser() {
         }
 
         fun safeDecodeBase64Url(encodedUrl: String): String? {
-            val decoded = decodeBase64Url(encodedUrl) ?: return null
-            return if (looksLikeUrl(decoded)) decoded else null
+            val decoded = decodeBase64Url(encodedUrl)
+            if (decoded == null) {
+                Log.w("EshkParser", "safeDecodeBase64Url: not base64: '$encodedUrl'")
+                return null
+            }
+            if (!looksLikeUrl(decoded)) {
+                Log.w("EshkParser", "safeDecodeBase64Url: decoded garbage from '$encodedUrl' -> '${decoded.take(60)}'")
+                return null
+            }
+            return decoded
         }
 
         fun decodeBase64Url(encodedUrl: String): String? {
