@@ -48,7 +48,7 @@ class EshkParser : NewBaseParser() {
     override fun parseItem(element: Element, config: MainPageConfig): ParserInterface.ParsedItem? {
         val rawTitle = element.extract(config.title) ?: return null
         val rawUrl = element.extract(config.url) ?: return null
-        val url = decodeBase64Url(rawUrl) ?: rawUrl
+        val url = safeDecodeBase64Url(rawUrl) ?: rawUrl
         val title = if (url.contains("/episodes/")) {
             rawTitle.substringBefore(" الحلقة").trim().ifBlank { rawTitle }
         } else rawTitle
@@ -67,7 +67,7 @@ class EshkParser : NewBaseParser() {
                 val rawUrl = epA.attr("data-clse").ifBlank { epA.attr("href") }
                 if (rawUrl.isBlank()) return@forEach
                 val url = if (rawUrl.startsWith("http")) rawUrl
-                else decodeBase64Url(rawUrl) ?: epA.attr("href")
+                else safeDecodeBase64Url(rawUrl) ?: epA.attr("href")
                 if (url.isBlank()) return@forEach
                 val epNum = epA.attr("data-ep-num").toIntOrNull()
                 val epName = epA.attr("title").ifBlank { "الحلقة $epNum" }
@@ -103,6 +103,15 @@ class EshkParser : NewBaseParser() {
     }
 
     companion object {
+        private fun looksLikeUrl(s: String): Boolean {
+            return s.startsWith("/") || s.startsWith("http://") || s.startsWith("https://")
+        }
+
+        fun safeDecodeBase64Url(encodedUrl: String): String? {
+            val decoded = decodeBase64Url(encodedUrl) ?: return null
+            return if (looksLikeUrl(decoded)) decoded else null
+        }
+
         fun decodeBase64Url(encodedUrl: String): String? {
             val s = encodedUrl.trim().let {
                 val mod = it.length % 4
@@ -126,7 +135,7 @@ class EshkParser : NewBaseParser() {
         fun resolveUrl(element: Element): String? {
             val encoded = element.attr("data-clse")
             if (encoded.isNotBlank()) {
-                decodeBase64Url(encoded)?.let { return it }
+                safeDecodeBase64Url(encoded)?.let { return it }
             }
             val href = element.attr("href")
             return href.takeIf { it.isNotBlank() }
