@@ -226,6 +226,30 @@ class eishk : BaseProvider() {
             return doc.select("iframe").mapNotNull { it.attr("src").ifBlank { null } }
         }
 
+        fun expandEmbedVariants(iframeUrl: String, labelPrefix: String): List<Pair<String, String>> {
+            val handlers = listOf("embed", "player", "watch", "video", "episode")
+            for (handler in handlers) {
+                val m = Regex("""(https?://[^/]+)/$handler/(\d+)(/.*|$)""").find(iframeUrl)
+                if (m != null) {
+                    val base = m.groupValues[1]
+                    val pathSuffix = m.groupValues[3]
+                    return (1..5).map { n -> "$base/$handler/$n$pathSuffix" to "$labelPrefix-s$n" }
+                }
+            }
+            val genericM = Regex("""(https?://[^/]+(?:/[^/]+)*/)(\d)(/.*|$)""").find(iframeUrl)
+            if (genericM != null) {
+                val prefix = genericM.groupValues[1]
+                val origNum = genericM.groupValues[2]
+                val suffix = genericM.groupValues[3]
+                val list = mutableListOf(iframeUrl to "$labelPrefix-orig")
+                for (n in 1..5) {
+                    if (n.toString() != origNum) list.add("$prefix$n$suffix" to "$labelPrefix-s$n")
+                }
+                return list
+            }
+            return listOf(iframeUrl to "$labelPrefix-other")
+        }
+
         suspend fun processSingleEmbedServer(
             embedUrl: String,
             refererFromPrevPage: String,
@@ -309,16 +333,8 @@ class eishk : BaseProvider() {
                                 Log.d(TAG, "Strategy 1: found ${iframeUrls.size} iframes in POST response")
                                 coroutineScope {
                                     val deferreds = iframeUrls.flatMap { ifr ->
-                                        val embedMatch = Regex("""(https?://[^/]+/embed/)(\d+)/(.*)""").find(ifr)
-                                        if (embedMatch != null) {
-                                            val basePrefix = embedMatch.groupValues[1]
-                                            val trailingPart = embedMatch.groupValues[3]
-                                            (1..5).map { serverNum ->
-                                                val url = "$basePrefix$serverNum/$trailingPart"
-                                                async { processSingleEmbedServer(url, redirectUrl, headers, "s1-s$serverNum") to serverNum.toString() }
-                                            }
-                                        } else {
-                                            listOf(async { processSingleEmbedServer(ifr, redirectUrl, headers, "s1") to "s1" })
+                                        expandEmbedVariants(ifr, "s1").map { (url, label) ->
+                                            async { processSingleEmbedServer(url, redirectUrl, headers, label) to label }
                                         }
                                     }
                                     deferreds.forEach { (links, label) ->
@@ -374,17 +390,9 @@ class eishk : BaseProvider() {
                                 val iframeSrcs = getAllIframeSrcs(soup2)
                                 Log.d(TAG, "Strategy 2: found ${iframeSrcs.size} iframes in POST2 response")
                                 coroutineScope {
-                                    val deferreds = iframeSrcs.flatMap { baseIframeSrc ->
-                                        val embedMatch = Regex("""(https?://[^/]+/embed/)(\d+)/(.*)""").find(baseIframeSrc)
-                                        if (embedMatch != null) {
-                                            val basePrefix = embedMatch.groupValues[1]
-                                            val trailingPart = embedMatch.groupValues[3]
-                                            (1..5).map { serverNum ->
-                                                val url = "$basePrefix$serverNum/$trailingPart"
-                                                async { processSingleEmbedServer(url, data, headers, "s2-s$serverNum") to serverNum.toString() }
-                                            }
-                                        } else {
-                                            listOf(async { processSingleEmbedServer(baseIframeSrc, data, headers, "s2") to "s2" })
+                                    val deferreds = iframeSrcs.flatMap { ifr ->
+                                        expandEmbedVariants(ifr, "s2").map { (url, label) ->
+                                            async { processSingleEmbedServer(url, data, headers, label) to label }
                                         }
                                     }
                                     deferreds.forEach { (links, label) ->
