@@ -1,7 +1,7 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
-import com.lagradost.cloudstream3.app
+import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -13,37 +13,30 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 
 import com.cloudstream.shared.util.WebConfig
 
-/**
- * Custom extractor for Vidoba.org embeds.
- * 
- * Uses static JS extraction instead of the WebView VideoSniffer.
- * Why? The Vidoba CDN (cdnz.quest) checks the TLS JA3 Fingerprint. 
- * If WebView generates the token and ExoPlayer (OkHttp) plays it, the 
- * TLS mismatch triggers a 403 Forbidden. Static extraction forces OkHttp 
- * to generate the token, ensuring it matches ExoPlayer.
- */
 class VidobaExtractor : ExtractorApi() {
     override val name = "Vidoba"
     override val mainUrl = "https://vidoba.org"
     override val requiresReferer = true
 
-    init {
-        android.util.Log.d("VidobaExtractor", "VidobaExtractor successfully initialized")
-    }
-
     companion object {
         private const val TAG = "VidobaExtractor"
     }
 
-    private suspend fun fetchEmbedWithHttpURLConnection(
-        urlUrl: String,
+    private suspend fun fetchViaHttpUrlConnection(
+        url: String,
         headers: Map<String, String>
-    ): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val connection = java.net.URI(urlUrl).toURL().openConnection() as java.net.HttpURLConnection
+    ): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val connection = try {
+            java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG, "fetchViaHttpUrlConnection", "Failed to open connection", e)
+            return@withContext null
+        }
         try {
             connection.requestMethod = "GET"
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.instanceFollowRedirects = true
             for ((key, value) in headers) {
                 connection.setRequestProperty(key, value)
             }
@@ -58,8 +51,12 @@ class VidobaExtractor : ExtractorApi() {
                 reader.close()
                 response.toString()
             } else {
-                throw java.io.IOException("HTTP error code: $responseCode")
+                ProviderLogger.w(TAG, "fetchViaHttpUrlConnection", "HTTP $responseCode for $url")
+                null
             }
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "fetchViaHttpUrlConnection", "Error: ${e.message}")
+            null
         } finally {
             connection.disconnect()
         }
@@ -75,45 +72,34 @@ class VidobaExtractor : ExtractorApi() {
 
         try {
             val userAgent = WebConfig.getCachedUserAgent()
-            val embedHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Referer" to (referer ?: "https://larozza.casa/"),
-                "Accept-Language" to "en-GB,en;q=0.7"
-            )
+            val headerReferer = referer ?: "https://larozza.casa/"
 
-            // 1. Fetch the embed page using HttpURLConnection (so the token binds to native Java TLS handshake signature)
-            val documentHtml = fetchEmbedWithHttpURLConnection(url, embedHeaders)
+            // ── Phase 1: Fetch embed page ──
+            // Try httpService first (handles CF, cookies, redirects).
+            // Fall back to raw HttpURLConnection if service is unavailable (preserves TLS fingerprint
+            // consistency with ExoPlayer for CDNs that check JA3).
+            val documentHtml = fetchViaHttpService(url, headerReferer, userAgent)
+                ?: fetchViaHttpUrlConnection(url, mapOf(
+                    "User-Agent" to userAgent,
+                    "Referer" to headerReferer,
+                    "Accept-Language" to "en-GB,en;q=0.7"
+                ))
 
-            // 2. Find the packed P.A.C.K.E.R JS script
-            val packedRegex = Regex("""eval\(function\(p,a,c,k,e,d\).+?split\(\s*['"]\|['"]\s*\)\s*\)\s*\)""", RegexOption.DOT_MATCHES_ALL)
-            val match = packedRegex.find(documentHtml)
-            
-            if (match == null) {
-                ProviderLogger.e(TAG, "getUrl", "Could not find packed script in Vidoba embed")
+            if (documentHtml.isNullOrBlank()) {
+                ProviderLogger.e(TAG, "getUrl", "Failed to fetch embed page")
                 return
             }
 
-            // 3. Unpack the script using CloudStream's built-in JsUnpacker
-            val unpacked = JsUnpacker(match.value).unpack()
-            if (unpacked == null) {
-                ProviderLogger.e(TAG, "getUrl", "Failed to unpack Vidoba script")
+            // ── Phase 2: Extract M3U8 from packed JS ──
+            val m3u8Url = extractM3u8FromPage(documentHtml)
+            if (m3u8Url == null) {
+                ProviderLogger.w(TAG, "getUrl", "No M3U8 found in page")
                 return
             }
 
-            // 4. Extract the M3U8 URL from the unpacked script
-            val urlRegex = Regex("""file:\s*["'](https:\/\/[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
-            val urlMatch = urlRegex.find(unpacked)
-            
-            if (urlMatch == null) {
-                ProviderLogger.e(TAG, "getUrl", "Could not find M3U8 URL in unpacked script")
-                return
-            }
+            ProviderLogger.d(TAG, "getUrl", "Extracted M3U8", "url" to m3u8Url.take(80))
 
-            val m3u8Url = urlMatch.groupValues[1]
-            ProviderLogger.d(TAG, "getUrl", "Successfully extracted M3U8", "m3u8Url" to m3u8Url.take(80))
-
-            // 5. Build the ExtractorLink pointing directly to the master playlist
-            // Referer is set to the base domain "https://vidoba.org/" (trailing slash) to prevent mismatches
+            // ── Phase 3: Emit M3U8 links ──
             val baseReferer = "https://vidoba.org/"
             val requestHeaders = mapOf(
                 "User-Agent" to userAgent,
@@ -129,9 +115,6 @@ class VidobaExtractor : ExtractorApi() {
                 "Sec-Fetch-Site" to "cross-site"
             )
 
-            android.util.Log.d(TAG, "[getUrl] Generating M3U8 links for: $m3u8Url")
-            android.util.Log.d(TAG, "[getUrl] Requesting M3U8 headers: $requestHeaders")
-
             val m3u8Links = M3u8Helper.generateM3u8(
                 source = name,
                 streamUrl = m3u8Url,
@@ -140,28 +123,116 @@ class VidobaExtractor : ExtractorApi() {
             )
 
             if (m3u8Links.isEmpty()) {
-                android.util.Log.d(TAG, "[getUrl] M3u8Helper returned empty, falling back to master playlist")
                 callback(
-                    newExtractorLink(
-                        source = name,
-                        name = "Vidoba Server",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
+                    newExtractorLink(source = name, name = "Vidoba", url = m3u8Url, type = ExtractorLinkType.M3U8) {
                         this.referer = baseReferer
                         this.quality = Qualities.Unknown.value
                         this.headers = requestHeaders
                     }
                 )
             } else {
-                for (link in m3u8Links) {
-                    android.util.Log.d(TAG, "[getUrl] Emitting variant: ${link.name} -> ${link.url}")
-                    callback(link)
+                m3u8Links.forEach { link ->
+                    callback(
+                        newExtractorLink(source = link.source, name = link.name, url = link.url) {
+                            this.referer = link.referer
+                            this.quality = link.quality
+                            this.headers = link.headers
+                        }
+                    )
                 }
             }
 
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "getUrl", "Error extracting Vidoba", e)
         }
+    }
+
+    private suspend fun fetchViaHttpService(url: String, referer: String, userAgent: String): String? {
+        val service = ProviderHttpServiceHolder.getInstance() ?: return null
+        val headers = mapOf(
+            "User-Agent" to userAgent,
+            "Referer" to referer,
+            "Accept-Language" to "en-GB,en;q=0.7"
+        )
+        return try {
+            val doc = service.getDocument(url, headers)
+            doc?.outerHtml()
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "fetchViaHttpService", "httpService failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun extractM3u8FromPage(html: String): String? {
+        // Try standard P.A.C.K.E.R: eval(function(p,a,c,k,e,d)...)
+        var unpacked: String? = tryUnpackPacker(html)
+        if (unpacked != null) return findM3u8InText(unpacked)
+
+        // Try base64-encoded eval: eval(atob('...'))
+        unpacked = tryUnpackBase64(html)
+        if (unpacked != null) return findM3u8InText(unpacked)
+
+        // Try inline sources pattern (no eval)
+        return findM3u8InText(html)
+    }
+
+    private fun tryUnpackPacker(html: String): String? {
+        val packedRegex = Regex(
+            """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)""",
+            RegexOption.DOT_MATCHES_ALL
+        )
+        val start = packedRegex.find(html) ?: return null
+        val fullMatch = html.substring(start.range.first).let { rest ->
+            // Find the closing ) of the eval
+            var depth = 0
+            var inString = false
+            var stringChar = ' '
+            for (i in rest.indices) {
+                val c = rest[i]
+                if (inString) {
+                    if (c == '\\') { // skip escaped char
+                        // just skip
+                    } else if (c == stringChar) {
+                        inString = false
+                    }
+                } else {
+                    when (c) {
+                        '\'', '"' -> { inString = true; stringChar = c }
+                        '(' -> depth++
+                        ')' -> { depth--; if (depth == 0) return@let rest.substring(0, i + 1) }
+                    }
+                }
+            }
+            rest
+        }
+        return JsUnpacker(fullMatch).unpack()
+    }
+
+    private fun tryUnpackBase64(html: String): String? {
+        val base64Regex = Regex(
+            """eval\s*\(\s*(?:atob|Base64\.decode)\s*\(\s*['"]([A-Za-z0-9+/=]+)['"]\s*\)\s*\)""",
+            RegexOption.DOT_MATCHES_ALL
+        )
+        val match = base64Regex.find(html) ?: return null
+        return try {
+            val decoded = String(android.util.Base64.decode(match.groupValues[1], android.util.Base64.DEFAULT))
+            // The decoded JS might itself be packed — try unpacking
+            tryUnpackPacker(decoded) ?: decoded
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun findM3u8InText(text: String): String? {
+        val patterns = listOf(
+            Regex("""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
+            Regex("""file\s*:\s*["'](https?://[^"']+)["'].*\.m3u8""", RegexOption.IGNORE_CASE),
+            Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']"""),
+        )
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) return match.groupValues[1].replace("\\/", "/")
+        }
+        return null
     }
 }
