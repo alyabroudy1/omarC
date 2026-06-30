@@ -42,8 +42,9 @@ data class EpisodeConfig(
     val container: String,
     val title: CssSelector? = null,
     val url: CssSelector,
-    val season: CssSelector? = null, // Logic often complex, but selector support helps
-    val episode: CssSelector? = null
+    val season: CssSelector? = null,
+    val episode: CssSelector? = null,
+    val poster: CssSelector? = null
 )
 
 data class SeasonSelector(
@@ -166,6 +167,7 @@ abstract class NewBaseParser : ParserInterface {
         return doc.select(config.container).mapNotNull { element ->
             val title = element.extract(config.title) ?: "Episode"
             val url = element.extract(config.url)
+            val posterUrl = element.extract(config.poster)
             
             if (!url.isNullOrBlank()) {
                 val epNum = element.extract(config.episode)?.toIntOrNull()
@@ -177,7 +179,8 @@ abstract class NewBaseParser : ParserInterface {
                     name = title,
                     url = url,
                     season = seasonNum ?: 1,
-                    episode = epNum
+                    episode = epNum,
+                    posterUrl = posterUrl
                 )
             } else null
         }

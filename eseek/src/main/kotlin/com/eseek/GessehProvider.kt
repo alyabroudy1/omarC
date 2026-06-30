@@ -45,62 +45,33 @@ class GessehProvider : BaseProvider() {
     )
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+    override var lang = "ar"
+    override val hasMainPage = true
+    override val supportsLazySearch = true
 
-    override fun getParser(): NewBaseParser {
-        return GessehParser()
-    }
+    override fun getParser(): NewBaseParser = GessehParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         httpService.ensureInitialized()
-        val document = app.get(request.data + page, headers = defaultHeaders).document
-        val home = document.select("article.post, article.postEp").mapNotNull { element ->
-            val linkTag = element.selectFirst("a") ?: return@mapNotNull null
-            val href = linkTag.attr("href")
-            val title = linkTag.selectFirst("div.title")?.text()?.trim() ?: return@mapNotNull null
-            var posterUrl = linkTag.selectFirst("div.imgBg, div.imgSer")?.attr("style")
-                ?.substringAfter("url(")?.substringBefore(")")
-                ?.replace("\"", "")?.replace("'", "")?.trim()
-            if (posterUrl.isNullOrBlank()) {
-                val imgTag = linkTag.selectFirst("img")
-                posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotBlank() }
-                    ?: imgTag?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                    ?: imgTag?.attr("src")
-            }
-            when {
-                href.contains("/movies/") -> newMovieSearchResponse(title, href, TvType.Movie) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
-                else -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
+        val url = request.data + page
+        val doc = httpService.getDocument(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true) ?: return null
+        val items = getParser().parseSearch(doc).map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
             }
         }
-        return newHomePageResponse(request.name, home)
+        return newHomePageResponse(request.name, items)
     }
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
-        val document = app.get("$mainUrl/?s=$query", headers = defaultHeaders).document
-        return document.select("article.post").mapNotNull { element ->
-            val linkTag = element.selectFirst("a") ?: return@mapNotNull null
-            val href = linkTag.attr("href")
-            val title = linkTag.selectFirst("div.title")?.text()?.trim() ?: return@mapNotNull null
-            var posterUrl = linkTag.selectFirst("div.imgBg, div.imgSer")?.attr("style")
-                ?.substringAfter("url(")?.substringBefore(")")
-                ?.replace("\"", "")?.replace("'", "")?.trim()
-            if (posterUrl.isNullOrBlank()) {
-                val imgTag = linkTag.selectFirst("img")
-                posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotBlank() }
-                    ?: imgTag?.attr("data-lazy-src")?.takeIf { it.isNotBlank() }
-                    ?: imgTag?.attr("src")
-            }
-            when {
-                href.contains("/movies/") -> newMovieSearchResponse(title, href, TvType.Movie) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
-                else -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                    this.posterUrl = fixUrlNull(posterUrl)
-                }
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = getParser().getSearchUrl(mainUrl, encoded)
+        val doc = httpService.getDocumentNoFallback(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true)
+            ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
+        return getParser().parseSearch(doc).map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
             }
         }
     }
@@ -144,51 +115,32 @@ class GessehProvider : BaseProvider() {
     override suspend fun load(url: String): LoadResponse? {
         httpService.ensureInitialized()
         val realUrl = resolveRealUrl(url)
-        val document = app.get(realUrl, headers = defaultHeaders).document
+        val document = httpService.getDocument(realUrl, headers = defaultHeaders) ?: return null
 
-        val seriesUrl = document.selectFirst("div.singleSeries div.info h1 a")?.attr("href")
-        if (seriesUrl != null) {
-            return load(seriesUrl)
+        val data = getParser().parseLoadPage(document, realUrl) ?: return null
+
+        if (data.parentSeriesUrl != null) {
+            return load(data.parentSeriesUrl)
         }
 
-        val title = document.selectFirst("div.info h1")?.text()?.trim() ?: ""
-        var poster = document.selectFirst("div.cover div.img")?.attr("style")
-            ?.substringAfter("url(")?.substringBefore(")")
-            ?.replace("\"", "")?.replace("'", "")?.trim()
-        if (poster.isNullOrBlank()) {
-            val imgTag = document.selectFirst("div.cover img")
-            poster = imgTag?.attr("data-src") ?: imgTag?.attr("src")
-        }
-        val description = document.selectFirst("div.story")?.text()?.trim()
-
-        if (realUrl.contains("/movies/")) {
-            return newMovieLoadResponse(title, realUrl, TvType.Movie, realUrl) {
-                this.posterUrl = fixUrlNull(poster)
-                this.plot = description
+        if (data.isMovie) {
+            return newMovieLoadResponse(data.title, realUrl, TvType.Movie, realUrl) {
+                this.posterUrl = fixUrlNull(data.posterUrl)
+                this.plot = data.plot
             }
         }
 
-        val episodes = document.select("article.postEp").mapNotNull {
-            val epUrl = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val epTitle = it.selectFirst("div.title")?.text()?.trim()
-            val epNum = it.selectFirst("div.episodeNum span:last-child")?.text()?.toIntOrNull()
-            var epPoster = it.selectFirst("div.imgSer")?.attr("style")
-                ?.substringAfter("url(")?.substringBefore(")")
-                ?.replace("\"", "")?.replace("'", "")?.trim()
-            if (epPoster.isNullOrBlank()) {
-                val imgTag = it.selectFirst("img")
-                epPoster = imgTag?.attr("data-src") ?: imgTag?.attr("src")
-            }
-            newEpisode(epUrl) {
-                name = epTitle
-                episode = epNum
-                posterUrl = fixUrlNull(epPoster)
+        val episodes = getParser().parseEpisodes(document, null).map { parsedEp ->
+            newEpisode(parsedEp.url) {
+                name = parsedEp.name
+                episode = parsedEp.episode
+                posterUrl = fixUrlNull(parsedEp.posterUrl)
             }
         }.reversed()
 
-        return newTvSeriesLoadResponse(title, realUrl, TvType.TvSeries, episodes) {
-            this.posterUrl = fixUrlNull(poster)
-            this.plot = description
+        return newTvSeriesLoadResponse(data.title, realUrl, TvType.TvSeries, episodes) {
+            this.posterUrl = fixUrlNull(data.posterUrl)
+            this.plot = data.plot
         }
     }
 

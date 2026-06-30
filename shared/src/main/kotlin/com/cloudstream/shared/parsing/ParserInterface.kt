@@ -44,7 +44,8 @@ interface ParserInterface {
         val url: String,
         val name: String,
         val season: Int,
-        val episode: Int
+        val episode: Int,
+        val posterUrl: String? = null
     )
 
     // Basic Parsing
