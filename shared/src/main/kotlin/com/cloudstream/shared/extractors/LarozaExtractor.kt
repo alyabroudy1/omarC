@@ -53,8 +53,8 @@ open class LarozaExtractor(
             return
         }
 
-        if (pageText.contains("rocket-loader", ignoreCase = true) || pageText.contains("cf-browser-rentry", ignoreCase = true)) {
-            Log.w(TAG, "Page still contains CF markers after httpService fetch — CF bypass incomplete")
+        if (pageText.length < 500) {
+            Log.w(TAG, "Page too short (${pageText.length} chars) — likely a CF challenge page with no content")
             return
         }
 
