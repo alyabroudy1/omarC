@@ -11,6 +11,7 @@ import okhttp3.Interceptor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import java.net.URI
+import android.util.Base64
 
 class KrmzyProvider : BaseProvider() {
     override val baseDomain get() = "krmzi.org"
@@ -32,6 +33,15 @@ class KrmzyProvider : BaseProvider() {
     override val supportsLazySearch = true
 
     override fun getParser(): NewBaseParser = KrmzyParser()
+
+    private fun resolveSayyarhUrl(url: String): String {
+        if (!url.contains("sayyarh.com") && !url.contains("latest1501")) return url
+        val urlParam = Regex("[?&]url=([^&]+)").find(url)?.groupValues?.getOrNull(1) ?: return url
+        return try {
+            val decoded = String(Base64.decode(urlParam, Base64.DEFAULT), Charsets.UTF_8).trim()
+            if (decoded.startsWith("http")) decoded else url
+        } catch (_: Exception) { url }
+    }
 
     private suspend fun extractLinkFromObfuscatedPage(
         url: String,
@@ -266,15 +276,20 @@ class KrmzyProvider : BaseProvider() {
 
         log("START loadLinks for page: $data")
 
+        val resolvedData = resolveSayyarhUrl(data)
+        if (resolvedData != data) {
+            log("Resolved sayyarh URL to: $resolvedData")
+        }
+
         val mainPageHostReferer = try {
-            val uri = java.net.URI(data)
+            val uri = java.net.URI(resolvedData)
             "${uri.scheme}://${uri.host}/"
         } catch (e: Exception) {
-            data
+            resolvedData
         }
 
         val episodePage = try {
-            app.get(data, interceptor = cfInterceptor).document
+            app.get(resolvedData, interceptor = cfInterceptor).document
         } catch (t: Throwable) {
             log("ERROR: failed to fetch episode page: ${t.message}")
             return false
