@@ -363,11 +363,13 @@ class eishk : BaseProvider() {
                                 coroutineScope {
                                     val deferreds = iframeUrls.flatMap { ifr ->
                                         expandEmbedVariants(ifr, "s1").map { (url, label) ->
-                                            async { processSingleEmbedServer(url, redirectUrl, headers, label) to label }
+                                            async { processSingleEmbedServer(url, redirectUrl, headers, label) } to label
                                         }
                                     }
                                     for ((deferred, label) in deferreds) {
-                                        deferred.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
+                                        deferred.await().forEach { url ->
+                                            foundAllMediaLinks.getOrPut(url) { mutableSetOf() }.add(label)
+                                        }
                                     }
                                 }
                             }
@@ -421,11 +423,13 @@ class eishk : BaseProvider() {
                                 coroutineScope {
                                     val deferreds = iframeSrcs.flatMap { ifr ->
                                         expandEmbedVariants(ifr, "s2").map { (url, label) ->
-                                            async { processSingleEmbedServer(url, data, headers, label) to label }
+                                            async { processSingleEmbedServer(url, data, headers, label) } to label
                                         }
                                     }
                                     for ((deferred, label) in deferreds) {
-                                        deferred.await().forEach { foundAllMediaLinks.getOrPut(it) { mutableSetOf() }.add(label) }
+                                        deferred.await().forEach { url ->
+                                            foundAllMediaLinks.getOrPut(url) { mutableSetOf() }.add(label)
+                                        }
                                     }
                                 }
                             }
