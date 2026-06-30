@@ -41,7 +41,8 @@ class KrmzyParser : NewBaseParser() {
         container = "article.postEp",
         title = CssSelector(query = "div.title", attr = "text"),
         url = CssSelector(query = "a", attr = "href"),
-        episode = CssSelector(query = "div.episodeNum span:last-child", attr = "text")
+        episode = CssSelector(query = "div.episodeNum span:last-child", attr = "text"),
+        poster = CssSelector(query = "div.imgSer", attr = "style", regex = """url\(['"]?(.*?)['"]?\)""")
     )
 
     override val watchServersSelectors = WatchServerSelector(
