@@ -13,9 +13,11 @@ class KrmzyProvider : BaseProvider() {
     override val baseDomain get() = "krmzi.org"
     override val providerName get() = "قرمزي"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/krmzy.json"
+    override val paginationFormat get() = "/page/%d/"
 
     override val mainPage = mainPageOf(
-        "$mainUrl/series-list/page/" to "جميع المسلسلات",
+        "$mainUrl/" to "آخر الحلقات",
+        "$mainUrl/series-list/" to "جميع المسلسلات",
     )
 
     override val supportedTypes = setOf(TvType.TvSeries)
