@@ -444,10 +444,13 @@ class eishk : BaseProvider() {
 
             for ((link, servers) in foundAllMediaLinks) {
                 try {
+                    val serverLabel = servers.firstOrNull()
+                    val labelNum = serverLabel?.let { Regex("""(\d+)""").findAll(it).lastOrNull()?.groupValues?.get(1) }
+                    val displayName = if (labelNum != null) "سيرفر $labelNum" else this.name
                     callback.invoke(
                         newExtractorLink(
-                            source = this.name,
-                            name = this.name,
+                            source = displayName,
+                            name = displayName,
                             url = link,
                             type = ExtractorLinkType.M3U8
                         ) {
