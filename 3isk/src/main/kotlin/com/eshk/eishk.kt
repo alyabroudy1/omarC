@@ -383,11 +383,8 @@ class eishk : BaseProvider() {
                 Log.d(TAG, "Strategy 2: legacy form-based POST flow")
                 var watchForm = soup0.selectFirst("button.single-watch-btn")?.let { it.parent() }
                 if (watchForm == null) {
-                    for (f in soup0.select("form")) {
-                        val act = f.attr("action")
-                        if (act.contains("3isk") || act.contains("aa.3isk") || act.contains("watch")) {
-                            watchForm = f; break
-                        }
+                    watchForm = soup0.select("form").firstOrNull { f ->
+                        f.attr("action").isNotBlank() && !f.select("input[type=hidden]").isEmpty()
                     }
                 }
                 if (watchForm != null) {
