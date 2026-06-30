@@ -54,4 +54,8 @@ fun Plugin.registerSharedExtractors() {
     // Arab HD / estream (eval-packed JS extraction from eseek/qeseh)
     registerExtractorAPI(ArabHdExtractor())
     registerExtractorAPI(EstreamExtractor())
+
+    // Laroza embed domains (CF-protected — uses httpService CF bypass)
+    registerExtractorAPI(LarozaExtractor("https://mp4.okhd.site", "OkhdSite"))
+    registerExtractorAPI(LarozaExtractor("https://rty1.film77.xyz", "Film77"))
 }
