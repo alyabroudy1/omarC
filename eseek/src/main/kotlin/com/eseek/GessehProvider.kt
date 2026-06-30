@@ -152,13 +152,9 @@ class GessehProvider : BaseProvider() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            httpService.getText(url, headers = mapOf("Referer" to referer))
+            app.get(url).text
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
-            return null
-        }
-        if (pageText == null) {
-            logCallback("Custom Extractor ERROR: null response for $url")
             return null
         }
 
@@ -242,13 +238,9 @@ class GessehProvider : BaseProvider() {
         val pageUrl = resolveRealUrl(data)
 
         val mainPage = try {
-            httpService.getDocument(pageUrl, headers = defaultHeaders)
+            app.get(pageUrl, headers = defaultHeaders).document
         } catch (e: Exception) {
             Log.e(TAG, "failed to load page: $pageUrl -> ${e.message}")
-            return false
-        }
-        if (mainPage == null) {
-            Log.e(TAG, "failed to load page (null): $pageUrl")
             return false
         }
 
@@ -309,28 +301,26 @@ class GessehProvider : BaseProvider() {
         }
 
         try {
-            val htmlPage = httpService.getDocument(targetUrl, headers = customHeaders)
-            if (htmlPage != null) {
-                htmlPage.select("ul.serversList li").forEach { li ->
-                    val serverName = li.attr("data-name").trim().takeIf { it.isNotEmpty() } ?: li.text().trim()
-                    val serverId = li.attr("data-server").trim()
-                    var embedUrl: String? = null
+            val htmlPage = app.get(targetUrl, headers = customHeaders).document
+            htmlPage.select("ul.serversList li").forEach { li ->
+                val serverName = li.attr("data-name").trim().takeIf { it.isNotEmpty() } ?: li.text().trim()
+                val serverId = li.attr("data-server").trim()
+                var embedUrl: String? = null
 
-                    if (serverId.isEmpty()) {
-                        val codeHtml = li.selectFirst("code")?.html()
-                        embedUrl = extractUrlFromCodeHtml(codeHtml, targetUrl)
-                        if (embedUrl.isNullOrBlank()) {
-                            val a = li.selectFirst("a")
-                            embedUrl = a?.attr("abs:href")?.takeIf { it.isNotBlank() } ?: a?.attr("href")
-                        }
-                    } else {
-                        embedUrl = buildEmbedUrl(serverName, serverId)
+                if (serverId.isEmpty()) {
+                    val codeHtml = li.selectFirst("code")?.html()
+                    embedUrl = extractUrlFromCodeHtml(codeHtml, targetUrl)
+                    if (embedUrl.isNullOrBlank()) {
+                        val a = li.selectFirst("a")
+                        embedUrl = a?.attr("abs:href")?.takeIf { it.isNotBlank() } ?: a?.attr("href")
                     }
+                } else {
+                    embedUrl = buildEmbedUrl(serverName, serverId)
+                }
 
-                    embedUrl = normalizeUrl(embedUrl)?.trim()
-                    if (!embedUrl.isNullOrBlank()) {
-                        serversToProcess.add(ServerData(serverName, embedUrl))
-                    }
+                embedUrl = normalizeUrl(embedUrl)?.trim()
+                if (!embedUrl.isNullOrBlank()) {
+                    serversToProcess.add(ServerData(serverName, embedUrl))
                 }
             }
         } catch (e: Exception) {
@@ -388,7 +378,7 @@ class GessehProvider : BaseProvider() {
             try {
                 QesehDailymotionExtractor().getUrl(embedUrl, null, subtitleCallback, callback)
             } catch (e: Exception) {
-                println("[GessehProvider] Custom Dailymotion extractor failed: ${e.message}")
+                Log.w("GessehProvider", "Custom Dailymotion extractor failed: ${e.message}")
             }
             return
         }
@@ -414,7 +404,7 @@ class GessehProvider : BaseProvider() {
                         "Referer" to embedUrl,
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
                     )
-                    val extracted = extractLinkFromObfuscatedPage(embedUrl, playerReferer) { s -> println(s) }
+                    val extracted = extractLinkFromObfuscatedPage(embedUrl, playerReferer) { s -> Log.d("GessehProvider", s) }
                     if (!extracted.isNullOrBlank()) {
                         callback(newExtractorLink(source = this.name, name = serverName, url = extracted) {
                             this.headers = headers
