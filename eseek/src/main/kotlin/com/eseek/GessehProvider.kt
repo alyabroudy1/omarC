@@ -15,6 +15,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 
@@ -151,9 +152,13 @@ class GessehProvider : BaseProvider() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            app.get(url).text
+            httpService.getText(url, headers = mapOf("Referer" to referer))
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
+            return null
+        }
+        if (pageText == null) {
+            logCallback("Custom Extractor ERROR: null response for $url")
             return null
         }
 
@@ -232,19 +237,24 @@ class GessehProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val TAG = "GessehProvider"
         httpService.ensureInitialized()
         val pageUrl = resolveRealUrl(data)
 
         val mainPage = try {
-            app.get(pageUrl, headers = defaultHeaders).document
+            httpService.getDocument(pageUrl, headers = defaultHeaders)
         } catch (e: Exception) {
-            println("[GessehProvider] failed to load page: $pageUrl -> ${e.message}")
+            Log.e(TAG, "failed to load page: $pageUrl -> ${e.message}")
+            return false
+        }
+        if (mainPage == null) {
+            Log.e(TAG, "failed to load page (null): $pageUrl")
             return false
         }
 
         val rawExtractorHref = mainPage.selectFirst("a.fullscreen-clickable")?.attr("href")?.trim()
         if (rawExtractorHref.isNullOrBlank()) {
-            println("[GessehProvider] extractor link not found on page")
+            Log.w(TAG, "extractor link not found on page")
             return false
         }
 
@@ -294,35 +304,37 @@ class GessehProvider : BaseProvider() {
                     }
                 }
             } catch (e: Exception) {
-                println("[GessehProvider] Failed to parse JSON: ${e.message}")
+                Log.w(TAG, "Failed to parse JSON: ${e.message}")
             }
         }
 
         try {
-            val htmlPage = app.get(targetUrl, headers = customHeaders).document
-            htmlPage.select("ul.serversList li").forEach { li ->
-                val serverName = li.attr("data-name").trim().takeIf { it.isNotEmpty() } ?: li.text().trim()
-                val serverId = li.attr("data-server").trim()
-                var embedUrl: String? = null
+            val htmlPage = httpService.getDocument(targetUrl, headers = customHeaders)
+            if (htmlPage != null) {
+                htmlPage.select("ul.serversList li").forEach { li ->
+                    val serverName = li.attr("data-name").trim().takeIf { it.isNotEmpty() } ?: li.text().trim()
+                    val serverId = li.attr("data-server").trim()
+                    var embedUrl: String? = null
 
-                if (serverId.isEmpty()) {
-                    val codeHtml = li.selectFirst("code")?.html()
-                    embedUrl = extractUrlFromCodeHtml(codeHtml, targetUrl)
-                    if (embedUrl.isNullOrBlank()) {
-                        val a = li.selectFirst("a")
-                        embedUrl = a?.attr("abs:href")?.takeIf { it.isNotBlank() } ?: a?.attr("href")
+                    if (serverId.isEmpty()) {
+                        val codeHtml = li.selectFirst("code")?.html()
+                        embedUrl = extractUrlFromCodeHtml(codeHtml, targetUrl)
+                        if (embedUrl.isNullOrBlank()) {
+                            val a = li.selectFirst("a")
+                            embedUrl = a?.attr("abs:href")?.takeIf { it.isNotBlank() } ?: a?.attr("href")
+                        }
+                    } else {
+                        embedUrl = buildEmbedUrl(serverName, serverId)
                     }
-                } else {
-                    embedUrl = buildEmbedUrl(serverName, serverId)
-                }
 
-                embedUrl = normalizeUrl(embedUrl)?.trim()
-                if (!embedUrl.isNullOrBlank()) {
-                    serversToProcess.add(ServerData(serverName, embedUrl))
+                    embedUrl = normalizeUrl(embedUrl)?.trim()
+                    if (!embedUrl.isNullOrBlank()) {
+                        serversToProcess.add(ServerData(serverName, embedUrl))
+                    }
                 }
             }
         } catch (e: Exception) {
-            println("[GessehProvider] HTML fetching failed: ${e.message}")
+            Log.e(TAG, "HTML fetching failed: ${e.message}")
         }
 
         coroutineScope {
