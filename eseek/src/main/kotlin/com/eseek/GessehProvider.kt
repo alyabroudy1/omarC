@@ -338,17 +338,6 @@ class GessehProvider : BaseProvider() {
                     this.type = ExtractorLinkType.VIDEO
                 })
             }
-            serverNameLower.contains("arab") || serverNameLower.contains("arabhd") || serverNameLower.contains("estream") || serverNameLower.contains("turk") || serverNameLower.contains("prohd") -> {
-                try {
-                    loadExtractor(embedUrl, playerReferer, subtitleCallback, callback)
-                } catch (e: Exception) {
-                    Log.w("GessehProvider", "loadExtractor failed for $serverName: ${e.message}")
-                    callback(newExtractorLink(this.name, serverName, embedUrl) {
-                        this.referer = playerReferer
-                        this.quality = getQualityFromName(embedUrl)
-                    })
-                }
-            }
             else -> {
                 try {
                     loadExtractor(embedUrl, playerReferer, subtitleCallback, callback)
