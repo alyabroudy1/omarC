@@ -51,4 +51,7 @@ fun Plugin.registerSharedExtractors() {
     // Luluvid
     registerExtractorAPI(LuluvidExtractor())
 
+    // Arab HD / estream (eval-packed JS extraction from eseek/qeseh)
+    registerExtractorAPI(ArabHdExtractor())
+    registerExtractorAPI(EstreamExtractor())
 }

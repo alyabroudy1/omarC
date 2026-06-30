@@ -145,66 +145,6 @@ class GessehProvider : BaseProvider() {
         }
     }
 
-    private suspend fun extractLinkFromObfuscatedPage(
-        url: String,
-        referer: String,
-        logCallback: (String) -> Unit
-    ): String? {
-        val pageText = try {
-            logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            app.get(url).text
-        } catch (e: Exception) {
-            logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
-            return null
-        }
-
-        val evalRegex = Regex("eval\\s*\\(\\s*function\\s*\\(.*?\\)\\s*\\{.*?\\}\\s*\\((.*)\\)\\s*\\)")
-        val evalMatch = evalRegex.find(pageText) ?: return null
-        val paramsString = evalMatch.groupValues.getOrNull(1) ?: return null
-
-        val paramsRegex = Regex("['\"](.*?)['\"]\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*['\"](.*?)['\"]\\.split\\s*\\(['\"]\\|['\"]\\)")
-        val paramMatch = paramsRegex.find(paramsString) ?: return null
-        val (packedCode, baseStr, countStr, dictionaryStr) = paramMatch.destructured
-        val base = baseStr.toInt()
-        val count = countStr.toInt()
-        val keywords = dictionaryStr.split('|')
-
-        fun toBase(num: Int, radix: Int): String {
-            val chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            if (num == 0) return "0"
-            var n = num
-            val sb = StringBuilder()
-            while (n > 0) {
-                sb.append(chars[n % radix])
-                n /= radix
-            }
-            return sb.reverse().toString()
-        }
-
-        fun deobfuscate(p: String, a: Int, c: Int, k: List<String>): String {
-            val replaceMap = mutableMapOf<String, String>()
-            for (i in 0 until c) {
-                val keyword = k.getOrNull(i)
-                if (!keyword.isNullOrEmpty()) {
-                    replaceMap[toBase(i, a)] = keyword
-                }
-            }
-            return Regex("\\b\\w+\\b").replace(p) { matchResult ->
-                replaceMap[matchResult.value] ?: matchResult.value
-            }
-        }
-
-        val deobfuscatedJs = deobfuscate(packedCode, base, count, keywords)
-        logCallback("Custom Extractor: Deobfuscated JS start: ${deobfuscatedJs.take(120)}")
-
-        val fileRegex = Regex("[\"']?file[\"']?\\s*:\\s*[\"']([^\"']+)[\"']")
-        val fileMatch = fileRegex.find(deobfuscatedJs)
-        val finalUrl = fileMatch?.groupValues?.get(1) ?: return null
-        val cleanUrl = finalUrl.replace("\\/", "/")
-        logCallback("Custom Extractor: Success! Found URL: $cleanUrl")
-        return cleanUrl
-    }
-
     private fun normalizeUrl(u: String?, base: String? = null): String? {
         val s = u?.trim().takeIf { !it.isNullOrEmpty() } ?: return null
         return when {
@@ -400,21 +340,9 @@ class GessehProvider : BaseProvider() {
             }
             serverNameLower.contains("arab") || serverNameLower.contains("arabhd") || serverNameLower.contains("estream") || serverNameLower.contains("turk") || serverNameLower.contains("prohd") -> {
                 try {
-                    val headers = mapOf(
-                        "Referer" to embedUrl,
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-                    )
-                    val extracted = extractLinkFromObfuscatedPage(embedUrl, playerReferer) { s -> Log.d("GessehProvider", s) }
-                    if (!extracted.isNullOrBlank()) {
-                        callback(newExtractorLink(source = this.name, name = serverName, url = extracted) {
-                            this.headers = headers
-                            this.quality = getQualityFromName(extracted)
-                        })
-                        return
-                    }
-                } catch (_: Exception) {}
-                try { loadExtractor(embedUrl, playerReferer, subtitleCallback, callback) }
-                catch (e: Exception) {
+                    loadExtractor(embedUrl, playerReferer, subtitleCallback, callback)
+                } catch (e: Exception) {
+                    Log.w("GessehProvider", "loadExtractor failed for $serverName: ${e.message}")
                     callback(newExtractorLink(this.name, serverName, embedUrl) {
                         this.referer = playerReferer
                         this.quality = getQualityFromName(embedUrl)
