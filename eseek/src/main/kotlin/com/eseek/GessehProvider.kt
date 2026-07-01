@@ -23,6 +23,7 @@ class GessehProvider : BaseProvider() {
     override val baseDomain get() = "qeseh.net"
     override val providerName get() = "عشق 2"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/eseek.json"
+    override val paginationFormat get() = "/page/%d/"
 
     data class GessehServer(
         val name: String? = null,
@@ -40,9 +41,10 @@ class GessehProvider : BaseProvider() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/all-series/page/" to "جميع المسلسلات",
-        "$mainUrl/category/الأفلام-التركية/page/" to "افلام تركية",
-        "$mainUrl/page/" to "آخر الحلقات",
+        "$mainUrl" to "آخر الحلقات",
+        "$mainUrl/category/alarshif/" to "المسلسلات",
+        "$mainUrl/category/yeni-filmler/" to "افلام تركية",
+        "$mainUrl/category/discover/" to "جميع المسلسلات",
     )
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
@@ -59,6 +61,7 @@ class GessehProvider : BaseProvider() {
         val items = getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
             }
         }
         return newHomePageResponse(request.name, items)
@@ -73,6 +76,7 @@ class GessehProvider : BaseProvider() {
         return getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
             }
         }
     }
@@ -127,6 +131,7 @@ class GessehProvider : BaseProvider() {
         if (data.isMovie) {
             return newMovieLoadResponse(data.title, realUrl, TvType.Movie, realUrl) {
                 this.posterUrl = fixUrlNull(data.posterUrl)
+                this.posterHeaders = httpService.getImageHeaders()
                 this.plot = data.plot
             }
         }
@@ -136,11 +141,13 @@ class GessehProvider : BaseProvider() {
                 name = parsedEp.name
                 episode = parsedEp.episode
                 posterUrl = fixUrlNull(parsedEp.posterUrl)
+                posterHeaders = httpService.getImageHeaders()
             }
         }.reversed()
 
         return newTvSeriesLoadResponse(data.title, realUrl, TvType.TvSeries, episodes) {
             this.posterUrl = fixUrlNull(data.posterUrl)
+            this.posterHeaders = httpService.getImageHeaders()
             this.plot = data.plot
         }
     }
