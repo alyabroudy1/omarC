@@ -10,6 +10,7 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import java.net.URI
 import android.util.Base64
+import org.json.JSONObject
 
 class KrmzyProvider : BaseProvider() {
     override val baseDomain get() = "krmzi.org"
@@ -344,24 +345,85 @@ class KrmzyProvider : BaseProvider() {
             return true
         }
 
-        log("STEP 3: Fetching extractor page via httpService.getDocument...")
-        val extractorPage = try {
-            httpService.getDocument(extractorUrl, headers = mapOf("Referer" to mainPageHostReferer), rewriteDomain = false)
-        } catch (t: Throwable) {
-            log("STEP 3 ERROR: httpService.getDocument threw: ${t.message}")
-            return false
-        }
-        if (extractorPage == null) {
-            log("STEP 3 ERROR: httpService.getDocument returned null for $extractorUrl")
-            return false
-        }
-        log("STEP 3: Extractor page fetched. Title: '${extractorPage.title()}'")
+        log("STEP 3: Resolving extractor URL chain...")
 
-        log("STEP 4: Looking for ul.serversList li...")
-        val serverItems = extractorPage.select("ul.serversList li")
-        log("STEP 4: Found ${serverItems.size} server items")
-        if (serverItems.isEmpty()) {
-            log("STEP 4: No servers found. Extractor HTML snippet: ${extractorPage.html().take(800)}")
+        data class ServerEntry(val name: String, val id: String)
+        val serversFromJson = mutableListOf<ServerEntry>()
+        var resolvedExtractorUrl = extractorUrl
+
+        val urlParam = Regex("[?&]url=([^&]+)").find(resolvedExtractorUrl)?.groupValues?.getOrNull(1)
+        if (urlParam != null) {
+            try {
+                var innerUrl = java.net.URLDecoder.decode(urlParam, "UTF-8")
+                if (!innerUrl.startsWith("http")) {
+                    innerUrl = String(Base64.decode(innerUrl, Base64.DEFAULT), Charsets.UTF_8).trim()
+                }
+                log("STEP 3: Resolved inner URL from url param: $innerUrl")
+                resolvedExtractorUrl = innerUrl
+            } catch (e: Exception) {
+                log("STEP 3: Failed to decode url param: ${e.message}")
+            }
+        }
+
+        val postMatch = Regex("[?&]post=([^&]+)").find(resolvedExtractorUrl)
+        if (postMatch != null) {
+            log("STEP 3: Found post param, decoding JSON...")
+            try {
+                var postEncoded = java.net.URLDecoder.decode(postMatch.groupValues[1], "UTF-8")
+                val decodedBytes = Base64.decode(postEncoded, Base64.DEFAULT)
+                val jsonString = String(decodedBytes, Charsets.UTF_8)
+                log("STEP 3: Decoded post JSON: ${jsonString.take(300)}")
+
+                val root = JSONObject(jsonString)
+                val serversArr = root.optJSONArray("servers")
+                if (serversArr != null && serversArr.length() > 0) {
+                    log("STEP 3: Found ${serversArr.length()} servers in JSON")
+                    for (i in 0 until serversArr.length()) {
+                        val s = serversArr.getJSONObject(i)
+                        val name = s.optString("name", "").trim()
+                        val id = s.optString("id", "").trim()
+                        if (name.isNotBlank() && id.isNotBlank()) {
+                            serversFromJson.add(ServerEntry(name, id))
+                            log("STEP 3: JSON server: name='$name' id='$id'")
+                        }
+                    }
+                } else {
+                    log("STEP 3: No servers array in JSON")
+                }
+
+                val backUrl = root.optString("backUrl", "")
+                if (!backUrl.isNullOrBlank()) {
+                    log("STEP 3: JSON backUrl: $backUrl")
+                }
+            } catch (e: Exception) {
+                log("STEP 3: Failed to decode post JSON: ${e.message}")
+            }
+        }
+
+        var serverItems = mutableListOf<org.jsoup.nodes.Element>()
+
+        if (serversFromJson.isEmpty()) {
+            log("STEP 4: No JSON servers, trying HTML fetch for ul.serversList li...")
+            val extractorPage = try {
+                httpService.getDocument(resolvedExtractorUrl, headers = mapOf("Referer" to mainPageHostReferer), rewriteDomain = false)
+            } catch (t: Throwable) {
+                log("STEP 4 ERROR: httpService.getDocument threw: ${t.message}")
+                null
+            }
+            if (extractorPage != null) {
+                log("STEP 4: Extractor page title: '${extractorPage.title()}'")
+                val items = extractorPage.select("ul.serversList li")
+                log("STEP 4: Found ${items.size} li items")
+                serverItems.addAll(items)
+            } else {
+                log("STEP 4: Extractor page fetch returned null")
+            }
+        } else {
+            log("STEP 4: Using ${serversFromJson.size} servers from JSON (skipping HTML fetch)")
+        }
+
+        if (serverItems.isEmpty() && serversFromJson.isEmpty()) {
+            log("STEP 4 ERROR: No servers found from JSON or HTML")
             log("========== Krmzy loadLinks END (no servers) ==========")
             return false
         }
@@ -380,80 +442,64 @@ class KrmzyProvider : BaseProvider() {
             return code?.takeIf { it.isNotBlank() }
         }
 
-        var processedCount = 0
-        var successCount = 0
+        fun buildEmbedUrl(serverName: String, serverId: String): String? {
+            val lower = serverName.lowercase().trim()
+            log("buildEmbedUrl: name='$serverName' id='$serverId'")
+            return when {
+                lower.contains("youtube_in") || lower.contains("youtube-in") -> "https://www.youtube.com/embed/$serverId"
+                lower.contains("youtube") -> "https://www.youtube.com/embed/$serverId"
+                lower == "express" -> serverId
+                lower.contains("dailymotion") -> "https://www.dailymotion.com/embed/video/$serverId"
+                lower.contains("facebook") -> "https://app.videas.fr/embed/media/$serverId"
+                lower.contains("estream") -> "https://arabveturk.com/embed-$serverId.html"
+                lower.contains("arab hd") || lower.contains("arabhd") || lower.contains("arab-hd") -> "https://v.turkvearab.com/embed-$serverId.html"
+                lower.contains("red hd") || lower.contains("redhd") || lower.contains("red-hd") -> null
+                lower.contains("pro hd") || lower.contains("prohd") || lower.contains("pro-hd") -> "https://ebtv.upns.live/#$serverId"
+                lower == "pro" -> "https://mdna.upns.online/#$serverId"
+                lower.contains("ok") -> "https://ok.ru/videoembed/$serverId"
+                lower.contains("box") -> "https://youdboox.com/embed-$serverId.html"
+                lower.contains("now") -> "https://extreamnow.org/embed-$serverId.html"
+                else -> null
+            }
+        }
 
-        log("STEP 5: Processing ${serverItems.size} servers...")
+        data class EmbedTarget(val name: String, val url: String)
+        val targets = mutableListOf<EmbedTarget>()
+
+        for (s in serversFromJson) {
+            val embedUrl = buildEmbedUrl(s.name, s.id)
+            if (!embedUrl.isNullOrBlank()) {
+                targets.add(EmbedTarget(s.name, embedUrl))
+                log("JSON server -> embed: name='${s.name}' url='$embedUrl'")
+            } else {
+                log("JSON server skipped: name='${s.name}' (no embed URL)")
+            }
+        }
+
         for (li in serverItems) {
             val serverIdRaw = li.attr("data-server").ifBlank { li.attr("data-server-id") }
             val serverTypeRaw = li.attr("data-name").ifBlank { li.attr("data-type") }.trim()
             val serverType = serverTypeRaw.lowercase().trim()
-            processedCount++
-
-            log("--- Server #$processedCount ---")
-            log("Server #$processedCount: typeRaw='$serverTypeRaw' type='$serverType' id='$serverIdRaw'")
-            log("Server #$processedCount: HTML=${li.html().take(200)}")
 
             var embedUrl: String? = null
             try {
                 embedUrl = when (serverType) {
-                    "youtube" -> {
-                        log("Server #$processedCount: youtube match")
-                        "https://www.youtube.com/watch?v=$serverIdRaw"
-                    }
-                    "youtube_in" -> {
-                        log("Server #$processedCount: youtube_in match")
-                        "https://www.youtube.com/embed/$serverIdRaw"
-                    }
-                    "express" -> {
-                        log("Server #$processedCount: express type, using serverIdRaw directly")
-                        serverIdRaw.ifBlank { null }
-                    }
-                    "dailymotion" -> {
-                        val dm = dailymotionFromLi(li)
-                        log("Server #$processedCount: dailymotion match, result=$dm")
-                        dm
-                    }
-                    "facebook" -> {
-                        log("Server #$processedCount: facebook match")
-                        "https://app.videas.fr/embed/media/$serverIdRaw"
-                    }
-                    "estream" -> {
-                        log("Server #$processedCount: estream match")
-                        "https://arabveturk.com/embed-$serverIdRaw.html"
-                    }
-                    "arab hd", "arabhd", "arab-hd" -> {
-                        log("Server #$processedCount: arab hd/arabhd/arab-hd match")
-                        "https://v.turkvearab.com/embed-$serverIdRaw.html"
-                    }
-                    "box" -> {
-                        log("Server #$processedCount: box match")
-                        "https://youdboox.com/embed-$serverIdRaw.html"
-                    }
-                    "now" -> {
-                        log("Server #$processedCount: now match")
-                        "https://extreamnow.org/embed-$serverIdRaw.html"
-                    }
-                    "ok" -> {
-                        log("Server #$processedCount: ok match")
-                        ensureHttp("//ok.ru/videoembed/$serverIdRaw")
-                    }
-                    "red hd", "redhd", "red-hd" -> {
-                        log("Server #$processedCount: red hd/redhd/red-hd match")
-                        "https://iplayerhls.com/e/$serverIdRaw"
-                    }
-                    "pro hd", "prohd", "pro-hd" -> {
-                        log("Server #$processedCount: pro hd/prohd/pro-hd match")
-                        "https://ebtv.upns.live/#$serverIdRaw"
-                    }
-                    "pro" -> {
-                        log("Server #$processedCount: pro match")
-                        "https://mdna.upns.online/#$serverIdRaw"
-                    }
+                    "youtube" -> "https://www.youtube.com/watch?v=$serverIdRaw"
+                    "youtube_in" -> "https://www.youtube.com/embed/$serverIdRaw"
+                    "express" -> serverIdRaw.ifBlank { null }
+                    "dailymotion" -> dailymotionFromLi(li)
+                    "facebook" -> "https://app.videas.fr/embed/media/$serverIdRaw"
+                    "estream" -> "https://arabveturk.com/embed-$serverIdRaw.html"
+                    "arab hd", "arabhd", "arab-hd" -> "https://v.turkvearab.com/embed-$serverIdRaw.html"
+                    "box" -> "https://youdboox.com/embed-$serverIdRaw.html"
+                    "now" -> "https://extreamnow.org/embed-$serverIdRaw.html"
+                    "ok" -> ensureHttp("//ok.ru/videoembed/$serverIdRaw")
+                    "red hd", "redhd", "red-hd" -> null
+                    "pro hd", "prohd", "pro-hd" -> "https://ebtv.upns.live/#$serverIdRaw"
+                    "pro" -> "https://mdna.upns.online/#$serverIdRaw"
                     else -> {
                         val fallbackHref = li.selectFirst("a")?.attr("href")
                         val fallbackData = li.attr("data-src")
-                        log("Server #$processedCount: unknown type '$serverType', fallbackHref='$fallbackHref', fallbackData='$fallbackData'")
                         when {
                             !fallbackHref.isNullOrBlank() -> fallbackHref
                             !fallbackData.isNullOrBlank() -> fallbackData
@@ -461,95 +507,116 @@ class KrmzyProvider : BaseProvider() {
                         }
                     }
                 }
-
-                log("Server #$processedCount: embedUrl = ${embedUrl ?: "NULL (skipping)"}")
                 if (!embedUrl.isNullOrBlank()) {
-                    when (serverType) {
-                        "arab hd", "arabhd", "arab-hd", "estream" -> {
-                            log("Server #$processedCount: routing to custom extraction")
-                            try {
-                                val fetchReferers = listOf(mainPageHostReferer, "https://newaat.com/")
-                                log("Server #$processedCount: calling extractLinkFromObfuscatedPage with referers=$fetchReferers")
-                                val extractedM3u8 = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
+                    targets.add(EmbedTarget(serverTypeRaw, embedUrl))
+                }
+            } catch (_: Exception) {}
+        }
 
-                                if (!extractedM3u8.isNullOrBlank()) {
-                                    log("Server #$processedCount: extracted M3U8 URL = $extractedM3u8")
-                                    log("Server #$processedCount: checking working referer...")
-                                    val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
-                                    log("Server #$processedCount: working referer = $workingReferer")
+        log("STEP 5: Total targets to process: ${targets.size}")
+        if (targets.isEmpty()) {
+            log("STEP 5: No embed targets to process")
+            log("========== Krmzy loadLinks END (no targets) ==========")
+            return false
+        }
 
-                                    log("Server #$processedCount: generating M3U8 links...")
-                                    val qualityLinks = M3u8Helper.generateM3u8(
-                                        source = this.name,
-                                        streamUrl = extractedM3u8,
-                                        referer = workingReferer,
-                                        headers = mapOf("Origin" to workingReferer.trimEnd('/'))
-                                    )
-                                    log("Server #$processedCount: generateM3u8 returned ${qualityLinks.size} links")
+        var processedCount = 0
+        var successCount = 0
 
-                                    if (qualityLinks.isNotEmpty()) {
-                                        qualityLinks.forEach { link ->
-                                            callback.invoke(
-                                                newExtractorLink(
-                                                    source = link.source,
-                                                    name = "$serverTypeRaw - ${link.name}",
-                                                    url = link.url
-                                                ) {
-                                                    this.referer = link.referer
-                                                    this.quality = link.quality
-                                                    this.headers = link.headers
-                                                }
-                                            )
-                                            successCount++
-                                            log("Server #$processedCount: invoked callback for quality='${link.name}' url=${link.url.take(80)}")
-                                        }
-                                    } else {
-                                        log("Server #$processedCount: no quality links, using raw M3U8 URL as fallback")
+        for (target in targets) {
+            processedCount++
+            val embedUrl = target.url
+            val serverTypeRaw = target.name
+            val serverType = serverTypeRaw.lowercase().trim()
+
+            log("--- Server #$processedCount/${targets.size} ---")
+            log("Server #$processedCount: name='$serverTypeRaw' embedUrl='$embedUrl'")
+
+            try {
+                when {
+                    serverType.contains("youtube") -> {
+                        log("Server #$processedCount: YouTube route")
+                        callback.invoke(
+                            newExtractorLink(source = this.name, name = "YouTube", url = embedUrl) {
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                        successCount++
+                    }
+                    embedUrl.contains(".m3u8") || embedUrl.endsWith(".mp4") -> {
+                        log("Server #$processedCount: direct media route")
+                        callback.invoke(
+                            newExtractorLink(source = this.name, name = serverTypeRaw, url = embedUrl) {
+                                this.quality = Qualities.Unknown.value
+                                this.referer = mainPageHostReferer
+                            }
+                        )
+                        successCount++
+                    }
+                    serverType.contains("estream") || serverType.contains("arab hd") || serverType.contains("arabhd") || serverType.contains("arab-hd") -> {
+                        log("Server #$processedCount: custom extraction route")
+                        try {
+                            val fetchReferers = listOf(mainPageHostReferer, "https://newaat.com/")
+                            val extractedM3u8 = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
+
+                            if (!extractedM3u8.isNullOrBlank()) {
+                                log("Server #$processedCount: extracted M3U8 = $extractedM3u8")
+                                val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
+                                log("Server #$processedCount: working referer = $workingReferer")
+
+                                val qualityLinks = M3u8Helper.generateM3u8(
+                                    source = this.name,
+                                    streamUrl = extractedM3u8,
+                                    referer = workingReferer,
+                                    headers = mapOf("Origin" to workingReferer.trimEnd('/'))
+                                )
+                                log("Server #$processedCount: generateM3u8 returned ${qualityLinks.size} links")
+
+                                if (qualityLinks.isNotEmpty()) {
+                                    qualityLinks.forEach { link ->
                                         callback.invoke(
-                                            newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8) {
-                                                this.quality = Qualities.Unknown.value
-                                                this.referer = workingReferer
+                                            newExtractorLink(
+                                                source = link.source,
+                                                name = "$serverTypeRaw - ${link.name}",
+                                                url = link.url
+                                            ) {
+                                                this.referer = link.referer
+                                                this.quality = link.quality
+                                                this.headers = link.headers
                                             }
                                         )
                                         successCount++
-                                        log("Server #$processedCount: invoked callback with raw M3U8 (fallback)")
                                     }
                                 } else {
-                                    log("Server #$processedCount: custom extraction returned null (no M3U8 found)")
+                                    callback.invoke(
+                                        newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8) {
+                                            this.quality = Qualities.Unknown.value
+                                            this.referer = workingReferer
+                                        }
+                                    )
+                                    successCount++
                                 }
-                            } catch (t: Throwable) {
-                                log("Server #$processedCount: EXCEPTION in custom extraction: ${t.message}")
-                                t.printStackTrace()
+                            } else {
+                                log("Server #$processedCount: custom extraction returned null")
                             }
+                        } catch (t: Throwable) {
+                            log("Server #$processedCount: EXCEPTION in custom extraction: ${t.message}")
                         }
-
-                        "youtube" -> {
-                            log("Server #$processedCount: invoking YouTube callback")
-                            callback.invoke(
-                                newExtractorLink(source = this.name, name = "YouTube", url = embedUrl) {
-                                    this.quality = Qualities.Unknown.value
-                                }
-                            )
-                            successCount++
-                            log("Server #$processedCount: YouTube link invoked")
-                        }
-
-                        else -> {
-                            log("Server #$processedCount: delegating to loadExtractor: url=$embedUrl, referer=$mainPageHostReferer")
-                            try {
-                                val before = successCount
-                                loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
-                                val after = successCount
-                                log("Server #$processedCount: loadExtractor done, new links = ${after - before}")
-                            } catch (t: Throwable) {
-                                log("Server #$processedCount: loadExtractor threw: ${t.message}")
-                            }
+                    }
+                    else -> {
+                        log("Server #$processedCount: delegating to loadExtractor: url=$embedUrl, referer=$mainPageHostReferer")
+                        try {
+                            val before = successCount
+                            loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
+                            val after = successCount
+                            log("Server #$processedCount: loadExtractor done, new links = ${after - before}")
+                        } catch (t: Throwable) {
+                            log("Server #$processedCount: loadExtractor threw: ${t.message}")
                         }
                     }
                 }
             } catch (t: Throwable) {
-                log("Server #$processedCount: EXCEPTION processing server: ${t.message}")
-                t.printStackTrace()
+                log("Server #$processedCount: EXCEPTION: ${t.message}")
             }
         }
 

@@ -141,7 +141,6 @@ class GessehProvider : BaseProvider() {
                 name = parsedEp.name
                 episode = parsedEp.episode
                 posterUrl = fixUrlNull(parsedEp.posterUrl)
-                posterHeaders = httpService.getImageHeaders()
             }
         }.reversed()
 
