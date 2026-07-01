@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.network.CloudflareKiller
-import okhttp3.Interceptor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import java.net.URI
@@ -18,9 +16,6 @@ class KrmzyProvider : BaseProvider() {
     override val providerName get() = "قرمزي"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/krmzy.json"
     override val paginationFormat get() = "/page/%d/"
-
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "آخر الحلقات",
@@ -50,7 +45,7 @@ class KrmzyProvider : BaseProvider() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            app.get(url, referer = referer, interceptor = cfInterceptor).text
+            app.get(url, referer = referer).text
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
             return null
@@ -146,8 +141,7 @@ class KrmzyProvider : BaseProvider() {
             try {
                 val code = app.get(
                     streamUrl,
-                    referer = ref,
-                    interceptor = cfInterceptor
+                    referer = ref
                 ).code
 
                 if (code == 200) {
@@ -175,7 +169,7 @@ class KrmzyProvider : BaseProvider() {
         for (ref in referers) {
             try {
                 logCallback("Custom Extractor: Trying to fetch page with referer: $ref")
-                val text = app.get(url, referer = ref, interceptor = cfInterceptor).text
+                val text = app.get(url, referer = ref).text
 
                 if (text.contains("eval(function")) {
                     pageText = text
@@ -279,29 +273,39 @@ class KrmzyProvider : BaseProvider() {
         val resolvedData = resolveSayyarhUrl(data)
         if (resolvedData != data) {
             log("Resolved sayyarh URL to: $resolvedData")
+        } else {
+            log("URL not modified by resolveSayyarhUrl, using original: $resolvedData")
         }
 
+        log("Parsed mainPageHostReferer from resolvedData: $resolvedData")
         val mainPageHostReferer = try {
             val uri = java.net.URI(resolvedData)
             "${uri.scheme}://${uri.host}/"
         } catch (e: Exception) {
+            log("Failed to parse URI from resolvedData, falling back to resolvedData itself: ${e.message}")
             resolvedData
         }
+        log("mainPageHostReferer = $mainPageHostReferer")
 
-        val episodePage = try {
-            app.get(resolvedData, interceptor = cfInterceptor).document
+        val episodeResponse = try {
+            app.get(resolvedData)
         } catch (t: Throwable) {
             log("ERROR: failed to fetch episode page: ${t.message}")
             return false
         }
+        log("Episode page fetched, code=${episodeResponse.code}, url=${episodeResponse.url}")
+        val episodePage = episodeResponse.document
+        log("Episode page title: ${episodePage.title()}")
 
         val extractorUrl = episodePage.selectFirst("a.fullscreen-clickable")?.attr("href")
+        log("Extractor URL from a.fullscreen-clickable: ${extractorUrl ?: "NULL"}")
         if (extractorUrl.isNullOrBlank()) {
             log("No <a.fullscreen-clickable> found.")
             return false
         }
 
         if (extractorUrl.endsWith(".m3u8", ignoreCase = true) || extractorUrl.endsWith(".mp4", ignoreCase = true)) {
+            log("Extractor URL is direct media, invoking callback: $extractorUrl")
             callback.invoke(
                 newExtractorLink(source = this.name, name = this.name, url = extractorUrl) {
                     this.quality = Qualities.Unknown.value
@@ -310,15 +314,22 @@ class KrmzyProvider : BaseProvider() {
             return true
         }
 
-        val extractorPage = try {
-            app.get(extractorUrl, referer = data, interceptor = cfInterceptor).document
+        val extractorResponse = try {
+            app.get(extractorUrl, referer = data)
         } catch (t: Throwable) {
             log("ERROR: failed to fetch extractor page: ${t.message}")
             return false
         }
+        log("Extractor page fetched, code=${extractorResponse.code}, url=${extractorResponse.url}")
+        val extractorPage = extractorResponse.document
+        log("Extractor page title: ${extractorPage.title()}")
 
         val serverItems = extractorPage.select("ul.serversList li")
-        if (serverItems.isEmpty()) return false
+        log("Server items found (ul.serversList li): ${serverItems.size}")
+        if (serverItems.isEmpty()) {
+            log("No server items found in extractor page. Dumping HTML snippet: ${extractorPage.html().take(500)}")
+            return false
+        }
 
         fun ensureHttp(u: String): String =
             when {
@@ -334,17 +345,26 @@ class KrmzyProvider : BaseProvider() {
             return code?.takeIf { it.isNotBlank() }
         }
 
+        var processedCount = 0
+        var successCount = 0
+
         for (li in serverItems) {
             val serverIdRaw = li.attr("data-server").ifBlank { li.attr("data-server-id") }
             val serverTypeRaw = li.attr("data-name").ifBlank { li.attr("data-type") }.trim()
             val serverType = serverTypeRaw.lowercase().trim()
+            processedCount++
+
+            log("Server #$processedCount: typeRaw='$serverTypeRaw' type='$serverType' id='$serverIdRaw'")
 
             var embedUrl: String? = null
             try {
                 embedUrl = when (serverType) {
                     "youtube" -> "https://www.youtube.com/watch?v=$serverIdRaw"
                     "youtube_in" -> "https://www.youtube.com/embed/$serverIdRaw"
-                    "express" -> serverIdRaw.ifBlank { null }
+                    "express" -> {
+                        log("Server #$processedCount: express type, using serverIdRaw directly")
+                        serverIdRaw.ifBlank { null }
+                    }
                     "dailymotion" -> dailymotionFromLi(li)
                     "facebook" -> "https://app.videas.fr/embed/media/$serverIdRaw"
                     "estream" -> "https://arabveturk.com/embed-$serverIdRaw.html"
@@ -352,12 +372,13 @@ class KrmzyProvider : BaseProvider() {
                     "box" -> "https://youdboox.com/embed-$serverIdRaw.html"
                     "now" -> "https://extreamnow.org/embed-$serverIdRaw.html"
                     "ok" -> ensureHttp("//ok.ru/videoembed/$serverIdRaw")
-                    "red hd", "redhd", "red-hd" -> null // iplayerhls.com — no extractor
-                    "pro hd", "prohd", "pro-hd" -> null // ebtv.upns.live — no extractor
-                    "pro" -> null // mdna.upns.online — no extractor
+                    "red hd", "redhd", "red-hd" -> "https://iplayerhls.com/e/$serverIdRaw"
+                    "pro hd", "prohd", "pro-hd" -> "https://ebtv.upns.live/#$serverIdRaw"
+                    "pro" -> "https://mdna.upns.online/#$serverIdRaw"
                     else -> {
                         val fallbackHref = li.selectFirst("a")?.attr("href")
                         val fallbackData = li.attr("data-src")
+                        log("Server #$processedCount: unknown type '$serverType', fallbackHref='$fallbackHref', fallbackData='$fallbackData'")
                         when {
                             !fallbackHref.isNullOrBlank() -> fallbackHref
                             !fallbackData.isNullOrBlank() -> fallbackData
@@ -366,16 +387,19 @@ class KrmzyProvider : BaseProvider() {
                     }
                 }
 
+                log("Server #$processedCount: embedUrl = ${embedUrl ?: "NULL (skipping)"}")
                 if (!embedUrl.isNullOrBlank()) {
                     when (serverType) {
                         "arab hd", "arabhd", "arab-hd", "estream" -> {
-                            log("Processing custom server: $serverType ($embedUrl)")
+                            log("Server #$processedCount: custom extraction for $serverType")
                             try {
                                 val fetchReferers = listOf(mainPageHostReferer, "https://newaat.com/")
                                 val extractedM3u8 = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
 
                                 if (!extractedM3u8.isNullOrBlank()) {
+                                    log("Server #$processedCount: extracted M3U8 URL = $extractedM3u8")
                                     val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
+                                    log("Server #$processedCount: working referer = $workingReferer")
 
                                     val qualityLinks = M3u8Helper.generateM3u8(
                                         source = this.name,
@@ -385,6 +409,7 @@ class KrmzyProvider : BaseProvider() {
                                     )
 
                                     if (qualityLinks.isNotEmpty()) {
+                                        log("Server #$processedCount: generated ${qualityLinks.size} quality links")
                                         qualityLinks.forEach { link ->
                                             callback.invoke(
                                                 newExtractorLink(
@@ -397,46 +422,63 @@ class KrmzyProvider : BaseProvider() {
                                                     this.headers = link.headers
                                                 }
                                             )
+                                            successCount++
                                         }
                                     } else {
+                                        log("Server #$processedCount: no quality links, using raw M3U8 URL")
                                         callback.invoke(
                                             newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8) {
                                                 this.quality = Qualities.Unknown.value
                                                 this.referer = workingReferer
                                             }
                                         )
+                                        successCount++
                                     }
+                                } else {
+                                    log("Server #$processedCount: custom extraction returned null")
                                 }
                             } catch (t: Throwable) {
-                                log("Error in custom extraction: ${t.message}")
+                                log("Server #$processedCount: Error in custom extraction: ${t.message}")
                             }
                         }
 
                         "youtube" -> {
+                            log("Server #$processedCount: invoking YouTube callback")
                             callback.invoke(
                                 newExtractorLink(source = this.name, name = "YouTube", url = embedUrl) {
                                     this.quality = Qualities.Unknown.value
                                 }
                             )
+                            successCount++
                         }
 
                         else -> {
+                            log("Server #$processedCount: delegating to loadExtractor: url=$embedUrl, referer=$mainPageHostReferer")
                             try {
+                                val before = successCount
                                 loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
+                                val after = successCount
+                                log("Server #$processedCount: loadExtractor done, links produced = ${after - before}")
                             } catch (t: Throwable) {
+                                log("Server #$processedCount: loadExtractor threw: ${t.message}")
                             }
                         }
                     }
                 }
             } catch (t: Throwable) {
-                log("Exception processing server: ${t.message}")
+                log("Server #$processedCount: Exception processing server: ${t.message}")
             }
         }
 
+        log("loadLinks completed. Processed $processedCount servers, total links produced: $successCount")
+
         try {
             java.io.File("server_log_${System.currentTimeMillis()}.txt").writeText(logBuilder.toString())
-        } catch (_: Exception) {}
+            log("Wrote debug log to file")
+        } catch (_: Exception) {
+            log("Failed to write debug log file")
+        }
 
-        return true
+        return successCount > 0
     }
 }
