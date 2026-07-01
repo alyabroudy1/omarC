@@ -106,39 +106,32 @@ class Laroza : BaseProvider() {
                 fullUrl
             } else null
 
-            val targetDoc = if (targetUrl != null) {
-                httpService.getDocument(targetUrl, rewriteDomain = true)
-            } else doc
-
-            val primaryDoc = targetDoc ?: doc
-
-            // Collect embed URLs from primary page (play page)
             val embedUrls = mutableListOf<String>()
-            embedUrls.addAll(getParser().extractWatchServersUrls(primaryDoc))
-            Log.d(methodTag, "Primary page: ${embedUrls.size} embed URL(s)")
-            embedUrls.forEachIndexed { i, url ->
-                Log.d(methodTag, "  embed[$i]: $url")
-            }
 
-            // Also fetch the download page which often has more servers
             if (targetUrl != null) {
-                val downloadHref = primaryDoc.selectFirst("a[href*='download.php?vid=']")?.attr("href")
-                if (downloadHref != null) {
-                    val downloadUrl = if (downloadHref.startsWith("http")) downloadHref
-                    else "$mainUrl/${downloadHref.trimStart('/')}"
-                    Log.d(methodTag, "Fetching download page: $downloadUrl")
-                    val downloadDoc = httpService.getDocument(downloadUrl, rewriteDomain = true)
-                    if (downloadDoc != null) {
-                        val downloadUrls = getParser().extractWatchServersUrls(downloadDoc)
-                        Log.d(methodTag, "Download page: ${downloadUrls.size} embed URL(s)")
-                        downloadUrls.forEachIndexed { i, url ->
-                            Log.d(methodTag, "  download[$i]: $url")
-                        }
-                        embedUrls.addAll(downloadUrls)
-                    }
-                } else {
-                    Log.d(methodTag, "No download page link found")
+                // Fetch raw HTML (not parsed doc) — some data-embed-url are added by JS
+                val rawHtml = httpService.getText(targetUrl, rewriteDomain = true)
+                if (rawHtml != null) {
+                    Log.d(methodTag, "Raw HTML length: ${rawHtml.length}")
+                    // Regex: find all data-embed-url values or bare embed URLs in raw text
+                    val urlPattern = Regex("""data-embed-url="([^"]+)"""")
+                    val regexMatches = urlPattern.findAll(rawHtml).map { it.groupValues[1] }.toList()
+                    Log.d(methodTag, "Regex found ${regexMatches.size} data-embed-url(s)")
+                    regexMatches.forEach { Log.d(methodTag, "  regex: $it") }
+                    embedUrls.addAll(regexMatches)
                 }
+
+                // Also try Jsoup extraction for any URLs Jsoup can find
+                val targetDoc = httpService.getDocument(targetUrl, rewriteDomain = true)
+                if (targetDoc != null) {
+                    val jsoupUrls = getParser().extractWatchServersUrls(targetDoc)
+                    Log.d(methodTag, "Jsoup extraction: ${jsoupUrls.size} embed URL(s)")
+                    embedUrls.addAll(jsoupUrls)
+                }
+            } else {
+                val jsoupUrls = getParser().extractWatchServersUrls(doc)
+                Log.d(methodTag, "Jsoup extraction (detail page): ${jsoupUrls.size} embed URL(s)")
+                embedUrls.addAll(jsoupUrls)
             }
 
             val allUrls = embedUrls.distinct()
