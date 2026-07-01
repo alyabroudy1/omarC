@@ -1,6 +1,11 @@
 package com.cloudstream.shared.extractors
 
+import com.lagradost.cloudstream3.extractors.MixDrop
 import com.lagradost.cloudstream3.plugins.Plugin
+
+class MixDropTop : MixDrop() {
+    override var mainUrl = "https://mixdrop.top"
+}
 
 /**
  * An extension function to easily register all shared extractors at once
@@ -48,6 +53,9 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
 
+    // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top)
+    registerExtractorAPI(MixDropTop())
+
     // Luluvid
     registerExtractorAPI(LuluvidExtractor())
 
@@ -58,4 +66,5 @@ fun Plugin.registerSharedExtractors() {
     // Laroza embed domains (CF-protected — uses httpService CF bypass)
     registerExtractorAPI(LarozaExtractor("https://mp4.okhd.site", "OkhdSite"))
     registerExtractorAPI(LarozaExtractor("https://rty1.film77.xyz", "Film77"))
+    registerExtractorAPI(LarozaExtractor("https://vidspeed.org:2096", "Vidspeed"))
 }

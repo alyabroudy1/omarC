@@ -93,15 +93,12 @@ class Laroza : BaseProvider() {
     ): Boolean {
         val methodTag = "[Laroza][newStrategy]"
         try {
-            // Fetch the detail page
             val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
             Log.d(methodTag, "Fetched detail page: ${doc.location()}")
 
-            // Try to find a play/watch page URL
             val playUrl = getParser().getPlayerPageUrl(doc)
             Log.d(methodTag, "Player page URL: $playUrl")
 
-            // Fetch the target page (play page or detail page)
             val targetUrl = if (!playUrl.isNullOrBlank()) {
                 val fullUrl = if (playUrl.startsWith("http")) playUrl
                 else "$mainUrl/${playUrl.trimStart('/')}"
@@ -113,26 +110,44 @@ class Laroza : BaseProvider() {
                 httpService.getDocument(targetUrl, rewriteDomain = true)
             } else doc
 
-            if (targetDoc == null) {
-                Log.d(methodTag, "Failed to fetch target doc, trying detail page instead")
-                // Fall through to use detail doc
-            }
+            val primaryDoc = targetDoc ?: doc
 
-            val actualDoc = targetDoc ?: doc
-
-            // Extract embed URLs using ALL available selectors
-            val embedUrls = getParser().extractWatchServersUrls(actualDoc)
-            Log.d(methodTag, "Found ${embedUrls.size} embed URL(s)")
+            // Collect embed URLs from primary page (play page)
+            val embedUrls = mutableListOf<String>()
+            embedUrls.addAll(getParser().extractWatchServersUrls(primaryDoc))
+            Log.d(methodTag, "Primary page: ${embedUrls.size} embed URL(s)")
             embedUrls.forEachIndexed { i, url ->
                 Log.d(methodTag, "  embed[$i]: $url")
             }
 
-            if (embedUrls.isEmpty()) {
+            // Also fetch the download page which often has more servers
+            if (targetUrl != null) {
+                val downloadHref = primaryDoc.selectFirst("a[href*='download.php?vid=']")?.attr("href")
+                if (downloadHref != null) {
+                    val downloadUrl = if (downloadHref.startsWith("http")) downloadHref
+                    else "$mainUrl/${downloadHref.trimStart('/')}"
+                    Log.d(methodTag, "Fetching download page: $downloadUrl")
+                    val downloadDoc = httpService.getDocument(downloadUrl, rewriteDomain = true)
+                    if (downloadDoc != null) {
+                        val downloadUrls = getParser().extractWatchServersUrls(downloadDoc)
+                        Log.d(methodTag, "Download page: ${downloadUrls.size} embed URL(s)")
+                        downloadUrls.forEachIndexed { i, url ->
+                            Log.d(methodTag, "  download[$i]: $url")
+                        }
+                        embedUrls.addAll(downloadUrls)
+                    }
+                } else {
+                    Log.d(methodTag, "No download page link found")
+                }
+            }
+
+            val allUrls = embedUrls.distinct()
+            Log.d(methodTag, "Total unique URLs: ${allUrls.size}")
+            if (allUrls.isEmpty()) {
                 Log.d(methodTag, "No embed URLs found")
                 return false
             }
 
-            // Resolve and call loadExtractor for each embed URL
             val foundAny = java.util.concurrent.atomic.AtomicBoolean(false)
             val referer = try {
                 val uri = java.net.URI(targetUrl ?: data)
@@ -142,7 +157,7 @@ class Laroza : BaseProvider() {
             }
 
             coroutineScope {
-                embedUrls.mapIndexed { index, url ->
+                allUrls.mapIndexed { index, url ->
                     launch {
                         try {
                             val resolved = resolveServerUrl(url, referer)
