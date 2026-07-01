@@ -294,7 +294,7 @@ class GessehProvider : BaseProvider() {
             lower.contains("facebook") -> "https://app.videas.fr/embed/media/$serverId"
             lower.contains("estream") -> "https://arabveturk.com/embed-$serverId.html"
             lower.contains("arab hd") || lower.contains("arabhd") -> "https://v.turkvearab.com/embed-$serverId.html"
-            lower.contains("red hd") || lower.contains("redhd") -> "https://iplayerhls.com/e/$serverId"
+            lower.contains("red hd") || lower.contains("redhd") -> null // iplayerhls.com has no extractor
             lower.contains("pro hd") || lower.contains("prohd") -> "https://w.larhu.com/play.php?id=$serverId"
             lower == "pro" -> "https://mdna.upns.online/#$serverId"
             lower.contains("ok") -> "https://ok.ru/videoembed/$serverId"
