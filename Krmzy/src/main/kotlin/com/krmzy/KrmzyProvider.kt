@@ -5,10 +5,11 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
-import java.net.URI
+
 import android.util.Base64
 import org.json.JSONObject
 
@@ -142,16 +143,16 @@ class KrmzyProvider : BaseProvider() {
         logCallback: (String) -> Unit
     ): String {
         val iframeHostReferer = try {
-            val uri = URI(originEmbedUrl)
-            "${uri.scheme}://${uri.host}/"
+            val u = java.net.URL(originEmbedUrl)
+            "${u.protocol}://${u.host}/"
         } catch (e: Exception) {
             "https://qesen.net/"
         }
 
         val candidates = listOf(
+            "https://newaat.com/",
             iframeHostReferer,
             "https://qesen.net/",
-            "https://newaat.com/"
         )
 
         logCallback("checkWorkingStreamReferer: Candidates: $candidates")
@@ -303,10 +304,10 @@ class KrmzyProvider : BaseProvider() {
         }
 
         val mainPageHostReferer = try {
-            val uri = java.net.URI(resolvedData)
-            "${uri.scheme}://${uri.host}/"
+            val url = java.net.URL(resolvedData)
+            "${url.protocol}://${url.host}/"
         } catch (e: Exception) {
-            log("URI parse error: ${e.message}, using raw")
+            log("URL parse error: ${e.message}, using raw")
             resolvedData
         }
         log("mainPageHostReferer = $mainPageHostReferer")
@@ -556,7 +557,16 @@ class KrmzyProvider : BaseProvider() {
                     serverType.contains("estream") || serverType.contains("arab hd") || serverType.contains("arabhd") || serverType.contains("arab-hd") -> {
                         log("Server #$processedCount: custom extraction route")
                         try {
-                            val fetchReferers = listOf(mainPageHostReferer, "https://newaat.com/")
+                            val embedDomain = try {
+                                val u = java.net.URL(embedUrl)
+                                "${u.protocol}://${u.host}/"
+                            } catch (e: Exception) { null }
+                            val fetchReferers = listOfNotNull(
+                                "https://newaat.com/",
+                                embedDomain,
+                                "https://v.turkvearab.com/",
+                                mainPageHostReferer,
+                            ).distinct()
                             val extractedM3u8 = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
 
                             if (!extractedM3u8.isNullOrBlank()) {
@@ -588,19 +598,75 @@ class KrmzyProvider : BaseProvider() {
                                         successCount++
                                     }
                                 } else {
-                                    callback.invoke(
-                                        newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8) {
-                                            this.quality = Qualities.Unknown.value
-                                            this.referer = workingReferer
-                                        }
-                                    )
-                                    successCount++
+                                    log("Server #$processedCount: generateM3u8 returned 0 links, trying loadExtractor...")
+                                    val before = successCount
+                                    val extractorSuccess = try {
+                                        loadExtractor(extractedM3u8, workingReferer, subtitleCallback, callback)
+                                    } catch (t: Throwable) {
+                                        log("Server #$processedCount: loadExtractor on M3U8 threw: ${t.message}")
+                                        false
+                                    }
+                                    if (extractorSuccess) {
+                                        val newLinks = successCount - before
+                                        log("Server #$processedCount: loadExtractor produced $newLinks links")
+                                        successCount += newLinks
+                                    } else {
+                                        log("Server #$processedCount: loadExtractor returned false, falling back to raw M3U8")
+                                        callback.invoke(
+                                            newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = workingReferer
+                                                this.headers = mapOf(
+                                                    "Origin" to workingReferer.trimEnd('/'),
+                                                    "Referer" to workingReferer
+                                                )
+                                            }
+                                        )
+                                        successCount++
+                                    }
                                 }
                             } else {
                                 log("Server #$processedCount: custom extraction returned null")
                             }
                         } catch (t: Throwable) {
                             log("Server #$processedCount: EXCEPTION in custom extraction: ${t.message}")
+                        }
+                    }
+                    serverType.contains("pro hd") || serverType.contains("prohd") || serverType.contains("pro-hd") || serverType.contains("pro") -> {
+                        log("Server #$processedCount: Pro HD / upns route")
+                        val hashId = embedUrl.substringAfter("#").substringBefore("&").ifBlank { null }
+                        if (hashId != null) {
+                            log("Server #$processedCount: extracted hash ID: $hashId")
+                            val apiBase = embedUrl.substringBefore("#").trimEnd('/')
+                            val apiUrl = "$apiBase/api/v1/info?id=$hashId"
+                            log("Server #$processedCount: fetching $apiUrl")
+                            try {
+                                val apiResp = httpService.getText(apiUrl, rewriteDomain = false)
+                                if (apiResp != null && apiResp.length > 50) {
+                                    log("Server #$processedCount: API response length=${apiResp.length}, trying loadExtractor on encrypted response")
+                                    val respDecoded = try {
+                                        String(android.util.Base64.decode(apiResp, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                    } catch (e: Exception) { null }
+                                    if (respDecoded != null) {
+                                        log("Server #$processedCount: decoded response: ${respDecoded.take(200)}")
+                                    }
+                                } else {
+                                    log("Server #$processedCount: API returned short response: ${apiResp?.take(100)}")
+                                }
+                            } catch (t: Throwable) {
+                                log("Server #$processedCount: API error: ${t.message}")
+                            }
+                            log("Server #$processedCount: Pro HD cannot be extracted without JS execution, skipping")
+                        } else {
+                            log("Server #$processedCount: No hash ID found in embedUrl, trying loadExtractor")
+                            try {
+                                val before = successCount
+                                loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
+                                val after = successCount
+                                log("Server #$processedCount: loadExtractor done, new links = ${after - before}")
+                            } catch (t: Throwable) {
+                                log("Server #$processedCount: loadExtractor threw: ${t.message}")
+                            }
                         }
                     }
                     else -> {
