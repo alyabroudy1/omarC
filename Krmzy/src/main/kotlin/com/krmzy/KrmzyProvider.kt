@@ -352,9 +352,9 @@ class KrmzyProvider : BaseProvider() {
                     "box" -> "https://youdboox.com/embed-$serverIdRaw.html"
                     "now" -> "https://extreamnow.org/embed-$serverIdRaw.html"
                     "ok" -> ensureHttp("//ok.ru/videoembed/$serverIdRaw")
-                    "red hd", "redhd", "red-hd" -> "https://iplayerhls.com/e/$serverIdRaw"
-                    "pro hd", "prohd", "pro-hd" -> "https://ebtv.upns.live/#$serverIdRaw"
-                    "pro" -> "https://mdna.upns.online/#$serverIdRaw"
+                    "red hd", "redhd", "red-hd" -> null // iplayerhls.com — no extractor
+                    "pro hd", "prohd", "pro-hd" -> null // ebtv.upns.live — no extractor
+                    "pro" -> null // mdna.upns.online — no extractor
                     else -> {
                         val fallbackHref = li.selectFirst("a")?.attr("href")
                         val fallbackData = li.attr("data-src")
