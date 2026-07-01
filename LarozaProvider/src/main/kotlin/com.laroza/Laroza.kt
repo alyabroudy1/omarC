@@ -109,30 +109,15 @@ class Laroza : BaseProvider() {
             val embedUrls = mutableListOf<String>()
 
             if (targetUrl != null) {
-                // Fetch raw HTML (not parsed doc) — some data-embed-url are added by JS
-                val rawHtml = httpService.getText(targetUrl, rewriteDomain = true)
-                if (rawHtml != null) {
-                    Log.d(methodTag, "Raw HTML length: ${rawHtml.length}")
-                    // Regex: find all data-embed-url values or bare embed URLs in raw text
-                    val urlPattern = Regex("""data-embed-url="([^"]+)"""")
-                    val regexMatches = urlPattern.findAll(rawHtml).map { it.groupValues[1] }.toList()
-                    Log.d(methodTag, "Regex found ${regexMatches.size} data-embed-url(s)")
-                    regexMatches.forEach { Log.d(methodTag, "  regex: $it") }
-                    embedUrls.addAll(regexMatches)
-                }
-
-                // Also try Jsoup extraction for any URLs Jsoup can find
                 val targetDoc = httpService.getDocument(targetUrl, rewriteDomain = true)
                 if (targetDoc != null) {
-                    val jsoupUrls = getParser().extractWatchServersUrls(targetDoc)
-                    Log.d(methodTag, "Jsoup extraction: ${jsoupUrls.size} embed URL(s)")
-                    embedUrls.addAll(jsoupUrls)
+                    embedUrls.addAll(getParser().extractWatchServersUrls(targetDoc))
                 }
             } else {
-                val jsoupUrls = getParser().extractWatchServersUrls(doc)
-                Log.d(methodTag, "Jsoup extraction (detail page): ${jsoupUrls.size} embed URL(s)")
-                embedUrls.addAll(jsoupUrls)
+                embedUrls.addAll(getParser().extractWatchServersUrls(doc))
             }
+
+            Log.d(methodTag, "Extracted ${embedUrls.size} embed URL(s)")
 
             val allUrls = embedUrls.distinct()
             Log.d(methodTag, "Total unique URLs: ${allUrls.size}")
