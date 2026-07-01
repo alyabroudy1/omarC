@@ -63,6 +63,9 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ArabHdExtractor())
     registerExtractorAPI(EstreamExtractor())
 
+    // Odnoklassniki API extractor (videoPlayerMetadata API + fallback to embed scraping)
+    registerExtractorAPI(OdnoklassnikiApiExtractor())
+
     // Laroza embed domains (CF-protected — uses httpService CF bypass)
     registerExtractorAPI(LarozaExtractor("https://mp4.okhd.site", "OkhdSite"))
     registerExtractorAPI(LarozaExtractor("https://rty1.film77.xyz", "Film77"))

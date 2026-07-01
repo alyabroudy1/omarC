@@ -7,11 +7,15 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 
 import android.util.Base64
 import org.json.JSONObject
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class KrmzyProvider : BaseProvider() {
     override val baseDomain get() = "krmzi.org"
@@ -176,11 +180,24 @@ class KrmzyProvider : BaseProvider() {
         return iframeHostReferer
     }
 
+    data class ObfuscatedExtractResult(
+        val m3u8Url: String,
+        val cookies: Map<String, String> = emptyMap()
+    )
+
+    private fun extractCookiesFromHtml(html: String): Map<String, String> {
+        val cookies = mutableMapOf<String, String>()
+        Regex("""\$\s*\.cookie\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""").findAll(html).forEach { match ->
+            cookies[match.groupValues[1]] = match.groupValues[2]
+        }
+        return cookies
+    }
+
     private suspend fun extractLinkFromObfuscatedPage(
         url: String,
         referers: List<String>,
         logCallback: (String) -> Unit
-    ): String? {
+    ): ObfuscatedExtractResult? {
         var pageText: String? = null
         var usedReferer: String? = null
 
@@ -274,7 +291,28 @@ class KrmzyProvider : BaseProvider() {
         val cleanUrl = finalUrl.replace("\\/", "/")
 
         logCallback("Custom Extractor v2: Success! Found URL: $cleanUrl")
-        return cleanUrl
+
+        val cookies = extractCookiesFromHtml(pageText)
+        if (cookies.isNotEmpty()) {
+            logCallback("Custom Extractor v2: Extracted cookies from page: $cookies")
+        }
+
+        return ObfuscatedExtractResult(m3u8Url = cleanUrl, cookies = cookies)
+    }
+
+    private fun decryptUpnsResponse(hexData: String): String? {
+        return try {
+            val key = "kiemtienmua911ca".toByteArray(Charsets.UTF_8)
+            val iv = "1234567890oiuytr".toByteArray(Charsets.UTF_8)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+            val ciphertext = hexData.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val plaintext = cipher.doFinal(ciphertext)
+            String(plaintext, Charsets.UTF_8)
+        } catch (e: Exception) {
+            println("[Krmzy] AES decrypt error: ${e.message}")
+            null
+        }
     }
 
     override suspend fun loadLinks(
@@ -567,18 +605,33 @@ class KrmzyProvider : BaseProvider() {
                                 "https://v.turkvearab.com/",
                                 mainPageHostReferer,
                             ).distinct()
-                            val extractedM3u8 = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
+                            val extractResult = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
 
-                            if (!extractedM3u8.isNullOrBlank()) {
+                            if (extractResult != null) {
+                                val extractedM3u8 = extractResult.m3u8Url
+                                val embedCookies = extractResult.cookies
                                 log("Server #$processedCount: extracted M3U8 = $extractedM3u8")
+                                log("Server #$processedCount: embed cookies = $embedCookies")
                                 val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
                                 log("Server #$processedCount: working referer = $workingReferer")
+
+                                val cookieHeader = if (embedCookies.isNotEmpty()) {
+                                    embedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                                } else null
+
+                                val baseHeaders = mutableMapOf(
+                                    "Origin" to workingReferer.trimEnd('/'),
+                                    "Referer" to workingReferer
+                                )
+                                if (cookieHeader != null) {
+                                    baseHeaders["Cookie"] = cookieHeader
+                                }
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
                                     source = this.name,
                                     streamUrl = extractedM3u8,
                                     referer = workingReferer,
-                                    headers = mapOf("Origin" to workingReferer.trimEnd('/'))
+                                    headers = baseHeaders
                                 )
                                 log("Server #$processedCount: generateM3u8 returned ${qualityLinks.size} links")
 
@@ -616,10 +669,7 @@ class KrmzyProvider : BaseProvider() {
                                             newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
                                                 this.quality = Qualities.Unknown.value
                                                 this.referer = workingReferer
-                                                this.headers = mapOf(
-                                                    "Origin" to workingReferer.trimEnd('/'),
-                                                    "Referer" to workingReferer
-                                                )
+                                                this.headers = baseHeaders
                                             }
                                         )
                                         successCount++
@@ -643,12 +693,67 @@ class KrmzyProvider : BaseProvider() {
                             try {
                                 val apiResp = httpService.getText(apiUrl, rewriteDomain = false)
                                 if (apiResp != null && apiResp.length > 50) {
-                                    log("Server #$processedCount: API response length=${apiResp.length}, trying loadExtractor on encrypted response")
-                                    val respDecoded = try {
-                                        String(android.util.Base64.decode(apiResp, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                                    } catch (e: Exception) { null }
-                                    if (respDecoded != null) {
-                                        log("Server #$processedCount: decoded response: ${respDecoded.take(200)}")
+                                    log("Server #$processedCount: API response length=${apiResp.length}, decrypting...")
+                                    val decrypted = decryptUpnsResponse(apiResp)
+                                    if (decrypted != null) {
+                                        log("Server #$processedCount: decrypted JSON: ${decrypted.take(500)}")
+                                        try {
+                                            val json = org.json.JSONObject(decrypted)
+                                            // Check all keys for URL-like content
+                                            for (key in json.keys()) {
+                                                val value = json.opt(key)
+                                                if (value is String && (value.contains("http") || value.contains("m3u8") || value.contains("mp4"))) {
+                                                    log("Server #$processedCount: found URL in key '$key': $value")
+                                                    callback.invoke(
+                                                        newExtractorLink(source = this.name, name = "$serverTypeRaw ($key)", url = value, type = INFER_TYPE) {
+                                                            this.quality = Qualities.Unknown.value
+                                                            this.referer = apiBase + "/"
+                                                        }
+                                                    )
+                                                    successCount++
+                                                }
+                                            }
+                                            // Also check nested objects
+                                            val sources = json.optJSONArray("sources") ?: json.optJSONArray("files") ?: json.optJSONArray("urls")
+                                            if (sources != null) {
+                                                for (i in 0 until sources.length()) {
+                                                    val src = sources.optString(i)
+                                                    if (src.startsWith("http")) {
+                                                        callback.invoke(
+                                                            newExtractorLink(source = this.name, name = "$serverTypeRaw source $i", url = src, type = INFER_TYPE) {
+                                                                this.quality = Qualities.Unknown.value
+                                                                this.referer = apiBase + "/"
+                                                            }
+                                                        )
+                                                        successCount++
+                                                    }
+                                                }
+                                            }
+                                            if (successCount <= processedCount) {
+                                                log("Server #$processedCount: no video URLs found in decrypted data, trying sniffVideos")
+                                                try {
+                                                    val sniffed = httpService.sniffVideos(embedUrl)
+                                                    if (sniffed.isNotEmpty()) {
+                                                        log("Server #$processedCount: sniffVideos found ${sniffed.size} sources")
+                                                        for (src in sniffed) {
+                                                            callback.invoke(
+                                                                newExtractorLink(source = this.name, name = "$serverTypeRaw (${src.quality})", url = src.url) {
+                                                                    this.quality = getQualityFromName(src.quality)
+                                                                    this.headers = src.headers
+                                                                }
+                                                            )
+                                                            successCount++
+                                                        }
+                                                    }
+                                                } catch (sn: Throwable) {
+                                                    log("Server #$processedCount: sniffVideos failed: ${sn.message}")
+                                                }
+                                            }
+                                        } catch (je: Exception) {
+                                            log("Server #$processedCount: failed to parse decrypted JSON: ${je.message}")
+                                        }
+                                    } else {
+                                        log("Server #$processedCount: AES decryption failed")
                                     }
                                 } else {
                                     log("Server #$processedCount: API returned short response: ${apiResp?.take(100)}")
@@ -656,7 +761,17 @@ class KrmzyProvider : BaseProvider() {
                             } catch (t: Throwable) {
                                 log("Server #$processedCount: API error: ${t.message}")
                             }
-                            log("Server #$processedCount: Pro HD cannot be extracted without JS execution, skipping")
+                            if (successCount <= processedCount) {
+                                log("Server #$processedCount: no usable URLs from API, trying loadExtractor...")
+                                try {
+                                    val before = successCount
+                                    loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
+                                    val after = successCount
+                                    log("Server #$processedCount: loadExtractor done, new links = ${after - before}")
+                                } catch (t: Throwable) {
+                                    log("Server #$processedCount: loadExtractor threw: ${t.message}")
+                                }
+                            }
                         } else {
                             log("Server #$processedCount: No hash ID found in embedUrl, trying loadExtractor")
                             try {
@@ -666,6 +781,31 @@ class KrmzyProvider : BaseProvider() {
                                 log("Server #$processedCount: loadExtractor done, new links = ${after - before}")
                             } catch (t: Throwable) {
                                 log("Server #$processedCount: loadExtractor threw: ${t.message}")
+                            }
+                        }
+                    }
+                    serverType.contains("ok") -> {
+                        log("Server #$processedCount: OK.ru route")
+                        // Step 1: try OdnoklassnikiApiExtractor (videoPlayerMetadata API)
+                        val before1 = successCount
+                        try {
+                            loadExtractor(embedUrl, mainPageHostReferer, subtitleCallback, callback)
+                        } catch (t: Throwable) {
+                            log("Server #$processedCount: loadExtractor (API) threw: ${t.message}")
+                        }
+                        val after1 = successCount
+                        log("Server #$processedCount: loadExtractor (API) produced ${after1 - before1} links")
+                        // Step 2: if no links from API extractor, fall back to built-in via odnoklassniki.ru URL
+                        if (after1 == before1) {
+                            val builtInUrl = embedUrl.replace("ok.ru", "odnoklassniki.ru").replace("/videoembed/", "/video/")
+                            log("Server #$processedCount: trying built-in extractor with url=$builtInUrl")
+                            try {
+                                val before2 = successCount
+                                loadExtractor(builtInUrl, mainPageHostReferer, subtitleCallback, callback)
+                                val after2 = successCount
+                                log("Server #$processedCount: built-in extractor produced ${after2 - before2} links")
+                            } catch (t: Throwable) {
+                                log("Server #$processedCount: built-in extractor threw: ${t.message}")
                             }
                         }
                     }
