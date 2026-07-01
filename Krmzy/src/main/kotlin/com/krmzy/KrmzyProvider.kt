@@ -306,7 +306,8 @@ class KrmzyProvider : BaseProvider() {
             val iv = "1234567890oiuytr".toByteArray(Charsets.UTF_8)
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
-            val ciphertext = hexData.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            val sanitized = hexData.replace(Regex("[^0-9a-fA-F]"), "")
+            val ciphertext = sanitized.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             val plaintext = cipher.doFinal(ciphertext)
             String(plaintext, Charsets.UTF_8)
         } catch (e: Exception) {
@@ -548,11 +549,19 @@ class KrmzyProvider : BaseProvider() {
                 }
                 if (!embedUrl.isNullOrBlank()) {
                     targets.add(EmbedTarget(serverTypeRaw, embedUrl))
+                    log("STEP 4 HTML server -> embed: name='$serverTypeRaw' url='$embedUrl'")
+                } else {
+                    log("STEP 4 HTML server skipped: name='$serverTypeRaw' (no embed URL)")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                log("STEP 4 HTML server error: name='$serverTypeRaw' exception='${e.message}'")
+            }
         }
 
-        log("STEP 5: Total targets to process: ${targets.size}")
+        log("STEP 5: Total servers found = ${serversFromJson.size + serverItems.size}, skipped = ${serversFromJson.size + serverItems.size - targets.size}, embeds to process = ${targets.size}")
+        targets.forEachIndexed { idx, t ->
+            log("  Target #${idx + 1}: name='${t.name}' url='${t.url}'")
+        }
         if (targets.isEmpty()) {
             log("STEP 5: No embed targets to process")
             log("========== Krmzy loadLinks END (no targets) ==========")
@@ -621,7 +630,8 @@ class KrmzyProvider : BaseProvider() {
 
                                 val baseHeaders = mutableMapOf(
                                     "Origin" to workingReferer.trimEnd('/'),
-                                    "Referer" to workingReferer
+                                    "Referer" to workingReferer,
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                                 )
                                 if (cookieHeader != null) {
                                     baseHeaders["Cookie"] = cookieHeader
