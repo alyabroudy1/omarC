@@ -18,6 +18,8 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class KrmzyProvider : BaseProvider() {
+    private val cleanUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
     override val baseDomain get() = "krmzi.org"
     override val providerName get() = "قرمزي"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/krmzy.json"
@@ -607,6 +609,10 @@ class KrmzyProvider : BaseProvider() {
                             newExtractorLink(source = this.name, name = serverTypeRaw, url = embedUrl) {
                                 this.quality = Qualities.Unknown.value
                                 this.referer = mainPageHostReferer
+                                this.headers = mapOf(
+                                    "User-Agent" to cleanUserAgent,
+                                    "Referer" to mainPageHostReferer
+                                )
                             }
                         )
                         successCount++
@@ -636,7 +642,7 @@ class KrmzyProvider : BaseProvider() {
                                 val baseHeaders = mutableMapOf(
                                     "Origin" to workingReferer.trimEnd('/'),
                                     "Referer" to workingReferer,
-                                    "User-Agent" to httpService.userAgent
+                                    "User-Agent" to cleanUserAgent
                                 )
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
@@ -724,6 +730,11 @@ class KrmzyProvider : BaseProvider() {
                                                         newExtractorLink(source = this.name, name = "$serverTypeRaw ($key)", url = value, type = INFER_TYPE) {
                                                             this.quality = Qualities.Unknown.value
                                                             this.referer = apiBase + "/"
+                                                            this.headers = mapOf(
+                                                                "User-Agent" to cleanUserAgent,
+                                                                "Referer" to apiBase + "/",
+                                                                "Origin" to apiBase
+                                                            )
                                                         }
                                                     )
                                                     successCount++
@@ -739,6 +750,11 @@ class KrmzyProvider : BaseProvider() {
                                                             newExtractorLink(source = this.name, name = "$serverTypeRaw source $i", url = src, type = INFER_TYPE) {
                                                                 this.quality = Qualities.Unknown.value
                                                                 this.referer = apiBase + "/"
+                                                                this.headers = mapOf(
+                                                                    "User-Agent" to cleanUserAgent,
+                                                                    "Referer" to apiBase + "/",
+                                                                    "Origin" to apiBase
+                                                                )
                                                             }
                                                         )
                                                         successCount++
