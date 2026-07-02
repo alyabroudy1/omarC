@@ -15,6 +15,9 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.ByteArrayOutputStream
 import java.util.regex.Pattern
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+
 
 class CimaNowProvider : BaseProvider() {
     lateinit var context: Context
@@ -323,270 +326,228 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v6] ================")
+        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
+        val successCount = java.util.concurrent.atomic.AtomicInteger(0)
         try {
-            Log.i("CimaNowLoadLinks", "[1/6] Fetching initial movie page via httpService.getRaw...")
+            val decryptedHtml = fetchDecryptedWatchPage(data)
+            if (!decryptedHtml.isNullOrBlank()) {
+                val doc = Jsoup.parse(decryptedHtml, data)
+
+                // 1. Extract watch servers
+                val servers = doc.select("li[data-index]")
+                Log.i("CimaNowLoadLinks", "Found ${servers.size} watch servers in decrypted HTML")
+
+                val deferredList = mutableListOf<Deferred<Unit>>()
+                coroutineScope {
+                    servers.forEach { server ->
+                        val index = server.attr("data-index")
+                        val id = server.attr("data-id")
+                        val serverName = server.text().trim()
+
+                        if (index.isNotBlank() && id.isNotBlank()) {
+                            val deferred = async {
+                                try {
+                                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
+                                    Log.d(TAG, "core.php GET: $ajaxUrl")
+                                    val coreHeaders = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
+                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                    val playerDoc = Jsoup.parse(coreText, ajaxUrl)
+                                    val rawIframeUrl = playerDoc.select("iframe").attr("src") ?: ""
+                                    val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
+
+                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                        successCount.incrementAndGet()
+                                        when {
+                                            iframeUrl.contains("cimanowtv", true) -> {
+                                                handlecima(iframeUrl, serverName, callback)
+                                            }
+                                            iframeUrl.contains("forafile.com", true) -> {
+                                                handleForafile(iframeUrl, 0, data, callback)
+                                            }
+                                            else -> {
+                                                fallbackExtractIframe(iframeUrl, serverName, data, callback)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error switching server index=$index: ${e.message}")
+                                }
+                            }
+                            deferredList.add(deferred)
+                        }
+                    }
+                    deferredList.awaitAll()
+                }
+
+                // 2. Extract download links
+                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href]")
+                Log.i("CimaNowLoadLinks", "Found ${downloadLinks.size} download links in decrypted HTML")
+                for (link in downloadLinks) {
+                    try {
+                        val dlink = link.attr("href")
+                        val linkText = link.text().trim()
+                        val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
+                            ?: Qualities.Unknown.value
+
+                        if (dlink.isNotBlank() && dlink.startsWith("http")) {
+                            Log.d(TAG, "Download link found: quality=$quality url=$dlink")
+                            when {
+                                dlink.contains("forafile.com", true) -> {
+                                    handleForafile(dlink, quality, data, callback)
+                                }
+                                dlink.contains("jetload.pp.ua", true) -> {
+                                    handleJetload(dlink, quality, data, callback)
+                                }
+                                else -> {
+                                    callback(newExtractorLink("CimaNow", "CimaNow", dlink, type = getLinkType(dlink)) {
+                                        this.referer = data
+                                        this.quality = quality
+                                    })
+                                }
+                            }
+                            successCount.incrementAndGet()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing download link: ${e.message}")
+                    }
+                }
+            } else {
+                Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
+            }
+        } catch (e: Exception) {
+            Log.e("CimaNowLoadLinks", "Programmatic flow error: ${e.message}")
+        }
+
+        if (successCount.get() > 0) {
+            Log.i("CimaNowLoadLinks", "================ [END PROGRAMMATIC SUCCESS] ================")
+            return true
+        }
+
+        Log.w("CimaNowLoadLinks", "Programmatic flow failed to find links. Falling back to WebView...")
+        val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
+        Log.i("CimaNowLoadLinks", "================ [END WebView FALLBACK Result: $webViewResult] ================")
+        return webViewResult
+    }
+
+    private suspend fun fetchDecryptedWatchPage(movieUrl: String): String? {
+        val TAG_DP = "CimaNowDecryptedPage"
+        try {
+            Log.i(TAG_DP, "1. Fetching movie page: $movieUrl")
             val cacheBuster = "?_ts=${System.currentTimeMillis()}"
-            val fetchUrl = if (data.contains("?")) "$data&$cacheBuster" else "$data$cacheBuster"
-            Log.d(TAG, "   Fetch URL (with cache buster): $fetchUrl")
+            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl$cacheBuster"
             val rawHeaders = mapOf(
                 "User-Agent" to httpService.userAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             )
-            val rawResp = httpService.getRaw(fetchUrl, headers = rawHeaders)
-            val respCode = rawResp.code
-            val respBody = rawResp.body?.string() ?: throw ErrorLoadingException("Empty response body")
-            val moviePageDoc = Jsoup.parse(respBody, fetchUrl)
-            val movieTitle = moviePageDoc.title()
-            Log.d(TAG, "   Doc title: $movieTitle")
-            Log.d(TAG, "   Doc HTML size: ${respBody.length} bytes")
-            Log.d(TAG, "   Response status: $respCode")
+            val movieHtml = httpService.getRaw(fetchUrl, headers = rawHeaders).body?.string() ?: return null
 
-            val cleanTitle = movieTitle.substringBefore("|").trim()
-            Log.d(TAG, "   Cleaned title for search: $cleanTitle")
+            val freexMatcher = Pattern.compile("href=[\"'](https?://[^\"']*freex2line[^\"']*)[\"']").matcher(movieHtml)
+            if (!freexMatcher.find()) {
+                Log.e(TAG_DP, "Freex URL not found in movie page")
+                return null
+            }
+            val freexUrl = freexMatcher.group(1)
+            Log.d(TAG_DP, "Found Freex URL: $freexUrl")
 
-            Log.i("CimaNowLoadLinks", "[2/6] Extracting post ID from movie page HTML...")
-            var postId = run {
-                // Scan movie page HTML for WordPress post ID patterns (most reliable)
-                val bodyClass = Regex("""postid[-\s]*(\d+)""", RegexOption.IGNORE_CASE).find(respBody)
-                if (bodyClass != null) {
-                    Log.i(TAG, "   Post ID found via body class: ${bodyClass.groupValues[1]}")
-                    bodyClass.groupValues[1]
-                } else {
-                    val articleId = Regex("""<article[^>]*\sid\s*=\s*["']post[-\s]*(\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
-                    if (articleId != null) {
-                        Log.i(TAG, "   Post ID found via article id: ${articleId.groupValues[1]}")
-                        articleId.groupValues[1]
-                    } else {
-                        val dataPostId = Regex("""data-post-id\s*=\s*["'](\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
-                        if (dataPostId != null) {
-                            Log.i(TAG, "   Post ID found via data-post-id: ${dataPostId.groupValues[1]}")
-                            dataPostId.groupValues[1]
-                        } else {
-                            val jsPostId = Regex("""post_id\s*=\s*(\d+)""", RegexOption.IGNORE_CASE).find(respBody)
-                            if (jsPostId != null) {
-                                Log.i(TAG, "   Post ID found via JS variable: ${jsPostId.groupValues[1]}")
-                                jsPostId.groupValues[1]
-                            } else {
-                                val hiddenInput = Regex("""<input[^>]*name=["']post(?:_id)?["'][^>]*value=["'](\d+)["']""", RegexOption.IGNORE_CASE).find(respBody)
-                                if (hiddenInput != null) {
-                                    Log.i(TAG, "   Post ID found via hidden input: ${hiddenInput.groupValues[1]}")
-                                    hiddenInput.groupValues[1]
-                                } else {
-                                    // Fallback: search RSS feed for ?p= pattern
-                                    Log.w(TAG, "   No post ID found in HTML — trying RSS feed fallback...")
-                                    val searchTerm = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
-                                    val feedUrl = "$mainUrl/feed/?s=$searchTerm"
-                                    Log.d(TAG, "   Feed search URL: $feedUrl")
-                                    val feedXml = httpService.getText(feedUrl)
-                                    Log.d(TAG, "   Feed response size: ${feedXml?.length ?: 0} bytes")
-                                    if (feedXml != null) Log.d(TAG, "   Feed content dump:\n${feedXml.take(1000)}")
+            val sessionHeaders = mutableMapOf<String, String>()
+            sessionHeaders["User-Agent"] = httpService.userAgent
 
-                                    val fromRss = feedXml?.let { Regex("[?&]p=(\\d+)").find(it)?.groupValues?.get(1) }
-                                    if (fromRss != null) {
-                                        Log.i(TAG, "   Post ID found via RSS: $fromRss")
-                                        fromRss
-                                    } else {
-                                        Log.w(TAG, "   RSS feed has no ?p= — trying REST API fallback...")
-                                        val slug = data.trimEnd('/').substringAfterLast('/')
-                                        Log.d(TAG, "   Extracted slug from URL: $slug")
-                                        val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
-                                        Log.d(TAG, "   REST API URL: $apiUrl")
-                                        val apiResult = httpService.getText(apiUrl, headers = mapOf("Accept" to "application/json"))
-                                        Log.d(TAG, "   REST API response (first 1000): ${apiResult?.take(1000)}")
-                                        val fromApi = apiResult?.let { json ->
-                                            Regex(""""id"\s*:\s*(\d+)""").find(json)?.groupValues?.get(1)
-                                        }
-                                        if (fromApi != null) {
-                                            Log.i(TAG, "   Post ID found via REST API: $fromApi")
-                                            fromApi
-                                        } else {
-                                            Log.w(TAG, "   REST API failed — will try watching page fallback...")
-                                            null
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            Log.i(TAG_DP, "2. Requesting loadon: $freexUrl")
+            val loadonResp = httpService.getRaw(freexUrl, headers = sessionHeaders)
+            val loadonBody = loadonResp.body?.string() ?: ""
+
+            // Extract any cookies set by loadon
+            val cookies = mutableMapOf<String, String>()
+            for (header in loadonResp.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    cookies[header.substring(0, eqIdx)] = value
                 }
             }
-            Log.i(TAG, "   Extracted post ID: $postId")
+            loadonResp.close()
 
-            if (postId == null) {
-                Log.i("CimaNowLoadLinks", "[2b/6] Fallback: fetching watching page for post ID via data-id...")
-                val fxLink = moviePageDoc.selectFirst("a[href*='freex2line']")?.attr("href")
-                if (fxLink != null) {
-                    val linkParam = fxLink.substringAfter("link=", "")
-                    if (linkParam.isNotBlank()) {
-                        val watchPageUrl = try {
-                            String(Base64.decode(linkParam, Base64.DEFAULT), Charsets.UTF_8)
-                        } catch (e: Exception) { null }
-                        if (watchPageUrl != null && watchPageUrl.startsWith("http")) {
-                            Log.d(TAG, "   Watching page URL: $watchPageUrl")
-                            val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                            val watchHeaders = mapOf(
-                                "User-Agent" to httpService.userAgent,
-                                "Referer" to data,
-                                "Cookie" to cookieStr
-                            )
-                            val watchResp = httpService.getRaw(watchPageUrl, headers = watchHeaders)
-                            val watchHtml = watchResp.body?.string() ?: ""
-                            Log.d(TAG, "   Watching page size: ${watchHtml.length} bytes")
-                            val dataIdMatch = Regex("""data-id\s*=\s*["'](\d+)["']""").find(watchHtml)
-                            if (dataIdMatch != null) {
-                                postId = dataIdMatch.groupValues[1]
-                                Log.i(TAG, "   Post ID found via watching page data-id: $postId")
-                            } else {
-                                Log.w(TAG, "   No data-id in watching page; snippet: ${watchHtml.take(300)}")
-                            }
-                        } else {
-                            Log.w(TAG, "   Decoded watch page URL is invalid or null")
-                        }
-                    } else {
-                        Log.w(TAG, "   No link param in freex2line URL")
-                    }
-                } else {
-                    Log.w(TAG, "   No freex2line link for watching page fallback")
-                }
+            if (cookies.isNotEmpty()) {
+                sessionHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
             }
 
-            if (postId == null) {
-                Log.i("CimaNowLoadLinks", "[2c/6] Fallback: REST API via getRaw with Cloudflare cookies...")
-                val slug = data.trimEnd('/').substringAfterLast('/')
-                val apiUrl = "$mainUrl/wp-json/wp/v2/posts?slug=$slug"
-                val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                val apiResp = httpService.getRaw(apiUrl, headers = mapOf(
-                    "User-Agent" to httpService.userAgent,
-                    "Accept" to "application/json",
-                    "Cookie" to cookieStr
-                ))
-                val apiBody = apiResp.body?.string()
-                if (apiBody != null) {
-                    Log.d(TAG, "   REST API body (first 500): ${apiBody.take(500)}")
-                    val fromApi = Regex(""""id"\s*:\s*(\d+)""").find(apiBody)?.groupValues?.get(1)
-                    if (fromApi != null) {
-                        postId = fromApi
-                        Log.i(TAG, "   Post ID found via REST API (getRaw): $postId")
-                    } else {
-                        Log.w(TAG, "   No id field in REST API response")
-                    }
-                } else {
-                    Log.w(TAG, "   REST API response body is null")
-                }
+            Log.i(TAG_DP, "3. Requesting redirectingfree")
+            sessionHeaders["Referer"] = freexUrl
+            val redirResp = httpService.getRaw("https://rm.freex2line.online/redirectingfree/", headers = sessionHeaders)
+            redirResp.close()
+
+            Log.i(TAG_DP, "4. Requesting blog-post.html")
+            sessionHeaders["Referer"] = "https://rm.freex2line.online/redirectingfree/"
+            val blogResp = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = sessionHeaders)
+            val blogHtml = blogResp.body?.string() ?: ""
+            blogResp.close()
+
+            // Extract ch, ri, ke, se variables
+            val chVar = reMatch(blogHtml, "ch:\\s*['\"]([^'\"]+)['\"]") ?: return null
+            val riVar = reMatch(blogHtml, "ri:\\s*['\"]([^'\"]+)['\"]") ?: return null
+            val keVar = reMatch(blogHtml, "ke:\\s*['\"]([^'\"]+)['\"]") ?: return null
+            val seVar = reMatch(blogHtml, "se:\\s*['\"]([^'\"]+)['\"]") ?: return null
+
+            val ctxMatcher = Pattern.compile("window\\['ctx_[^']+'\\]\\s*=\\s*\\{([^}]+)\\}").matcher(blogHtml)
+            if (!ctxMatcher.find()) {
+                Log.e(TAG_DP, "ctx not found in blog-post.html")
+                return null
             }
+            val ctxContent = ctxMatcher.group(1)
+            val ch = reMatch(ctxContent, "'$chVar'\\s*:\\s*'([^']+)'") ?: return null
+            val ri = reMatch(ctxContent, "'$riVar'\\s*:\\s*'([^']+)'") ?: return null
+            val ke = reMatch(ctxContent, "'$keVar'\\s*:\\s*'([^']+)'") ?: return null
+            val se = reMatch(ctxContent, "'$seVar'\\s*:\\s*'([^']+)'") ?: return null
 
-            if (postId == null) {
-                Log.w(TAG, "   All HTTP post-ID extraction methods exhausted — trying WebView navigation fallback...")
-                return tryWebViewFallback(data, subtitleCallback, callback)
+            // Decrypt key
+            val keDecoded = Base64.decode(ke, Base64.DEFAULT)
+            val keyBytes = ByteArray(keDecoded.size)
+            for (i in keDecoded.indices) {
+                keyBytes[i] = (keDecoded[i].toInt() xor se[i % se.length].code).toByte()
             }
+            val keyHex = String(keyBytes, Charsets.UTF_8)
 
-            Log.i("CimaNowLoadLinks", "[3/6] Searching for freex2line intermediate link...")
-            var intermediateLink: String? = null
-            val preciseLink = moviePageDoc.selectFirst("ul.btns li a.shine[href*='freex2line']")
-            if (preciseLink != null) {
-                intermediateLink = preciseLink.attr("href")
-                Log.d(TAG, "   Found via precise selector: $intermediateLink")
+            val fp = "TW96aWxsYS81Ll9f"
+            val msg = ri + ch + fp
+            val hmacBytes = hmacSha256(keyHex.toByteArray(Charsets.UTF_8), msg.toByteArray(Charsets.UTF_8))
+            val hmacToken = Base64.encodeToString(hmacBytes, Base64.NO_WRAP)
+
+            Log.i(TAG_DP, "Waiting 11 seconds for delay bypass...")
+            delay(11000)
+
+            Log.i(TAG_DP, "5. Requesting get-link.php")
+            val ajaxUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php?request_id=$ri&hmac_token=${java.net.URLEncoder.encode(hmacToken, "UTF-8")}&ch=$ch&fp=$fp"
+            sessionHeaders["X-Requested-With"] = "XMLHttpRequest"
+            sessionHeaders["Referer"] = "https://rm.freex2line.online/2020/02/blog-post.html/"
+
+            val ajaxResp = httpService.getRaw(ajaxUrl, headers = sessionHeaders)
+            val ajaxText = ajaxResp.body?.string() ?: ""
+            ajaxResp.close()
+
+            val watchUrl = ajaxText.trim().replace("\ufeff", "")
+            Log.i(TAG_DP, "Resolved Watch URL: $watchUrl")
+
+            Log.i(TAG_DP, "6. Fetching watch page: $watchUrl")
+            sessionHeaders.remove("X-Requested-With")
+            sessionHeaders["Referer"] = "https://rm.freex2line.online/2020/02/blog-post.html/"
+            val watchResp = httpService.getRaw(watchUrl, headers = sessionHeaders)
+            val watchHtml = watchResp.body?.string() ?: ""
+            watchResp.close()
+
+            Log.i(TAG_DP, "7. Decrypting watch page HTML")
+            val decrypted = decryptWatchHtml(watchHtml)
+            if (decrypted == null) {
+                Log.e(TAG_DP, "Failed to decrypt watch page HTML")
+                return null
             }
-            if (intermediateLink.isNullOrBlank()) {
-                Log.w(TAG, "   - Precise selector failed, trying a general search...")
-                val allFreex2 = moviePageDoc.select("a[href*='freex2line']")
-                Log.d(TAG, "   Total freex2line links found: ${allFreex2.size}")
-                intermediateLink = allFreex2.firstOrNull()?.attr("href")
-            }
-            if (intermediateLink.isNullOrBlank()) {
-                Log.e(TAG, "   - CRITICAL: Could not find any freex2line link.")
-                Log.e(TAG, "   - HTML snippet around watch area: ${moviePageDoc.select("ul.btns").text().take(200)}")
-                throw ErrorLoadingException("Failed to find intermediate link.")
-            }
-            Log.d(TAG, "   Found intermediate link: $intermediateLink")
-
-            Log.i(TAG, "[4/6] Resolving shortlink via resolveFreex2line...")
-            val finalCimaNowUrl = resolveFreex2line(intermediateLink)
-                ?: throw ErrorLoadingException("Failed to bypass shortlink.")
-            Log.i(TAG, "   Watch page URL obtained: $finalCimaNowUrl")
-
-            Log.i(TAG, "[5/6] Fetching video links via core.php (bypass watch page)...")
-            val knownIndices = listOf("00", "66", "32", "7", "30", "12")
-            Log.d(TAG, "   Known indices to try: $knownIndices")
-            var successCount = 0
-            var failCount = 0
-
-            coroutineScope {
-                knownIndices.map { index ->
-                    async {
-                        try {
-                            val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$postId"
-                            Log.d(TAG, "   core.php GET: $ajaxUrl")
-                            val coreHeaders = mapOf("Referer" to finalCimaNowUrl, "X-Requested-With" to "XMLHttpRequest")
-                            val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
-                            Log.d(TAG, "   core.php body start: ${coreText.take(300)}")
-                            val playerDoc = Jsoup.parse(coreText, ajaxUrl)
-                            val rawIframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
-                            val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
-
-                            if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                                val serverName = when (index) {
-                                    "00" -> "CimaNow"
-                                    "66" -> "Upnshare"
-                                    "32" -> "Filemoon"
-                                    "7" -> "OK.ru"
-                                    "30" -> "VK Video"
-                                    "12" -> "Uqload"
-                                    else -> "Server $index"
-                                }
-                                Log.i(TAG, "   ✅ index=$index ($serverName): iframe=$iframeUrl")
-                                successCount++
-
-                                when {
-                                    iframeUrl.contains("cimanowtv", true) -> {
-                                        Log.d(TAG, "   -> routing to handlecima")
-                                        handlecima(iframeUrl, serverName, callback)
-                                    }
-                                    iframeUrl.contains("forafile.com", true) -> {
-                                        Log.d(TAG, "   -> routing to handleForafile")
-                                        handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
-                                    }
-                                    else -> {
-                                        Log.d(TAG, "   -> routing to fallbackExtractIframe")
-                                        fallbackExtractIframe(iframeUrl, serverName, finalCimaNowUrl, callback)
-                                    }
-                                }
-                            } else {
-                                val reason = if (iframeUrl.isBlank()) "blank iframe" else "placeholder (123456789)"
-                                Log.w(TAG, "   ❌ index=$index skipped ($reason)")
-                                failCount++
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "   💥 Error processing server index=$index: ${e.message}")
-                            failCount++
-                        }
-                    }
-                }.awaitAll()
-            }
-
-            Log.i(TAG, "   core.php results: $successCount succeeded, $failCount failed out of ${knownIndices.size}")
-
-            if (successCount > 0) {
-                Log.i(TAG, "================ [END LOADLINKS v6] =================")
-                return true
-            }
-
-            Log.w(TAG, "   No valid servers found via core.php! Trying WebView navigation fallback...")
-            val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
-
-            Log.i(TAG, "================ [END LOADLINKS v6] =================")
-            return webViewResult
-
+            return decrypted
         } catch (e: Exception) {
-            Log.e(TAG, "FATAL ERROR in loadLinks: ${e.message}")
-            Log.e(TAG, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
+            Log.e(TAG_DP, "fetchDecryptedWatchPage error: ${e.message}")
         }
-
-        Log.i(TAG, "================ [END LOADLINKS v6] =================")
-        return false
+        return null
     }
 
     // ==================== WebView Fallback ====================
@@ -1112,6 +1073,91 @@ class CimaNowProvider : BaseProvider() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        val secretKey = SecretKeySpec(key, "HmacSHA256")
+        mac.init(secretKey)
+        return mac.doFinal(data)
+    }
+
+    private fun decryptWatchHtml(html: String): String? {
+        try {
+            var key: Int? = null
+
+            // 1. Try _oArr sum key
+            val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
+            if (oArrMatcher.find()) {
+                key = oArrMatcher.group(1).split(",").map { it.trim().toIntOrNull() ?: 0 }.sum()
+            } else {
+                // 2. Try _dk1 and _dk2
+                val dk1Matcher = Pattern.compile("var\\s+_dk1\\s*=\\s*(\\d+);").matcher(html)
+                val dk2Matcher = Pattern.compile("var\\s+_dk2\\s*=\\s*(\\d+);").matcher(html)
+                if (dk1Matcher.find() && dk2Matcher.find()) {
+                    val dk1 = dk1Matcher.group(1).toIntOrNull() ?: 0
+                    val dk2 = dk2Matcher.group(1).toIntOrNull() ?: 0
+                    key = dk1 - dk2
+                }
+            }
+
+            if (key == null) {
+                Log.e(TAG, "decryptWatchHtml: Key not found")
+                return null
+            }
+
+            // Find base64 variable containing '@'
+            val varMatcher = Pattern.compile("var\\s+(_[a-zA-Z0-9]{5})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
+            var rawVal = ""
+            while (varMatcher.find()) {
+                val valContent = varMatcher.group(2)
+                if (valContent.contains("@")) {
+                    rawVal = valContent
+                    break
+                }
+            }
+
+            if (rawVal.isBlank()) {
+                Log.e(TAG, "decryptWatchHtml: Base64 variable not found")
+                return null
+            }
+
+            // Extract string literals
+            val strMatcher = Pattern.compile("'([^']*)'").matcher(rawVal)
+            val sb = StringBuilder()
+            while (strMatcher.find()) {
+                sb.append(strMatcher.group(1))
+            }
+
+            val parts = sb.toString().split("@")
+            val decryptedChars = StringBuilder()
+
+            for (p in parts) {
+                if (p.isBlank()) continue
+                try {
+                    val decodedBytes = Base64.decode(p, Base64.DEFAULT)
+                    val decStr = String(decodedBytes, Charsets.ISO_8859_1)
+                    val digits = decStr.filter { it.isDigit() }
+                    if (digits.isNotEmpty()) {
+                        val num = digits.toInt() xor key
+                        decryptedChars.append(num.toChar())
+                    }
+                } catch (_: Exception) {
+                }
+            }
+
+            val decrypted = decryptedChars.toString()
+            if (decrypted.isBlank()) return null
+
+            val bytes = ByteArray(decrypted.length)
+            for (i in 0 until decrypted.length) {
+                bytes[i] = decrypted[i].code.toByte()
+            }
+            return String(bytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e(TAG, "decryptWatchHtml error: ${e.message}")
+        }
+        return null
     }
 
 }
