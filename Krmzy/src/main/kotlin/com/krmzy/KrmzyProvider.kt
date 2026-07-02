@@ -687,9 +687,8 @@ class KrmzyProvider : BaseProvider() {
                                         log("Server #$processedCount: loadExtractor returned false, trying httpService proxy for master playlist")
                                         var proxySucceeded = false
                                         try {
-                                            val playlistResp = httpService.getRaw(extractedM3u8, headers = baseHeaders)
-                                            if (playlistResp.code == 200) {
-                                                val playlistText = playlistResp.text ?: ""
+                                            val playlistText = httpService.getText(extractedM3u8, headers = baseHeaders) ?: ""
+                                            if (playlistText.isNotEmpty()) {
                                                 log("Server #$processedCount: Master playlist fetched (${playlistText.length} chars)")
                                                 val variantRegex = Regex("""#EXT-X-STREAM-INF:.*\n(.*\.m3u8[^\n]*)""")
                                                 val variantMatches = variantRegex.findAll(playlistText).toList()
@@ -728,7 +727,7 @@ class KrmzyProvider : BaseProvider() {
                                                     proxySucceeded = true
                                                 }
                                             } else {
-                                                log("Server #$processedCount: httpService proxy failed (code=${playlistResp.code})")
+                                                log("Server #$processedCount: httpService proxy returned empty response")
                                             }
                                         } catch (t: Throwable) {
                                             log("Server #$processedCount: httpService proxy error: ${t.message}")
