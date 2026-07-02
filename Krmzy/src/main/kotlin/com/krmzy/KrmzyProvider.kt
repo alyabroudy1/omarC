@@ -684,65 +684,15 @@ class KrmzyProvider : BaseProvider() {
                                         log("Server #$processedCount: loadExtractor produced $newLinks links")
                                         successCount += newLinks
                                     } else {
-                                        log("Server #$processedCount: loadExtractor returned false, trying httpService proxy for master playlist")
-                                        var proxySucceeded = false
-                                        try {
-                                            val playlistText = httpService.getText(extractedM3u8, headers = baseHeaders) ?: ""
-                                            if (playlistText.isNotEmpty()) {
-                                                log("Server #$processedCount: Master playlist fetched (${playlistText.length} chars)")
-                                                val variantRegex = Regex("""#EXT-X-STREAM-INF:.*\n(.*\.m3u8[^\n]*)""")
-                                                val variantMatches = variantRegex.findAll(playlistText).toList()
-                                                if (variantMatches.isNotEmpty()) {
-                                                    log("Server #$processedCount: Found ${variantMatches.size} variant playlists in master")
-                                                    val baseUrl = extractedM3u8.substringBeforeLast("/")
-                                                    for (vm in variantMatches) {
-                                                        val variantPath = vm.groupValues[1].trim()
-                                                        val variantUrl = if (variantPath.startsWith("http")) variantPath else "$baseUrl/$variantPath"
-                                                        log("Server #$processedCount: Variant: $variantUrl")
-                                                        val qualityLinks = M3u8Helper.generateM3u8(source = this.name, streamUrl = variantUrl, referer = workingReferer, headers = baseHeaders)
-                                                        if (qualityLinks.isNotEmpty()) {
-                                                            log("Server #$processedCount: Variant produced ${qualityLinks.size} links")
-                                                            for (link in qualityLinks) {
-                                                                callback.invoke(newExtractorLink(source = link.source, name = "$serverTypeRaw - ${link.name}", url = link.url) {
-                                                                    this.referer = link.referer; this.quality = link.quality; this.headers = link.headers
-                                                                })
-                                                                successCount++
-                                                            }
-                                                            proxySucceeded = true
-                                                        } else {
-                                                            log("Server #$processedCount: Variant generateM3u8 returned 0, emitting raw variant")
-                                                            callback.invoke(newExtractorLink(source = this.name, name = serverTypeRaw, url = variantUrl, type = INFER_TYPE) {
-                                                                this.quality = Qualities.Unknown.value; this.referer = workingReferer; this.headers = baseHeaders
-                                                            })
-                                                            successCount++
-                                                            proxySucceeded = true
-                                                        }
-                                                    }
-                                                } else {
-                                                    log("Server #$processedCount: No variants in playlist, using full content as single stream")
-                                                    callback.invoke(newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
-                                                        this.quality = Qualities.Unknown.value; this.referer = workingReferer; this.headers = baseHeaders
-                                                    })
-                                                    successCount++
-                                                    proxySucceeded = true
-                                                }
-                                            } else {
-                                                log("Server #$processedCount: httpService proxy returned empty response")
+                                        log("Server #$processedCount: loadExtractor returned false / CDN blocks HTTP clients (403). Emitting raw M3U8 for $serverTypeRaw")
+                                        callback.invoke(
+                                            newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = workingReferer
+                                                this.headers = baseHeaders
                                             }
-                                        } catch (t: Throwable) {
-                                            log("Server #$processedCount: httpService proxy error: ${t.message}")
-                                        }
-                                        if (!proxySucceeded) {
-                                            log("Server #$processedCount: all proxy attempts failed, falling back to raw M3U8")
-                                            callback.invoke(
-                                                newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
-                                                    this.quality = Qualities.Unknown.value
-                                                    this.referer = workingReferer
-                                                    this.headers = baseHeaders
-                                                }
-                                            )
-                                            successCount++
-                                        }
+                                        )
+                                        successCount++
                                     }
                                 }
                             } else {
