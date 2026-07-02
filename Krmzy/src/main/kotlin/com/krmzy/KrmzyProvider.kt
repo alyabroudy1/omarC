@@ -502,7 +502,7 @@ class KrmzyProvider : BaseProvider() {
                 lower.contains("dailymotion") -> "https://www.dailymotion.com/embed/video/$serverId"
                 lower.contains("facebook") -> "https://app.videas.fr/embed/media/$serverId"
                 lower.contains("estream") -> "https://arabveturk.com/embed-$serverId.html"
-                lower.contains("arab hd") || lower.contains("arabhd") || lower.contains("arab-hd") -> "https://v.turkvearab.com/embed-$serverId.html"
+                lower.contains("arab hd") || lower.contains("arabhd") || lower.contains("arab-hd") -> "https://arabhd.onl/embed-$serverId.html"
                 lower.contains("red hd") || lower.contains("redhd") || lower.contains("red-hd") -> null
                 lower.contains("pro hd") || lower.contains("prohd") || lower.contains("pro-hd") -> "https://ebtv.upns.live/#$serverId"
                 lower == "pro" -> "https://mdna.upns.online/#$serverId"
@@ -540,7 +540,7 @@ class KrmzyProvider : BaseProvider() {
                     "dailymotion" -> dailymotionFromLi(li)
                     "facebook" -> "https://app.videas.fr/embed/media/$serverIdRaw"
                     "estream" -> "https://arabveturk.com/embed-$serverIdRaw.html"
-                    "arab hd", "arabhd", "arab-hd" -> "https://v.turkvearab.com/embed-$serverIdRaw.html"
+                    "arab hd", "arabhd", "arab-hd" -> "https://arabhd.onl/embed-$serverIdRaw.html"
                     "box" -> "https://youdboox.com/embed-$serverIdRaw.html"
                     "now" -> "https://extreamnow.org/embed-$serverIdRaw.html"
                     "ok" -> ensureHttp("//ok.ru/videoembed/$serverIdRaw")
@@ -621,31 +621,23 @@ class KrmzyProvider : BaseProvider() {
                             val fetchReferers = listOfNotNull(
                                 "https://newaat.com/",
                                 embedDomain,
-                                "https://v.turkvearab.com/",
                                 mainPageHostReferer,
                             ).distinct()
                             val extractResult = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
 
                             if (extractResult != null) {
                                 val extractedM3u8 = extractResult.m3u8Url
-                                val embedCookies = extractResult.cookies
                                 log("Server #$processedCount: extracted M3U8 = $extractedM3u8")
-                                log("Server #$processedCount: embed cookies = $embedCookies")
-                                val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log, embedCookies)
-                                log("Server #$processedCount: working referer = $workingReferer")
 
-                                val cookieHeader = if (embedCookies.isNotEmpty()) {
-                                    embedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                                } else null
+                                val workingReferer = try {
+                                    java.net.URL(embedUrl).let { "${it.protocol}://${it.host}/" }
+                                } catch (e: Exception) { embedUrl }
 
                                 val baseHeaders = mutableMapOf(
                                     "Origin" to workingReferer.trimEnd('/'),
                                     "Referer" to workingReferer,
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                    "User-Agent" to httpService.userAgent
                                 )
-                                if (cookieHeader != null) {
-                                    baseHeaders["Cookie"] = cookieHeader
-                                }
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
                                     source = this.name,
