@@ -144,7 +144,8 @@ class KrmzyProvider : BaseProvider() {
     private suspend fun checkWorkingStreamReferer(
         streamUrl: String,
         originEmbedUrl: String,
-        logCallback: (String) -> Unit
+        logCallback: (String) -> Unit,
+        cookies: Map<String, String> = emptyMap()
     ): String {
         val iframeHostReferer = try {
             val u = java.net.URL(originEmbedUrl)
@@ -161,9 +162,18 @@ class KrmzyProvider : BaseProvider() {
 
         logCallback("checkWorkingStreamReferer: Candidates: $candidates")
 
+        val cookieHeader = if (cookies.isNotEmpty()) {
+            cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        } else null
+
         for (ref in candidates) {
             try {
-                val resp = httpService.getRaw(streamUrl, headers = mapOf("Referer" to ref))
+                val reqHeaders = mutableMapOf("Referer" to ref)
+                if (cookieHeader != null) {
+                    reqHeaders["Cookie"] = cookieHeader
+                    reqHeaders["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                val resp = httpService.getRaw(streamUrl, headers = reqHeaders)
                 val code = resp.code
                 if (code == 200) {
                     logCallback("checkWorkingStreamReferer: Referer works: $ref (code=$code)")
@@ -621,7 +631,7 @@ class KrmzyProvider : BaseProvider() {
                                 val embedCookies = extractResult.cookies
                                 log("Server #$processedCount: extracted M3U8 = $extractedM3u8")
                                 log("Server #$processedCount: embed cookies = $embedCookies")
-                                val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log)
+                                val workingReferer = checkWorkingStreamReferer(extractedM3u8, embedUrl, ::log, embedCookies)
                                 log("Server #$processedCount: working referer = $workingReferer")
 
                                 val cookieHeader = if (embedCookies.isNotEmpty()) {
@@ -674,15 +684,66 @@ class KrmzyProvider : BaseProvider() {
                                         log("Server #$processedCount: loadExtractor produced $newLinks links")
                                         successCount += newLinks
                                     } else {
-                                        log("Server #$processedCount: loadExtractor returned false, falling back to raw M3U8")
-                                        callback.invoke(
-                                            newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
-                                                this.quality = Qualities.Unknown.value
-                                                this.referer = workingReferer
-                                                this.headers = baseHeaders
+                                        log("Server #$processedCount: loadExtractor returned false, trying httpService proxy for master playlist")
+                                        var proxySucceeded = false
+                                        try {
+                                            val playlistResp = httpService.getRaw(extractedM3u8, headers = baseHeaders)
+                                            if (playlistResp.code == 200) {
+                                                val playlistText = playlistResp.text ?: ""
+                                                log("Server #$processedCount: Master playlist fetched (${playlistText.length} chars)")
+                                                val variantRegex = Regex("""#EXT-X-STREAM-INF:.*\n(.*\.m3u8[^\n]*)""")
+                                                val variantMatches = variantRegex.findAll(playlistText).toList()
+                                                if (variantMatches.isNotEmpty()) {
+                                                    log("Server #$processedCount: Found ${variantMatches.size} variant playlists in master")
+                                                    val baseUrl = extractedM3u8.substringBeforeLast("/")
+                                                    for (vm in variantMatches) {
+                                                        val variantPath = vm.groupValues[1].trim()
+                                                        val variantUrl = if (variantPath.startsWith("http")) variantPath else "$baseUrl/$variantPath"
+                                                        log("Server #$processedCount: Variant: $variantUrl")
+                                                        val qualityLinks = M3u8Helper.generateM3u8(source = this.name, streamUrl = variantUrl, referer = workingReferer, headers = baseHeaders)
+                                                        if (qualityLinks.isNotEmpty()) {
+                                                            log("Server #$processedCount: Variant produced ${qualityLinks.size} links")
+                                                            for (link in qualityLinks) {
+                                                                callback.invoke(newExtractorLink(source = link.source, name = "$serverTypeRaw - ${link.name}", url = link.url) {
+                                                                    this.referer = link.referer; this.quality = link.quality; this.headers = link.headers
+                                                                })
+                                                                successCount++
+                                                            }
+                                                            proxySucceeded = true
+                                                        } else {
+                                                            log("Server #$processedCount: Variant generateM3u8 returned 0, emitting raw variant")
+                                                            callback.invoke(newExtractorLink(source = this.name, name = serverTypeRaw, url = variantUrl, type = INFER_TYPE) {
+                                                                this.quality = Qualities.Unknown.value; this.referer = workingReferer; this.headers = baseHeaders
+                                                            })
+                                                            successCount++
+                                                            proxySucceeded = true
+                                                        }
+                                                    }
+                                                } else {
+                                                    log("Server #$processedCount: No variants in playlist, using full content as single stream")
+                                                    callback.invoke(newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
+                                                        this.quality = Qualities.Unknown.value; this.referer = workingReferer; this.headers = baseHeaders
+                                                    })
+                                                    successCount++
+                                                    proxySucceeded = true
+                                                }
+                                            } else {
+                                                log("Server #$processedCount: httpService proxy failed (code=${playlistResp.code})")
                                             }
-                                        )
-                                        successCount++
+                                        } catch (t: Throwable) {
+                                            log("Server #$processedCount: httpService proxy error: ${t.message}")
+                                        }
+                                        if (!proxySucceeded) {
+                                            log("Server #$processedCount: all proxy attempts failed, falling back to raw M3U8")
+                                            callback.invoke(
+                                                newExtractorLink(source = this.name, name = serverTypeRaw, url = extractedM3u8, type = INFER_TYPE) {
+                                                    this.quality = Qualities.Unknown.value
+                                                    this.referer = workingReferer
+                                                    this.headers = baseHeaders
+                                                }
+                                            )
+                                            successCount++
+                                        }
                                     }
                                 }
                             } else {
@@ -709,11 +770,15 @@ class KrmzyProvider : BaseProvider() {
                                         log("Server #$processedCount: decrypted JSON: ${decrypted.take(500)}")
                                         try {
                                             val json = org.json.JSONObject(decrypted)
-                                            // Check all keys for URL-like content
+                                            val skipKeys = setOf("ads", "playerAds", "error", "message", "title", "poster", "backUrl", "playerId")
                                             for (key in json.keys()) {
+                                                if (key in skipKeys) {
+                                                    log("Server #$processedCount: skipping key '$key' (non-video)")
+                                                    continue
+                                                }
                                                 val value = json.opt(key)
                                                 if (value is String && (value.contains("http") || value.contains("m3u8") || value.contains("mp4"))) {
-                                                    log("Server #$processedCount: found URL in key '$key': $value")
+                                                    log("Server #$processedCount: found URL in key '$key': ${value.take(200)}")
                                                     callback.invoke(
                                                         newExtractorLink(source = this.name, name = "$serverTypeRaw ($key)", url = value, type = INFER_TYPE) {
                                                             this.quality = Qualities.Unknown.value
