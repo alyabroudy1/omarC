@@ -381,7 +381,8 @@ class CimaNowProvider : BaseProvider() {
                     deferredList.awaitAll()
                 }
 
-                // 2. Extract download links
+                /*
+                // 2. Extract download links (Commented out to prevent video player launch delays. Uncomment to re-enable)
                 val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href]")
                 Log.i("CimaNowLoadLinks", "Found ${downloadLinks.size} download links in decrypted HTML")
                 for (link in downloadLinks) {
@@ -413,6 +414,7 @@ class CimaNowProvider : BaseProvider() {
                         Log.e(TAG, "Error processing download link: ${e.message}")
                     }
                 }
+                */
             } else {
                 Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
             }
@@ -1082,6 +1084,23 @@ class CimaNowProvider : BaseProvider() {
         return mac.doFinal(data)
     }
 
+    /**
+     * Decrypts the watch page HTML (from /watching/?token=...) containing the server lists and iframes.
+     * The watch HTML contains an encrypted string consisting of base64 blocks split by '@'.
+     *
+     * How to debug/fix when the decryption method changes:
+     * 1. Check the dynamic key computation:
+     *    - Currently, the key is the sum of integer elements inside `var _oArr = [...]` (e.g. 39597 + 39598 + 39597 = 118792).
+     *    - Fallback: Key is calculated as `_dk1 - _dk2` if they are present.
+     *    - If they change the variable name `_oArr`, update the regex matching the key array.
+     * 2. Check the encrypted data format:
+     *    - Currently, it extracts the variable containing the string with '@' separators (e.g., var _b5178 = 'base64@base64@...').
+     *    - It splits by '@', base64 decodes each block, extracts all digit characters, parses them as an integer, XORs it with the key, and converts it to a character.
+     *    - If they change the separator '@' or base64 layout, adjust the splitting and parsing loop accordingly.
+     * 3. Look at the Android Logcat under the tags:
+     *    - "CimaNowDecryptedPage": For redirection, HMAC token generation, and decryption status logs.
+     *    - "CimaNowLoadLinks": For parsing success counts and failover WebView triggers.
+     */
     private fun decryptWatchHtml(html: String): String? {
         try {
             var key: Int? = null
