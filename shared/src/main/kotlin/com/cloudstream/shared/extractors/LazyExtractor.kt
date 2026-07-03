@@ -3,7 +3,6 @@ package com.cloudstream.shared.extractors
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.util.WebConfig
-import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*

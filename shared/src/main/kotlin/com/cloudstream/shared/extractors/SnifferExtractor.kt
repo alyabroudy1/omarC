@@ -138,7 +138,7 @@ class SnifferExtractor : ExtractorApi() {
         // This avoids any class-loader isolation issues with WebConfig/SessionProvider.
         // Cookies are already in the system CookieManager (injected by ProviderHttpService.updateCookies).
         val snifferUserAgent = try {
-            val ctx = com.lagradost.cloudstream3.AcraApplication.context
+            val ctx = ActivityProvider.currentActivity
             if (ctx != null) {
                 android.webkit.WebSettings.getDefaultUserAgent(ctx)
                     .replace("; wv)", ")")  // Strip WebView marker, same as WebConfig
