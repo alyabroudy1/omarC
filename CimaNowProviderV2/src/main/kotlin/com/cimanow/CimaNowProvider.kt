@@ -1105,18 +1105,37 @@ class CimaNowProvider : BaseProvider() {
         try {
             var key: Int? = null
 
-            // 1. Try _oArr sum key
-            val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
-            if (oArrMatcher.find()) {
-                key = oArrMatcher.group(1).split(",").map { it.trim().toIntOrNull() ?: 0 }.sum()
-            } else {
-                // 2. Try _dk1 and _dk2
+            // 1. Try _x\d+ dynamic sum key first (latest logic)
+            val xVarMatcher = Pattern.compile("var\\s+(_x\\d+)\\s*=\\s*(\\d+)").matcher(html)
+            var xSum = 0
+            var hasXVars = false
+            while (xVarMatcher.find()) {
+                xSum += xVarMatcher.group(2).toIntOrNull() ?: 0
+                hasXVars = true
+            }
+            if (hasXVars) {
+                key = xSum
+                Log.d(TAG, "Key Detection: Found _x variables, sum key: $key")
+            }
+
+            if (key == null) {
+                // 2. Try _oArr sum key
+                val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
+                if (oArrMatcher.find()) {
+                    key = oArrMatcher.group(1).split(",").map { it.trim().toIntOrNull() ?: 0 }.sum()
+                    Log.d(TAG, "Key Detection: Found _oArr, sum key: $key")
+                }
+            }
+
+            if (key == null) {
+                // 3. Try _dk1 and _dk2
                 val dk1Matcher = Pattern.compile("var\\s+_dk1\\s*=\\s*(\\d+);").matcher(html)
                 val dk2Matcher = Pattern.compile("var\\s+_dk2\\s*=\\s*(\\d+);").matcher(html)
                 if (dk1Matcher.find() && dk2Matcher.find()) {
                     val dk1 = dk1Matcher.group(1).toIntOrNull() ?: 0
                     val dk2 = dk2Matcher.group(1).toIntOrNull() ?: 0
                     key = dk1 - dk2
+                    Log.d(TAG, "Key Detection: Found _dk1 and _dk2, diff key: $key")
                 }
             }
 
@@ -1125,14 +1144,22 @@ class CimaNowProvider : BaseProvider() {
                 return null
             }
 
-            // Find base64 variable containing '@'
-            val varMatcher = Pattern.compile("var\\s+(_[a-zA-Z0-9]{5})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
+            // Find base64 variable containing '*' or '@'
+            val varMatcher = Pattern.compile("var\\s+(_[a-zA-Z0-9_]{3,10})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
             var rawVal = ""
+            var delimiter = "@"
             while (varMatcher.find()) {
                 val valContent = varMatcher.group(2)
-                if (valContent.contains("@")) {
-                    rawVal = valContent
-                    break
+                if (valContent.length > 1000) {
+                    if (valContent.contains("*")) {
+                        rawVal = valContent
+                        delimiter = "*"
+                        break
+                    } else if (valContent.contains("@")) {
+                        rawVal = valContent
+                        delimiter = "@"
+                        break
+                    }
                 }
             }
 
@@ -1148,7 +1175,40 @@ class CimaNowProvider : BaseProvider() {
                 sb.append(strMatcher.group(1))
             }
 
-            val parts = sb.toString().split("@")
+            val parts = sb.toString().split(delimiter)
+            
+            // 4. Operator Auto-detection (XOR vs Subtraction)
+            var firstDigits: Int? = null
+            for (p in parts) {
+                if (p.isNotBlank()) {
+                    try {
+                        val decodedBytes = Base64.decode(p, Base64.DEFAULT)
+                        val decStr = String(decodedBytes, Charsets.ISO_8859_1)
+                        val digits = decStr.filter { it.isDigit() }
+                        if (digits.isNotEmpty()) {
+                            firstDigits = digits.toInt()
+                            break
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            if (firstDigits == null) {
+                Log.e(TAG, "decryptWatchHtml: Failed to get first digits for operator auto-detection")
+                return null
+            }
+
+            val valXor = firstDigits xor key
+            val valSub = firstDigits - key
+            val useXor = if (valXor in 10..127) {
+                true
+            } else if (valSub in 10..127) {
+                false
+            } else {
+                true // Fallback to XOR
+            }
+            Log.d(TAG, "Operator Detection: useXor=$useXor (XOR=$valXor, SUB=$valSub)")
+
             val decryptedChars = StringBuilder()
 
             for (p in parts) {
@@ -1158,8 +1218,9 @@ class CimaNowProvider : BaseProvider() {
                     val decStr = String(decodedBytes, Charsets.ISO_8859_1)
                     val digits = decStr.filter { it.isDigit() }
                     if (digits.isNotEmpty()) {
-                        val num = digits.toInt() xor key
-                        decryptedChars.append(num.toChar())
+                        val num = digits.toInt()
+                        val code = if (useXor) (num xor key) else (num - key)
+                        decryptedChars.append(code.toChar())
                     }
                 } catch (_: Exception) {
                 }
