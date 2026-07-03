@@ -16,9 +16,30 @@ import org.json.JSONObject
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import com.cloudstream.shared.util.WebConfig
+import com.cloudstream.shared.android.PluginContext
 
 class KrmzyProvider : BaseProvider() {
-    private val cleanUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
+    private fun getBrowserHeaders(referer: String? = null): Map<String, String> {
+        val context = PluginContext.context
+        val ua = context?.let { WebConfig.getUserAgent(it) } ?: WebConfig.getCachedUserAgent()
+        val headers = mutableMapOf(
+            "User-Agent" to ua,
+            "sec-ch-ua" to WebConfig.buildSecChUa(ua),
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\""
+        )
+        if (referer != null) {
+            headers["Referer"] = referer
+            try {
+                val uri = java.net.URI(referer)
+                headers["Origin"] = "${uri.scheme}://${uri.host}"
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        return headers
+    }
 
     override val baseDomain get() = "krmzi.org"
     override val providerName get() = "قرمزي"
@@ -218,10 +239,7 @@ class KrmzyProvider : BaseProvider() {
                 logCallback("Custom Extractor v2: Trying referer: $ref")
                 val text = httpService.getText(
                     url,
-                    headers = mapOf(
-                        "Referer" to ref,
-                        "User-Agent" to cleanUserAgent
-                    ),
+                    headers = getBrowserHeaders(ref),
                     rewriteDomain = false
                 )
 
@@ -616,13 +634,7 @@ class KrmzyProvider : BaseProvider() {
                             newExtractorLink(source = this.name, name = serverTypeRaw, url = embedUrl) {
                                 this.quality = Qualities.Unknown.value
                                 this.referer = mainPageHostReferer
-                                this.headers = mapOf(
-                                    "User-Agent" to cleanUserAgent,
-                                    "Referer" to mainPageHostReferer,
-                                    "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
-                                    "sec-ch-ua-mobile" to "?1",
-                                    "sec-ch-ua-platform" to "\"Android\""
-                                )
+                                this.headers = getBrowserHeaders(mainPageHostReferer)
                             }
                         )
                         successCount++
@@ -649,14 +661,7 @@ class KrmzyProvider : BaseProvider() {
                                     java.net.URL(embedUrl).let { "${it.protocol}://${it.host}/" }
                                 } catch (e: Exception) { embedUrl }
 
-                                 val baseHeaders = mutableMapOf(
-                                     "Origin" to workingReferer.trimEnd('/'),
-                                     "Referer" to workingReferer,
-                                     "User-Agent" to cleanUserAgent,
-                                     "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
-                                     "sec-ch-ua-mobile" to "?1",
-                                     "sec-ch-ua-platform" to "\"Android\""
-                                 )
+                                 val baseHeaders = getBrowserHeaders(workingReferer).toMutableMap()
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
                                     source = this.name,
@@ -743,14 +748,7 @@ class KrmzyProvider : BaseProvider() {
                                                         newExtractorLink(source = this.name, name = "$serverTypeRaw ($key)", url = value, type = INFER_TYPE) {
                                                             this.quality = Qualities.Unknown.value
                                                             this.referer = apiBase + "/"
-                                                            this.headers = mapOf(
-                                                                "User-Agent" to cleanUserAgent,
-                                                                "Referer" to apiBase + "/",
-                                                                "Origin" to apiBase,
-                                                                "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
-                                                                "sec-ch-ua-mobile" to "?1",
-                                                                "sec-ch-ua-platform" to "\"Android\""
-                                                            )
+                                                            this.headers = getBrowserHeaders(apiBase + "/")
                                                         }
                                                     )
                                                     successCount++
@@ -766,14 +764,7 @@ class KrmzyProvider : BaseProvider() {
                                                             newExtractorLink(source = this.name, name = "$serverTypeRaw source $i", url = src, type = INFER_TYPE) {
                                                                 this.quality = Qualities.Unknown.value
                                                                 this.referer = apiBase + "/"
-                                                                this.headers = mapOf(
-                                                                    "User-Agent" to cleanUserAgent,
-                                                                    "Referer" to apiBase + "/",
-                                                                    "Origin" to apiBase,
-                                                                    "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
-                                                                    "sec-ch-ua-mobile" to "?1",
-                                                                    "sec-ch-ua-platform" to "\"Android\""
-                                                                )
+                                                                this.headers = getBrowserHeaders(apiBase + "/")
                                                             }
                                                         )
                                                         successCount++
