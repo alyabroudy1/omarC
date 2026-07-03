@@ -18,7 +18,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 class KrmzyProvider : BaseProvider() {
-    private val cleanUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    private val cleanUserAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
 
     override val baseDomain get() = "krmzi.org"
     override val providerName get() = "قرمزي"
@@ -216,7 +216,14 @@ class KrmzyProvider : BaseProvider() {
         for (ref in referers) {
             try {
                 logCallback("Custom Extractor v2: Trying referer: $ref")
-                val text = httpService.getText(url, headers = mapOf("Referer" to ref), rewriteDomain = false)
+                val text = httpService.getText(
+                    url,
+                    headers = mapOf(
+                        "Referer" to ref,
+                        "User-Agent" to cleanUserAgent
+                    ),
+                    rewriteDomain = false
+                )
 
                 if (text != null && text.contains("eval(function")) {
                     pageText = text
@@ -611,7 +618,10 @@ class KrmzyProvider : BaseProvider() {
                                 this.referer = mainPageHostReferer
                                 this.headers = mapOf(
                                     "User-Agent" to cleanUserAgent,
-                                    "Referer" to mainPageHostReferer
+                                    "Referer" to mainPageHostReferer,
+                                    "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+                                    "sec-ch-ua-mobile" to "?1",
+                                    "sec-ch-ua-platform" to "\"Android\""
                                 )
                             }
                         )
@@ -639,11 +649,14 @@ class KrmzyProvider : BaseProvider() {
                                     java.net.URL(embedUrl).let { "${it.protocol}://${it.host}/" }
                                 } catch (e: Exception) { embedUrl }
 
-                                val baseHeaders = mutableMapOf(
-                                    "Origin" to workingReferer.trimEnd('/'),
-                                    "Referer" to workingReferer,
-                                    "User-Agent" to cleanUserAgent
-                                )
+                                 val baseHeaders = mutableMapOf(
+                                     "Origin" to workingReferer.trimEnd('/'),
+                                     "Referer" to workingReferer,
+                                     "User-Agent" to cleanUserAgent,
+                                     "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+                                     "sec-ch-ua-mobile" to "?1",
+                                     "sec-ch-ua-platform" to "\"Android\""
+                                 )
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
                                     source = this.name,
@@ -733,7 +746,10 @@ class KrmzyProvider : BaseProvider() {
                                                             this.headers = mapOf(
                                                                 "User-Agent" to cleanUserAgent,
                                                                 "Referer" to apiBase + "/",
-                                                                "Origin" to apiBase
+                                                                "Origin" to apiBase,
+                                                                "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+                                                                "sec-ch-ua-mobile" to "?1",
+                                                                "sec-ch-ua-platform" to "\"Android\""
                                                             )
                                                         }
                                                     )
@@ -753,7 +769,10 @@ class KrmzyProvider : BaseProvider() {
                                                                 this.headers = mapOf(
                                                                     "User-Agent" to cleanUserAgent,
                                                                     "Referer" to apiBase + "/",
-                                                                    "Origin" to apiBase
+                                                                    "Origin" to apiBase,
+                                                                    "sec-ch-ua" to "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+                                                                    "sec-ch-ua-mobile" to "?1",
+                                                                    "sec-ch-ua-platform" to "\"Android\""
                                                                 )
                                                             }
                                                         )
