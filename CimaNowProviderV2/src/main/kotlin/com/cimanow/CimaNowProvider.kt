@@ -437,6 +437,8 @@ class CimaNowProvider : BaseProvider() {
             } else {
                 Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("CimaNowLoadLinks", "Programmatic flow error: ${e.message}")
         }
@@ -559,12 +561,18 @@ class CimaNowProvider : BaseProvider() {
             watchResp.close()
 
             Log.i(TAG_DP, "7. Decrypting watch page HTML")
-            val decrypted = decryptWatchHtml(watchHtml)
+            var decrypted = decryptWatchHtml(watchHtml)
             if (decrypted == null) {
-                Log.e(TAG_DP, "Failed to decrypt watch page HTML")
+                Log.w(TAG_DP, "Phase 1 (strategies) failed, trying Phase 2 (JS Sandbox)...")
+                decrypted = decryptViaSandbox(watchHtml)
+            }
+            if (decrypted == null) {
+                Log.e(TAG_DP, "Phase 2 (sandbox) failed too, falling through to WebView phase 3")
                 return null
             }
             return decrypted
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG_DP, "fetchDecryptedWatchPage error: ${e.message}")
         }
@@ -659,6 +667,8 @@ class CimaNowProvider : BaseProvider() {
             Log.i(TAG_WV, "========== [END] WebView fallback, found=$found ==========")
             return found
 
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG_WV, "WebView fallback EXCEPTION: ${e.message}")
             Log.e(TAG_WV, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
@@ -1122,7 +1132,82 @@ class CimaNowProvider : BaseProvider() {
      */
     private fun decryptWatchHtml(html: String): String? {
         try {
-            // 1. Try finding _pHsh and kV (new July 2026 format)
+            // Phase 1a: AtobConfigStrategy - atob() encoded config format
+            try {
+                val atobCfgMatcher = Pattern.compile("atob\\s*\\(\\s*'([A-Za-z0-9+/=]+)'\\s*\\)").matcher(html)
+                if (atobCfgMatcher.find()) {
+                    val atobCfgEncoded = atobCfgMatcher.group(1)
+                    val atobCfgDecoded = String(Base64.decode(atobCfgEncoded, Base64.DEFAULT))
+                    if (atobCfgDecoded.matches(Regex("^\\d+,\\d+,\\d+,\\d+,[0-9a-f]+$"))) {
+                        val cfg = atobCfgDecoded.split(",")
+                        val aBase = cfg[0].toInt()
+                        val aModulo = cfg[1].toInt()
+                        val aSubtract = cfg.getOrNull(2)?.toIntOrNull() ?: 0
+                        val aBaseN = cfg.getOrNull(3)?.toIntOrNull() ?: 10
+                        val aHex = cfg.getOrNull(4) ?: ""
+                        val aKey = aBase + (aHex.toInt(16) % aModulo)
+
+                        val dm = Pattern.compile("split\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)").matcher(html)
+                        val aDelim = if (dm.find()) dm.group(1) else "*"
+
+                        var payloadStr: String? = null
+
+                        val joinM = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\.join\\(\\s*['\"]*['\"]\\s*\\)").matcher(html)
+                        if (joinM.find()) {
+                            val varName = joinM.group(1)
+                            val arrayM = Pattern.compile("var\\s+$varName\\s*=\\s*\\[(.*?)\\];", Pattern.DOTALL).matcher(html)
+                            if (arrayM.find()) {
+                                val sm = Pattern.compile("'([^']*)'").matcher(arrayM.group(1) ?: "")
+                                val sb = StringBuilder()
+                                while (sm.find()) sb.append(sm.group(1) ?: "")
+                                if (sb.isNotEmpty()) payloadStr = sb.toString()
+                            }
+                        }
+
+                        if (payloadStr == null || payloadStr.length < 100) {
+                            val vm = Pattern.compile("var\\s+(_[a-zA-Z0-9_]{3,10})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
+                            while (vm.find()) {
+                                val vc = vm.group(2) ?: continue
+                                if (vc.length > 500 && vc.contains(aDelim)) {
+                                    val sm = Pattern.compile("'([^']*)'").matcher(vc)
+                                    val sb = StringBuilder()
+                                    while (sm.find()) sb.append(sm.group(1))
+                                    if (sb.isNotEmpty() && sb.length > 100) {
+                                        payloadStr = sb.toString()
+                                        break
+                                    }
+                                }
+                            }
+                        }
+
+                        if (payloadStr != null && payloadStr.length > 50) {
+                            val parts = payloadStr.split(Regex(Pattern.quote(aDelim)))
+                            val decrypted = StringBuilder()
+                            for (p in parts) {
+                                if (p.isBlank()) continue
+                                try {
+                                    val decoded = Base64.decode(p, Base64.DEFAULT)
+                                    val decStr = String(decoded, Charsets.ISO_8859_1)
+                                    val pIn = decStr.split('-')
+                                    if (pIn.size >= 2) {
+                                        val num = pIn[1].toLong(aBaseN).toInt()
+                                        val fC = (num - aSubtract) xor aKey
+                                        decrypted.append(fC.toChar())
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                            if (decrypted.isNotBlank()) {
+                                Log.d(TAG, "AtobConfig decrypt success, len: ${decrypted.length}")
+                                return decrypted.toString()
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AtobConfigStrategy error: ${e.message}")
+            }
+
+            // Phase 1b: Try finding _pHsh and kV (new July 2026 format)
             val pHshMatcher = Pattern.compile("var\\s+_pHsh\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]").matcher(html)
             val kvMatcher = Pattern.compile("kV\\s*=\\s*(\\d+)").matcher(html)
             if (pHshMatcher.find()) {
@@ -1327,6 +1412,48 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
+    private suspend fun decryptViaSandbox(watchHtml: String): String? {
+        val TAG_SB = "CimaNowSandbox"
+        Log.i(TAG_SB, "Phase 2: JS Sandbox decryption starting...")
+        try {
+            val scriptPattern = Pattern.compile("<script[^>]*>(.*?)</script>", Pattern.DOTALL)
+            val matcher = scriptPattern.matcher(watchHtml)
+            val scripts = mutableListOf<String>()
+            while (matcher.find()) {
+                var content = matcher.group(1)?.trim() ?: continue
+                if (content.isNotBlank()) {
+                    if (content.startsWith("<!--")) content = content.removePrefix("<!--").trim()
+                    if (content.endsWith("-->")) content = content.removeSuffix("-->").trim()
+                    if (content.startsWith("//<![CDATA[")) content = content.removePrefix("//<![CDATA[").trim()
+                    if (content.endsWith("//]]>")) content = content.removeSuffix("//]]>").trim()
+                    scripts.add(content)
+                }
+            }
+            if (scripts.isEmpty()) {
+                Log.e(TAG_SB, "No scripts found in watch page")
+                return null
+            }
+            Log.d(TAG_SB, "Extracted ${scripts.size} scripts, total size: ${scripts.sumOf { it.length }}")
+
+            val combinedJs = buildString {
+                append("window.__captured='';var _ow=document.write;document.write=function(h){window.__captured+=h;};document.writeln=function(h){window.__captured+=h+'\\n';};")
+                for (s in scripts) { append("try{").append(s).append("}catch(e){}") }
+                append("document.write=_ow;return window.__captured;")
+            }
+
+            val result = httpService.navigationEngine.executeJsSandbox(combinedJs)
+            if (result != null && result.length > 50) {
+                Log.i(TAG_SB, "Sandbox decrypt succeeded, length: ${result.length}")
+                return result
+            } else {
+                Log.w(TAG_SB, "Sandbox returned empty/short: ${result?.length ?: 0}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG_SB, "Sandbox error: ${e.message}")
+        }
+        return null
+    }
+
     private suspend fun runIsolatedWebViewTest(
         movieUrl: String,
         callback: (ExtractorLink) -> Unit
@@ -1343,45 +1470,48 @@ class CimaNowProvider : BaseProvider() {
                 // 1. Load details page
                 NavigationStep.LoadUrl(movieUrl),
 
-                // 2. Wait for watch button (handling Cloudflare solve) and click it
-                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 45000L, abortOnFailure = true),
-                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 10000L, abortOnFailure = true),
+                // 2. Wait for JS auto-redirect to freex2line.online
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 45000L, abortOnFailure = false),
 
-                // 3. Wait for freex2line to load
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 30000L, abortOnFailure = true),
+                // 3. Fallback: try clicking the watch button if auto-redirect didn't happen
+                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 3000L, abortOnFailure = false),
 
-                // 4. Wait for redirection chain (CF on freex -> href.li -> redirectingfree -> blog-post)
-                NavigationStep.WaitForDelay(25000L),
-                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = true),
+                // 4. Wait for freex2line to load (following the redirect)
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15000L, abortOnFailure = false),
 
-                // 5. Wait 12 seconds for the countdown guard to bypass
+                // 5. Wait for redirection chain (CF on freex -> href.li -> redirectingfree -> blog-post)
+                NavigationStep.WaitForDelay(20000L),
+                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = false),
+
+                // 6. Wait 12 seconds for the countdown guard to bypass
                 NavigationStep.WaitForDelay(12000L),
 
-                // 6. Dismiss popup consent
+                // 7. Dismiss popup consent
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
-                // 7. Navigate to the watching URL captured from get-link.php
+                // 8. Navigate to the watching URL captured from get-link.php
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // 8. Let the watching page render and lock it
+                // 9. Let the watching page render and lock it
                 NavigationStep.WaitForDelay(8000L),
 
-                // 9. Extract server list
+                // 10. Extract server list
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
 
-                // 10. Fetch iframes via core.php AJAX switches
+                // 11. Fetch iframes via core.php AJAX switches
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
 
-                // 11. Wait for AJAX fetches to complete
+                // 12. Wait for AJAX fetches to complete
                 NavigationStep.WaitForDelay(6000L),
 
-                // 12. Retrieve iframe results
+                // 13. Retrieve iframe results
                 NavigationStep.ExecuteJs(
                     javascript = "(function(){ return window._serverResults || '[]'; })();",
                     key = "iframe_results"
                 ),
 
-                // 13. Extract download links
+                // 14. Extract download links
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links")
             )
 

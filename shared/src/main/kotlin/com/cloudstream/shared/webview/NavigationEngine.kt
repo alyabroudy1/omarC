@@ -846,6 +846,41 @@ class NavigationEngine(
         }
     }
 
+    /**
+     * Creates a sandboxed WebView (no network), loads about:blank, and executes JavaScript.
+     * Returns the result of the JS execution. The WebView is destroyed after execution.
+     * Safe to call from any coroutine context.
+     */
+    suspend fun executeJsSandbox(javascript: String): String? {
+        val activity = activityProvider()?.let {
+            if (it.isFinishing) null else it
+        } ?: run {
+            ProviderLogger.e(TAG, "executeJsSandbox", "No activity available")
+            return null
+        }
+        val webView = createWebView(activity, "")
+        try {
+            webView.settings.blockNetworkLoads = true
+            Handler(Looper.getMainLooper()).post {
+                webView.loadUrl("about:blank")
+            }
+            // Ensure about:blank is loaded before evaluating JS
+            delay(100)
+            return executeJsInWebView(webView, "(function() { $javascript })();")
+        } finally {
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    webView.stopLoading()
+                    webView.loadUrl("about:blank")
+                    webView.clearHistory()
+                    webView.removeAllViews()
+                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                    webView.destroy()
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun extractHtmlFromWebView(webView: WebView, selector: String?): String? {
         return suspendCancellableCoroutine { cont ->

@@ -537,8 +537,8 @@ class ProviderHttpService private constructor(
     // ==================== INTERNAL ====================
 
     internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
+        val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
         return try {
-            val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
             
             // Check if URL domain is an alias and get appropriate cookies
             val urlDomain = try {
@@ -641,7 +641,7 @@ class ProviderHttpService private constructor(
 
             result
         } catch (e: Exception) {
-            ProviderLogger.e(TAG_PROVIDER_HTTP, "executeDirectRequest", "Failed", e, "url" to url.take(80))
+            ProviderLogger.e(TAG_PROVIDER_HTTP, "executeDirectRequest", "Failed", e, "url" to targetUrl.take(80))
             RequestResult.failure(e)
         }
     }
