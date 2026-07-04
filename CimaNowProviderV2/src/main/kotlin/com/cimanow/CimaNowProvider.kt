@@ -517,8 +517,8 @@ class CimaNowProvider : BaseProvider() {
             val hmacBytes = hmacSha256(keyHex.toByteArray(Charsets.UTF_8), msg.toByteArray(Charsets.UTF_8))
             val hmacToken = Base64.encodeToString(hmacBytes, Base64.NO_WRAP)
 
-            Log.i(TAG_DP, "Waiting 11 seconds for delay bypass...")
-            delay(11000)
+            Log.i(TAG_DP, "Waiting 12 seconds for delay bypass...")
+            delay(12000)
 
             Log.i(TAG_DP, "5. Requesting get-link.php")
             val ajaxUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php?request_id=$ri&hmac_token=${java.net.URLEncoder.encode(hmacToken, "UTF-8")}&ch=$ch&fp=$fp"
@@ -1103,6 +1103,75 @@ class CimaNowProvider : BaseProvider() {
      */
     private fun decryptWatchHtml(html: String): String? {
         try {
+            // 1. Try finding _pHsh and kV (new July 2026 format)
+            val pHshMatcher = Pattern.compile("var\\s+_pHsh\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]").matcher(html)
+            val kvMatcher = Pattern.compile("kV\\s*=\\s*(\\d+)").matcher(html)
+            if (pHshMatcher.find()) {
+                val pHsh = pHshMatcher.group(1)
+                
+                // Parse _kV calculation dynamically to handle future value changes
+                val formulaMatcher = Pattern.compile("_kV\\s*=\\s*(\\d+)\\s*\\+\\s*\\(parseInt\\(_pHsh\\.substring\\(0,\\s*6\\),\\s*16\\)\\s*%\\s*(\\d+)\\)").matcher(html)
+                var computedKv = 50000
+                var modulo = 100000
+                if (formulaMatcher.find()) {
+                    computedKv = formulaMatcher.group(1).toIntOrNull() ?: 50000
+                    modulo = formulaMatcher.group(2).toIntOrNull() ?: 100000
+                } else if (kvMatcher.find()) {
+                    computedKv = kvMatcher.group(1).toIntOrNull() ?: 50000
+                }
+                
+                val hexPart = try { pHsh.substring(0, 6) } catch (_: Exception) { "" }
+                val parsedHex = try { hexPart.toInt(16) } catch (_: Exception) { 0 }
+                val keyVal = computedKv + (parsedHex % modulo)
+                
+                val arrayName = try { "_" + pHsh.substring(2, 7) } catch (_: Exception) { "" }
+                if (arrayName.isNotEmpty()) {
+                    val startKeyword = "var $arrayName"
+                    val startIdx = html.indexOf(startKeyword)
+                    if (startIdx != -1) {
+                        val subHtml = html.substring(startIdx)
+                        var endIdx = subHtml.indexOf(";var")
+                        if (endIdx == -1) {
+                            endIdx = subHtml.indexOf(";\nvar")
+                        }
+                        if (endIdx == -1) {
+                            endIdx = subHtml.indexOf(";var _aArr")
+                        }
+                        val varBlock = if (endIdx != -1) subHtml.substring(0, endIdx) else subHtml
+                        
+                        // Extract all string literals inside single quotes
+                        val strMatcher = Pattern.compile("'([^']*)'").matcher(varBlock)
+                        val sb = StringBuilder()
+                        while (strMatcher.find()) {
+                            sb.append(strMatcher.group(1))
+                        }
+                        val arrayStr = sb.toString()
+                        val parts = arrayStr.split('|')
+                        
+                        val decryptedChars = StringBuilder()
+                        for (p in parts) {
+                            if (p.isBlank()) continue
+                            try {
+                                val decodedBytes = Base64.decode(p, Base64.DEFAULT)
+                                val decStr = String(decodedBytes, Charsets.ISO_8859_1)
+                                val pIn = decStr.split('-')
+                                if (pIn.size >= 2) {
+                                    val num = pIn[1].toLong(36).toInt()
+                                    val fC = (num - 1337) xor keyVal
+                                    decryptedChars.append(fC.toChar())
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        val decrypted = decryptedChars.toString()
+                        if (decrypted.isNotBlank()) {
+                            Log.d(TAG, "Successfully decrypted watch page using July 2026 format, length: ${decrypted.length}")
+                            return decrypted
+                        }
+                    }
+                }
+            }
+
+            // --- Fallback to old formats ---
             var key: Int? = null
 
             // 1. Try _x\d+ dynamic sum key first (latest logic)
@@ -1115,7 +1184,7 @@ class CimaNowProvider : BaseProvider() {
             }
             if (hasXVars) {
                 key = xSum
-                Log.d(TAG, "Key Detection: Found _x variables, sum key: $key")
+                Log.d(TAG, "Key Detection (Fallback): Found _x variables, sum key: $key")
             }
 
             if (key == null) {
@@ -1123,7 +1192,7 @@ class CimaNowProvider : BaseProvider() {
                 val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
                 if (oArrMatcher.find()) {
                     key = oArrMatcher.group(1).split(",").map { it.trim().toIntOrNull() ?: 0 }.sum()
-                    Log.d(TAG, "Key Detection: Found _oArr, sum key: $key")
+                    Log.d(TAG, "Key Detection (Fallback): Found _oArr, sum key: $key")
                 }
             }
 
@@ -1135,12 +1204,12 @@ class CimaNowProvider : BaseProvider() {
                     val dk1 = dk1Matcher.group(1).toIntOrNull() ?: 0
                     val dk2 = dk2Matcher.group(1).toIntOrNull() ?: 0
                     key = dk1 - dk2
-                    Log.d(TAG, "Key Detection: Found _dk1 and _dk2, diff key: $key")
+                    Log.d(TAG, "Key Detection (Fallback): Found _dk1 and _dk2, diff key: $key")
                 }
             }
 
             if (key == null) {
-                Log.e(TAG, "decryptWatchHtml: Key not found")
+                Log.e(TAG, "decryptWatchHtml (Fallback): Key not found")
                 return null
             }
 
@@ -1164,7 +1233,7 @@ class CimaNowProvider : BaseProvider() {
             }
 
             if (rawVal.isBlank()) {
-                Log.e(TAG, "decryptWatchHtml: Base64 variable not found")
+                Log.e(TAG, "decryptWatchHtml (Fallback): Base64 variable not found")
                 return null
             }
 
@@ -1194,7 +1263,7 @@ class CimaNowProvider : BaseProvider() {
             }
 
             if (firstDigits == null) {
-                Log.e(TAG, "decryptWatchHtml: Failed to get first digits for operator auto-detection")
+                Log.e(TAG, "decryptWatchHtml (Fallback): Failed to get first digits for operator auto-detection")
                 return null
             }
 
@@ -1207,7 +1276,7 @@ class CimaNowProvider : BaseProvider() {
             } else {
                 true // Fallback to XOR
             }
-            Log.d(TAG, "Operator Detection: useXor=$useXor (XOR=$valXor, SUB=$valSub)")
+            Log.d(TAG, "Operator Detection (Fallback): useXor=$useXor (XOR=$valXor, SUB=$valSub)")
 
             val decryptedChars = StringBuilder()
 
@@ -1222,8 +1291,7 @@ class CimaNowProvider : BaseProvider() {
                         val code = if (useXor) (num xor key) else (num - key)
                         decryptedChars.append(code.toChar())
                     }
-                } catch (_: Exception) {
-                }
+                } catch (_: Exception) {}
             }
 
             val decrypted = decryptedChars.toString()
