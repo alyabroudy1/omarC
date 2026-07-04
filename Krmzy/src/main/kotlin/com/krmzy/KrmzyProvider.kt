@@ -24,10 +24,7 @@ class KrmzyProvider : BaseProvider() {
         val context = PluginContext.context
         val ua = context?.let { WebConfig.getUserAgent(it) } ?: WebConfig.getCachedUserAgent()
         val headers = mutableMapOf(
-            "User-Agent" to ua,
-            "sec-ch-ua" to WebConfig.buildSecChUa(ua),
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\""
+            "User-Agent" to ua
         )
         if (referer != null) {
             headers["Referer"] = referer
@@ -651,17 +648,33 @@ class KrmzyProvider : BaseProvider() {
                                 embedDomain,
                                 mainPageHostReferer,
                             ).distinct()
+                            log("Server #$processedCount: fetchReferers list: $fetchReferers")
                             val extractResult = extractLinkFromObfuscatedPage(embedUrl, fetchReferers, ::log)
 
                             if (extractResult != null) {
                                 val extractedM3u8 = extractResult.m3u8Url
                                 log("Server #$processedCount: extracted M3U8 = $extractedM3u8")
+                                log("Server #$processedCount: extracted cookies = ${extractResult.cookies}")
 
                                 val workingReferer = try {
                                     java.net.URL(embedUrl).let { "${it.protocol}://${it.host}/" }
                                 } catch (e: Exception) { embedUrl }
 
                                  val baseHeaders = getBrowserHeaders(workingReferer).toMutableMap()
+                                 log("Server #$processedCount: baseHeaders for playlist request: $baseHeaders")
+
+                                 // Manual verification request to see exact status code returned by CDN:
+                                 try {
+                                     log("Server #$processedCount: Testing manual GET on extracted M3U8 URL...")
+                                     val testResp = httpService.getRaw(extractedM3u8, headers = baseHeaders)
+                                     log("Server #$processedCount: Manual GET Response Code: ${testResp.code}")
+                                     log("Server #$processedCount: Manual GET Content Length: ${testResp.body?.contentLength()}")
+                                     log("Server #$processedCount: Manual GET Headers: ${testResp.headers.toMultimap()}")
+                                     val testBody = testResp.body?.string()
+                                     log("Server #$processedCount: Manual GET Body snippet: ${testBody?.take(300)}")
+                                 } catch (te: Exception) {
+                                     log("Server #$processedCount: Manual GET request threw: ${te.message}")
+                                 }
 
                                 val qualityLinks = M3u8Helper.generateM3u8(
                                     source = this.name,
@@ -673,18 +686,19 @@ class KrmzyProvider : BaseProvider() {
 
                                 if (qualityLinks.isNotEmpty()) {
                                     qualityLinks.forEach { link ->
-                                        callback.invoke(
-                                            newExtractorLink(
-                                                source = link.source,
-                                                name = "$serverTypeRaw - ${link.name}",
-                                                url = link.url
-                                            ) {
-                                                this.referer = link.referer
-                                                this.quality = link.quality
-                                                this.headers = link.headers
-                                            }
-                                        )
-                                        successCount++
+                                         log("Server #$processedCount: Emitting quality link: ${link.name} -> url=${link.url} headers=${link.headers}")
+                                         callback.invoke(
+                                             newExtractorLink(
+                                                 source = link.source,
+                                                 name = "$serverTypeRaw - ${link.name}",
+                                                 url = link.url
+                                             ) {
+                                                 this.referer = link.referer
+                                                 this.quality = link.quality
+                                                 this.headers = link.headers
+                                             }
+                                         )
+                                         successCount++
                                     }
                                 } else {
                                     log("Server #$processedCount: generateM3u8 returned 0 links, trying loadExtractor...")
