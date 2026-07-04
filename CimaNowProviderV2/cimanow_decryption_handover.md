@@ -32,16 +32,19 @@ The decryption key is represented by integer variables in the HTML. Over time, C
 *   **Version A (Key-diff):** Two variables `_dk1` and `_dk2` are defined, and the key is their difference: `key = _dk1 - _dk2`.
 *   **Version B (Array-sum):** An integer array `_oArr` is defined, and the key is the sum of its elements: `key = _oArr.sum()`.
 *   **Version C (Decoy + dynamic local sum):** Decoy `_dk1` and `_dk2` variables are left in the HTML (but unused), while the real key is the sum of dynamically generated local variables inside the self-invoking decryption function (e.g., `var _x1=45132; var _x2=45132; var _x3=45132;` -> `key = 135396`).
+*   **Version D (July 2026 - Page hash & dynamic formula):** The key is calculated using a dynamic formula: `var _kV = 50000 + (parseInt(_pHsh.substring(0,6), 16) % 100000);`. The page hash `_pHsh` is a hex string (e.g., `"0efb06ef"`). The parser dynamically extracts the formula coefficients and calculates `keyVal = computedKv + (parsedHex % modulo)`.
 
 ### C. The Delimiter
 The delimiter separates the base64 chunks in the payload:
-*   **Old Delimiter:** `@` (e.g., `'MTM1MzY0@MTM1MzY0@...'`)
-*   **New Delimiter:** `*` (e.g., `'MTM1MzY0*MTM1MzY0*...'`)
+*   **Old Delimiter:** `@` or `*`
+*   **July 2026 Delimiter:** `|` (pipe character)
 
-### D. The Mathematical Operator
-Once a chunk is base64-decoded, all non-digit characters are removed, and the remaining number is processed with the key:
-*   **Old Math:** Subtraction (`number - key`)
-*   **New Math:** Bitwise XOR (`number ^ key`)
+### D. The Mathematical Operator and Base36 Translation
+Once a chunk is base64-decoded, the decoding steps are:
+1. Decode the chunk using Base64.
+2. Read the decoded bytes as a `latin-1` / `ISO-8859-1` string.
+3. Split the string by `-` (hyphen). The second element represents a base-36 encoded integer (e.g., `2u` -> `102`).
+4. Convert the base-36 string to an integer, subtract `1337`, and XOR it with the calculated key: `character_code = (number - 1337) ^ key`.
 
 The resulting integers correspond to the character codes of the target HTML (e.g., `<` = 60, space = 32). The decoded string is injected into the DOM via `document.write(decodeURIComponent(escape(decryptedHtml)))`.
 
@@ -73,25 +76,28 @@ graph TD
 
 ### Key Auto-Detection Order
 ```kotlin
-// 1. Check for dynamic local sum (Version C)
+// 1. Check for page hash and dynamic formula (Version D - July 2026)
+val pHshMatcher = Pattern.compile("var\\s+_pHsh\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]").matcher(html)
+val formulaMatcher = Pattern.compile("_kV\\s*=\\s*(\\d+)\\s*\\+\\s*\\(parseInt\\(_pHsh\\.substring\\(0,\\s*6\\),\\s*16\\)\\s*%\\s*(\\d+)\\)").matcher(html)
+
+// 2. Check for dynamic local sum (Version C)
 val xVarMatcher = Pattern.compile("var\\s+(_x\\d+)\\s*=\\s*(\\d+)").matcher(html)
-// 2. Fall back to array sum (Version B)
+// 3. Fall back to array sum (Version B)
 val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
-// 3. Fall back to key-diff (Version A)
+// 4. Fall back to key-diff (Version A)
 val dk1Matcher = Pattern.compile("var\\s+_dk1\\s*=\\s*(\\d+);").matcher(html)
 ```
 
-### Operator Auto-Detection
-The first decoded chunk's digit value is run through both potential operators (`xor` and `-`). The compiler checks which operator yields a standard, printable character code (ASCII values `10..127` representing typical HTML layout and space characters):
+### Delimiter & Decryption Logic (Version D - July 2026)
+For Version D, the base64 payload is delimited by `|` (pipe character). Decrypting the payload involves base64 decoding the parts, parsing the hyphen-separated second element as a base-36 integer, subtracting `1337`, and bitwise XORing with the dynamically calculated key:
 ```kotlin
-val valXor = firstDigits xor key
-val valSub = firstDigits - key
-val useXor = if (valXor in 10..127) {
-    true
-} else if (valSub in 10..127) {
-    false
-} else {
-    true // Fallback to XOR
+val decodedBytes = Base64.decode(part, Base64.DEFAULT)
+val decStr = String(decodedBytes, Charsets.ISO_8859_1)
+val pIn = decStr.split('-')
+if (pIn.size >= 2) {
+    val num = pIn[1].toLong(36).toInt()
+    val fC = (num - 1337) xor keyVal
+    decryptedChars.append(fC.toChar())
 }
 ```
 
