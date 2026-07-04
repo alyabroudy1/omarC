@@ -398,27 +398,29 @@ class NavigationEngine(
                 val scheme = request.url?.scheme?.lowercase()
                 if (scheme != "http" && scheme != "https") return null
 
-                // CRITICAL: Never intercept Main Frame. Let Android WebView natively load
-                // the main HTML so it can execute Cloudflare JS challenges.
-                if (request.isForMainFrame) return null
-
                 val host = request.url?.host?.lowercase() ?: ""
                 val path = request.url?.path?.lowercase() ?: ""
                 val reqHeaders = request.requestHeaders ?: emptyMap()
+                val isMain = request.isForMainFrame
+
+                android.util.Log.d("NavEngineNet", "shouldInterceptRequest: url=$reqUrl main=$isMain headers=${reqHeaders.entries.joinToString(", ") { "${it.key}=${it.value}" }}")
 
                 // NEVER intercept Cloudflare challenge scripts — they must execute in the
                 // original WebView context to properly solve the JS challenge and set cookies.
                 val isCfChallenge = path.contains("/cdn-cgi/")
+                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
+
+                // CRITICAL: Never intercept Main Frame unless it is a protected domain where we must strip X-Requested-With
+                if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
+
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
                 val isGetLink = path.contains("get-link.php") && !isCfChallenge
                 val isAjaxEndpoint = (path.contains("core.php") || isGetLink) && !isCfChallenge
                 val isAsset = (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
 
-                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
-
-                // Intercept if it's an asset, an AJAX call, OR if the header leaked on any sub-resource
-                if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader)) {
+                // Intercept if it's an asset, an AJAX call, the header leaked, OR if it's a main frame request for protected domains to clean the header
+                if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = true
@@ -516,6 +518,8 @@ class NavigationEngine(
 
                 val isMainFrame = request.isForMainFrame
                 val nextHost = try { java.net.URI(nextUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+
+                android.util.Log.d("NavEngineNet", "shouldOverrideUrlLoading: nextUrl=$nextUrl host=$nextHost main=$isMainFrame isOnDestination=$isOnDestination")
 
                 if (isMainFrame && isOnDestination) {
                     ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK", "url" to nextUrl, "host" to nextHost)
