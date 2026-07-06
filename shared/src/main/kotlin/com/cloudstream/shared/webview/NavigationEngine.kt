@@ -416,8 +416,12 @@ class NavigationEngine(
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
                 val isGetLink = path.contains("get-link.php") && !isCfChallenge
-                val isAjaxEndpoint = (path.contains("core.php") || isGetLink) && !isCfChallenge
+                val isAjaxEndpoint = path.contains("core.php") && !isCfChallenge
                 val isAsset = (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
+
+                // Never intercept get-link.php — it must flow naturally through the WebView
+                // so the page's JS can call it, get the watching URL, and navigate the main frame.
+                if (isGetLink) return null
 
                 // Intercept if it's an asset, an AJAX call, the header leaked, OR if it's a main frame request for protected domains to clean the header
                 if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {

@@ -1464,37 +1464,48 @@ class CimaNowProvider : BaseProvider() {
 
         try {
             val userAgent = httpService.userAgent
-            
-            // Custom Navigation Steps
+
+            // Real-user navigation: click watch button → freex2line → timer → /watch/ page
             val steps = listOf(
-                // 1. Load details page
+                // 1. Load movie page
                 NavigationStep.LoadUrl(movieUrl),
+                NavigationStep.ExtractHtml(key = "html1_movie"),
 
-                // 2. Wait for JS auto-redirect to freex2line.online
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 45000L, abortOnFailure = false),
+                // 2. Wait for the watch button to appear, then click it (real touch)
+                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 30000L, abortOnFailure = true),
+                NavigationStep.ExtractHtml(key = "html2_before_click"),
+                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = true),
 
-                // 3. Fallback: try clicking the watch button if auto-redirect didn't happen
-                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 3000L, abortOnFailure = false),
+                // 3. Follow navigation to freex2line.online (loadon page)
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 30000L, abortOnFailure = true),
+                NavigationStep.ExtractHtml(key = "html3_freex"),
 
-                // 4. Wait for freex2line to load (following the redirect)
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15000L, abortOnFailure = false),
+                // 4. Let the redirect chain play out naturally: loadon → href.li → redirectingfree → blog-post
+                //    (CF challenge, href.li proxy, redirectingfree cookie-setter, blog-post with timer)
+                NavigationStep.WaitForDelay(5000L),
+                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = true),
+                NavigationStep.ExtractHtml(key = "html4_blog"),
 
-                // 5. Wait for redirection chain (CF on freex -> href.li -> redirectingfree -> blog-post)
-                NavigationStep.WaitForDelay(20000L),
-                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = false),
+                // 5. Wait for the countdown timer to finish on blog-post.html
+                //    After ~11s the page's JS calls get-link.php (NOT intercepted) which returns the watch URL,
+                //    then the page auto-navigates the main frame to /watch/ or /watching/
+                NavigationStep.WaitForDelay(15000L),
+                NavigationStep.ExtractHtml(key = "html5_after_timer"),
 
-                // 6. Wait 12 seconds for the countdown guard to bypass
-                NavigationStep.WaitForDelay(12000L),
+                // 6. Try clicking any "watch" link/button on the timer page (in case auto-nav doesn't fire)
+                NavigationStep.ClickElement("a[href*='get-link']", timeoutMs = 3000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a[href*='watch']", timeoutMs = 3000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a[href*='cimanow']", timeoutMs = 3000L, abortOnFailure = false),
 
-                // 7. Dismiss popup consent
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
+                // 7. Wait for navigation to the watching page
+                NavigationStep.WaitForUrl("(watch|watching)", timeoutMs = 30000L, abortOnFailure = true),
 
-                // 8. Navigate to the watching URL captured from get-link.php
-                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
-
-                // 9. Let the watching page render and lock it
+                // 8. Let the watching page render fully
                 NavigationStep.WaitForDelay(8000L),
+                NavigationStep.ExtractHtml(key = "html6_watch"),
+
+                // 9. Dismiss any consent popups
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
                 // 10. Extract server list
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
@@ -1512,24 +1523,35 @@ class CimaNowProvider : BaseProvider() {
                 ),
 
                 // 14. Extract download links
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links")
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
+
+                // 15. Final HTML dump
+                NavigationStep.ExtractHtml(key = "html7_final")
             )
 
-            val allowedDomains = setOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li")
-            val destinationLockRegexes = listOf(Regex("/watching/"))
+            val allowedDomains = setOf(
+                "cimanow.cc", "freex2line.online", "rm.freex2line.online",
+                "href.li", "www.freex2line.online"
+            )
+            val destinationLockRegexes = listOf(Regex("/(watch|watching)/"))
 
             Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
-            
+
             val navResult = httpService.navigationEngine.execute(
                 steps = steps,
                 userAgent = userAgent,
-                mode = Mode.FULLSCREEN, // Use Mode.FULLSCREEN so the user can see it!
-                overallTimeoutMs = 150000L,
+                mode = Mode.FULLSCREEN,
+                overallTimeoutMs = 180000L,
                 allowedDomains = allowedDomains,
                 destinationLockPatterns = destinationLockRegexes
             )
 
             Log.i(TAG_TEST, "Navigation Result: success=${navResult.success}, error=${navResult.error}")
+            Log.i(TAG_TEST, "Final URL: ${navResult.finalUrl}")
+            Log.i(TAG_TEST, "HTML dumps: ${navResult.extractedHtml.keys.filter { it.startsWith("html") }.joinToString(", ")}")
+            navResult.extractedHtml.filterKeys { it.startsWith("html") }.forEach { (key, html) ->
+                Log.i(TAG_TEST, "  $key: ${html.length} chars")
+            }
 
             if (!navResult.success) {
                 Log.e(TAG_TEST, "Isolated flow failed: ${navResult.error}")
@@ -1545,7 +1567,6 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
             Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
 
-            // Parse servers with iframes
             var found = false
             try {
                 val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
