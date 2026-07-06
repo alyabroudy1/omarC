@@ -1471,61 +1471,60 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.LoadUrl(movieUrl),
                 NavigationStep.ExtractHtml(key = "html1_movie"),
 
-                // 2. Wait for the watch button to appear, then click it (real touch)
-                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 30000L, abortOnFailure = true),
+                // 2. Wait for the 'شاهد وحمل الان' button (a.shine) to appear, then click it
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = "document.querySelector('a.shine') !== null",
+                    timeoutMs = 30000L, abortOnFailure = true
+                ),
                 NavigationStep.ExtractHtml(key = "html2_before_click"),
-                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = true),
+                NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = true),
 
                 // 3. Follow navigation to freex2line.online (loadon page)
                 NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 30000L, abortOnFailure = true),
                 NavigationStep.ExtractHtml(key = "html3_freex"),
 
                 // 4. Let the redirect chain play out naturally: loadon → href.li → redirectingfree → blog-post
-                //    (CF challenge, href.li proxy, redirectingfree cookie-setter, blog-post with timer)
                 NavigationStep.WaitForDelay(5000L),
                 NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = true),
                 NavigationStep.ExtractHtml(key = "html4_blog"),
 
-                // 5. Wait for the countdown timer to finish on blog-post.html
-                //    After ~11s the page's JS calls get-link.php (NOT intercepted) which returns the watch URL,
-                //    then the page auto-navigates the main frame to /watch/ or /watching/
-                NavigationStep.WaitForDelay(15000L),
-                NavigationStep.ExtractHtml(key = "html5_after_timer"),
+                // 5. Wait for the countdown timer to finish, then the 'مشاهدة وتحميل' button appears
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = "document.querySelector('#downloadbtn') !== null && document.querySelector('#downloadbtn').style.display !== 'none'",
+                    timeoutMs = 25000L, abortOnFailure = true
+                ),
+                NavigationStep.ExtractHtml(key = "html5_before_second_click"),
+                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
 
-                // 6. Try clicking any "watch" link/button on the timer page (in case auto-nav doesn't fire)
-                NavigationStep.ClickElement("a[href*='get-link']", timeoutMs = 3000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a[href*='watch']", timeoutMs = 3000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a[href*='cimanow']", timeoutMs = 3000L, abortOnFailure = false),
+                // 6. Wait for navigation to /watching/ (page auto-navigates after get-link.php returns the URL)
+                NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
 
-                // 7. Wait for navigation to the watching page
-                NavigationStep.WaitForUrl("(watch|watching)", timeoutMs = 30000L, abortOnFailure = true),
-
-                // 8. Let the watching page render fully
+                // 7. Let the watching page render fully
                 NavigationStep.WaitForDelay(8000L),
                 NavigationStep.ExtractHtml(key = "html6_watch"),
 
-                // 9. Dismiss any consent popups
+                // 8. Dismiss any consent popups
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
-                // 10. Extract server list
+                // 9. Extract server list
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
 
-                // 11. Fetch iframes via core.php AJAX switches
+                // 10. Fetch iframes via core.php AJAX switches
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
 
-                // 12. Wait for AJAX fetches to complete
+                // 11. Wait for AJAX fetches to complete
                 NavigationStep.WaitForDelay(6000L),
 
-                // 13. Retrieve iframe results
+                // 12. Retrieve iframe results
                 NavigationStep.ExecuteJs(
                     javascript = "(function(){ return window._serverResults || '[]'; })();",
                     key = "iframe_results"
                 ),
 
-                // 14. Extract download links
+                // 13. Extract download links
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
-                // 15. Final HTML dump
+                // 14. Final HTML dump
                 NavigationStep.ExtractHtml(key = "html7_final")
             )
 
