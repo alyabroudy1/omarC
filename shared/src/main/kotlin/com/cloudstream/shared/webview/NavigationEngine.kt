@@ -164,9 +164,9 @@ class NavigationEngine(
                                     try {
                                         val file = java.io.File(ctx.cacheDir, "cimanow_html_${key}.html")
                                         file.writeText(html.orEmpty())
-                                        ProviderLogger.i("CimaNowHtmlDump", "HTML $key written to ${file.absolutePath} ($len bytes)")
+                                        ProviderLogger.i("CimaNowHtmlDump", "writeHtml", "HTML $key written to ${file.absolutePath} ($len bytes)")
                                     } catch (e: Exception) {
-                                        ProviderLogger.w("CimaNowHtmlDump", "Failed to write HTML $key: ${e.message}")
+                                        ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write HTML $key: ${e.message}")
                                     }
                                 }
                             }
