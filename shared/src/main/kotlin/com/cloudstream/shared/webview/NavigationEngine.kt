@@ -96,7 +96,7 @@ class NavigationEngine(
                                 loadUrlInWebView(webView, step.url, step.referer, step.extraHeaders)
                             }
                             is NavigationStep.ClickElement -> {
-                                val clicked = clickElementInWebView(webView, step.selector, step.timeoutMs)
+                                val clicked = clickElementInWebView(webView, step.selector, step.timeoutMs, currentUrl)
                                 if (!clicked) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: ClickElement failed for selector: ${step.selector}")
                                     if (step.abortOnFailure) {
@@ -119,7 +119,7 @@ class NavigationEngine(
                                 delay(300)
                             }
                             is NavigationStep.WaitForSelector -> {
-                                val found = waitForSelector(webView, step.selector, step.timeoutMs)
+                                val found = waitForSelector(webView, step.selector, step.timeoutMs, currentUrl)
                                 if (!found) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: WaitForSelector timed out: ${step.selector}")
                                     if (step.abortOnFailure) {
@@ -222,9 +222,26 @@ class NavigationEngine(
                     timeoutJob.cancel()
                     val cookies = extractCookiesFromManager(currentUrl)
                     currentUrl = getCurrentUrlFromWebView(webView) ?: currentUrl
+                    
+                    val isSuccess = failedStep == null && errorMsg == null
+                    if (!isSuccess && webView != null) {
+                        try {
+                            val html = extractHtmlFromWebView(webView, null)
+                            val len = html?.length ?: 0
+                            val dumpKey = "failure_step_${failedStep ?: completedSteps}"
+                            activityProvider()?.let { ctx ->
+                                val file = java.io.File(ctx.cacheDir, "cimanow_html_${dumpKey}.html")
+                                file.writeText(html.orEmpty())
+                                ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to ${file.absolutePath} ($len bytes)")
+                            }
+                        } catch (de: Exception) {
+                            ProviderLogger.w(TAG, "execute", "Failed to dump HTML on failure: ${de.message}")
+                        }
+                    }
+
                     cleanupWebView(webView, dialog)
                     result.complete(NavigationResult(
-                        success = failedStep == null && errorMsg == null,
+                        success = isSuccess,
                         finalUrl = currentUrl,
                         cookies = cookies,
                         extractedHtml = extractedHtml,
@@ -237,6 +254,17 @@ class NavigationEngine(
                 if (!delivered) {
                     delivered = true
                     timeoutJob.cancel()
+                    if (webView != null) {
+                        try {
+                            val html = extractHtmlFromWebView(webView, null)
+                            val len = html?.length ?: 0
+                            activityProvider()?.let { ctx ->
+                                val file = java.io.File(ctx.cacheDir, "cimanow_html_failure_exception.html")
+                                file.writeText(html.orEmpty())
+                                ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to ${file.absolutePath} ($len bytes)")
+                            }
+                        } catch (_: Exception) {}
+                    }
                     cleanupWebView(webView, dialog)
                     result.complete(NavigationResult(
                         success = false, finalUrl = currentUrl,
@@ -600,10 +628,22 @@ class NavigationEngine(
     private suspend fun clickElementInWebView(
         webView: WebView,
         selector: String,
-        timeoutMs: Long
+        timeoutMs: Long,
+        expectedUrl: String = ""
     ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
+        val expectedHost = try { java.net.URI(expectedUrl).host?.lowercase() } catch(_: Exception) { null }
+
         while (System.currentTimeMillis() < deadline) {
+            if (expectedHost != null) {
+                val currentWebviewUrl = withContext(Dispatchers.Main) { webView.url ?: "" }
+                val currentHost = try { java.net.URI(currentWebviewUrl).host?.lowercase() } catch(_: Exception) { null }
+                if (currentHost != null && currentHost != expectedHost) {
+                    ProviderLogger.i(TAG, "clickElement", "URL host changed from $expectedHost to $currentHost. Breaking early.")
+                    return false
+                }
+            }
+
             val coords = findElementCoordinates(webView, selector)
             if (coords != null) {
                 dispatchNativeClick(webView, coords.first, coords.second)
@@ -734,12 +774,25 @@ class NavigationEngine(
     private suspend fun waitForSelector(
         webView: WebView,
         selector: String,
-        timeoutMs: Long
+        timeoutMs: Long,
+        expectedUrl: String = ""
     ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         var pollCount = 0
+        val expectedHost = try { java.net.URI(expectedUrl).host?.lowercase() } catch(_: Exception) { null }
+
         while (System.currentTimeMillis() < deadline) {
             pollCount++
+
+            if (expectedHost != null) {
+                val currentWebviewUrl = withContext(Dispatchers.Main) { webView.url ?: "" }
+                val currentHost = try { java.net.URI(currentWebviewUrl).host?.lowercase() } catch(_: Exception) { null }
+                if (currentHost != null && currentHost != expectedHost) {
+                    ProviderLogger.i(TAG, "waitForSelector", "URL host changed from $expectedHost to $currentHost. Breaking early.")
+                    return false
+                }
+            }
+
             val found = checkSelectorExists(webView, selector)
             ProviderLogger.d(TAG, "waitForSelector", "poll#$pollCount selector=$selector found=$found remaining=${deadline - System.currentTimeMillis()}ms")
             if (found) {

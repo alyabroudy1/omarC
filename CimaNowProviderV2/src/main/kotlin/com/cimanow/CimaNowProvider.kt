@@ -1471,8 +1471,8 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.ExtractHtml(key = "html1_movie"),
 
                 // Try to click the watch button — if page auto-redirects, this times out gracefully
-                NavigationStep.WaitForSelector("a.shine[href*='/loadon/']", timeoutMs = 30000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a.shine[href*='/loadon/']", timeoutMs = 5000L, abortOnFailure = false),
+                NavigationStep.WaitForSelector("a.shine", timeoutMs = 30000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = false),
 
                 // Wait for blog-post (the timer page). Skip freex2line — href.li URL is a trap
                 NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 90000L, abortOnFailure = true),
@@ -1480,10 +1480,31 @@ class CimaNowProvider : BaseProvider() {
 
                 // Wait for the download button after countdown finishes, then click it
                 NavigationStep.WaitForDomCondition(
-                    jsCondition = "document.querySelector('#downloadbtn') !== null && document.querySelector('#downloadbtn').style.display !== 'none'",
-                    timeoutMs = 30000L, abortOnFailure = false
+                    jsCondition = """
+                        (function() {
+                            var btn = document.querySelector('#downloadbtn');
+                            if (!btn) return false;
+                            var href = btn.getAttribute('href') || '';
+                            return href.indexOf('token=') !== -1 || (href.indexOf('/watching/') !== -1 && href !== 'https://cimanow.cc/pig/watching/' && href !== 'https://cimanow.cc/pig/watching');
+                        })()
+                    """.trimIndent(),
+                    timeoutMs = 20000L, abortOnFailure = true
                 ),
-                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = false),
+
+                // Force show the button to ensure native click/JS click works correctly
+                NavigationStep.ExecuteJs(
+                    javascript = """
+                        (function() {
+                            var btn = document.querySelector('#downloadbtn');
+                            if (btn) {
+                                btn.style.display = 'inline-block';
+                                btn.style.visibility = 'visible';
+                                btn.style.opacity = '1';
+                            }
+                        })();
+                    """.trimIndent()
+                ),
+                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
 
                 // Wait for /watching/ page — page auto-navigates after get-link.php returns the URL
                 NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
@@ -1514,10 +1535,14 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.ExtractHtml(key = "html_final")
             )
 
-            val allowedDomains = setOf(
+            val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
+            val allowedDomains = mutableSetOf(
                 "cimanow.cc", "freex2line.online", "rm.freex2line.online",
                 "href.li", "www.freex2line.online"
             )
+            if (movieHost != null) {
+                allowedDomains.add(movieHost)
+            }
             val destinationLockRegexes = listOf(Regex("/(watch|watching)/"))
 
             Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
