@@ -1474,8 +1474,9 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.WaitForSelector("a.shine", timeoutMs = 30000L, abortOnFailure = false),
                 NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = false),
 
-                // Wait for blog-post (the timer page). Skip freex2line — href.li URL is a trap
-                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 90000L, abortOnFailure = true),
+                // Wait for blog-post (the timer page). Must include trailing slash! 
+                // blog-post.html 301 redirects to blog-post.html/, and we need the final page.
+                NavigationStep.WaitForUrl("blog-post\\.html/", timeoutMs = 90000L, abortOnFailure = true),
                 NavigationStep.ExtractHtml(key = "html_blog"),
 
                 // Wait for the download button after countdown finishes, then click it
