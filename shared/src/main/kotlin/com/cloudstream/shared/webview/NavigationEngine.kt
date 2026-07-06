@@ -158,7 +158,17 @@ class NavigationEngine(
                                 val html = extractHtmlFromWebView(webView, step.selector)
                                 val key = step.key.ifBlank { step.selector ?: "full_page_${index}" }
                                 extractedHtml[key] = html ?: ""
-                                ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> ${html?.length ?: 0} chars")
+                                val len = html?.length ?: 0
+                                ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> $len chars")
+                                activityProvider()?.let { ctx ->
+                                    try {
+                                        val file = java.io.File(ctx.cacheDir, "cimanow_html_${key}.html")
+                                        file.writeText(html.orEmpty())
+                                        ProviderLogger.i("CimaNowHtmlDump", "HTML $key written to ${file.absolutePath} ($len bytes)")
+                                    } catch (e: Exception) {
+                                        ProviderLogger.w("CimaNowHtmlDump", "Failed to write HTML $key: ${e.message}")
+                                    }
+                                }
                             }
                             is NavigationStep.NavigateToWatchingUrl -> {
                                 val watchUrl = this@NavigationEngine.interceptedWatchingUrl

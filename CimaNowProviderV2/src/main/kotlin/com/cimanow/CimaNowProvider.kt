@@ -1465,64 +1465,53 @@ class CimaNowProvider : BaseProvider() {
         try {
             val userAgent = httpService.userAgent
 
-            // Real-user navigation: click watch button → freex2line → timer → /watch/ page
+            // Pure user simulation: navigate → click watch → reach blog-post → click download → /watching/
             val steps = listOf(
-                // 1. Load movie page
                 NavigationStep.LoadUrl(movieUrl),
                 NavigationStep.ExtractHtml(key = "html1_movie"),
 
-                // 2. Dump HTML so we can see what elements are on the page
-                NavigationStep.ExtractHtml(key = "html2_movie_dump"),
-                // 3. Wait for the watch button and click it
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = "document.querySelector('a.shine[href*=\"/loadon/\"]') !== null",
-                    timeoutMs = 60000L, abortOnFailure = false
-                ),
+                // Try to click the watch button — if page auto-redirects, this times out gracefully
+                NavigationStep.WaitForSelector("a.shine[href*='/loadon/']", timeoutMs = 30000L, abortOnFailure = false),
                 NavigationStep.ClickElement("a.shine[href*='/loadon/']", timeoutMs = 5000L, abortOnFailure = false),
 
-                // 3. After clicking, the redirect chain plays out: loadon → href.li (CF) → redirectingfree → blog-post
-                //    Don't wait for freex2line — href.li's URL also matches (trap), causing premature step completion
-                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = true),
-                NavigationStep.ExtractHtml(key = "html3_blog"),
+                // Wait for blog-post (the timer page). Skip freex2line — href.li URL is a trap
+                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 90000L, abortOnFailure = true),
+                NavigationStep.ExtractHtml(key = "html_blog"),
 
-                // 4. Wait for the countdown timer to finish, then the 'مشاهدة وتحميل' button appears
+                // Wait for the download button after countdown finishes, then click it
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "document.querySelector('#downloadbtn') !== null && document.querySelector('#downloadbtn').style.display !== 'none'",
-                    timeoutMs = 25000L, abortOnFailure = true
+                    timeoutMs = 30000L, abortOnFailure = false
                 ),
-                NavigationStep.ExtractHtml(key = "html5_before_second_click"),
-                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
+                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = false),
 
-                // 6. Wait for navigation to /watching/ (page auto-navigates after get-link.php returns the URL)
+                // Wait for /watching/ page — page auto-navigates after get-link.php returns the URL
                 NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
 
-                // 6. Let the watching page render fully
-                NavigationStep.WaitForDelay(8000L),
-                NavigationStep.ExtractHtml(key = "html6_watch"),
+                // Let the page's own JS render servers and load iframes
+                NavigationStep.WaitForDelay(15000L),
+                NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // 7. Dismiss any consent popups
+                // Dismiss consent popups if any
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
-                // 8. Extract server list
+                // Extract server list from the rendered page
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
 
-                // 9. Fetch iframes via core.php AJAX switches
+                // Let the page's own JS finish loading iframes from core.php via AJAX
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
+                NavigationStep.WaitForDelay(8000L),
 
-                // 10. Wait for AJAX fetches to complete
-                NavigationStep.WaitForDelay(6000L),
-
-                // 11. Retrieve iframe results
+                // Retrieve iframe results
                 NavigationStep.ExecuteJs(
                     javascript = "(function(){ return window._serverResults || '[]'; })();",
                     key = "iframe_results"
                 ),
 
-                // 12. Extract download links
+                // Extract download links
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
-                // 13. Final HTML dump
-                NavigationStep.ExtractHtml(key = "html7_final")
+                NavigationStep.ExtractHtml(key = "html_final")
             )
 
             val allowedDomains = setOf(
