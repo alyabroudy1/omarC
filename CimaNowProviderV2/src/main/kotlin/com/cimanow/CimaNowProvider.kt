@@ -725,11 +725,11 @@ class CimaNowProvider : BaseProvider() {
         Log.i(TAG_WV, "URL: $data")
 
         try {
-            val userAgent = httpService.userAgent
-            Log.d(TAG_WV, "User-Agent: $userAgent")
+            val userAgent = httpService.userAgent.replace(Regex("Version/\\d+\\.\\d+\\s+"), "")
+            Log.d(TAG_WV, "User-Agent (Cleaned): $userAgent")
 
             val steps = listOf(
-                NavigationStep.LoadUrl(data),
+                NavigationStep.LoadUrl(data, extraHeaders = mapOf("X-Requested-With" to "")),
                 NavigationStep.ExtractHtml(key = "html1_movie"),
 
                 // Step 1: Wait for and click the freex CTA
@@ -789,7 +789,7 @@ class CimaNowProvider : BaseProvider() {
             val movieHost = try { java.net.URI(data).host } catch(_: Exception) { null }
             val allowedDomains = mutableSetOf(
                 "cimanow.cc", "freex2line.online", "rm.freex2line.online",
-                "href.li", "www.freex2line.online",
+                "href.li", "www.freex2line.online", "cimanow.upns.online", "cimanowtv.com",
                 // Ad domains — needed so popup WebViews can load them
                 "viiukuhe.com", "ayhal.com"
             )
