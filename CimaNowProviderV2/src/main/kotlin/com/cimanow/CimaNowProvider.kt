@@ -42,140 +42,6 @@ class CimaNowProvider : BaseProvider() {
         WebViewFlowHelper(httpService.navigationEngine)
     }
 
-    companion object {
-        private val JS_EXTRACT_SERVERS = """
-(function(){
-    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
-    var servers = [];
-    for (var i = 0; i < items.length; i++) {
-        var idx = items[i].getAttribute('data-index') || '';
-        var id = items[i].getAttribute('data-id') || '';
-        var name = (items[i].textContent || '').trim().slice(0, 60);
-        servers.push({index: idx, id: id, name: name});
-        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'"');
-    }
-    return JSON.stringify(servers);
-})();
-        """.trimIndent()
-
-        private val JS_FETCH_IFRAMES = """
-(function(){
-    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
-    var baseUrl = window.location.origin;
-    var results = [];
-    var done = 0;
-    for (var i = 0; i < Math.min(items.length, 10); i++) {
-        var idx = items[i].getAttribute('data-index') || '';
-        var id = items[i].getAttribute('data-id') || '';
-        var name = (items[i].textContent || '').trim().slice(0, 60);
-        var ajaxUrl = baseUrl + '/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=' + idx + '&id=' + id;
-        console.log('[Nav] Fetching server ' + name + ': ' + ajaxUrl);
-        (function(srvName, srvIdx, url) {
-            fetch(url, {credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': window.location.href}})
-                .then(function(r) { return r.text(); })
-                .then(function(html) {
-                    var iframeSrc = '';
-                    var match = html.match(/<iframe[^>]+src=["']([^"']+)["']/);
-                    if (match) iframeSrc = match[1];
-                    console.log('[Nav] Server ' + srvName + ' iframe: ' + iframeSrc);
-                    results.push({name: srvName, index: srvIdx, iframe: iframeSrc, responseLength: html.length});
-                    done++;
-                    if (done === Math.min(document.querySelectorAll('#watch li, li[data-index], [data-index]').length, 10)) {
-                        window._serverResults = JSON.stringify(results);
-                    }
-                })
-                .catch(function(err) {
-                    console.log('[Nav] Server ' + srvName + ' error: ' + err.message);
-                    results.push({name: srvName, index: srvIdx, iframe: '', error: err.message});
-                    done++;
-                });
-        })(name, idx, ajaxUrl);
-    }
-    return 'fetching_' + Math.min(items.length, 10) + '_servers';
-})();
-        """.trimIndent()
-
-        private val JS_EXTRACT_DOWNLOADS = """
-(function(){
-    var links = document.querySelectorAll('#download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
-    var downloads = [];
-    for (var i = 0; i < links.length; i++) {
-        var name = (links[i].textContent || '').trim().slice(0, 60);
-        var href = links[i].href || '';
-        if (href && name) {
-            downloads.push({name: name, url: href});
-            console.log('[Nav] Download #'+i+': name="'+name+'" url="'+href+'"');
-        }
-    }
-    return JSON.stringify(downloads);
-})();
-        """.trimIndent()
-
-        private val JS_DISMISS_FREEX_OVERLAY = """
-(function() {
-    var dismissedCount = 0;
-    
-    // 1. Remove elements explicitly marked as sponsored
-    var sponsored = document.querySelectorAll('a[rel="sponsored"], [rel*="sponsored"]');
-    for (var i = 0; i < sponsored.length; i++) {
-        var el = sponsored[i];
-        el.style.display = 'none';
-        if (el.parentNode) {
-            el.parentNode.removeChild(el);
-            dismissedCount++;
-        }
-    }
-
-    // 2. Identify and remove any full-screen fixed overlays with high z-index (handles dynamic IDs/classes)
-    var allElements = document.querySelectorAll('a, div, iframe, section, dialog');
-    for (var j = 0; j < allElements.length; j++) {
-        var el = allElements[j];
-        try {
-            var style = window.getComputedStyle(el);
-            var zIndex = parseInt(style.zIndex) || 0;
-            if (style.position === 'fixed' && zIndex > 99999) {
-                var rect = el.getBoundingClientRect();
-                var coversWidth = rect.width >= window.innerWidth * 0.9;
-                var coversHeight = rect.height >= window.innerHeight * 0.9;
-                
-                // If it covers most of the viewport, it's an overlay
-                if (coversWidth && coversHeight) {
-                    el.style.display = 'none';
-                    if (el.parentNode) {
-                        el.parentNode.removeChild(el);
-                        dismissedCount++;
-                    }
-                }
-            }
-        } catch (e) {}
-    }
-    console.log('[WVSafe] freex overlay dismissed, count: ' + dismissedCount);
-    return 'overlay_dismissed_count_' + dismissedCount;
-})();
-        """.trimIndent()
-
-        private val JS_FORCE_SHOW_DOWNLOAD_BTN = """
-(function() {
-    var btn = document.querySelector('#downloadbtn');
-    if (btn) {
-        btn.style.display = 'inline-block';
-        btn.style.visibility = 'visible';
-        btn.style.opacity = '1';
-        btn.style.pointerEvents = 'auto';
-        btn.style.zIndex = '999999999';  // Above any remaining overlays
-    }
-    // Also remove the countdown element if still present
-    var cd = document.getElementById('countdown');
-    if (cd) cd.remove();
-    var ts = document.querySelector('.text_sco');
-    if (ts) ts.remove();
-    
-    console.log('[WVSafe] force show download button: ' + (btn ? 'found' : 'not_found'));
-    return btn ? 'btn_shown' : 'btn_not_found';
-})();
-        """.trimIndent()
-    }
-
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -477,9 +343,9 @@ class CimaNowProvider : BaseProvider() {
         Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
-        if (data.contains("agent-kim-reactivated", ignoreCase = true) || data.contains("test", ignoreCase = true)) {
-            Log.i("CimaNowLoadLinks", "Directly triggering WebView fallback flow for test item: $data")
-            return tryWebViewFallback(data, subtitleCallback, callback)
+        if (data.contains("agent-kim-reactivated", ignoreCase = true)) {
+            Log.i("CimaNowLoadLinks", "Triggering isolated WebView test flow for: $data")
+            return runIsolatedWebViewTest(data, callback)
         }
 
         val successCount = java.util.concurrent.atomic.AtomicInteger(0)
@@ -725,185 +591,77 @@ class CimaNowProvider : BaseProvider() {
         Log.i(TAG_WV, "URL: $data")
 
         try {
-            val userAgent = httpService.userAgent.replace(Regex("Version/\\d+\\.\\d+\\s+"), "")
-            Log.d(TAG_WV, "User-Agent (Cleaned): $userAgent")
-
-            val steps = listOf(
-                NavigationStep.LoadUrl(data, extraHeaders = mapOf("X-Requested-With" to "")),
-                NavigationStep.ExtractHtml(key = "html1_movie"),
-
-                // Step 1: Wait for and click the freex CTA
-                NavigationStep.WaitForSelector("a.shine, a[href*='freex2line']", timeoutMs = 30000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a.shine, a[href*='freex2line']", timeoutMs = 10000L, abortOnFailure = false),
-
-                // Step 2: Wait for blog-post.html/ (the timer page) — 90s timeout to allow CF + redirects
-                NavigationStep.WaitForUrl("blog-post\\.html/", timeoutMs = 90000L, abortOnFailure = true),
-                NavigationStep.ExtractHtml(key = "html_blog"),
-
-                // Step 3: Wait 15s (10s countdown + 5s buffer for CF/cookie state accumulation)
-                NavigationStep.WaitForDelay(15000L),
-
-                // Step 4: Dismiss ad overlay generically via JS
-                NavigationStep.ExecuteJs(
-                    javascript = JS_DISMISS_FREEX_OVERLAY,
-                    key = "dismiss_overlay_result"
-                ),
-
-                // Step 5: Force-show the download button (#downloadbtn)
-                NavigationStep.ExecuteJs(
-                    javascript = JS_FORCE_SHOW_DOWNLOAD_BTN,
-                    key = "force_show_result"
-                ),
-
-                // Step 6: Click #downloadbtn — the page's JS handles get-link.php internally
-                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 10000L, abortOnFailure = true),
-
-                // Step 7: Wait for /watching/ URL (30s timeout)
-                NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
-
-                // Step 8: Let watch page JS render (15s settle)
-                NavigationStep.WaitForDelay(15000L),
-                NavigationStep.ExtractHtml(key = "html_watch"),
-
-                // Dismiss consent popups on watch page if any
-                NavigationStep.ExecuteJs(javascript = JS_DISMISS_FREEX_OVERLAY, key = "dismiss_overlay_watch"),
-
-                // Step 9: Extract server list from the rendered page
-                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
-
-                // Let the page's own JS finish loading iframes from core.php via AJAX
-                NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
-                NavigationStep.WaitForDelay(10000L),
-
-                // Retrieve iframe results
-                NavigationStep.ExecuteJs(
-                    javascript = "(function(){ return window._serverResults || '[]'; })();",
-                    key = "iframe_results"
-                ),
-
-                // Extract download links
-                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
-                NavigationStep.ExtractHtml(key = "html_final")
+            val config = WebViewFlowHelper.Config(
+                allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li"),
+                destinationLockPatterns = listOf("/watching/"),
+                overallTimeoutMs = 120_000L
             )
+            Log.d(TAG_WV, "Config: allowedDomains=${config.allowedDomains}, destPatterns=${config.destinationLockPatterns}, timeoutMs=${config.overallTimeoutMs}")
 
-            val movieHost = try { java.net.URI(data).host } catch(_: Exception) { null }
-            val allowedDomains = mutableSetOf(
-                "cimanow.cc", "freex2line.online", "rm.freex2line.online",
-                "href.li", "www.freex2line.online", "cimanow.upns.online", "cimanowtv.com",
-                // Ad domains — needed so popup WebViews can load them
-                "viiukuhe.com", "ayhal.com"
-            )
-            if (movieHost != null) {
-                allowedDomains.add(movieHost)
-            }
-            val destinationLockRegexes = listOf(Regex("/(watch|watching)/"))
+            Log.i(TAG_WV, "Invoking WebView navigation (this may take up to ${config.overallTimeoutMs / 1000}s)...")
+            val flowResult = webViewFlowHelper.navigateMovieToWatchPage(data, config)
 
-            Log.i(TAG_WV, "Executing navigation engine in FULLSCREEN mode...")
-            val navResult = httpService.navigationEngine.execute(
-                steps = steps,
-                userAgent = userAgent,
-                mode = Mode.FULLSCREEN,
-                overallTimeoutMs = 180000L,
-                allowedDomains = allowedDomains,
-                destinationLockPatterns = destinationLockRegexes
-            )
-
-            Log.i(TAG_WV, "Navigation Result: success=${navResult.success}, error=${navResult.error}")
-            Log.i(TAG_WV, "Final URL: ${navResult.finalUrl}")
-            Log.i(TAG_WV, "HTML dumps: ${navResult.extractedHtml.keys.filter { it.startsWith("html") }.joinToString(", ")}")
-            navResult.extractedHtml.filterKeys { it.startsWith("html") }.forEach { (key, html) ->
-                Log.i(TAG_WV, "  $key: ${html.length} chars")
-            }
-
-            if (!navResult.success) {
-                Log.e(TAG_WV, "WebView flow FAILED: ${navResult.error}")
+            if (!flowResult.success) {
+                Log.w(TAG_WV, "WebView flow FAILED: ${flowResult.error}")
+                Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
+                Log.d(TAG_WV, "  servers extracted: ${flowResult.servers.size}")
                 return false
             }
 
-            // Extract and parse the links
-            val rawServers = navResult.extractedHtml["server_list"] ?: "[]"
-            val rawIframeResults = navResult.extractedHtml["iframe_results"] ?: "[]"
-            val rawDownloads = navResult.extractedHtml["download_links"] ?: "[]"
+            Log.i(TAG_WV, "WebView flow SUCCEEDED")
+            Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
+            Log.d(TAG_WV, "  servers count: ${flowResult.servers.size}")
+            Log.d(TAG_WV, "  downloads count: ${flowResult.downloads.size}")
 
-            Log.d(TAG_WV, "Extracted servers raw: $rawServers")
-            Log.d(TAG_WV, "Extracted iframes raw: $rawIframeResults")
-            Log.d(TAG_WV, "Extracted downloads raw: $rawDownloads")
+            flowResult.servers.forEachIndexed { i, s ->
+                Log.d(TAG_WV, "  server[$i]: name='${s.name}' index=${s.index} id=${s.id} hasIframe=${s.iframeUrl.isNotBlank()}")
+                if (s.iframeUrl.isNotBlank()) {
+                    Log.d(TAG_WV, "    iframeUrl: ${s.iframeUrl.take(100)}")
+                }
+            }
+            flowResult.downloads.forEachIndexed { i, d ->
+                Log.d(TAG_WV, "  download[$i]: name='${d.name}' url=${d.url.take(100)}")
+            }
 
             var found = false
-            
-            val iframeMap = try {
-                val cleanedIframes = org.json.JSONTokener(rawIframeResults).nextValue().toString()
-                val iframeArr = org.json.JSONArray(cleanedIframes)
-                (0 until iframeArr.length()).associate { i ->
-                    val obj = iframeArr.getJSONObject(i)
-                    obj.optString("index", "") to obj.optString("iframe", "")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG_WV, "Error parsing iframe results: ${e.message}")
-                emptyMap()
-            }
+            val referer = flowResult.finalUrl.ifBlank { data }
 
-            val referer = navResult.finalUrl.ifBlank { data }
-
-            try {
-                val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
-                val serverArr = org.json.JSONArray(cleanedServers)
-
-                for (i in 0 until serverArr.length()) {
-                    val obj = serverArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val index = obj.optString("index", "")
-                    val id = obj.optString("id", "")
-                    val iframeUrl = iframeMap[index] ?: ""
-
-                    Log.i(TAG_WV, "Found server: name='$name', index=$index, id=$id, iframe='$iframeUrl'")
-                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                        try {
-                            when {
-                                iframeUrl.contains("cimanowtv", true) -> {
-                                    Log.d(TAG_WV, "  -> routing to handlecima")
-                                    handlecima(iframeUrl, name, callback)
-                                }
-                                iframeUrl.contains("forafile.com", true) -> {
-                                    Log.d(TAG_WV, "  -> routing to handleForafile")
-                                    handleForafile(iframeUrl, 0, referer, callback)
-                                }
-                                else -> {
-                                    Log.d(TAG_WV, "  -> routing to fallbackExtractIframe (referer=$referer)")
-                                    fallbackExtractIframe(iframeUrl, name, referer, callback)
-                                }
+            for (server in flowResult.servers) {
+                if (server.iframeUrl.isNotBlank()) {
+                    Log.i(TAG_WV, "Processing server '${server.name}' ...")
+                    try {
+                        val iframeUrl = server.iframeUrl
+                        when {
+                            iframeUrl.contains("cimanowtv", true) -> {
+                                Log.d(TAG_WV, "  -> routing to handlecima")
+                                handlecima(iframeUrl, server.name, callback)
                             }
-                            found = true
-                        } catch (e: Exception) {
-                            Log.e(TAG_WV, "  ERROR processing server '$name': ${e.message}")
+                            iframeUrl.contains("forafile.com", true) -> {
+                                Log.d(TAG_WV, "  -> routing to handleForafile")
+                                handleForafile(iframeUrl, 0, referer, callback)
+                            }
+                            else -> {
+                                Log.d(TAG_WV, "  -> routing to fallbackExtractIframe (referer=$referer)")
+                                fallbackExtractIframe(iframeUrl, server.name, referer, callback)
+                            }
                         }
-                    } else {
-                        Log.d(TAG_WV, "Server '$name' has empty or invalid iframeUrl, skipping")
+                        found = true
+                    } catch (e: Exception) {
+                        Log.e(TAG_WV, "  ERROR processing server '${server.name}': ${e.message}")
                     }
+                } else {
+                    Log.d(TAG_WV, "Server '${server.name}' has empty iframeUrl, skipping")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG_WV, "Error parsing server results: ${e.message}")
             }
 
-            try {
-                val cleanedDownloads = org.json.JSONTokener(rawDownloads).nextValue().toString()
-                val downloadArr = org.json.JSONArray(cleanedDownloads)
-                for (i in 0 until downloadArr.length()) {
-                    val obj = downloadArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val url = obj.optString("url", "")
-                    if (url.isNotBlank()) {
-                        Log.i(TAG_WV, "Found download link: name='$name', url='$url'")
-                        callback(
-                            newExtractorLink(name, name, url, type = getLinkType(url)) {
-                                this.referer = data
-                            }
-                        )
-                        found = true
-                    }
+            for (download in flowResult.downloads) {
+                if (download.url.isNotBlank()) {
+                    Log.i(TAG_WV, "Processing download '${download.name}' -> ${download.url.take(100)}")
+                    callback(
+                        newExtractorLink(download.name, download.name, download.url, type = getLinkType(download.url))
+                    )
+                    found = true
                 }
-            } catch (e: Exception) {
-                Log.e(TAG_WV, "Error parsing download results: ${e.message}")
             }
 
             Log.i(TAG_WV, "========== [END] WebView fallback, found=$found ==========")
@@ -1694,5 +1452,199 @@ class CimaNowProvider : BaseProvider() {
             Log.e(TAG_SB, "Sandbox error: ${e.message}")
         }
         return null
-    }}
+    }
+
+    private suspend fun runIsolatedWebViewTest(
+        movieUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val TAG_TEST = "CimaNowIsolatedTest"
+        Log.i(TAG_TEST, "========== [START] Isolated WebView Test Flow ==========")
+        Log.i(TAG_TEST, "Target URL: $movieUrl")
+
+        try {
+            val userAgent = httpService.userAgent
+
+            // Pure user simulation: navigate → click watch → reach blog-post → click download → /watching/
+            val steps = listOf(
+                NavigationStep.LoadUrl(movieUrl),
+                NavigationStep.ExtractHtml(key = "html1_movie"),
+
+                // Try to click the watch button — if page auto-redirects, this times out gracefully
+                NavigationStep.WaitForSelector("a.shine", timeoutMs = 30000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = false),
+
+                // Wait for blog-post (the timer page). Must include trailing slash! 
+                // blog-post.html 301 redirects to blog-post.html/, and we need the final page.
+                NavigationStep.WaitForUrl("blog-post\\.html/", timeoutMs = 90000L, abortOnFailure = true),
+                NavigationStep.ExtractHtml(key = "html_blog"),
+
+                // Wait for the download button after countdown finishes, then click it
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = """
+                        (function() {
+                            var btn = document.querySelector('#downloadbtn');
+                            if (!btn) return false;
+                            var href = btn.getAttribute('href') || '';
+                            return href.indexOf('token=') !== -1 || (href.indexOf('/watching/') !== -1 && href !== 'https://cimanow.cc/pig/watching/' && href !== 'https://cimanow.cc/pig/watching');
+                        })()
+                    """.trimIndent(),
+                    timeoutMs = 20000L, abortOnFailure = true
+                ),
+
+                // Force show the button to ensure native click/JS click works correctly
+                NavigationStep.ExecuteJs(
+                    javascript = """
+                        (function() {
+                            var btn = document.querySelector('#downloadbtn');
+                            if (btn) {
+                                btn.style.display = 'inline-block';
+                                btn.style.visibility = 'visible';
+                                btn.style.opacity = '1';
+                            }
+                        })();
+                    """.trimIndent()
+                ),
+                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
+
+                // Wait for /watching/ page — page auto-navigates after get-link.php returns the URL
+                NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
+
+                // Let the page's own JS render servers and load iframes
+                NavigationStep.WaitForDelay(15000L),
+                NavigationStep.ExtractHtml(key = "html_watch"),
+
+                // Dismiss consent popups if any
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
+
+                // Extract server list from the rendered page
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
+
+                // Let the page's own JS finish loading iframes from core.php via AJAX
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
+                NavigationStep.WaitForDelay(8000L),
+
+                // Retrieve iframe results
+                NavigationStep.ExecuteJs(
+                    javascript = "(function(){ return window._serverResults || '[]'; })();",
+                    key = "iframe_results"
+                ),
+
+                // Extract download links
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
+
+                NavigationStep.ExtractHtml(key = "html_final")
+            )
+
+            val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
+            val allowedDomains = mutableSetOf(
+                "cimanow.cc", "freex2line.online", "rm.freex2line.online",
+                "href.li", "www.freex2line.online"
+            )
+            if (movieHost != null) {
+                allowedDomains.add(movieHost)
+            }
+            val destinationLockRegexes = listOf(Regex("/(watch|watching)/"))
+
+            Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
+
+            val navResult = httpService.navigationEngine.execute(
+                steps = steps,
+                userAgent = userAgent,
+                mode = Mode.FULLSCREEN,
+                overallTimeoutMs = 180000L,
+                allowedDomains = allowedDomains,
+                destinationLockPatterns = destinationLockRegexes
+            )
+
+            Log.i(TAG_TEST, "Navigation Result: success=${navResult.success}, error=${navResult.error}")
+            Log.i(TAG_TEST, "Final URL: ${navResult.finalUrl}")
+            Log.i(TAG_TEST, "HTML dumps: ${navResult.extractedHtml.keys.filter { it.startsWith("html") }.joinToString(", ")}")
+            navResult.extractedHtml.filterKeys { it.startsWith("html") }.forEach { (key, html) ->
+                Log.i(TAG_TEST, "  $key: ${html.length} chars")
+            }
+
+            if (!navResult.success) {
+                Log.e(TAG_TEST, "Isolated flow failed: ${navResult.error}")
+                return false
+            }
+
+            // Extract and report the links
+            val rawServers = navResult.extractedHtml["server_list"] ?: "[]"
+            val rawIframeResults = navResult.extractedHtml["iframe_results"] ?: "[]"
+            val rawDownloads = navResult.extractedHtml["download_links"] ?: "[]"
+
+            Log.d(TAG_TEST, "Extracted servers raw: $rawServers")
+            Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
+            Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
+
+            var found = false
+            try {
+                val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
+                val serverArr = org.json.JSONArray(cleanedServers)
+                val cleanedIframes = org.json.JSONTokener(rawIframeResults).nextValue().toString()
+                val iframeArr = org.json.JSONArray(cleanedIframes)
+
+                val iframeMap = (0 until iframeArr.length()).associate { i ->
+                    val obj = iframeArr.getJSONObject(i)
+                    obj.optString("index", "") to obj.optString("iframe", "")
+                }
+
+                for (i in 0 until serverArr.length()) {
+                    val obj = serverArr.getJSONObject(i)
+                    val name = obj.optString("name", "")
+                    val index = obj.optString("index", "")
+                    val id = obj.optString("id", "")
+                    val iframeUrl = iframeMap[index] ?: ""
+
+                    Log.i(TAG_TEST, "Found server: name='$name', index=$index, id=$id, iframe='$iframeUrl'")
+                    if (iframeUrl.isNotBlank()) {
+                        when {
+                            iframeUrl.contains("cimanowtv", true) -> {
+                                handlecima(iframeUrl, name, callback)
+                            }
+                            iframeUrl.contains("forafile.com", true) -> {
+                                handleForafile(iframeUrl, 0, movieUrl, callback)
+                            }
+                            else -> {
+                                fallbackExtractIframe(iframeUrl, name, movieUrl, callback)
+                            }
+                        }
+                        found = true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG_TEST, "Error parsing server results: ${e.message}")
+            }
+
+            try {
+                val cleanedDownloads = org.json.JSONTokener(rawDownloads).nextValue().toString()
+                val downloadArr = org.json.JSONArray(cleanedDownloads)
+                for (i in 0 until downloadArr.length()) {
+                    val obj = downloadArr.getJSONObject(i)
+                    val name = obj.optString("name", "")
+                    val url = obj.optString("url", "")
+                    if (url.isNotBlank()) {
+                        Log.i(TAG_TEST, "Found download link: name='$name', url='$url'")
+                        callback(
+                            newExtractorLink(name, name, url, type = getLinkType(url)) {
+                                this.referer = movieUrl
+                            }
+                        )
+                        found = true
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG_TEST, "Error parsing download results: ${e.message}")
+            }
+
+            Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
+            return found
+        } catch (e: Exception) {
+            Log.e(TAG_TEST, "Exception in isolated test flow: ${e.message}")
+        }
+        return false
+    }
+
+}
 
