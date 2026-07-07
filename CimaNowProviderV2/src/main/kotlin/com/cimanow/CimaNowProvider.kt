@@ -1464,105 +1464,72 @@ class CimaNowProvider : BaseProvider() {
 
         try {
             val userAgent = httpService.userAgent
-
-            // Pure user simulation: navigate → click watch → reach blog-post → click download → /watching/
+            
+            // Custom Navigation Steps
             val steps = listOf(
+                // 1. Load details page
                 NavigationStep.LoadUrl(movieUrl),
-                NavigationStep.ExtractHtml(key = "html1_movie"),
 
-                // Try to click the watch button — if page auto-redirects, this times out gracefully
-                NavigationStep.WaitForSelector("a.shine", timeoutMs = 30000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = false),
+                // 2. Wait for JS auto-redirect to freex2line.online
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 45000L, abortOnFailure = false),
 
-                // Wait for blog-post (the timer page). Must include trailing slash! 
-                // blog-post.html 301 redirects to blog-post.html/, and we need the final page.
-                NavigationStep.WaitForUrl("blog-post\\.html/", timeoutMs = 90000L, abortOnFailure = true),
-                NavigationStep.ExtractHtml(key = "html_blog"),
+                // 3. Fallback: try clicking the watch button if auto-redirect didn't happen
+                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = false),
+                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 3000L, abortOnFailure = false),
 
-                // Wait for the download button after countdown finishes, then click it
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = """
-                        (function() {
-                            var btn = document.querySelector('#downloadbtn');
-                            if (!btn) return false;
-                            var href = btn.getAttribute('href') || '';
-                            return href.indexOf('token=') !== -1 || (href.indexOf('/watching/') !== -1 && href !== 'https://cimanow.cc/pig/watching/' && href !== 'https://cimanow.cc/pig/watching');
-                        })()
-                    """.trimIndent(),
-                    timeoutMs = 20000L, abortOnFailure = true
-                ),
+                // 4. Wait for freex2line to load (following the redirect)
+                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15000L, abortOnFailure = false),
 
-                // Force show the button to ensure native click/JS click works correctly
-                NavigationStep.ExecuteJs(
-                    javascript = """
-                        (function() {
-                            var btn = document.querySelector('#downloadbtn');
-                            if (btn) {
-                                btn.style.display = 'inline-block';
-                                btn.style.visibility = 'visible';
-                                btn.style.opacity = '1';
-                            }
-                        })();
-                    """.trimIndent()
-                ),
-                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
+                // 5. Wait for redirection chain (CF on freex -> href.li -> redirectingfree -> blog-post)
+                NavigationStep.WaitForDelay(20000L),
+                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = false),
 
-                // Wait for /watching/ page — page auto-navigates after get-link.php returns the URL
-                NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
+                // 6. Wait 12 seconds for the countdown guard to bypass
+                NavigationStep.WaitForDelay(12000L),
 
-                // Let the page's own JS render servers and load iframes
-                NavigationStep.WaitForDelay(15000L),
-                NavigationStep.ExtractHtml(key = "html_watch"),
-
-                // Dismiss consent popups if any
+                // 7. Dismiss popup consent
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
-                // Extract server list from the rendered page
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
+                // 8. Navigate to the watching URL captured from get-link.php
+                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Let the page's own JS finish loading iframes from core.php via AJAX
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
+                // 9. Let the watching page render and lock it
                 NavigationStep.WaitForDelay(8000L),
 
-                // Retrieve iframe results
+                // 10. Extract server list
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
+
+                // 11. Fetch iframes via core.php AJAX switches
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
+
+                // 12. Wait for AJAX fetches to complete
+                NavigationStep.WaitForDelay(6000L),
+
+                // 13. Retrieve iframe results
                 NavigationStep.ExecuteJs(
                     javascript = "(function(){ return window._serverResults || '[]'; })();",
                     key = "iframe_results"
                 ),
 
-                // Extract download links
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
-
-                NavigationStep.ExtractHtml(key = "html_final")
+                // 14. Extract download links
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links")
             )
 
-            val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
-            val allowedDomains = mutableSetOf(
-                "cimanow.cc", "freex2line.online", "rm.freex2line.online",
-                "href.li", "www.freex2line.online"
-            )
-            if (movieHost != null) {
-                allowedDomains.add(movieHost)
-            }
-            val destinationLockRegexes = listOf(Regex("/(watch|watching)/"))
+            val allowedDomains = setOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li")
+            val destinationLockRegexes = listOf(Regex("/watching/"))
 
             Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
-
+            
             val navResult = httpService.navigationEngine.execute(
                 steps = steps,
                 userAgent = userAgent,
-                mode = Mode.FULLSCREEN,
-                overallTimeoutMs = 180000L,
+                mode = Mode.FULLSCREEN, // Use Mode.FULLSCREEN so the user can see it!
+                overallTimeoutMs = 150000L,
                 allowedDomains = allowedDomains,
                 destinationLockPatterns = destinationLockRegexes
             )
 
             Log.i(TAG_TEST, "Navigation Result: success=${navResult.success}, error=${navResult.error}")
-            Log.i(TAG_TEST, "Final URL: ${navResult.finalUrl}")
-            Log.i(TAG_TEST, "HTML dumps: ${navResult.extractedHtml.keys.filter { it.startsWith("html") }.joinToString(", ")}")
-            navResult.extractedHtml.filterKeys { it.startsWith("html") }.forEach { (key, html) ->
-                Log.i(TAG_TEST, "  $key: ${html.length} chars")
-            }
 
             if (!navResult.success) {
                 Log.e(TAG_TEST, "Isolated flow failed: ${navResult.error}")
@@ -1578,6 +1545,7 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
             Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
 
+            // Parse servers with iframes
             var found = false
             try {
                 val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
