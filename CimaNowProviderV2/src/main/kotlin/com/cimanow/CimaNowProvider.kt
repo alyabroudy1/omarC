@@ -1,16 +1,23 @@
 package com.cimanow
 
+import android.app.AlertDialog
 import android.content.Context
+import android.net.http.SslError
 import android.util.Base64
+import android.webkit.SslErrorHandler
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.WebViewFlowHelper
-import com.cloudstream.shared.webview.NavigationStep
-import com.cloudstream.shared.webview.Mode
 import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -1458,160 +1465,142 @@ class CimaNowProvider : BaseProvider() {
         movieUrl: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val TAG_TEST = "CimaNowIsolatedTest"
-        Log.i(TAG_TEST, "========== [START] Isolated WebView Test Flow ==========")
+        val TAG_TEST = "CimaNowDebugWV"
+        Log.i(TAG_TEST, "═══════════════════════════════════════════")
+        Log.i(TAG_TEST, "Debug WebView started")
         Log.i(TAG_TEST, "Target URL: $movieUrl")
+        Log.i(TAG_TEST, "═══════════════════════════════════════════")
 
-        try {
-            val userAgent = httpService.userAgent
-            
-            // Custom Navigation Steps
-            val steps = listOf(
-                // 1. Load details page
-                NavigationStep.LoadUrl(movieUrl),
-
-                // 2. Wait for JS auto-redirect to freex2line.online
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 45000L, abortOnFailure = false),
-
-                // 3. Fallback: try clicking the watch button if auto-redirect didn't happen
-                NavigationStep.WaitForSelector("a[href*='freex2line']", timeoutMs = 5000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a[href*='freex2line']", timeoutMs = 3000L, abortOnFailure = false),
-
-                // 4. Wait for freex2line to load (following the redirect)
-                NavigationStep.WaitForUrl("freex2line\\.online", timeoutMs = 15000L, abortOnFailure = false),
-
-                // 5. Wait for redirection chain (CF on freex -> href.li -> redirectingfree -> blog-post)
-                NavigationStep.WaitForDelay(20000L),
-                NavigationStep.WaitForUrl("blog-post\\.html", timeoutMs = 60000L, abortOnFailure = false),
-
-                // 6. Wait 12 seconds for the countdown guard to bypass
-                NavigationStep.WaitForDelay(12000L),
-
-                // 7. Dismiss popup consent
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
-
-                // 8. Navigate to the watching URL captured from get-link.php
-                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
-
-                // 9. Let the watching page render and lock it
-                NavigationStep.WaitForDelay(8000L),
-
-                // 10. Extract server list
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
-
-                // 11. Fetch iframes via core.php AJAX switches
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
-
-                // 12. Wait for AJAX fetches to complete
-                NavigationStep.WaitForDelay(6000L),
-
-                // 13. Retrieve iframe results
-                NavigationStep.ExecuteJs(
-                    javascript = "(function(){ return window._serverResults || '[]'; })();",
-                    key = "iframe_results"
-                ),
-
-                // 14. Extract download links
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links")
-            )
-
-            val allowedDomains = setOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li")
-            val destinationLockRegexes = listOf(Regex("/watching/"))
-
-            Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
-            
-            val navResult = httpService.navigationEngine.execute(
-                steps = steps,
-                userAgent = userAgent,
-                mode = Mode.FULLSCREEN, // Use Mode.FULLSCREEN so the user can see it!
-                overallTimeoutMs = 150000L,
-                allowedDomains = allowedDomains,
-                destinationLockPatterns = destinationLockRegexes
-            )
-
-            Log.i(TAG_TEST, "Navigation Result: success=${navResult.success}, error=${navResult.error}")
-
-            if (!navResult.success) {
-                Log.e(TAG_TEST, "Isolated flow failed: ${navResult.error}")
-                return false
-            }
-
-            // Extract and report the links
-            val rawServers = navResult.extractedHtml["server_list"] ?: "[]"
-            val rawIframeResults = navResult.extractedHtml["iframe_results"] ?: "[]"
-            val rawDownloads = navResult.extractedHtml["download_links"] ?: "[]"
-
-            Log.d(TAG_TEST, "Extracted servers raw: $rawServers")
-            Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
-            Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
-
-            // Parse servers with iframes
-            var found = false
-            try {
-                val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
-                val serverArr = org.json.JSONArray(cleanedServers)
-                val cleanedIframes = org.json.JSONTokener(rawIframeResults).nextValue().toString()
-                val iframeArr = org.json.JSONArray(cleanedIframes)
-
-                val iframeMap = (0 until iframeArr.length()).associate { i ->
-                    val obj = iframeArr.getJSONObject(i)
-                    obj.optString("index", "") to obj.optString("iframe", "")
-                }
-
-                for (i in 0 until serverArr.length()) {
-                    val obj = serverArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val index = obj.optString("index", "")
-                    val id = obj.optString("id", "")
-                    val iframeUrl = iframeMap[index] ?: ""
-
-                    Log.i(TAG_TEST, "Found server: name='$name', index=$index, id=$id, iframe='$iframeUrl'")
-                    if (iframeUrl.isNotBlank()) {
-                        when {
-                            iframeUrl.contains("cimanowtv", true) -> {
-                                handlecima(iframeUrl, name, callback)
-                            }
-                            iframeUrl.contains("forafile.com", true) -> {
-                                handleForafile(iframeUrl, 0, movieUrl, callback)
-                            }
-                            else -> {
-                                fallbackExtractIframe(iframeUrl, name, movieUrl, callback)
-                            }
-                        }
-                        found = true
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG_TEST, "Error parsing server results: ${e.message}")
-            }
-
-            try {
-                val cleanedDownloads = org.json.JSONTokener(rawDownloads).nextValue().toString()
-                val downloadArr = org.json.JSONArray(cleanedDownloads)
-                for (i in 0 until downloadArr.length()) {
-                    val obj = downloadArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val url = obj.optString("url", "")
-                    if (url.isNotBlank()) {
-                        Log.i(TAG_TEST, "Found download link: name='$name', url='$url'")
-                        callback(
-                            newExtractorLink(name, name, url, type = getLinkType(url)) {
-                                this.referer = movieUrl
-                            }
-                        )
-                        found = true
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG_TEST, "Error parsing download results: ${e.message}")
-            }
-
-            Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
-            return found
-        } catch (e: Exception) {
-            Log.e(TAG_TEST, "Exception in isolated test flow: ${e.message}")
+        val activity = ActivityProvider.currentActivity
+        if (activity == null) {
+            Log.e(TAG_TEST, "No activity available")
+            return false
         }
-        return false
+
+        return withContext(Dispatchers.Main) {
+            val result = CompletableDeferred<Boolean>()
+            var redirectPending = false
+
+            val webView = WebView(activity)
+            webView.settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                useWideViewPort = true
+                loadWithOverviewMode = true
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                userAgentString = httpService.userAgent
+            }
+
+            val dialog = android.app.Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply {
+                setContentView(webView)
+                setCancelable(true)
+                setCanceledOnTouchOutside(false)
+                setOnKeyListener { _, keyCode, _ ->
+                    if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                        dismiss()
+                        true
+                    } else false
+                }
+            }
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val url = request.url.toString()
+                    Log.i(TAG_TEST, "╔═══════════════════════════════════════════")
+                    Log.i(TAG_TEST, "║ shouldOverrideUrlLoading")
+                    Log.i(TAG_TEST, "║ URL: $url")
+                    Log.i(TAG_TEST, "║ Method: ${request.method}")
+                    Log.i(TAG_TEST, "║ IsRedirect: ${request.isRedirect}")
+                    Log.i(TAG_TEST, "╚═══════════════════════════════════════════")
+
+                    if (!url.startsWith("http")) return true
+                    if (redirectPending) return true
+
+                    redirectPending = true
+                    AlertDialog.Builder(activity)
+                        .setTitle("Redirect Confirmation")
+                        .setMessage("Target URL:\n$url")
+                        .setPositiveButton("Yes") { _, _ ->
+                            Log.i(TAG_TEST, "Redirect ACCEPTED: $url")
+                            redirectPending = false
+                            view.loadUrl(url)
+                        }
+                        .setNegativeButton("No") { _, _ ->
+                            Log.i(TAG_TEST, "Redirect REJECTED: $url")
+                            redirectPending = false
+                        }
+                        .setCancelable(false)
+                        .show()
+                    return true
+                }
+
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val url = request.url.toString()
+                    val headers = request.requestHeaders
+                    Log.i(TAG_TEST, "╔═══════════════════════════════════════════")
+                    Log.i(TAG_TEST, "║ shouldInterceptRequest")
+                    Log.i(TAG_TEST, "║ URL: $url")
+                    Log.i(TAG_TEST, "║ Headers:")
+                    if (headers != null) {
+                        for ((key, value) in headers) {
+                            Log.i(TAG_TEST, "║   $key: $value")
+                        }
+                    } else {
+                        Log.i(TAG_TEST, "║   (no headers)")
+                    }
+                    Log.i(TAG_TEST, "╚═══════════════════════════════════════════")
+                    return super.shouldInterceptRequest(view, request)
+                }
+
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    Log.i(TAG_TEST, "═══════════════════════════════════════════")
+                    Log.i(TAG_TEST, "onPageStarted: $url")
+                    Log.i(TAG_TEST, "═══════════════════════════════════════════")
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    Log.i(TAG_TEST, "═══════════════════════════════════════════")
+                    Log.i(TAG_TEST, "onPageFinished: $url")
+                    Log.i(TAG_TEST, "═══════════════════════════════════════════")
+                }
+
+                override fun onLoadResource(view: WebView, url: String) {
+                    Log.i(TAG_TEST, "onLoadResource: $url")
+                    super.onLoadResource(view, url)
+                }
+
+                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                    Log.i(TAG_TEST, "onReceivedSslError: ${error.primaryError}")
+                    handler.proceed()
+                }
+            }
+
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+            val timeoutRunnable = Runnable {
+                if (!result.isCompleted) {
+                    Log.i(TAG_TEST, "Timeout reached")
+                    dialog.dismiss()
+                    webView.destroy()
+                    result.complete(false)
+                }
+            }
+            handler.postDelayed(timeoutRunnable, 120000)
+
+            dialog.setOnDismissListener {
+                if (!result.isCompleted) {
+                    handler.removeCallbacks(timeoutRunnable)
+                    Log.i(TAG_TEST, "WebView dialog closed by user")
+                    webView.destroy()
+                    result.complete(false)
+                }
+            }
+
+            dialog.show()
+            webView.loadUrl(movieUrl)
+            result.await()
+        }
     }
 
 }
