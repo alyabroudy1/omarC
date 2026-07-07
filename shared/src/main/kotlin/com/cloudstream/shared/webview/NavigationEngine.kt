@@ -565,7 +565,7 @@ class NavigationEngine(
 
                 logI(
                     "shouldOverride/$webViewId",
-                    "main=$isMain host=$nextHost currentLocked=$isOnDestination next=${safeTrim(nextUrl, 220)}"
+                    "main=$isMain host=$nextHost currentLocked=$isOnDestination isPopup=$isPopup next=${safeTrim(nextUrl, 220)}"
                 )
 
                 if (scheme != "http" && scheme != "https") {
@@ -573,12 +573,12 @@ class NavigationEngine(
                     return true
                 }
 
-                if (isMain && isOnDestination) {
+                if (!isPopup && isMain && isOnDestination) {
                     logW("shouldOverride/$webViewId", "Destination lock blocked navigation to $nextUrl")
                     return true
                 }
 
-                if (isMain && allowedDomains.isNotEmpty()) {
+                if (!isPopup && isMain && allowedDomains.isNotEmpty()) {
                     val allowed = allowedDomains.any { allowedDomain ->
                         nextHost == allowedDomain || nextHost.endsWith(".$allowedDomain")
                     }
