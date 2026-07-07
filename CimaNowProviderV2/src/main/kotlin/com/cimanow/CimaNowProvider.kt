@@ -42,6 +42,76 @@ class CimaNowProvider : BaseProvider() {
         WebViewFlowHelper(httpService.navigationEngine)
     }
 
+    companion object {
+        private val JS_EXTRACT_SERVERS = """
+(function(){
+    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var servers = [];
+    for (var i = 0; i < items.length; i++) {
+        var idx = items[i].getAttribute('data-index') || '';
+        var id = items[i].getAttribute('data-id') || '';
+        var name = (items[i].textContent || '').trim().slice(0, 60);
+        servers.push({index: idx, id: id, name: name});
+        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'"');
+    }
+    return JSON.stringify(servers);
+})();
+        """.trimIndent()
+
+        private val JS_FETCH_IFRAMES = """
+(function(){
+    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var baseUrl = window.location.origin;
+    var results = [];
+    var done = 0;
+    for (var i = 0; i < Math.min(items.length, 10); i++) {
+        var idx = items[i].getAttribute('data-index') || '';
+        var id = items[i].getAttribute('data-id') || '';
+        var name = (items[i].textContent || '').trim().slice(0, 60);
+        var ajaxUrl = baseUrl + '/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=' + idx + '&id=' + id;
+        console.log('[Nav] Fetching server ' + name + ': ' + ajaxUrl);
+        (function(srvName, srvIdx, url) {
+            fetch(url, {credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': window.location.href}})
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    var iframeSrc = '';
+                    var match = html.match(/<iframe[^>]+src=["']([^"']+)["']/);
+                    if (match) iframeSrc = match[1];
+                    console.log('[Nav] Server ' + srvName + ' iframe: ' + iframeSrc);
+                    results.push({name: srvName, index: srvIdx, iframe: iframeSrc, responseLength: html.length});
+                    done++;
+                    if (done === Math.min(document.querySelectorAll('#watch li, li[data-index], [data-index]').length, 10)) {
+                        window._serverResults = JSON.stringify(results);
+                    }
+                })
+                .catch(function(err) {
+                    console.log('[Nav] Server ' + srvName + ' error: ' + err.message);
+                    results.push({name: srvName, index: srvIdx, iframe: '', error: err.message});
+                    done++;
+                });
+        })(name, idx, ajaxUrl);
+    }
+    return 'fetching_' + Math.min(items.length, 10) + '_servers';
+})();
+        """.trimIndent()
+
+        private val JS_EXTRACT_DOWNLOADS = """
+(function(){
+    var links = document.querySelectorAll('#download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
+    var downloads = [];
+    for (var i = 0; i < links.length; i++) {
+        var name = (links[i].textContent || '').trim().slice(0, 60);
+        var href = links[i].href || '';
+        if (href && name) {
+            downloads.push({name: name, url: href});
+            console.log('[Nav] Download #'+i+': name="'+name+'" url="'+href+'"');
+        }
+    }
+    return JSON.stringify(downloads);
+})();
+        """.trimIndent()
+    }
+
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -1518,10 +1588,10 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
                 // Extract server list from the rendered page
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
+                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
 
                 // Let the page's own JS finish loading iframes from core.php via AJAX
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
+                NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
                 NavigationStep.WaitForDelay(8000L),
 
                 // Retrieve iframe results
@@ -1531,7 +1601,7 @@ class CimaNowProvider : BaseProvider() {
                 ),
 
                 // Extract download links
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
+                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
                 NavigationStep.ExtractHtml(key = "html_final")
             )
