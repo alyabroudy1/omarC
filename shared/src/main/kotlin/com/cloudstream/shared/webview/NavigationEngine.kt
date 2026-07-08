@@ -483,13 +483,13 @@ class NavigationEngine(
                 if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        // CRITICAL: Never follow redirects internally for main-frame requests.
-                        // If we follow the redirect internally (e.g., 301 blog-post.html → blog-post.html/),
-                        // the WebView's URL tracker never updates and step patterns (like WaitForUrl) fail.
-                        // By returning null on 3xx, the WebView handles the redirect natively,
-                        // updates its URL, and the new (redirected) request gets re-intercepted
-                        // with our custom headers.
-                        conn.instanceFollowRedirects = false
+                        // Follow redirects internally so we get the final content from the
+                        // redirect target (e.g. blog-post.html → blog-post.html/). Our spoofed
+                        // sec-ch-ua headers stay on the connection through the redirect chain,
+                        // so Cloudflare doesn't block the redirected request. The WebView's URL
+                        // tracker stays at the original URL (no trailing slash), but our regex
+                        // `blog-post\.html(/|$|\?)` matches both forms.
+                        conn.instanceFollowRedirects = true
 
                         // Copy all headers EXCEPT X-Requested-With and the sec-ch-ua fingerprint headers
                         // (we override these below to mask that we're a WebView)
@@ -536,15 +536,6 @@ class NavigationEngine(
                         conn.readTimeout = 15000
 
                         val code = conn.responseCode
-                        // CRITICAL: On 3xx redirects for main-frame, return null so the WebView
-                        // follows the redirect natively — its URL tracker will update to the
-                        // Location header's target, and the redirected request will hit this
-                        // interceptor again with our custom (non-WebView) headers.
-                        if (request.isForMainFrame && code in 300..399) {
-                            val location = conn.getHeaderField("Location")
-                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Main-frame 3xx ($code) detected for ${reqUrl.take(80)} → Location: ${location?.take(120)}; returning null for native WebView redirect")
-                            return null
-                        }
 
                         if (code == 200) {
                             val ct = conn.contentType ?: "application/octet-stream"
