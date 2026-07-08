@@ -431,6 +431,7 @@ class NavigationEngine(
                             ProviderLogger.i(TAG, "onPageStarted", "Destination lock engaged for URL matching pattern", "url" to url)
                         }
                         isOnDestination = true
+                        autoApproveAllRedirects = false
                     }
                 }
                 view?.evaluateJavascript("(function(){ return document.title; })();", null)
@@ -476,15 +477,17 @@ class NavigationEngine(
                 // NEVER intercept Cloudflare challenge scripts — they must execute in the
                 // original WebView context to properly solve the JS challenge and set cookies.
                 val isCfChallenge = path.contains("/cdn-cgi/")
-                val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
+                val isFreeDomain = host.contains("freex2line.online")
+                val isCimaDomain = host.contains("cimanow.cc")
+                val isProtectedDomain = isFreeDomain || isCimaDomain
 
-                // CRITICAL: Never intercept Cloudflare challenge scripts or main-frame for
-                // non-protected domains — they must flow through the WebView natively.
-                // Protected-domain main frames ARE intercepted (to strip the WebView fingerprint
-                // headers like sec-ch-ua="Android WebView" and X-Requested-With) but redirects
-                // are not followed internally; instead we return null on 3xx so the WebView's
-                // native redirect handling kicks in and the URL tracker updates correctly.
-                if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
+                // CRITICAL: Never intercept Cloudflare challenge scripts — they must execute in the
+                // original WebView context to properly solve the JS challenge and set cookies.
+                // Only intercept main-frame for freex2line.online (timer page) to strip WebView
+                // fingerprint headers. For cimanow.cc (watching page), let the WebView handle
+                // main-frame natively — Cloudflare clearance and cookies are domain-specific and
+                // the interceptor lacks cimanow.cc credentials.
+                if (request.isForMainFrame && (!isProtectedDomain || isCimaDomain || reqUrl.contains("/cdn-cgi/"))) return null
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
@@ -567,8 +570,9 @@ class NavigationEngine(
                                 val cleanBody = body.trimStart('\uFEFF').trimStart('\u00BB').trim()
                                 if (cleanBody.isNotBlank() && (cleanBody.startsWith("http://") || cleanBody.startsWith("https://"))) {
                                     interceptedWatchingUrl = cleanBody
-                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "✅ Captured watching URL: ${cleanBody.take(120)}",
-                                        "rawPrefix" to body.take(20).replace("\uFEFF", "{BOM}").replace("\u00BB", "{»}"))
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "✅ Captured watching URL: ${cleanBody}",
+                                        "rawPrefix" to body.take(20).replace("\uFEFF", "{BOM}").replace("\u00BB", "{»}"),
+                                        "length" to cleanBody.length.toString())
                                 } else {
                                     ProviderLogger.w(TAG, "shouldInterceptRequest", "⚠️ get-link.php response is not a URL: ${body.take(120)}")
                                 }
