@@ -481,6 +481,11 @@ class NavigationEngine(
                 val isCimaDomain = host.contains("cimanow.cc")
                 val isProtectedDomain = isFreeDomain || isCimaDomain
 
+                // Detect CDN scripts loaded via document.write that Chrome may block
+                // (jquery-cookie, sweetalert2, lazyload on cdnjs.cloudflare.com / cdn.jsdelivr.net)
+                val requiresInterventionBypass = (host == "cdnjs.cloudflare.com" || host == "cdn.jsdelivr.net")
+                    && (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
+
                 // CRITICAL: Never intercept Cloudflare challenge scripts — they must execute in the
                 // original WebView context to properly solve the JS challenge and set cookies.
                 // Only intercept main-frame for freex2line.online (timer page) to strip WebView
@@ -498,7 +503,10 @@ class NavigationEngine(
                 // Intercept get-link.php with spoofed headers so the page's JS gets the
                 // watching URL. Also intercept assets, AJAX calls, header leaks, and
                 // main-frame requests for protected domains to clean headers.
-                if (isProtectedDomain && (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
+                // Also intercept CDN scripts (cdnjs.cloudflare.com, cdn.jsdelivr.net) that are
+                // loaded via document.write — Chrome blocks cross-origin document.write in
+                // WebView, breaking the server list extraction.
+                if ((isProtectedDomain || requiresInterventionBypass) && (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         // Follow redirects internally so we get the final content from the
