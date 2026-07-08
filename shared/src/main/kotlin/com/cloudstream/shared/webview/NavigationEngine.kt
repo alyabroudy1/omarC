@@ -461,8 +461,9 @@ class NavigationEngine(
                 val isCfChallenge = path.contains("/cdn-cgi/")
                 val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
 
-                // CRITICAL: Never intercept Main Frame unless it is a protected domain where we must strip X-Requested-With
-                if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
+                // CRITICAL: Never intercept Main Frame — let the WebView handle it natively
+                // so 301 redirects (e.g. blog-post.html → blog-post.html/) update the URL naturally.
+                if (request.isForMainFrame) return null
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
