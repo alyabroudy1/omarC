@@ -81,6 +81,13 @@ sealed class NavigationStep {
         val extraHeaders: Map<String, String> = emptyMap()
     ) : NavigationStep()
 
+    /** Load raw HTML string into the WebView with a base URL (for resolving relative URLs) */
+    data class LoadHtml(
+        val html: String,
+        val baseUrl: String,
+        val referer: String? = null
+    ) : NavigationStep()
+
     data class ClickElement(
         val selector: String,
         val timeoutMs: Long = 10_000L,

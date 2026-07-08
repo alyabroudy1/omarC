@@ -100,6 +100,15 @@ class NavigationEngine(
                                 currentUrl = step.url
                                 loadUrlInWebView(webView, step.url, step.referer, step.extraHeaders)
                             }
+                            is NavigationStep.LoadHtml -> {
+                                ProviderLogger.w(TAG, "execute", "Step $index: LoadHtml",
+                                    "baseUrl" to step.baseUrl.take(100),
+                                    "htmlLen" to step.html.length.toString())
+                                currentUrl = step.baseUrl
+                                webView.loadDataWithBaseURL(step.baseUrl, step.html, "text/html", "UTF-8", null)
+                                ProviderLogger.d(TAG, "execute", "Step $index: LoadHtml — loadDataWithBaseURL called, waiting 2s for initial render")
+                                delay(2000)
+                            }
                             is NavigationStep.ClickElement -> {
                                 val clicked = clickElementInWebView(webView, step.selector, step.timeoutMs, currentUrl)
                                 if (!clicked) {

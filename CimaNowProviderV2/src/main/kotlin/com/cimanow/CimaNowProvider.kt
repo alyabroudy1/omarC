@@ -1456,33 +1456,265 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
+    // ==================== Hybrid Approach: HTTP Nav → WebView Timer ====================
+
+    /**
+     * Navigates the freex redirect chain using httpService (okhttp) directly with spoofed headers.
+     *
+     * Flow: loadon → redirectingfree → blog-post.html → (follow 301) → blog-post.html/ 158KB timer HTML.
+     * Cookies are extracted at each hop and set into CookieManager for the WebView.
+     *
+     * @param movieUrl The CimaNow movie/episode page URL
+     * @return The blog-post.html/ timer HTML (158KB) or null on failure
+     */
+    private suspend fun navigateToTimerPageViaHttp(movieUrl: String): String? {
+        val TAG_HT = "CimaNowHttpNav"
+        try {
+            Log.i(TAG_HT, "======== [START] HTTP redirect chain navigation ========")
+            Log.i(TAG_HT, "movieUrl: $movieUrl")
+
+            // ====================== Step 1: Get movie page ======================
+            Log.i(TAG_HT, "Step 1/4: Fetching movie page to extract freex URL")
+            val cacheBuster = "?_ts=${System.currentTimeMillis()}"
+            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl$cacheBuster"
+            val rawHeaders = mapOf(
+                "User-Agent" to httpService.userAgent,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            Log.d(TAG_HT, "GET $fetchUrl")
+            Log.d(TAG_HT, "Headers: UA=${httpService.userAgent.take(50)}...")
+
+            val movieResponse = httpService.getRaw(fetchUrl, headers = rawHeaders)
+            val movieStatus = movieResponse.code
+            val movieHeaders = movieResponse.headers
+            val movieHtml = movieResponse.body?.string() ?: ""
+            movieResponse.close()
+            Log.i(TAG_HT, "Movie page response: HTTP $movieStatus, ${movieHtml.length} bytes")
+            Log.d(TAG_HT, "Response headers: ${movieHeaders.joinToString("; ") { "${it.first}=${it.second.take(60)}" }}")
+
+            // Extract the first freex2line URL (loadon link)
+            val freexMatcher = Pattern.compile("href=[\"'](https?://[^\"']*freex2line[^\"']*)[\"']").matcher(movieHtml)
+            if (!freexMatcher.find()) {
+                Log.e(TAG_HT, "FATAL: No freex URL found in movie page")
+                return null
+            }
+            val freexUrl = freexMatcher.group(1)
+            Log.i(TAG_HT, "Extracted freex URL: $freexUrl")
+            Log.d(TAG_HT, "freexMatcher found match in movieHtml[${freexMatcher.start()}:${freexMatcher.end()}]")
+
+            // ====================== Step 2: Fetch loadon ======================
+            Log.i(TAG_HT, "Step 2/4: Fetching loadon → $freexUrl")
+            val sessionHeaders = mutableMapOf<String, String>()
+            sessionHeaders["User-Agent"] = httpService.userAgent
+            sessionHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+            val loadonResponse = httpService.getRaw(freexUrl, headers = sessionHeaders)
+            val loadonStatus = loadonResponse.code
+            val loadonBody = loadonResponse.body?.string() ?: ""
+            Log.i(TAG_HT, "loadon response: HTTP $loadonStatus, ${loadonBody.length} bytes")
+            Log.d(TAG_HT, "loadon body preview (200 chars): ${loadonBody.take(200)}")
+
+            // Extract Set-Cookie headers
+            val cookies = mutableMapOf<String, String>()
+            for (header in loadonResponse.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    val key = header.substring(0, eqIdx)
+                    cookies[key] = value
+                    Log.d(TAG_HT, "Cookie from loadon: $key=$value")
+                }
+            }
+            for (header in loadonResponse.headers("set-cookie")) {
+                if (header.startsWith("Cookie=")) continue  // skip if already captured above
+            }
+            loadonResponse.close()
+
+            if (cookies.isNotEmpty()) {
+                sessionHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                Log.i(TAG_HT, "Tracking ${cookies.size} cookies: ${cookies.keys.joinToString(", ")}")
+            } else {
+                Log.w(TAG_HT, "No cookies set by loadon")
+            }
+
+            // Try to extract JS redirect URL from loadon response body for debugging
+            val jsRedirectMatch = Regex("""window\.location(?:\.href)?\s*=\s*['"]([^'"]+)['"]""").find(loadonBody)
+            if (jsRedirectMatch != null) {
+                Log.d(TAG_HT, "JS redirect target in loadon: ${jsRedirectMatch.groupValues[1]}")
+            } else {
+                Log.d(TAG_HT, "No JS redirect found in loadon body (expected if href.li is skipped)")
+            }
+
+            // ====================== Step 3: Fetch redirectingfree ======================
+            Log.i(TAG_HT, "Step 3/4: Fetching redirectingfree")
+            sessionHeaders["Referer"] = freexUrl
+            Log.d(TAG_HT, "GET https://rm.freex2line.online/redirectingfree/")
+            Log.d(TAG_HT, "Request headers: ${sessionHeaders.entries.joinToString(", ") { "${it.key}=${it.value.take(50)}" }}")
+
+            val redirResponse = httpService.getRaw("https://rm.freex2line.online/redirectingfree/", headers = sessionHeaders)
+            val redirStatus = redirResponse.code
+            val redirBody = redirResponse.body?.string() ?: ""
+            Log.i(TAG_HT, "redirectingfree response: HTTP $redirStatus, ${redirBody.length} bytes")
+            Log.d(TAG_HT, "redirectingfree body preview (200 chars): ${redirBody.take(200)}")
+
+            // Extract any cookies
+            var redirCookies = 0
+            for (header in redirResponse.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    val key = header.substring(0, eqIdx)
+                    if (key !in cookies) {
+                        cookies[key] = value
+                        redirCookies++
+                        Log.d(TAG_HT, "New cookie from redirectingfree: $key=$value")
+                    }
+                }
+            }
+            if (redirCookies > 0) {
+                Log.i(TAG_HT, "Got $redirCookies new cookies from redirectingfree")
+            }
+
+            // Update cookie header
+            if (cookies.isNotEmpty()) {
+                sessionHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            }
+            redirResponse.close()
+
+            // Extract JS redirect target from redirectingfree
+            val redirJsMatch = Regex("""window\.location(?:\.href)?\s*=\s*['"]([^'"]+)['"]""").find(redirBody)
+            if (redirJsMatch != null) {
+                Log.d(TAG_HT, "JS redirect target in redirectingfree: ${redirJsMatch.groupValues[1]}")
+            } else {
+                Log.w(TAG_HT, "No JS redirect found in redirectingfree body")
+                Log.d(TAG_HT, "redirectingfree full body: $redirBody")
+            }
+
+            // ====================== Step 4: Fetch blog-post.html ======================
+            Log.i(TAG_HT, "Step 4/4: Fetching blog-post.html (with 301 redirect to blog-post.html/)")
+            sessionHeaders["Referer"] = "https://rm.freex2line.online/redirectingfree/"
+            sessionHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+
+            Log.d(TAG_HT, "GET https://rm.freex2line.online/2020/02/blog-post.html")
+            Log.d(TAG_HT, "Request headers: ${sessionHeaders.entries.joinToString(", ") { "${it.key}=${it.value.take(50)}" }}")
+
+            val blogResponse = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = sessionHeaders)
+            val blogStatus = blogResponse.code
+            val blogFinalUrl = blogResponse.request.url.toString()
+            val blogBody = blogResponse.body?.string() ?: ""
+            Log.i(TAG_HT, "blog-post.html response: HTTP $blogStatus, ${blogBody.length} bytes, finalUrl=$blogFinalUrl")
+            Log.d(TAG_HT, "blog-post.html body preview (200 chars): ${blogBody.take(200)}")
+
+            // Check if we got the timer page (expecting ~158KB)
+            when {
+                blogBody.length > 100000 -> Log.i(TAG_HT, "✅ Timer page detected! Body is ${blogBody.length} bytes (expected ~158KB)")
+                blogBody.length > 10000 -> Log.w(TAG_HT, "⚠️ Timer page seems smaller than expected: ${blogBody.length} bytes")
+                blogBody.length < 1000 -> {
+                    Log.e(TAG_HT, "❌ Timer page too small (${blogBody.length} bytes). Response may be blocked or empty.")
+                    Log.d(TAG_HT, "Full body: $blogBody")
+                }
+            }
+
+            // Extract any additional cookies
+            for (header in blogResponse.headers("Set-Cookie")) {
+                val eqIdx = header.indexOf('=')
+                if (eqIdx > 0) {
+                    val semiIdx = header.indexOf(';')
+                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
+                    val key = header.substring(0, eqIdx)
+                    if (key !in cookies) {
+                        cookies[key] = value
+                        Log.d(TAG_HT, "New cookie from blog-post: $key=$value")
+                    }
+                }
+            }
+            blogResponse.close()
+
+            // ====================== Set cookies in CookieManager ======================
+            if (cookies.isNotEmpty()) {
+                Log.i(TAG_HT, "Setting ${cookies.size} cookies in CookieManager for rm.freex2line.online")
+                val cm = android.webkit.CookieManager.getInstance()
+                var setCount = 0
+                for ((key, value) in cookies) {
+                    cm.setCookie("https://rm.freex2line.online", "$key=$value; domain=.rm.freex2line.online")
+                    setCount++
+                }
+                cm.flush()
+                Log.i(TAG_HT, "Flushed $setCount cookies to CookieManager")
+            } else {
+                Log.w(TAG_HT, "No cookies to set in CookieManager")
+            }
+
+            // ====================== Validate the HTML ======================
+            // Check for key markers that indicate it's the real timer page
+            val hasCountdown = blogBody.contains("countdown") || blogBody.contains("setInterval") || blogBody.contains("setTimeout")
+            val hasGetLink = blogBody.contains("get-link.php")
+            val hasDownloadBtn = blogBody.contains("downloadbtn") || blogBody.contains("download-btn") || blogBody.contains("download_btn")
+            Log.i(TAG_HT, "Validation: hasCountdown=$hasCountdown, hasGetLink=$hasGetLink, hasDownloadBtn=$hasDownloadBtn")
+
+            if (blogBody.length < 5000) {
+                Log.e(TAG_HT, "❌ Timer page body too short (${blogBody.length}), likely blocked by CF")
+                Log.d(TAG_HT, "Dumping blog-post body for analysis:\n$blogBody")
+                return null
+            }
+
+            Log.i(TAG_HT, "======== [END] HTTP redirect chain SUCCESS ========")
+            return blogBody
+        } catch (e: Exception) {
+            Log.e(TAG_HT, "EXCEPTION in HTTP navigation: ${e.message}")
+            Log.e(TAG_HT, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
+        }
+        Log.i(TAG_HT, "======== [END] HTTP redirect chain FAILED ========")
+        return null
+    }
+
     private suspend fun runIsolatedWebViewTest(
         movieUrl: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val TAG_TEST = "CimaNowIsolatedTest"
-        Log.i(TAG_TEST, "========== [START] Isolated WebView Test Flow ==========")
+        Log.i(TAG_TEST, "========== [START] HYBRID WebView Test Flow ==========")
         Log.i(TAG_TEST, "Target URL: $movieUrl")
 
         try {
             val userAgent = httpService.userAgent
 
-            // Pure user simulation: navigate → click watch → reach blog-post → click download → /watching/
+            // ======================== PHASE 1: HTTP navigation ========================
+            Log.i(TAG_TEST, "PHASE 1: Navigating redirect chain via httpService (OkHttp)...")
+            val timerHtml = navigateToTimerPageViaHttp(movieUrl)
+            if (timerHtml == null) {
+                Log.e(TAG_TEST, "❌ PHASE 1 FAILED: Could not fetch timer page HTML via HTTP")
+                return false
+            }
+            Log.i(TAG_TEST, "✅ PHASE 1 SUCCESS: Got timer page HTML (${timerHtml.length} bytes)")
+            Log.d(TAG_TEST, "Timer HTML first 300 chars: ${timerHtml.take(300)}")
+            Log.d(TAG_TEST, "Timer HTML last 100 chars: ...${timerHtml.takeLast(100)}")
+
+            // Log key markers in the HTML
+            for (marker in listOf("countdown", "get-link.php", "downloadbtn", "request_id", "hmac", "_0x_cfg", "setInterval", "setTimeout")) {
+                val idx = timerHtml.indexOf(marker)
+                if (idx >= 0) {
+                    Log.d(TAG_TEST, "Marker '$marker' found at position $idx, context: ...${timerHtml.substring(maxOf(0, idx - 30), minOf(timerHtml.length, idx + 80))}...")
+                } else {
+                    Log.w(TAG_TEST, "Marker '$marker' NOT found in timer HTML")
+                }
+            }
+
+            // ======================== PHASE 2: WebView rendering ========================
+            Log.i(TAG_TEST, "PHASE 2: Rendering timer HTML in WebView via loadDataWithBaseURL...")
+            val baseUrl = "https://rm.freex2line.online/2020/02/blog-post.html/"
+            val referer = "https://rm.freex2line.online/redirectingfree/"
+
             val steps = listOf(
-                NavigationStep.LoadUrl(movieUrl),
-                NavigationStep.ExtractHtml(key = "html1_movie"),
+                // Step 0: Load the timer HTML directly (no network request for the page itself,
+                //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
+                NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
-                // Try to click the watch button — if page auto-redirects, this times out gracefully
-                NavigationStep.WaitForSelector("a.shine", timeoutMs = 30000L, abortOnFailure = false),
-                NavigationStep.ClickElement("a.shine", timeoutMs = 5000L, abortOnFailure = false),
-
-                // Wait for blog-post (the timer page). Match with or without trailing slash,
-                // because the JS-redirect goes to blog-post.html (no slash) but Cloudflare may
-                // 301 to blog-post.html/. Either way, we want to proceed when we reach it.
-                NavigationStep.WaitForUrl("blog-post\\.html(/|$|\\?)", timeoutMs = 90000L, abortOnFailure = true),
-                NavigationStep.ExtractHtml(key = "html_blog"),
-
-                // Wait for the download button after countdown finishes, then click it
+                // Step 1: Wait for the download button after JS countdown finishes.
+                //         The page's inline JS computes hmac_token and calls get-link.php,
+                //         which returns the watching URL and sets #downloadbtn.href to it.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = """
                         (function() {
