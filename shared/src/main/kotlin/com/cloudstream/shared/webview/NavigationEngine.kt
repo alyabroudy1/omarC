@@ -488,11 +488,10 @@ class NavigationEngine(
 
                 // CRITICAL: Never intercept Cloudflare challenge scripts — they must execute in the
                 // original WebView context to properly solve the JS challenge and set cookies.
-                // Only intercept main-frame for freex2line.online (timer page) to strip WebView
-                // fingerprint headers. For cimanow.cc (watching page), let the WebView handle
-                // main-frame natively — Cloudflare clearance and cookies are domain-specific and
-                // the interceptor lacks cimanow.cc credentials.
-                if (request.isForMainFrame && (!isProtectedDomain || isCimaDomain || reqUrl.contains("/cdn-cgi/"))) return null
+                // Intercept main-frame for ALL protected domains (including cimanow.cc) to
+                // spoof sec-ch-ua headers and hide the WebView fingerprint. Without this,
+                // cimanow.cc detects sec-ch-ua="Android WebView" and redirects to home.
+                if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
@@ -607,7 +606,28 @@ class NavigationEngine(
 
                             val mimeLog = if (mime != reportedMime) "$reportedMime -> $mime" else mime
                             ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED ${reqUrl.take(80)} ($mimeLog)")
-                            return WebResourceResponse(mime, charset.name(), conn.inputStream)
+
+                            // Rewrite HTML for cimanow.cc main-frame: replace document.write('<script src="...")>
+                            // and document.write('<link rel="stylesheet" href="...")> with direct tags
+                            // to bypass Chrome's cross-origin document.write intervention
+                            // (which blocks sweetalert2, jquery-cookie, lazyload).
+                            val bodyStream: java.io.InputStream = if (request.isForMainFrame && isCimaDomain && mime == "text/html") {
+                                val html = conn.inputStream.bufferedReader(charset).readText()
+                                var rewritten = html.replace(
+                                    Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*></script>\s*'\s*\)"""),
+                                    """<script src="$1"></script>"""
+                                )
+                                rewritten = rewritten.replace(
+                                    Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
+                                    """<link rel="stylesheet" href="$1">"""
+                                )
+                                val changed = if (rewritten != html) " (rewrote document.write)" else ""
+                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$changed")
+                                java.io.ByteArrayInputStream(rewritten.toByteArray(charset))
+                            } else {
+                                conn.inputStream
+                            }
+                            return WebResourceResponse(mime, charset.name(), bodyStream)
                         } else {
                             ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 ($code) for ${reqUrl.take(80)}")
                             return null
