@@ -1712,38 +1712,18 @@ class CimaNowProvider : BaseProvider() {
                 //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
                 NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
-                // Step 1: Wait for the download button after JS countdown finishes.
-                //         The page's inline JS computes hmac_token and calls get-link.php,
-                //         which returns the watching URL and sets #downloadbtn.href to it.
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = """
-                        (function() {
-                            var btn = document.querySelector('#downloadbtn');
-                            if (!btn) return false;
-                            var href = btn.getAttribute('href') || '';
-                            return href.indexOf('token=') !== -1 || (href.indexOf('/watching/') !== -1 && href !== 'https://cimanow.cc/pig/watching/' && href !== 'https://cimanow.cc/pig/watching');
-                        })()
-                    """.trimIndent(),
-                    timeoutMs = 20000L, abortOnFailure = true
-                ),
+                // Step 1: Wait for the countdown timer to finish and get-link.php to fire.
+                //         The intercepted get-link.php response is captured by the request
+                //         interceptor and stored in interceptedWatchingUrl. The countdown
+                //         on this page takes ~11 seconds, so 15s should be enough.
+                NavigationStep.WaitForDelay(15000L),
 
-                // Force show the button to ensure native click/JS click works correctly
-                NavigationStep.ExecuteJs(
-                    javascript = """
-                        (function() {
-                            var btn = document.querySelector('#downloadbtn');
-                            if (btn) {
-                                btn.style.display = 'inline-block';
-                                btn.style.visibility = 'visible';
-                                btn.style.opacity = '1';
-                            }
-                        })();
-                    """.trimIndent()
-                ),
-                NavigationStep.ClickElement("#downloadbtn", timeoutMs = 5000L, abortOnFailure = true),
-
-                // Wait for /watching/ page — page auto-navigates after get-link.php returns the URL
-                NavigationStep.WaitForUrl("/(watch|watching)/", timeoutMs = 30000L, abortOnFailure = true),
+                // Step 2: Navigate to the watching URL captured by the interceptor.
+                //         This polls interceptedWatchingUrl for up to 15s, then calls
+                //         loadUrlInWebView. The main-frame navigation is then intercepted
+                //         by the request interceptor (protected domain + spoofed headers),
+                //         so Cloudflare doesn't block it with sec-ch-ua: "Android WebView".
+                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
                 // Let the page's own JS render servers and load iframes
                 NavigationStep.WaitForDelay(15000L),

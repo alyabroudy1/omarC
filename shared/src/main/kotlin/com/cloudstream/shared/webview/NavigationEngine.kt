@@ -484,12 +484,10 @@ class NavigationEngine(
                 val isAjaxEndpoint = path.contains("core.php") && !isCfChallenge
                 val isAsset = (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
 
-                // Never intercept get-link.php — it must flow naturally through the WebView
-                // so the page's JS can call it, get the watching URL, and navigate the main frame.
-                if (isGetLink) return null
-
-                // Intercept if it's an asset, an AJAX call, the header leaked, OR if it's a main frame request for protected domains to clean the header
-                if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
+                // Intercept get-link.php with spoofed headers so the page's JS gets the
+                // watching URL. Also intercept assets, AJAX calls, header leaks, and
+                // main-frame requests for protected domains to clean headers.
+                if (isProtectedDomain && (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         // Follow redirects internally so we get the final content from the
@@ -553,16 +551,18 @@ class NavigationEngine(
                             val charset = try { Charset.forName(encodingStr) } catch (e: Exception) { Charsets.UTF_8 }
 
                             // Special handling for get-link.php — capture the watching URL
-                            // from the response body, then return an empty response so the
-                            // page's fetch() completes but can't shadow the URL.
+                            // from the response body, then return it so the page's JS can
+                            // update #downloadbtn.href and navigate the main frame.
                             if (isGetLink) {
                                 val body = try { conn.inputStream.bufferedReader(charset).readText() } catch (_: Exception) { "" }
                                 if (body.isNotBlank() && (body.startsWith("http://") || body.startsWith("https://"))) {
                                     interceptedWatchingUrl = body
-                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "Captured watching URL: ${body.take(120)}")
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "✅ Captured watching URL: ${body.take(120)}")
+                                } else {
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "⚠️ get-link.php response is not a URL: ${body.take(120)}")
                                 }
-                                val emptyBytes = "@".toByteArray()
-                                return WebResourceResponse("text/plain", "utf-8", emptyBytes.size, "", emptyMap(), java.io.ByteArrayInputStream(emptyBytes))
+                                val bodyBytes = body.toByteArray(charset)
+                                return WebResourceResponse("text/plain", charset.name(), bodyBytes.size, "", emptyMap(), java.io.ByteArrayInputStream(bodyBytes))
                             }
 
                             // Override wrong MIME types — server may return text/html for JS/CSS
