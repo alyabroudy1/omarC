@@ -478,7 +478,11 @@ class NavigationEngine(
                 if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        conn.instanceFollowRedirects = true
+                        // CRITICAL: Do NOT follow redirects for main-frame HTML requests.
+                        // If we follow the redirect internally (e.g., 301 blog-post.html → blog-post.html/),
+                        // the WebView's URL tracker never updates and step patterns (like WaitForUrl) fail.
+                        // By returning null on 3xx, the WebView handles the redirect naturally and updates its URL.
+                        conn.instanceFollowRedirects = !request.isForMainFrame
 
                         // Copy all headers EXCEPT X-Requested-With
                         reqHeaders.forEach { (key, value) ->
