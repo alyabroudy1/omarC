@@ -461,9 +461,13 @@ class NavigationEngine(
                 val isCfChallenge = path.contains("/cdn-cgi/")
                 val isProtectedDomain = host.contains("cimanow.cc") || host.contains("freex2line.online")
 
-                // CRITICAL: Never intercept Main Frame — let the WebView handle it natively
-                // so 301 redirects (e.g. blog-post.html → blog-post.html/) update the URL naturally.
-                if (request.isForMainFrame) return null
+                // CRITICAL: Never intercept Cloudflare challenge scripts or main-frame for
+                // non-protected domains — they must flow through the WebView natively.
+                // Protected-domain main frames ARE intercepted (to strip the WebView fingerprint
+                // headers like sec-ch-ua="Android WebView" and X-Requested-With) but redirects
+                // are not followed internally; instead we return null on 3xx so the WebView's
+                // native redirect handling kicks in and the URL tracker updates correctly.
+                if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
@@ -479,23 +483,36 @@ class NavigationEngine(
                 if (isProtectedDomain && (isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
-                        // CRITICAL: Do NOT follow redirects for main-frame HTML requests.
+                        // CRITICAL: Never follow redirects internally for main-frame requests.
                         // If we follow the redirect internally (e.g., 301 blog-post.html → blog-post.html/),
                         // the WebView's URL tracker never updates and step patterns (like WaitForUrl) fail.
-                        // By returning null on 3xx, the WebView handles the redirect naturally and updates its URL.
-                        conn.instanceFollowRedirects = !request.isForMainFrame
+                        // By returning null on 3xx, the WebView handles the redirect natively,
+                        // updates its URL, and the new (redirected) request gets re-intercepted
+                        // with our custom headers.
+                        conn.instanceFollowRedirects = false
 
-                        // Copy all headers EXCEPT X-Requested-With
+                        // Copy all headers EXCEPT X-Requested-With and the sec-ch-ua fingerprint headers
+                        // (we override these below to mask that we're a WebView)
                         reqHeaders.forEach { (key, value) ->
-                            if (!key.equals("X-Requested-With", true)) {
+                            if (!key.equals("X-Requested-With", true) &&
+                                !key.equals("sec-ch-ua", true) &&
+                                !key.equals("sec-ch-ua-mobile", true) &&
+                                !key.equals("sec-ch-ua-platform", true)) {
                                 conn.setRequestProperty(key, value)
                             }
                         }
+
                         // Explicitly send an empty string to overwrite the package name
                         conn.setRequestProperty("X-Requested-With", "")
 
                         // CRITICAL: Set a proper browser User-Agent — HttpURLConnection defaults to "Java/1.x"
                         conn.setRequestProperty("User-Agent", userAgent)
+
+                        // SPOOF sec-ch-ua headers to look like a real Chrome browser, not a WebView.
+                        // Cloudflare fingerprints "Android WebView" in sec-ch-ua and blocks it.
+                        conn.setRequestProperty("sec-ch-ua", "\"Chromium\";v=\"149\", \"Google Chrome\";v=\"149\", \"Not?A_Brand\";v=\"24\"")
+                        conn.setRequestProperty("sec-ch-ua-mobile", "?1")
+                        conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
 
                         // Set Referer if the original request had one (anti-hotlink protection)
                         val originalReferer = reqHeaders["Referer"]
@@ -503,8 +520,12 @@ class NavigationEngine(
                             conn.setRequestProperty("Referer", originalReferer)
                         }
 
-                        // Standard browser accept header
-                        conn.setRequestProperty("Accept", "*/*")
+                        // Standard browser accept header — use HTML accept for main-frame, */* for assets
+                        if (request.isForMainFrame) {
+                            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                        } else {
+                            conn.setRequestProperty("Accept", "*/*")
+                        }
 
                         // Pass the Cloudflare cookie that the main frame acquired
                         val cookies = CookieManager.getInstance().getCookie(reqUrl)
@@ -514,7 +535,18 @@ class NavigationEngine(
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
 
-                        if (conn.responseCode == 200) {
+                        val code = conn.responseCode
+                        // CRITICAL: On 3xx redirects for main-frame, return null so the WebView
+                        // follows the redirect natively — its URL tracker will update to the
+                        // Location header's target, and the redirected request will hit this
+                        // interceptor again with our custom (non-WebView) headers.
+                        if (request.isForMainFrame && code in 300..399) {
+                            val location = conn.getHeaderField("Location")
+                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Main-frame 3xx ($code) detected for ${reqUrl.take(80)} → Location: ${location?.take(120)}; returning null for native WebView redirect")
+                            return null
+                        }
+
+                        if (code == 200) {
                             val ct = conn.contentType ?: "application/octet-stream"
                             val reportedMime = ct.substringBefore(";").trim()
                             val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
@@ -554,7 +586,7 @@ class NavigationEngine(
                             ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED ${reqUrl.take(80)} ($mimeLog)")
                             return WebResourceResponse(mime, charset.name(), conn.inputStream)
                         } else {
-                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 (${conn.responseCode}) for ${reqUrl.take(80)}")
+                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 ($code) for ${reqUrl.take(80)}")
                             return null
                         }
                     } catch (e: Exception) {
