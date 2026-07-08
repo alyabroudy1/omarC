@@ -24,6 +24,7 @@ class NavigationEngine(
     /** Set when a redirect is pending user approval via the confirmation dialog */
     @Volatile
     var pendingRedirectUrl: String? = null
+    var autoApproveAllRedirects: Boolean = false
 
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
@@ -42,6 +43,7 @@ class NavigationEngine(
             // Reset intercepted state for this session
             interceptedWatchingUrl = null
             pendingRedirectUrl = null
+            autoApproveAllRedirects = false
 
             val activity = activityProvider()
             if (activity == null) {
@@ -185,9 +187,13 @@ class NavigationEngine(
                                 }
                             }
                             is NavigationStep.NavigateToWatchingUrl -> {
+                                // Enable auto-approve for the redirect chain through ad domains
+                                this@NavigationEngine.autoApproveAllRedirects = true
                                 val watchUrl = this@NavigationEngine.interceptedWatchingUrl
                                 if (!watchUrl.isNullOrBlank()) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: Navigating to watching URL: ${watchUrl.take(120)}")
+                                    // Pre-approve the redirect so no confirmation dialog appears
+                                    this@NavigationEngine.pendingRedirectUrl = watchUrl
                                     // Use the current page URL (blog-post.html) as Referer to prevent hotlink blocking
                                     val referer = currentUrl.takeIf { it.isNotBlank() }
                                     loadUrlInWebView(webView, watchUrl, referer, emptyMap())
@@ -200,6 +206,8 @@ class NavigationEngine(
                                         val url = this@NavigationEngine.interceptedWatchingUrl
                                         if (!url.isNullOrBlank()) {
                                             ProviderLogger.w(TAG, "execute", "Step $index: Watching URL appeared after polling: ${url.take(120)}")
+                                            // Pre-approve the redirect so no confirmation dialog appears
+                                            this@NavigationEngine.pendingRedirectUrl = url
                                             val referer = currentUrl.takeIf { it.isNotBlank() }
                                             loadUrlInWebView(webView, url, referer, emptyMap())
                                             currentUrl = url
@@ -555,14 +563,17 @@ class NavigationEngine(
                             // update #downloadbtn.href and navigate the main frame.
                             if (isGetLink) {
                                 val body = try { conn.inputStream.bufferedReader(charset).readText() } catch (_: Exception) { "" }
-                                if (body.isNotBlank() && (body.startsWith("http://") || body.startsWith("https://"))) {
-                                    interceptedWatchingUrl = body
-                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "✅ Captured watching URL: ${body.take(120)}")
+                                // Strip UTF-8 BOM (U+FEFF / EF BB BF) that some servers prepend
+                                val cleanBody = body.trimStart('\uFEFF').trimStart('\u00BB').trim()
+                                if (cleanBody.isNotBlank() && (cleanBody.startsWith("http://") || cleanBody.startsWith("https://"))) {
+                                    interceptedWatchingUrl = cleanBody
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest", "✅ Captured watching URL: ${cleanBody.take(120)}",
+                                        "rawPrefix" to body.take(20).replace("\uFEFF", "{BOM}").replace("\u00BB", "{»}"))
                                 } else {
                                     ProviderLogger.w(TAG, "shouldInterceptRequest", "⚠️ get-link.php response is not a URL: ${body.take(120)}")
                                 }
                                 val bodyBytes = body.toByteArray(charset)
-                                return WebResourceResponse("text/plain", charset.name(), bodyBytes.size, "", emptyMap(), java.io.ByteArrayInputStream(bodyBytes))
+                                return WebResourceResponse("text/plain", charset.name(), 200, "OK", emptyMap(), java.io.ByteArrayInputStream(bodyBytes))
                             }
 
                             // Override wrong MIME types — server may return text/html for JS/CSS
@@ -619,6 +630,21 @@ class NavigationEngine(
                     this@NavigationEngine.pendingRedirectUrl = null
                     ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "USER APPROVED REDIRECT",
                         "url" to nextUrl.take(120), "host" to nextHost, "mainFrame" to isMainFrame.toString())
+                    return false
+                }
+
+                // === AUTO-APPROVE ALL REDIRECTS DURING WATCHING PHASE ===
+                // The watching URL goes through dynamic ad domains (viiqkzqv.com, etc.)
+                // that change per session. We must allow all redirects to reach the video.
+                if (autoApproveAllRedirects && isMainFrame) {
+                    ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "AUTO-APPROVED (watching phase)",
+                        "url" to nextUrl.take(120), "host" to nextHost)
+                    // Stop auto-approving once we return to freex2line.online (the video player page)
+                    if (nextHost.contains("freex2line.online") && nextUrl.contains("/pig/watching/")) {
+                        autoApproveAllRedirects = false
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "🎬 Reached video player on freex2line",
+                            "url" to nextUrl.take(120))
+                    }
                     return false
                 }
 
