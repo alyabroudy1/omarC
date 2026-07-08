@@ -643,7 +643,7 @@ class NavigationEngine(
                             .setCancelable(false)
                             .show()
                     } else {
-                        ProviderLogger.e(TAG, "shouldOverrideUrlLoading", "No Activity available for redirect confirmation dialog", "url" to nextUrl.take(120))
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "No Activity available for redirect confirmation dialog", "url" to nextUrl.take(120))
                     }
                     return true
                 }
