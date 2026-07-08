@@ -1,53 +1,23 @@
 package com.cloudstream.shared.webview
 
 import com.cloudstream.shared.logging.ProviderLogger
-import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONArray
 import org.json.JSONTokener
 
-/**
- * Generic, safe WebView helper for authorized browser automation/debugging.
- *
- * This version intentionally does NOT:
- * - rely on protected endpoint interception
- * - fetch page-owned AJAX iframe sources
- * - perform site-specific watch-link extraction
- *
- * It DOES:
- * - navigate to a page
- * - optionally wait for destination URL patterns
- * - dismiss common consent dialogs
- * - extract generic visible links
- * - extract generic explicit download/document links
- * - save raw page HTML
- * - emit very verbose logs
- */
 class WebViewFlowHelper(
     private val navigationEngine: NavigationEngine
 ) {
-    private val TAG = "WebViewFlowHelperSafe"
+    private val TAG = "WebViewFlowHelper"
 
     data class Config(
         val userAgent: String = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         val overallTimeoutMs: Long = 120_000L,
         val allowedDomains: List<String> = emptyList(),
         val destinationLockPatterns: List<String> = emptyList(),
-        val mode: Mode = Mode.FULLSCREEN,
-
-        // Generic timing knobs
-        val initialDelayMs: Long = 1_500L,
-        val waitForDestinationMs: Long = 20_000L,
-        val postConsentDelayMs: Long = 500L,
-        val settleDelayMs: Long = 1_500L,
-
-        // Extraction knobs
-        val maxExtractedLinks: Int = 80
+        val mode: Mode = Mode.FULLSCREEN
     )
 
-    /**
-     * Kept for compatibility with older calling code.
-     * This safe helper does NOT populate iframe/server URLs.
-     */
     data class ServerInfo(
         val name: String,
         val index: String,
@@ -55,68 +25,33 @@ class WebViewFlowHelper(
         val iframeUrl: String = ""
     )
 
-    /**
-     * Generic explicit download/document-like links.
-     * Intentionally not focused on media-stream extraction.
-     */
     data class DownloadInfo(
         val name: String,
         val url: String
     )
 
-    data class GenericLinkInfo(
-        val text: String,
-        val url: String,
-        val target: String,
-        val rel: String,
-        val visible: Boolean,
-        val downloadAttr: String,
-        val tag: String
-    )
-
     data class FlowResult(
         val success: Boolean,
         val finalUrl: String,
-        val servers: List<ServerInfo> = emptyList(),     // compatibility only; safe helper leaves empty
-        val downloads: List<DownloadInfo> = emptyList(),
-        val watchPageHtml: String? = null,
-        val error: String? = null,
-
-        // New generic debug/extraction outputs
-        val debugDom: String? = null,
-        val actions: List<GenericLinkInfo> = emptyList(),
-        val consentResult: String? = null
+        val servers: List<ServerInfo>,
+        val downloads: List<DownloadInfo>,
+        val watchPageHtml: String?,
+        val error: String?
     )
 
-    /**
-     * New generic API.
-     */
-    suspend fun navigateToPage(
-        startUrl: String,
+    suspend fun navigateMovieToWatchPage(
+        movieUrl: String,
         config: Config = Config()
     ): FlowResult {
-        logI(
-            "navigateToPage",
-            buildString {
-                append("Starting generic flow. ")
-                append("startUrl=${startUrl.take(120)}, ")
-                append("allowedDomains=${config.allowedDomains.joinToString(",")}, ")
-                append("destinationPatterns=${config.destinationLockPatterns.joinToString(",")}, ")
-                append("timeoutMs=${config.overallTimeoutMs}, ")
-                append("mode=${config.mode}, ")
-                append("initialDelayMs=${config.initialDelayMs}, ")
-                append("settleDelayMs=${config.settleDelayMs}, ")
-                append("maxExtractedLinks=${config.maxExtractedLinks}")
-            }
-        )
+        ProviderLogger.i(TAG, "navigateMovieToWatchPage", "Starting WebView navigation flow",
+            "movieUrl" to movieUrl.take(100),
+            "allowedDomains" to config.allowedDomains.joinToString(","),
+            "destinationLockPatterns" to config.destinationLockPatterns.joinToString(","))
 
         val destinationLockRegexes = config.destinationLockPatterns.map { Regex(it) }
-        val steps = buildGenericStepList(startUrl, config)
 
-        logI("navigateToPage", "Built ${steps.size} navigation steps")
-        steps.forEachIndexed { index, step ->
-            logD("navigateToPage", "step[$index]=${step.javaClass.simpleName}")
-        }
+        this.movieUrl = movieUrl
+        val steps = buildStepList()
 
         val navResult = navigationEngine.execute(
             steps = steps,
@@ -127,475 +62,331 @@ class WebViewFlowHelper(
             destinationLockPatterns = destinationLockRegexes
         )
 
-        logI(
-            "navigateToPage",
-            buildString {
-                append("Navigation result: ")
-                append("success=${navResult.success}, ")
-                append("finalUrl=${navResult.finalUrl.take(140)}, ")
-                append("completedSteps=${navResult.completedSteps}, ")
-                append("failedAt=${navResult.failedAtStep ?: "none"}, ")
-                append("error=${navResult.error ?: "none"}, ")
-                append("keys=${navResult.extractedHtml.keys.joinToString(",")}")
-            }
-        )
+        ProviderLogger.i(TAG, "navigateMovieToWatchPage", "Navigation result",
+            "success" to navResult.success.toString(),
+            "finalUrl" to navResult.finalUrl.take(100),
+            "completedSteps" to navResult.completedSteps.toString(),
+            "failedAt" to (navResult.failedAtStep?.toString() ?: "none"),
+            "error" to (navResult.error ?: "none"),
+            "extractedKeys" to navResult.extractedHtml.keys.joinToString(","))
 
-        val consentResult = navResult.extractedHtml["consent_result"]
-        val debugDom = navResult.extractedHtml["debug_dom"]
-        val actions = parseGenericLinks(navResult.extractedHtml["action_links"])
-        val downloads = parseDownloads(navResult.extractedHtml["download_links"])
-        val pageHtml = navResult.extractedHtml["page_raw"]
-
-        logI(
-            "navigateToPage",
-            buildString {
-                append("Parsed outputs: ")
-                append("actions=${actions.size}, ")
-                append("downloads=${downloads.size}, ")
-                append("pageHtmlLen=${pageHtml?.length ?: 0}, ")
-                append("consentResult=${consentResult ?: "null"}")
-            }
-        )
-
-        actions.forEachIndexed { i, link ->
-            logD(
-                "navigateToPage",
-                "action[$i] text='${link.text.take(60)}' url=${link.url.take(120)} visible=${link.visible} target=${link.target}"
+        if (!navResult.success) {
+            return FlowResult(
+                success = false,
+                finalUrl = navResult.finalUrl,
+                servers = emptyList(),
+                downloads = emptyList(),
+                watchPageHtml = navResult.extractedHtml["watch_page_raw"],
+                error = "Navigation failed at step ${navResult.failedAtStep}: ${navResult.error}"
             )
         }
 
-        downloads.forEachIndexed { i, dl ->
-            logD(
-                "navigateToPage",
-                "download[$i] name='${dl.name.take(60)}' url=${dl.url.take(120)}"
-            )
+        val servers = parseServers(navResult)
+        val iframeResults = fetchIframeUrls(navResult, config)
+        val serversWithIframes = servers.mapIndexed { index, server ->
+            server.copy(iframeUrl = iframeResults.getOrElse(index) { "" })
+        }
+        val downloads = parseDownloads(navResult)
+        val watchPageHtml = navResult.extractedHtml["watch_page_raw"]
+
+        ProviderLogger.i(TAG, "navigateMovieToWatchPage", "Extraction complete",
+            "servers" to serversWithIframes.size.toString(),
+            "serversWithIframes" to serversWithIframes.count { it.iframeUrl.isNotBlank() }.toString(),
+            "downloads" to downloads.size.toString(),
+            "watchHtmlLen" to (watchPageHtml?.length ?: 0).toString())
+
+        serversWithIframes.forEach { s ->
+            ProviderLogger.d(TAG, "navigateMovieToWatchPage", "  server: '${s.name}' idx=${s.index} id=${s.id} iframe=${s.iframeUrl.take(80)}")
+        }
+        downloads.forEach { d ->
+            ProviderLogger.d(TAG, "navigateMovieToWatchPage", "  download: '${d.name}' url=${d.url.take(80)}")
         }
 
         return FlowResult(
-            success = navResult.success,
+            success = true,
             finalUrl = navResult.finalUrl,
-            servers = emptyList(), // intentionally empty in safe helper
+            servers = serversWithIframes,
             downloads = downloads,
-            watchPageHtml = pageHtml,
-            error = if (navResult.success) null else "Navigation failed at step ${navResult.failedAtStep}: ${navResult.error}",
-            debugDom = debugDom,
-            actions = actions,
-            consentResult = consentResult
+            watchPageHtml = watchPageHtml,
+            error = null
         )
     }
 
-    /**
-     * Compatibility wrapper for older provider code.
-     *
-     * NOTE:
-     * - This now behaves as a generic page-navigation snapshot helper.
-     * - It does NOT fetch server iframe URLs or protected watch links.
-     * - `servers` is intentionally empty.
-     */
-    suspend fun navigateMovieToWatchPage(
-        movieUrl: String,
-        config: Config = Config()
-    ): FlowResult {
-        logW(
-            "navigateMovieToWatchPage",
-            "Compatibility wrapper invoked. This safe helper no longer performs site-specific server/iframe extraction."
+    private var movieUrl: String = ""
+
+    private fun buildStepList(): List<NavigationStep> {
+        return listOf(
+            // Step 0: Load the movie page
+            // All navigation is controlled manually via the redirect confirmation dialog.
+            // The engine shows a dialog for each main-frame redirect: user taps Allow/Block.
+            NavigationStep.LoadUrl(movieUrl),
+
+            // Step 1: Keep the WebView alive for up to 10 minutes so the user can
+            // manually navigate through redirects (freex → href.li → redirectingfree →
+            // blog-post → get-link.php → /watching/?token=...) using the confirmation dialogs.
+            NavigationStep.WaitForDelay(600_000L),
+
+            // Step 2: Debug DOM — log DOM state for diagnostics
+            NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
+
+            // Step 3: Extract server list (if on watching page)
+            NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
+
+            // Step 4: Fetch iframes via core.php (if on watching page)
+            NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
+
+            // Step 5: Wait for fetches
+            NavigationStep.WaitForDelay(8_000L),
+
+            // Step 6: Collect iframe results
+            NavigationStep.ExecuteJs(
+                javascript = "(function(){ return window._serverResults || '[]'; })();",
+                key = "iframe_results"
+            ),
+
+            // Step 7: Extract download links
+            NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
+
+            // Step 8: Save final watch page HTML for debugging
+            NavigationStep.ExtractHtml(key = "watch_page_raw")
         )
-        return navigateToPage(movieUrl, config)
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Step building
-    // ---------------------------------------------------------------------------------------------
-
-    private fun buildGenericStepList(
-        startUrl: String,
-        config: Config
-    ): List<NavigationStep> {
-        val steps = mutableListOf<NavigationStep>()
-
-        // 0) Load the initial page
-        steps += NavigationStep.LoadUrl(startUrl)
-
-        // 1) Give the page a moment to initialize
-        steps += NavigationStep.WaitForDelay(config.initialDelayMs)
-
-        // 2) Optionally wait for declared destination patterns
-        config.destinationLockPatterns.forEachIndexed { i, pattern ->
-            steps += NavigationStep.WaitForUrl(
-                urlPattern = pattern,
-                timeoutMs = config.waitForDestinationMs,
-                abortOnFailure = false
-            )
-            steps += NavigationStep.WaitForDelay(500L)
-            logD("buildGenericStepList", "Added destination wait[$i] pattern=$pattern")
-        }
-
-        // 3) Dismiss consent/popups generically
-        steps += NavigationStep.ExecuteJs(
-            javascript = JS_DISMISS_CONSENT,
-            key = "consent_result"
-        )
-
-        // 4) Let the DOM settle after dismissals/clicks
-        steps += NavigationStep.WaitForDelay(config.postConsentDelayMs)
-
-        // 5) Snapshot/debug page state
-        steps += NavigationStep.ExecuteJs(
-            javascript = JS_DEBUG_DOM_SUMMARY,
-            key = "debug_dom"
-        )
-
-        // 6) Extract generic visible links
-        steps += NavigationStep.ExecuteJs(
-            javascript = jsExtractGenericLinks(config.maxExtractedLinks),
-            key = "action_links"
-        )
-
-        // 7) Extract explicit download/document-like links only
-        steps += NavigationStep.ExecuteJs(
-            javascript = jsExtractDownloadLinks(config.maxExtractedLinks),
-            key = "download_links"
-        )
-
-        // 8) Wait briefly, then dump full HTML
-        steps += NavigationStep.WaitForDelay(config.settleDelayMs)
-        steps += NavigationStep.ExtractHtml(key = "page_raw")
-
-        return steps
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Parsing
-    // ---------------------------------------------------------------------------------------------
-
-    private fun parseGenericLinks(raw: String?): List<GenericLinkInfo> {
-        if (raw.isNullOrBlank()) {
-            logW("parseGenericLinks", "No raw action_links value")
-            return emptyList()
-        }
-
+    private fun parseServers(result: NavigationResult): List<ServerInfo> {
+        val raw = result.extractedHtml["server_list"] ?: return emptyList()
         return try {
             val cleaned = JSONTokener(raw).nextValue().toString()
             val arr = JSONArray(cleaned)
-            val list = mutableListOf<GenericLinkInfo>()
-            for (i in 0 until arr.length()) {
+            (0 until arr.length()).mapNotNull { i ->
                 val obj = arr.getJSONObject(i)
-                list += GenericLinkInfo(
-                    text = obj.optString("text", ""),
-                    url = obj.optString("url", ""),
-                    target = obj.optString("target", ""),
-                    rel = obj.optString("rel", ""),
-                    visible = obj.optBoolean("visible", false),
-                    downloadAttr = obj.optString("download", ""),
-                    tag = obj.optString("tag", "")
+                ServerInfo(
+                    name = obj.optString("name", ""),
+                    index = obj.optString("index", ""),
+                    id = obj.optString("id", "")
                 )
             }
-            logI("parseGenericLinks", "Parsed ${list.size} action links")
-            list
         } catch (e: Exception) {
-            logW("parseGenericLinks", "Failed: ${e.message} raw=${raw.take(240)}")
+            ProviderLogger.w(TAG, "parseServers", "Failed: ${e.message}", "raw" to raw.take(200))
             emptyList()
         }
     }
 
-    private fun parseDownloads(raw: String?): List<DownloadInfo> {
-        if (raw.isNullOrBlank()) {
-            logW("parseDownloads", "No raw download_links value")
-            return emptyList()
-        }
-
+    private fun fetchIframeUrls(result: NavigationResult, config: Config): Map<Int, String> {
+        val raw = result.extractedHtml["iframe_results"] ?: return emptyMap()
         return try {
             val cleaned = JSONTokener(raw).nextValue().toString()
             val arr = JSONArray(cleaned)
-            val list = mutableListOf<DownloadInfo>()
-            for (i in 0 until arr.length()) {
+            (0 until arr.length()).associate { i ->
+                i to arr.getJSONObject(i).optString("iframe", "")
+            }
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "fetchIframeUrls", "Failed: ${e.message}", "raw" to raw.take(200))
+            emptyMap()
+        }
+    }
+
+    private fun parseDownloads(result: NavigationResult): List<DownloadInfo> {
+        val raw = result.extractedHtml["download_links"] ?: return emptyList()
+        return try {
+            val cleaned = JSONTokener(raw).nextValue().toString()
+            val arr = JSONArray(cleaned)
+            (0 until arr.length()).mapNotNull { i ->
                 val obj = arr.getJSONObject(i)
-                list += DownloadInfo(
+                DownloadInfo(
                     name = obj.optString("name", ""),
                     url = obj.optString("url", "")
                 )
             }
-            logI("parseDownloads", "Parsed ${list.size} downloads")
-            list
         } catch (e: Exception) {
-            logW("parseDownloads", "Failed: ${e.message} raw=${raw.take(240)}")
+            ProviderLogger.w(TAG, "parseDownloads", "Failed: ${e.message}", "raw" to raw.take(200))
             emptyList()
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Logging
-    // ---------------------------------------------------------------------------------------------
-
-    private fun logD(method: String, message: String) {
-        try { ProviderLogger.d(TAG, method, message) } catch (_: Exception) {}
-    }
-
-    private fun logI(method: String, message: String) {
-        try { ProviderLogger.i(TAG, method, message) } catch (_: Exception) {}
-    }
-
-    private fun logW(method: String, message: String) {
-        try { ProviderLogger.w(TAG, method, message) } catch (_: Exception) {}
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Generic JS helpers
-    // ---------------------------------------------------------------------------------------------
-
     companion object {
-        /**
-         * Generic consent / popup dismissal.
-         * Very broad, browser-safe, and verbose.
-         */
         val JS_DISMISS_CONSENT = """
 (function() {
-    try {
-        var clicked = [];
-        var seen = [];
-        var keywords = [
-            'accept','allow','agree','continue','confirm','close','dismiss','ok','got it',
-            'accept all','i agree','consent',
-            'أوافق','موافق','قبول','استمرار','متابعة','اغلاق','إغلاق'
-        ];
-
-        function isVisible(el) {
-            if (!el) return false;
-            try {
+    var found = false;
+    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button');
+    var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق'];
+    for (var i = 0; i < candidates.length; i++) {
+        var el = candidates[i];
+        var text = (el.innerText || el.textContent || '').trim().toLowerCase();
+        if (text.length === 0 || text.length > 30) continue;
+        for (var k = 0; k < keywords.length; k++) {
+            if (text.indexOf(keywords[k]) !== -1) {
                 var rect = el.getBoundingClientRect();
-                var style = window.getComputedStyle(el);
-                return rect.width > 0 &&
-                       rect.height > 0 &&
-                       style.visibility !== 'hidden' &&
-                       style.display !== 'none';
-            } catch(e) {
-                return false;
-            }
-        }
-
-        function maybeClick(el, reason) {
-            try {
-                if (!el || !isVisible(el)) return false;
-                var text = ((el.innerText || el.textContent || '').trim().toLowerCase()).slice(0, 80);
-                var sig = el.tagName + '|' + text + '|' + reason;
-                if (seen.indexOf(sig) !== -1) return false;
-                seen.push(sig);
-                try { el.click(); } catch(e) {}
-                clicked.push({ tag: el.tagName, text: text, reason: reason });
-                console.log('[WVSafe] consent click', sig);
-                return true;
-            } catch(e) {
-                return false;
-            }
-        }
-
-        var selectors = [
-            'button',
-            'a[role="button"]',
-            'a',
-            '[role="button"]',
-            '.fc-button',
-            '.fc-cta-consent',
-            '.cc-btn',
-            '.cookie-btn',
-            '.accept-btn',
-            '.agree-btn',
-            '.consent-btn',
-            '.close',
-            '.close-btn',
-            '.modal-close',
-            '.popup-close',
-            '[onclick*="close"]',
-            '[aria-label*="close" i]'
-        ];
-
-        for (var s = 0; s < selectors.length; s++) {
-            var els = document.querySelectorAll(selectors[s]);
-            for (var i = 0; i < els.length; i++) {
-                var el = els[i];
-                var text = ((el.innerText || el.textContent || '').trim().toLowerCase());
-                var matched = false;
-
-                if (text && text.length <= 80) {
-                    for (var k = 0; k < keywords.length; k++) {
-                        if (text.indexOf(keywords[k]) !== -1) {
-                            matched = true;
-                            break;
-                        }
-                    }
+                var visible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+                console.log('[Nav] consent candidate:', el.tagName, 'text="' + text + '" visible=' + visible);
+                if (visible) {
+                    try { el.click(); console.log('[Nav] clicked consent:', text); found = true; } catch(e) {}
                 }
-
-                if (matched) {
-                    maybeClick(el, 'keyword');
-                }
+                break;
             }
         }
-
-        return JSON.stringify({
-            dismissed: clicked.length > 0,
-            count: clicked.length,
-            clicks: clicked
-        });
-    } catch (e) {
-        return JSON.stringify({
-            dismissed: false,
-            error: e.message || 'unknown'
-        });
     }
+    if (!found) {
+        var closeSelectors = ['.close', '.close-btn', '.modal-close', '.popup-close', '[onclick*="close"]', '.fc-cta-consent', '.fc-button', '.cc-btn', '.agree-btn', '#continue', '.continue', '.accept-btn'];
+        for (var i = 0; i < closeSelectors.length; i++) {
+            var els = document.querySelectorAll(closeSelectors[i]);
+            for (var j = 0; j < els.length; j++) {
+                var rect = els[j].getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && els[j].offsetParent !== null) {
+                    try { els[j].click(); console.log('[Nav] clicked close btn:', closeSelectors[i]); found = true; } catch(e) {}
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+    return found ? 'consent_dismissed' : 'no_consent';
 })();
         """.trimIndent()
 
-        /**
-         * Generic page state summary for debugging.
-         */
-        val JS_DEBUG_DOM_SUMMARY = """
-(function() {
+        val JS_VISIBLE_SERVER_LINK_CONDITION = """
+(function(){
     try {
-        function count(sel) {
-            try { return document.querySelectorAll(sel).length; } catch(e) { return -1; }
-        }
-
-        var summary = {
-            url: location.href || '',
-            origin: location.origin || '',
-            title: document.title || '',
-            readyState: document.readyState || '',
-            bodyHtmlLength: document.body ? (document.body.innerHTML || '').length : -1,
-            counts: {
-                links: count('a[href]'),
-                buttons: count('button'),
-                iframes: count('iframe'),
-                forms: count('form'),
-                inputs: count('input'),
-                scripts: count('script'),
-                videos: count('video'),
-                sources: count('source')
-            }
-        };
-
-        console.log('[WVSafe] DOM summary', summary);
-        return JSON.stringify(summary);
-    } catch (e) {
-        return JSON.stringify({
-            error: e.message || 'unknown'
-        });
-    }
-})();
-        """.trimIndent()
-
-        /**
-         * Generic visible link extraction.
-         * Collects only normal http/https links and basic metadata.
-         */
-        fun jsExtractGenericLinks(maxLinks: Int): String {
-            return """
-(function() {
-    try {
-        function isVisible(el) {
-            if (!el) return false;
-            try {
-                var rect = el.getBoundingClientRect();
-                var style = window.getComputedStyle(el);
-                return rect.width > 0 &&
-                       rect.height > 0 &&
-                       style.visibility !== 'hidden' &&
-                       style.display !== 'none';
-            } catch(e) {
-                return false;
-            }
-        }
-
-        var anchors = document.querySelectorAll('a[href]');
-        var out = [];
-
-        for (var i = 0; i < anchors.length; i++) {
-            if (out.length >= $maxLinks) break;
-
-            var a = anchors[i];
-            var href = a.href || '';
-            if (!href) continue;
-            if (!/^https?:/i.test(href)) continue;
-            if (/^javascript:/i.test(href)) continue;
-
-            var text = ((a.innerText || a.textContent || '').trim()).replace(/\s+/g, ' ').slice(0, 160);
-            out.push({
-                tag: a.tagName || 'A',
-                text: text,
-                url: href,
-                target: a.target || '',
-                rel: a.rel || '',
-                visible: isVisible(a),
-                download: a.getAttribute('download') || ''
-            });
-        }
-
-        console.log('[WVSafe] extracted generic links', out.length);
-        return JSON.stringify(out);
-    } catch (e) {
-        return JSON.stringify([{ error: e.message || 'unknown' }]);
-    }
-})();
-            """.trimIndent()
-        }
-
-        /**
-         * Generic explicit download/document-like link extraction.
-         *
-         * Intentionally excludes streaming-specific logic.
-         * Focuses on:
-         * - [download] attribute
-         * - common document/archive file extensions
-         */
-        fun jsExtractDownloadLinks(maxLinks: Int): String {
-            return """
-(function() {
-    try {
-        function isVisible(el) {
-            if (!el) return false;
-            try {
-                var rect = el.getBoundingClientRect();
-                var style = window.getComputedStyle(el);
-                return rect.width > 0 &&
-                       rect.height > 0 &&
-                       style.visibility !== 'hidden' &&
-                       style.display !== 'none';
-            } catch(e) {
-                return false;
-            }
-        }
-
-        var links = document.querySelectorAll('a[href]');
-        var out = [];
-        var exts = /\.(pdf|zip|rar|7z|doc|docx|xls|xlsx|ppt|pptx|txt|csv)(\?|#|$)/i;
-
+        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
         for (var i = 0; i < links.length; i++) {
-            if (out.length >= $maxLinks) break;
-
-            var a = links[i];
-            var href = a.href || '';
-            if (!href) continue;
-            if (!/^https?:/i.test(href)) continue;
-
-            var hasDownloadAttr = !!a.getAttribute('download');
-            var looksLikeDoc = exts.test(href);
-
-            if (!hasDownloadAttr && !looksLikeDoc) continue;
-
-            out.push({
-                name: ((a.innerText || a.textContent || '').trim()).replace(/\s+/g, ' ').slice(0, 160),
-                url: href,
-                visible: isVisible(a),
-                download: a.getAttribute('download') || ''
-            });
+            var r = links[i].getBoundingClientRect();
+            var href = links[i].href || '';
+            var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
+            
+            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null && !isDisabled
+                && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
+                console.log('[Nav] found visible & enabled server link:', href);
+                return true;
+            }
         }
+        return false;
+    } catch(e) { return false; }
+})()
+        """.trimIndent()
 
-        console.log('[WVSafe] extracted download links', out.length);
-        return JSON.stringify(out);
-    } catch (e) {
-        return JSON.stringify([{ error: e.message || 'unknown' }]);
+        val JS_FIND_SERVER_LINK = """
+(function() {
+    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
+    for (var i = 0; i < links.length; i++) {
+        var rect = links[i].getBoundingClientRect();
+        var visible = rect.width > 0 && rect.height > 0 && links[i].offsetParent !== null;
+        var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
+        
+        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible, 'disabled=' + isDisabled);
+        
+        if (visible && !isDisabled) {
+            var href = links[i].href || '';
+            if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) {
+                console.log('[Nav] skipping ad link:', href);
+                continue;
+            }
+            console.log('[Nav] clicking server link:', href);
+            try { links[i].click(); return 'clicked:' + href; } catch(e) { return 'error:' + e.message; }
+        }
     }
-})();
-            """.trimIndent()
+    var allLinks = document.querySelectorAll('a[href]:not([href=""]):not([href^="javascript"])');
+    for (var i = 0; i < allLinks.length; i++) {
+        var rect = allLinks[i].getBoundingClientRect();
+        var href = allLinks[i].href || '';
+        var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || (allLinks[i].style.pointerEvents === 'none');
+        
+        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled 
+            && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
+            console.log('[Nav] fallback clicking:', href);
+            try { allLinks[i].click(); return 'clicked_fallback:' + href; } catch(e) {}
         }
+    }
+    return 'no_server_link';
+})();
+        """.trimIndent()
+
+        val JS_DEBUG_DOM = """
+(function(){
+    var uls = document.querySelectorAll('ul');
+    console.log('[Nav] UL count:', uls.length);
+    for (var i = 0; i < uls.length; i++) {
+        console.log('[Nav] UL #'+i+': id="'+uls[i].id+'" class="'+uls[i].className+'" children='+uls[i].children.length);
+    }
+    var iframes = document.querySelectorAll('iframe');
+    console.log('[Nav] IFRAME count:', iframes.length);
+    for (var i = 0; i < iframes.length; i++) {
+        console.log('[Nav] IFRAME #'+i+': src="'+(iframes[i].src||'none')+'"');
+    }
+    var watchLis = document.querySelectorAll('[data-index], li[class*="server"], li[class*="watch"]');
+    console.log('[Nav] Server LI count:', watchLis.length);
+    for (var i = 0; i < watchLis.length; i++) {
+        var a = watchLis[i].querySelector('a');
+        console.log('[Nav] Server #'+i+': text="'+(watchLis[i].textContent||'').trim().slice(0,50)+'" href="'+(a?a.href:'none')+'"');
+    }
+    return 'debug_done';
+})();
+        """.trimIndent()
+
+        val JS_EXTRACT_SERVERS = """
+(function(){
+    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var servers = [];
+    for (var i = 0; i < items.length; i++) {
+        var idx = items[i].getAttribute('data-index') || '';
+        var id = items[i].getAttribute('data-id') || '';
+        var name = (items[i].textContent || '').trim().slice(0, 60);
+        servers.push({index: idx, id: id, name: name});
+        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'"');
+    }
+    return JSON.stringify(servers);
+})();
+        """.trimIndent()
+
+        val JS_FETCH_IFRAMES = """
+(function(){
+    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var baseUrl = window.location.origin;
+    var results = [];
+    var done = 0;
+    for (var i = 0; i < Math.min(items.length, 10); i++) {
+        var idx = items[i].getAttribute('data-index') || '';
+        var id = items[i].getAttribute('data-id') || '';
+        var name = (items[i].textContent || '').trim().slice(0, 60);
+        var ajaxUrl = baseUrl + '/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=' + idx + '&id=' + id;
+        console.log('[Nav] Fetching server ' + name + ': ' + ajaxUrl);
+        (function(srvName, srvIdx, url) {
+            fetch(url, {credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': window.location.href}})
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    var iframeSrc = '';
+                    var match = html.match(/<iframe[^>]+src=["']([^"']+)["']/);
+                    if (match) iframeSrc = match[1];
+                    console.log('[Nav] Server ' + srvName + ' iframe: ' + iframeSrc);
+                    results.push({name: srvName, index: srvIdx, iframe: iframeSrc, responseLength: html.length});
+                    done++;
+                    if (done === Math.min(document.querySelectorAll('#watch li, li[data-index], [data-index]').length, 10)) {
+                        window._serverResults = JSON.stringify(results);
+                    }
+                })
+                .catch(function(err) {
+                    console.log('[Nav] Server ' + srvName + ' error: ' + err.message);
+                    results.push({name: srvName, index: srvIdx, iframe: '', error: err.message});
+                    done++;
+                });
+        })(name, idx, ajaxUrl);
+    }
+    return 'fetching_' + Math.min(items.length, 10) + '_servers';
+})();
+        """.trimIndent()
+
+        val JS_EXTRACT_DOWNLOADS = """
+(function(){
+    var links = document.querySelectorAll('#download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
+    var downloads = [];
+    for (var i = 0; i < links.length; i++) {
+        var name = (links[i].textContent || '').trim().slice(0, 60);
+        var href = links[i].href || '';
+        if (href && name) {
+            downloads.push({name: name, url: href});
+            console.log('[Nav] Download #'+i+': name="'+name+'" url="'+href+'"');
+        }
+    }
+    return JSON.stringify(downloads);
+})();
+        """.trimIndent()
     }
 }
