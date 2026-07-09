@@ -1769,7 +1769,13 @@ class CimaNowProvider : BaseProvider() {
                 // Snapshot: all <iframe> currently in the DOM (best-effort).
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DIRECT_IFRAMES, key = "direct_iframes"),
 
-                NavigationStep.ExtractHtml(key = "html_final")
+                // Wait for the page to decrypt and inject the player iframe, then return the
+                // full rendered outerHTML. This captures the already-decrypted server tabs +
+                // player iframe (clicking a tab opens a popup, which is now allowed).
+                NavigationStep.ExecuteJs(
+                    javascript = WebViewFlowHelper.JS_EXTRACT_HTML_AFTER_IFRAME,
+                    key = "html_final"
+                )
             )
 
             val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }

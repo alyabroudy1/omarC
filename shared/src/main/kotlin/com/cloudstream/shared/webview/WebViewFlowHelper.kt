@@ -459,6 +459,36 @@ class WebViewFlowHelper(
          * (Swal / jQuery / $.cookie), and any visible modal/dialog buttons — so we can tell
          * whether the page reached the consent/server-list stage or bounced to /home.
          */
+        /**
+         * Waits until an <iframe> is present in the live DOM (the page decrypts and injects
+         * the player iframe after its JS runs), then returns document.documentElement.outerHTML.
+         * This captures the already-decrypted content (server tabs + player iframe). If no
+         * iframe appears within 30s it returns the current outerHTML anyway.
+         */
+        val JS_EXTRACT_HTML_AFTER_IFRAME = """
+(function(){
+    return new Promise(function(resolve){
+        var deadline = Date.now() + 30000;
+        var poll = setInterval(function(){
+            var iframes = document.querySelectorAll('iframe');
+            var real = null;
+            for (var i = 0; i < iframes.length; i++) {
+                var s = iframes[i].getAttribute('data-src') || iframes[i].src || '';
+                if (s && s.indexOf('about:blank') === -1 && s.length > 5) { real = iframes[i]; break; }
+            }
+            if (real || Date.now() > deadline) {
+                clearInterval(poll);
+                try {
+                    resolve(document.documentElement.outerHTML);
+                } catch(e) {
+                    resolve('');
+                }
+            }
+        }, 500);
+    });
+})();
+        """.trimIndent()
+
         val JS_DIAGNOSE_WATCHING = """
 (function(){
     try {

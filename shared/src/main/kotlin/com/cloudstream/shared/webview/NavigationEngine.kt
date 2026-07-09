@@ -3,6 +3,7 @@ package com.cloudstream.shared.webview
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.webkit.*
@@ -338,8 +339,11 @@ class NavigationEngine(
                 loadsImagesAutomatically = true
                 @Suppress("DEPRECATION")
                 allowFileAccess = false
-                javaScriptCanOpenWindowsAutomatically = false
-                setSupportMultipleWindows(false)
+                // Allow the page to open popups (e.g. the player window launched when a
+                // server tab is clicked). Required so the page's JS runs fully and the
+                // decrypted player iframe gets injected into the DOM.
+                javaScriptCanOpenWindowsAutomatically = true
+                setSupportMultipleWindows(true)
             }
             // THE NUCLEAR SOLUTION: Hide the package name from ALL WebView requests natively.
             hideXRequestedWithHeader(this)
@@ -826,6 +830,19 @@ class NavigationEngine(
                     }
                     android.util.Log.println(android.util.Log.INFO, "NavEngineJS", "[$level] ${it.message()} [${it.sourceId()}:${it.lineNumber()}]")
                 }
+                return true
+            }
+
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: Message?
+            ): Boolean {
+                // Allow the page to open popups (e.g. the player window launched when a
+                // server tab is clicked) so its JS runs fully and the decrypted player
+                // iframe gets injected into the main-frame DOM. We do NOT follow/capture
+                // the popup — the content we need is already in the main-frame HTML.
                 return true
             }
         }
