@@ -535,7 +535,9 @@ class NavigationEngine(
 
                         // SPOOF sec-ch-ua headers to look like a real Chrome browser, not a WebView.
                         // Cloudflare fingerprints "Android WebView" in sec-ch-ua and blocks it.
-                        conn.setRequestProperty("sec-ch-ua", "\"Chromium\";v=\"149\", \"Google Chrome\";v=\"149\", \"Not?A_Brand\";v=\"24\"")
+                        // Use the actual Chrome version from the User-Agent to keep headers consistent.
+                        val chromeVersion = Regex("""Chrome/(\d+)""").find(userAgent)?.groupValues?.getOrNull(1) ?: "131"
+                        conn.setRequestProperty("sec-ch-ua", "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$chromeVersion\", \"Chromium\";v=\"$chromeVersion\"")
                         conn.setRequestProperty("sec-ch-ua-mobile", "?1")
                         conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
 
@@ -607,22 +609,30 @@ class NavigationEngine(
                             val mimeLog = if (mime != reportedMime) "$reportedMime -> $mime" else mime
                             ProviderLogger.d(TAG, "shouldInterceptRequest", "INTERCEPTED ${reqUrl.take(80)} ($mimeLog)")
 
+                            // Detect CDN scripts that were previously loaded via document.write
+                            if (requiresInterventionBypass) {
+                                ProviderLogger.w(TAG, "shouldInterceptRequest", "CDN bypass: ${reqUrl.take(80)}")
+                            }
+
                             // Rewrite HTML for cimanow.cc main-frame: replace document.write('<script src="...")>
                             // and document.write('<link rel="stylesheet" href="...")> with direct tags
                             // to bypass Chrome's cross-origin document.write intervention
                             // (which blocks sweetalert2, jquery-cookie, lazyload).
                             val bodyStream: java.io.InputStream = if (request.isForMainFrame && isCimaDomain && mime == "text/html") {
                                 val html = conn.inputStream.bufferedReader(charset).readText()
+                                val scriptCount = Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*><\\/script>\s*'\s*\)""").findAll(html).count()
+                                val linkCount = Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)""").findAll(html).count()
                                 var rewritten = html.replace(
-                                    Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*></script>\s*'\s*\)"""),
+                                    Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*><\\/script>\s*'\s*\)"""),
                                     """<script src="$1"></script>"""
                                 )
                                 rewritten = rewritten.replace(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
-                                val changed = if (rewritten != html) " (rewrote document.write)" else ""
-                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$changed")
+                                val total = scriptCount + linkCount
+                                val countLog = if (total > 0) " (rewrote $total document.write calls)" else " (no document.write found)"
+                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog")
                                 java.io.ByteArrayInputStream(rewritten.toByteArray(charset))
                             } else {
                                 conn.inputStream
