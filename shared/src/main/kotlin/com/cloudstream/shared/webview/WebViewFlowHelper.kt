@@ -489,6 +489,35 @@ class WebViewFlowHelper(
 })();
         """.trimIndent()
 
+        /**
+         * Compact diagnostic: dumps every download/media-like <a> on the page (text + href)
+         * plus the #download section's innerHTML, so the real download-link markup is
+         * visible in the log without dumping the entire 3.4 MB document.
+         */
+        val JS_DUMP_LINKS = """
+(function(){
+    try {
+        var anchors = document.querySelectorAll('a[href]');
+        var hosts = ['jetload','forafile','ok.ru','vk','youtube','dailymotion','mp4','m3u8','download','fopen','uploda','mega','mediafire','4shared','1fichier','solidfiles','drive','uptobox','adminfor','ceska','fastdrive','racaty','usercdn','onlinestream','shahid','mycima','cima','filerab','vidbob','upvid','giga-down','samaup','easyload','upstream'];
+        var out = [];
+        for (var i = 0; i < anchors.length; i++) {
+            var a = anchors[i];
+            var h = a.getAttribute('href') || '';
+            var t = (a.textContent || '').trim().slice(0, 50);
+            if (h.indexOf('http') !== 0) continue;
+            var hit = false;
+            var hl = h.toLowerCase();
+            for (var k = 0; k < hosts.length; k++) { if (hl.indexOf(hosts[k]) !== -1) { hit = true; break; } }
+            if (!hit && /\d+p/.test(t)) hit = true;
+            if (hit) out.push({ t: t, h: h.slice(0, 400) });
+        }
+        var dl = document.querySelector('#download, .download, [class*="download"], [id*="download"]');
+        var dlHtml = dl ? dl.innerHTML.slice(0, 4000) : 'NO_DOWNLOAD_SECTION';
+        return 'DUMP_LINKS:' + JSON.stringify({ count: out.length, links: out, downloadSection: dlHtml });
+    } catch(e) { return 'dump_err:' + e.message; }
+})();
+        """.trimIndent()
+
         val JS_DIAGNOSE_WATCHING = """
 (function(){
     try {

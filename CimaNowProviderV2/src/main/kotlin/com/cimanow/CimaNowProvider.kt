@@ -1775,6 +1775,13 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.ExecuteJs(
                     javascript = WebViewFlowHelper.JS_EXTRACT_HTML_AFTER_IFRAME,
                     key = "html_final"
+                ),
+
+                // Compact dump of all download/media <a> links + the #download section markup,
+                // so the real download-link structure is visible in the log.
+                NavigationStep.ExecuteJs(
+                    javascript = WebViewFlowHelper.JS_DUMP_LINKS,
+                    key = "dump_links"
                 )
             )
 
@@ -1831,8 +1838,17 @@ class CimaNowProvider : BaseProvider() {
             if (htmlFinal.isNotBlank()) {
                 val doc = Jsoup.parse(htmlFinal, watchUrl)
 
-                // 1. Download links from #download section
-                val downloadLinks = doc.select("#download li[aria-label='quality'] a[href]")
+                // 1. Download links from #download section (broadened — the site's markup
+                //    varies, so we also catch direct host anchors and quality-labelled items).
+                val downloadLinks = doc.select(
+                    "#download li[aria-label='quality'] a[href], " +
+                    "#download a[href], " +
+                    "a[href*='jetload'], " +
+                    "a[href*='forafile'], " +
+                    "a[href*='download'], " +
+                    "li[class*='quality'] a[href], " +
+                    "[data-quality] a[href]"
+                ).distinct()
                 Log.i(TAG_TEST, "Found ${downloadLinks.size} download links")
                 for (link in downloadLinks) {
                     try {
@@ -1890,30 +1906,41 @@ class CimaNowProvider : BaseProvider() {
                 Log.w(TAG_TEST, "html_final is blank")
             }
 
-            // Debug dump if nothing found — print the FULL rendered HTML to logcat
-            if (!found) {
-                Log.w(TAG_TEST, "========== NOTHING FOUND — dumping FULL html_final to log ==========")
-                val diagData = navResult.extractedHtml["diag"] ?: ""
-                if (diagData.startsWith("DIAG_JSON:")) {
-                    Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
-                }
-                Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
-                // logcat truncates lines >~4KB, so emit in safe chunks
-                val chunkSize = 3000
-                var offset = 0
-                var part = 0
-                while (offset < htmlFinal.length) {
-                    val end = minOf(offset + chunkSize, htmlFinal.length)
-                    Log.w(TAG_TEST, "--- html_final[$part] (${offset}-${end}) ---\n" + htmlFinal.substring(offset, end))
-                    offset = end
-                    part++
-                }
-                Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
+            // Always log the compact download-link dump (reveals the real structure).
+            val dumpLinks = navResult.extractedHtml["dump_links"] ?: ""
+            if (dumpLinks.isNotBlank()) {
+                Log.w(TAG_TEST, "========== DUMP_LINKS ==========")
+                Log.w(TAG_TEST, dumpLinks.take(4000))
+                Log.w(TAG_TEST, "========== END DUMP_LINKS ==========")
             }
+
+            // Always dump the FULL rendered watching-page HTML to logcat (once the iframe is
+            // present, this holds the decrypted server tabs + download section). logcat
+            // truncates large buffers, so the full copy is also written to
+            // /data/user/0/com.lagradost.cloudstream3/cache/cimanow_html_html_final.html
+            Log.w(TAG_TEST, "========== DUMPING FULL html_final (${htmlFinal.length} chars) ==========")
+            val diagData = navResult.extractedHtml["diag"] ?: ""
+            if (diagData.startsWith("DIAG_JSON:")) {
+                Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
+            }
+            Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
+            // logcat truncates lines >~4KB, so emit in safe chunks
+            val chunkSize = 3000
+            var offset = 0
+            var part = 0
+            while (offset < htmlFinal.length) {
+                val end = minOf(offset + chunkSize, htmlFinal.length)
+                Log.w(TAG_TEST, "--- html_final[$part] (${offset}-${end}) ---\n" + htmlFinal.substring(offset, end))
+                offset = end
+                part++
+            }
+            Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
 
             if (found) {
                 Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
                 foundLinks.forEachIndexed { i, url -> Log.i(TAG_TEST, "  [$i] $url") }
+            } else {
+                Log.w(TAG_TEST, "========== NOTHING FOUND in html_final parse ==========")
             }
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
             return found
