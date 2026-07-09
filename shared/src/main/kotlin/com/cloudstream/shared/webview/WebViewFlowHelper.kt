@@ -206,40 +206,60 @@ class WebViewFlowHelper(
     companion object {
         val JS_DISMISS_CONSENT = """
 (function() {
+    var log = [];
     var found = false;
-    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button, .swal2-confirm');
-    var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق'];
-    for (var i = 0; i < candidates.length; i++) {
-        var el = candidates[i];
-        var text = (el.innerText || el.textContent || '').trim().toLowerCase();
-        if (text.length === 0 || text.length > 30) continue;
-        for (var k = 0; k < keywords.length; k++) {
-            if (text.indexOf(keywords[k]) !== -1) {
-                var rect = el.getBoundingClientRect();
-                var visible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
-                console.log('[Nav] consent candidate:', el.tagName, 'text="' + text + '" visible=' + visible);
-                if (visible) {
-                    try { el.click(); console.log('[Nav] clicked consent:', text); found = true; } catch(e) {}
-                }
-                break;
-            }
+    function clickEl(el, label) {
+        try {
+            el.click();
+            log.push('clicked:' + label);
+            return true;
+        } catch(e) { log.push('err:' + label + ':' + e.message); return false; }
+    }
+    // 1. Try Swal API directly
+    try {
+        if (typeof window.Swal !== 'undefined' && typeof window.Swal.clickConfirm === 'function') {
+            window.Swal.clickConfirm();
+            log.push('swal_clickConfirm');
+            found = true;
+        }
+    } catch(e) { log.push('swal_api_err:' + e.message); }
+    // 2. Click any .swal2-confirm button regardless of text
+    var swalBtns = document.querySelectorAll('.swal2-confirm');
+    for (var s = 0; s < swalBtns.length; s++) {
+        var rect = swalBtns[s].getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && swalBtns[s].offsetParent !== null) {
+            if (clickEl(swalBtns[s], 'swal2-confirm')) found = true;
         }
     }
+    // 3. Keyword-based fallback
     if (!found) {
-        var closeSelectors = ['.close', '.close-btn', '.modal-close', '.popup-close', '[onclick*="close"]', '.fc-cta-consent', '.fc-button', '.cc-btn', '.agree-btn', '#continue', '.continue', '.accept-btn'];
-        for (var i = 0; i < closeSelectors.length; i++) {
-            var els = document.querySelectorAll(closeSelectors[i]);
-            for (var j = 0; j < els.length; j++) {
-                var rect = els[j].getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0 && els[j].offsetParent !== null) {
-                    try { els[j].click(); console.log('[Nav] clicked close btn:', closeSelectors[i]); found = true; } catch(e) {}
+        var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button');
+        var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق', 'موافقة', 'دخول', 'تأكيد'];
+        for (var i = 0; i < candidates.length; i++) {
+            var el = candidates[i];
+            var text = (el.innerText || el.textContent || '').trim().toLowerCase();
+            if (text.length === 0 || text.length > 40) continue;
+            for (var k = 0; k < keywords.length; k++) {
+                if (text.indexOf(keywords[k]) !== -1) {
+                    var r2 = el.getBoundingClientRect();
+                    if (r2.width > 0 && r2.height > 0 && el.offsetParent !== null) {
+                        if (clickEl(el, text)) found = true;
+                    }
                     break;
                 }
             }
-            if (found) break;
         }
     }
-    return found ? 'consent_dismissed' : 'no_consent';
+    // 4. Close any swal2 container via Escape key
+    try {
+        var cont = document.querySelector('.swal2-container');
+        if (cont) {
+            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', keyCode: 27, bubbles: true}));
+            log.push('escape_dispatched');
+            found = true;
+        }
+    } catch(e) { log.push('escape_err:' + e.message); }
+    return (found ? 'consent_dismissed' : 'no_consent') + '|' + log.join(',');
 })();
         """.trimIndent()
 
@@ -413,6 +433,27 @@ class WebViewFlowHelper(
         """.trimIndent()
 
         /**
+         * Extracts ALL iframes currently in the page DOM (including ones injected by the
+         * page's own JS, e.g. the VK embed that auto-plays). This is the V1 fallback
+         * `iframe` selector. Returns [{name, iframe, src}].
+         */
+        val JS_EXTRACT_DIRECT_IFRAMES = """
+(function(){
+    var iframes = document.querySelectorAll('iframe');
+    var results = [];
+    for (var i = 0; i < iframes.length; i++) {
+        var src = iframes[i].getAttribute('data-src') || iframes[i].src || '';
+        if (!src || src.indexOf('about:blank') !== -1) continue;
+        var parent = iframes[i].parentElement || {};
+        var name = (parent.getAttribute && parent.getAttribute('aria-label')) || parent.className || ('iframe#' + i);
+        results.push({name: String(name).slice(0, 40), iframe: src, src: src});
+        console.log('[Nav] Direct iframe #' + i + ': name="' + name + '" src="' + src + '"');
+    }
+    return JSON.stringify(results);
+})();
+        """.trimIndent()
+
+        /**
          * Diagnostic snapshot of the watching page state. Logs (to console, captured by
          * NavEngineJS) the JS-visible userAgent, cookies, availability of consent libs
          * (Swal / jQuery / $.cookie), and any visible modal/dialog buttons — so we can tell
@@ -428,15 +469,25 @@ class WebViewFlowHelper(
             hasSwal: typeof window.Swal !== 'undefined',
             hasJQuery: typeof window.jQuery !== 'undefined',
             hasJQueryCookie: (typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
-            watchItems: document.querySelectorAll('li[aria-label="embed"], #watch li, li[data-index], [data-index]').length,
+            watchItems: document.querySelectorAll('li[aria-label="embed"], #watch li, li[data-index], [data-index], li[aria-label="quality"], a[href*="download"]').length,
             visibleDialogs: 0,
-            dialogButtons: []
+            dialogButtons: [],
+            swal2Confirm: '',
+            swal2Title: '',
+            swal2Html: '',
+            iframes: []
         };
-        var modals = document.querySelectorAll('.swal2-container, .swal2-modal, .modal, .popup, .consent, [role="dialog"]');
+        var modals = document.querySelectorAll('.swal2-container, .swal2-modal, .swal2-popup, .modal, .popup, .consent, [role="dialog"]');
         for (var m = 0; m < modals.length; m++) {
             var mr = modals[m].getBoundingClientRect();
             if (mr.width > 0 && mr.height > 0 && modals[m].offsetParent !== null) {
                 diag.visibleDialogs++;
+                var conf = modals[m].querySelector('.swal2-confirm');
+                if (conf) diag.swal2Confirm = (conf.innerText || conf.textContent || '').trim().slice(0, 30);
+                var title = modals[m].querySelector('.swal2-title');
+                if (title) diag.swal2Title = (title.innerText || title.textContent || '').trim().slice(0, 60);
+                var htmlC = modals[m].querySelector('.swal2-html-container');
+                if (htmlC) diag.swal2Html = (htmlC.innerText || htmlC.textContent || '').trim().slice(0, 120);
                 var btns = modals[m].querySelectorAll('button, a, [role="button"], .swal2-confirm');
                 for (var b = 0; b < btns.length; b++) {
                     var t = (btns[b].innerText || btns[b].textContent || '').trim();
@@ -445,11 +496,13 @@ class WebViewFlowHelper(
             }
         }
         diag.allSpans = document.querySelectorAll('#watch li span, #watch li a, #watch li').length;
-        diag.watchHtml = (document.querySelector('#watch') || {}).innerHTML ? (document.querySelector('#watch').innerHTML.slice(0, 800) || 'no_watch') : 'no_watch';
-        console.log('[Nav][DIAG] watching page snapshot: ' + JSON.stringify(diag));
-        return 'diag_ok';
+        diag.watchHtml = (document.querySelector('#watch') || {}).innerHTML ? (document.querySelector('#watch').innerHTML.slice(0, 1200) || 'no_watch') : 'no_watch';
+        var ifr = document.querySelectorAll('iframe');
+        for (var i = 0; i < Math.min(ifr.length, 8); i++) {
+            diag.iframes.push((ifr[i].getAttribute('data-src') || ifr[i].src || 'none').slice(0, 120));
+        }
+        return 'DIAG_JSON:' + JSON.stringify(diag);
     } catch(e) {
-        console.log('[Nav][DIAG] error: ' + e.message);
         return 'diag_error:' + e.message;
     }
 })();

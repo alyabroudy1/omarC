@@ -1753,6 +1753,10 @@ class CimaNowProvider : BaseProvider() {
                 // Extract download links
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
+                // Fallback: extract ALL iframes directly from the DOM (e.g. the VK embed that
+                // auto-plays). This captures video even when the server <li> list isn't rendered.
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DIRECT_IFRAMES, key = "direct_iframes"),
+
                 NavigationStep.ExtractHtml(key = "html_final")
             )
 
@@ -1793,10 +1797,14 @@ class CimaNowProvider : BaseProvider() {
             val rawServers = navResult.extractedHtml["server_list"] ?: "[]"
             val rawIframeResults = navResult.extractedHtml["iframe_results"] ?: "[]"
             val rawDownloads = navResult.extractedHtml["download_links"] ?: "[]"
+            val rawDirectIframes = navResult.extractedHtml["direct_iframes"] ?: "[]"
+            val rawDiag = navResult.extractedHtml["diag"] ?: "diag_ok"
 
             Log.d(TAG_TEST, "Extracted servers raw: $rawServers")
             Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
             Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
+            Log.d(TAG_TEST, "Extracted direct iframes raw: $rawDirectIframes")
+            Log.d(TAG_TEST, "Diag raw: $rawDiag")
 
             var found = false
             try {
@@ -1856,6 +1864,46 @@ class CimaNowProvider : BaseProvider() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG_TEST, "Error parsing download results: ${e.message}")
+            }
+
+            // Fallback: process any iframes found directly in the DOM (VK embed, etc.)
+            if (!found) {
+                try {
+                    val cleanedDirect = org.json.JSONTokener(rawDirectIframes).nextValue().toString()
+                    val directArr = org.json.JSONArray(cleanedDirect)
+                    Log.i(TAG_TEST, "Direct iframes found: ${directArr.length()}")
+                    for (i in 0 until directArr.length()) {
+                        val obj = directArr.getJSONObject(i)
+                        val name = obj.optString("name", "iframe")
+                        val iframeUrl = obj.optString("iframe", "")
+                        if (iframeUrl.isNotBlank() && !iframeUrl.contains("youtube.com")) {
+                            Log.i(TAG_TEST, "Found direct iframe: name='$name', iframe='$iframeUrl'")
+                            fallbackExtractIframe(iframeUrl, name, movieUrl, callback)
+                            found = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_TEST, "Error parsing direct iframe results: ${e.message}")
+                }
+            }
+
+            // If still nothing found, dump the rendered HTML + diag for debugging
+            if (!found) {
+                Log.w(TAG_TEST, "========== NOTHING FOUND — dumping debug info ==========")
+                Log.w(TAG_TEST, "Diag: $rawDiag")
+                val htmlFinal = navResult.extractedHtml["html_final"] ?: ""
+                val watchStart = htmlFinal.indexOf("#watch")
+                if (watchStart >= 0) {
+                    Log.w(TAG_TEST, "HTML #watch region: " + htmlFinal.substring(watchStart, minOf(watchStart + 3000, htmlFinal.length)))
+                } else {
+                    Log.w(TAG_TEST, "No '#watch' marker in HTML. Dumping first 4000 chars of body.")
+                    val bodyIdx = htmlFinal.indexOf("<body")
+                    Log.w(TAG_TEST, htmlFinal.substring(if (bodyIdx >= 0) bodyIdx else 0, minOf(if (bodyIdx >= 0) bodyIdx + 4000 else 4000, htmlFinal.length)))
+                }
+                val diagData = navResult.extractedHtml["diag"] ?: ""
+                if (diagData.startsWith("DIAG_JSON:")) {
+                    Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
+                }
             }
 
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
