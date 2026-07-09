@@ -388,5 +388,46 @@ class WebViewFlowHelper(
     return JSON.stringify(downloads);
 })();
         """.trimIndent()
+
+        /**
+         * Diagnostic snapshot of the watching page state. Logs (to console, captured by
+         * NavEngineJS) the JS-visible userAgent, cookies, availability of consent libs
+         * (Swal / jQuery / $.cookie), and any visible modal/dialog buttons — so we can tell
+         * whether the page reached the consent/server-list stage or bounced to /home.
+         */
+        val JS_DIAGNOSE_WATCHING = """
+(function(){
+    try {
+        var diag = {
+            url: window.location.href,
+            ua: navigator.userAgent,
+            cookie: (document.cookie || '').slice(0, 300),
+            hasSwal: typeof window.Swal !== 'undefined',
+            hasJQuery: typeof window.jQuery !== 'undefined',
+            hasJQueryCookie: (typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
+            watchItems: document.querySelectorAll('#watch li, li[data-index], [data-index]').length,
+            visibleDialogs: 0,
+            dialogButtons: []
+        };
+        var modals = document.querySelectorAll('.swal2-container, .modal, .popup, .consent, [role="dialog"]');
+        for (var m = 0; m < modals.length; m++) {
+            var mr = modals[m].getBoundingClientRect();
+            if (mr.width > 0 && mr.height > 0 && modals[m].offsetParent !== null) {
+                diag.visibleDialogs++;
+                var btns = modals[m].querySelectorAll('button, a, [role="button"]');
+                for (var b = 0; b < btns.length; b++) {
+                    var t = (btns[b].innerText || btns[b].textContent || '').trim();
+                    if (t.length > 0 && t.length < 40) diag.dialogButtons.push(t);
+                }
+            }
+        }
+        console.log('[Nav][DIAG] watching page snapshot: ' + JSON.stringify(diag));
+        return 'diag_ok';
+    } catch(e) {
+        console.log('[Nav][DIAG] error: ' + e.message);
+        return 'diag_error:' + e.message;
+    }
+})();
+        """.trimIndent()
     }
 }

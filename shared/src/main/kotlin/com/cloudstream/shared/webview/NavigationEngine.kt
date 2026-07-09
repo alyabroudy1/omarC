@@ -26,6 +26,10 @@ class NavigationEngine(
     var pendingRedirectUrl: String? = null
     var autoApproveAllRedirects: Boolean = false
 
+    /** Last baseUrl used by a LoadHtml step — used as the Referer when navigating
+     *  to the watching URL (the real browser sends the timer-page referer). */
+    var lastHtmlBaseUrl: String? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -44,6 +48,7 @@ class NavigationEngine(
             interceptedWatchingUrl = null
             pendingRedirectUrl = null
             autoApproveAllRedirects = false
+            lastHtmlBaseUrl = null
 
             val activity = activityProvider()
             if (activity == null) {
@@ -107,6 +112,7 @@ class NavigationEngine(
                                     "baseUrl" to step.baseUrl.take(100),
                                     "htmlLen" to step.html.length.toString())
                                 currentUrl = step.baseUrl
+                                lastHtmlBaseUrl = step.baseUrl
                                 webView.loadDataWithBaseURL(step.baseUrl, step.html, "text/html", "UTF-8", null)
                                 ProviderLogger.d(TAG, "execute", "Step $index: LoadHtml — loadDataWithBaseURL called, waiting 2s for initial render")
                                 delay(2000)
@@ -189,14 +195,19 @@ class NavigationEngine(
                             is NavigationStep.NavigateToWatchingUrl -> {
                                 // Enable auto-approve for the redirect chain through ad domains
                                 this@NavigationEngine.autoApproveAllRedirects = true
+                                // Referer for the watching request should be the timer page
+                                // (lastHtmlBaseUrl). currentUrl is reset to "about:blank" after
+                                // loadDataWithBaseURL, so prefer lastHtmlBaseUrl and never send about:blank.
+                                val refererForWatching = (lastHtmlBaseUrl ?: currentUrl)
+                                    .takeIf { it.isNotBlank() && it != "about:blank" }
                                 val watchUrl = this@NavigationEngine.interceptedWatchingUrl
                                 if (!watchUrl.isNullOrBlank()) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: Navigating to watching URL: ${watchUrl.take(120)}")
+                                    ProviderLogger.w(TAG, "execute", "Step $index: Watching Referer = ${refererForWatching ?: "<none>"}")
                                     // Pre-approve the redirect so no confirmation dialog appears
                                     this@NavigationEngine.pendingRedirectUrl = watchUrl
-                                    // Use the current page URL (blog-post.html) as Referer to prevent hotlink blocking
-                                    val referer = currentUrl.takeIf { it.isNotBlank() }
-                                    loadUrlInWebView(webView, watchUrl, referer, emptyMap())
+                                    // Use the timer page URL (blog-post.html) as Referer to prevent hotlink blocking
+                                    loadUrlInWebView(webView, watchUrl, refererForWatching, emptyMap())
                                     currentUrl = watchUrl
                                 } else {
                                     ProviderLogger.w(TAG, "execute", "Step $index: No watching URL captured yet, polling...")
@@ -206,10 +217,10 @@ class NavigationEngine(
                                         val url = this@NavigationEngine.interceptedWatchingUrl
                                         if (!url.isNullOrBlank()) {
                                             ProviderLogger.w(TAG, "execute", "Step $index: Watching URL appeared after polling: ${url.take(120)}")
+                                            ProviderLogger.w(TAG, "execute", "Step $index: Watching Referer = ${refererForWatching ?: "<none>"}")
                                             // Pre-approve the redirect so no confirmation dialog appears
                                             this@NavigationEngine.pendingRedirectUrl = url
-                                            val referer = currentUrl.takeIf { it.isNotBlank() }
-                                            loadUrlInWebView(webView, url, referer, emptyMap())
+                                            loadUrlInWebView(webView, url, refererForWatching, emptyMap())
                                             currentUrl = url
                                             polled = true
                                             break
@@ -506,6 +517,14 @@ class NavigationEngine(
                 // loaded via document.write — Chrome blocks cross-origin document.write in
                 // WebView, breaking the server list extraction.
                 if ((isProtectedDomain || requiresInterventionBypass) && (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
+                    // Explicit confirmation of the Referer the WebView sent for the watching page
+                    // request. A wrong/blank Referer (e.g. about:blank) causes cimanow.cc to
+                    // redirect /watching/ -> /home.
+                    if (request.isForMainFrame && isCimaDomain) {
+                        val webViewReferer = reqHeaders["Referer"]
+                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                            "WATCHING PAGE main-frame | Referer from WebView = ${webViewReferer ?: "<none>"}")
+                    }
                     try {
                         val conn = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                         // Follow redirects internally so we get the final content from the

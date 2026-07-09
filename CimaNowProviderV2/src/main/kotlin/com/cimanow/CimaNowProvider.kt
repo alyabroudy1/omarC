@@ -1729,6 +1729,9 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.WaitForDelay(15000L),
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
+                // Diagnostic snapshot: confirm UA spoof, cookies, consent libs, dialogs
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DIAGNOSE_WATCHING, key = "diag"),
+
                 // Dismiss consent popups if any
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
