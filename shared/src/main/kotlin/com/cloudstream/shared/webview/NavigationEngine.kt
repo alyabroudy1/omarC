@@ -30,6 +30,11 @@ class NavigationEngine(
      *  to the watching URL (the real browser sends the timer-page referer). */
     var lastHtmlBaseUrl: String? = null
 
+    /** Actual playable video stream URLs captured from network traffic (e.g. VK CDN
+     *  vkuser.net) while the WebView plays the embedded video. Returned as a bonus
+     *  alongside the extracted HTML so the provider can use them directly. */
+    val capturedVideoUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -49,6 +54,7 @@ class NavigationEngine(
             pendingRedirectUrl = null
             autoApproveAllRedirects = false
             lastHtmlBaseUrl = null
+            capturedVideoUrls.clear()
 
             val activity = activityProvider()
             if (activity == null) {
@@ -82,7 +88,8 @@ class NavigationEngine(
                         extractedHtml = extractedHtml,
                         completedSteps = completedSteps,
                         failedAtStep = completedSteps,
-                        error = "Overall timeout"
+                        error = "Overall timeout",
+                        capturedVideoUrls = capturedVideoUrls.toList()
                     ))
                 }
             }
@@ -280,7 +287,8 @@ class NavigationEngine(
                         extractedHtml = extractedHtml,
                         completedSteps = completedSteps,
                         failedAtStep = failedStep,
-                        error = errorMsg
+                        error = errorMsg,
+                        capturedVideoUrls = capturedVideoUrls.toList()
                     ))
                 }
             } catch (e: Exception) {
@@ -303,7 +311,8 @@ class NavigationEngine(
                         success = false, finalUrl = currentUrl,
                         cookies = emptyMap(), extractedHtml = extractedHtml,
                         completedSteps = completedSteps,
-                        failedAtStep = completedSteps, error = e.message
+                        failedAtStep = completedSteps, error = e.message,
+                        capturedVideoUrls = capturedVideoUrls.toList()
                     ))
                 }
             }
@@ -484,6 +493,23 @@ class NavigationEngine(
                     "main" to isMain.toString(),
                     "headers" to interceptHeaderSummary)
                 android.util.Log.w("NavEngineRequest", "URL: $reqUrl\nMAIN: $isMain\nHEADERS: ${reqHeaders.entries.joinToString("\n  ") { "${it.key}=${it.value}" }}")
+
+                // === CAPTURE ACTUAL VIDEO STREAM URLS ===
+                // The WebView may auto-play the embedded video (e.g. VK CDN vkuser.net).
+                // Capture these signed stream URLs so they can be returned directly as links.
+                val isVideoStream = host.endsWith("vkuser.net")
+                        || host.endsWith("vkontakte.ru") || host.endsWith("userapi.net")
+                        || path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".ts")
+                        || (host.contains("okcdn.ru") && reqUrl.contains("type="))
+                        || (host.contains("vkcdn") && path.contains("video"))
+                if (isVideoStream) {
+                    // Strip byte-range param so we keep the canonical URL (range requests are the same file)
+                    val clean = reqUrl.substringBefore("&bytes=")
+                    if (!capturedVideoUrls.contains(clean)) {
+                        capturedVideoUrls.add(clean)
+                        ProviderLogger.i(TAG, "shouldInterceptRequest", "🎬 CAPTURED VIDEO URL: ${clean.take(160)}")
+                    }
+                }
 
                 // NEVER intercept Cloudflare challenge scripts — they must execute in the
                 // original WebView context to properly solve the JS challenge and set cookies.

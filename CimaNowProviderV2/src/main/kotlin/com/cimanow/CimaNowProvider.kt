@@ -1793,117 +1793,116 @@ class CimaNowProvider : BaseProvider() {
                 return false
             }
 
-            // Extract and report the links
-            val rawServers = navResult.extractedHtml["server_list"] ?: "[]"
-            val rawIframeResults = navResult.extractedHtml["iframe_results"] ?: "[]"
-            val rawDownloads = navResult.extractedHtml["download_links"] ?: "[]"
-            val rawDirectIframes = navResult.extractedHtml["direct_iframes"] ?: "[]"
-            val rawDiag = navResult.extractedHtml["diag"] ?: "diag_ok"
-
-            Log.d(TAG_TEST, "Extracted servers raw: $rawServers")
-            Log.d(TAG_TEST, "Extracted iframes raw: $rawIframeResults")
-            Log.d(TAG_TEST, "Extracted downloads raw: $rawDownloads")
-            Log.d(TAG_TEST, "Extracted direct iframes raw: $rawDirectIframes")
-            Log.d(TAG_TEST, "Diag raw: $rawDiag")
-
+            // ======================== PARSE RENDERED HTML (same as V1 loadLinks after decryption) ========================
+            // The WebView navigator's job is DONE: html_final is the fully-rendered DOM (the JS
+            // execution IS the "decryption"). Now run the SAME JSoup extraction CloudStream uses
+            // after decryption — find embedded iframes + server tabs (core.php) + download links,
+            // and feed every URL to the normal loadExtractor / callback pipeline.
+            val htmlFinal = navResult.extractedHtml["html_final"] ?: ""
+            val watchUrl = navResult.finalUrl
             var found = false
-            try {
-                val cleanedServers = org.json.JSONTokener(rawServers).nextValue().toString()
-                val serverArr = org.json.JSONArray(cleanedServers)
-                val cleanedIframes = org.json.JSONTokener(rawIframeResults).nextValue().toString()
-                val iframeArr = org.json.JSONArray(cleanedIframes)
 
-                val iframeMap = (0 until iframeArr.length()).associate { i ->
-                    val obj = iframeArr.getJSONObject(i)
-                    obj.optString("index", "") to obj.optString("iframe", "")
+            if (htmlFinal.isNotBlank()) {
+                val doc = Jsoup.parse(htmlFinal, watchUrl)
+
+                // 1. Direct iframes already rendered in the DOM (e.g. the active VK embed).
+                //    V1 selector: ul.tabcontent#watch li[aria-label='embed'] iframe, #watch li[aria-label='embed'] iframe, iframe
+                val watchSection = doc.select("ul.tabcontent#watch li[aria-label='embed'] iframe, #watch li[aria-label='embed'] iframe, iframe")
+                Log.i(TAG_TEST, "Found ${watchSection.size} embedded iframes in rendered HTML")
+                for (iframe in watchSection) {
+                    val iframeSrc = iframe.attr("data-src").ifBlank { iframe.attr("src") }
+                    if (iframeSrc.isBlank() || iframeSrc.contains("youtube.com")) continue
+                    val fullIframeUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
+                    Log.i(TAG_TEST, "Found watch iframe: $fullIframeUrl")
+                    try {
+                        loadExtractor(fullIframeUrl, watchUrl, { }, callback)
+                    } catch (e: Exception) {
+                        Log.e(TAG_TEST, "loadExtractor failed for $fullIframeUrl: ${e.message}")
+                    }
+                    found = true
                 }
 
-                for (i in 0 until serverArr.length()) {
-                    val obj = serverArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val index = obj.optString("index", "")
-                    val id = obj.optString("id", "")
-                    val iframeUrl = iframeMap[index] ?: ""
-
-                    Log.i(TAG_TEST, "Found server: name='$name', index=$index, id=$id, iframe='$iframeUrl'")
-                    if (iframeUrl.isNotBlank()) {
-                        when {
-                            iframeUrl.contains("cimanowtv", true) -> {
-                                handlecima(iframeUrl, name, callback)
+                // 2. Server tabs -> AJAX core.php (mirrors V2 loadLinks). Renders OTHER servers' iframes
+                //    (Filemoon, OK, Uqload, etc.) which aren't auto-loaded by the page.
+                val servers = doc.select("li[data-index]")
+                Log.i(TAG_TEST, "Found ${servers.size} server tabs in rendered HTML")
+                for (server in servers) {
+                    val index = server.attr("data-index")
+                    val id = server.attr("data-id")
+                    val serverName = server.text().trim()
+                    if (index.isNotBlank() && id.isNotBlank()) {
+                        try {
+                            val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
+                            val coreHeaders = mapOf("Referer" to watchUrl, "X-Requested-With" to "XMLHttpRequest")
+                            val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                            val playerDoc = Jsoup.parse(coreText, ajaxUrl)
+                            val rawIframeUrl = playerDoc.select("iframe").attr("src") ?: ""
+                            val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
+                            if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                Log.i(TAG_TEST, "Server '$serverName' iframe: $iframeUrl")
+                                fallbackExtractIframe(iframeUrl, serverName, watchUrl, callback)
+                                found = true
                             }
-                            iframeUrl.contains("forafile.com", true) -> {
-                                handleForafile(iframeUrl, 0, movieUrl, callback)
-                            }
-                            else -> {
-                                fallbackExtractIframe(iframeUrl, name, movieUrl, callback)
-                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG_TEST, "Error switching server index=$index: ${e.message}")
                         }
-                        found = true
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG_TEST, "Error parsing server results: ${e.message}")
-            }
 
-            try {
-                val cleanedDownloads = org.json.JSONTokener(rawDownloads).nextValue().toString()
-                val downloadArr = org.json.JSONArray(cleanedDownloads)
-                for (i in 0 until downloadArr.length()) {
-                    val obj = downloadArr.getJSONObject(i)
-                    val name = obj.optString("name", "")
-                    val url = obj.optString("url", "")
-                    if (url.isNotBlank()) {
-                        Log.i(TAG_TEST, "Found download link: name='$name', url='$url'")
-                        callback(
-                            newExtractorLink(name, name, url, type = getLinkType(url)) {
-                                this.referer = movieUrl
-                            }
-                        )
-                        found = true
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG_TEST, "Error parsing download results: ${e.message}")
-            }
-
-            // Fallback: process any iframes found directly in the DOM (VK embed, etc.)
-            if (!found) {
-                try {
-                    val cleanedDirect = org.json.JSONTokener(rawDirectIframes).nextValue().toString()
-                    val directArr = org.json.JSONArray(cleanedDirect)
-                    Log.i(TAG_TEST, "Direct iframes found: ${directArr.length()}")
-                    for (i in 0 until directArr.length()) {
-                        val obj = directArr.getJSONObject(i)
-                        val name = obj.optString("name", "iframe")
-                        val iframeUrl = obj.optString("iframe", "")
-                        if (iframeUrl.isNotBlank() && !iframeUrl.contains("youtube.com")) {
-                            Log.i(TAG_TEST, "Found direct iframe: name='$name', iframe='$iframeUrl'")
-                            fallbackExtractIframe(iframeUrl, name, movieUrl, callback)
+                // 3. Download links
+                val downloadLinks = doc.select("li[aria-label='quality'] a[href]")
+                Log.i(TAG_TEST, "Found ${downloadLinks.size} download links in rendered HTML")
+                for (dl in downloadLinks) {
+                    try {
+                        val dlUrl = dl.attr("href")
+                        val linkText = dl.text().trim()
+                        val quality = Regex("(\\d{3,4})p?").find(linkText)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
+                        if (dlUrl.isNotBlank() && dlUrl.startsWith("http")) {
+                            Log.i(TAG_TEST, "Download link: quality=$quality url=$dlUrl")
+                            callback(newExtractorLink("CimaNow", "CimaNow", dlUrl, type = getLinkType(dlUrl)) {
+                                this.referer = watchUrl
+                                this.quality = quality
+                            })
                             found = true
                         }
+                    } catch (e: Exception) {
+                        Log.e(TAG_TEST, "Error processing download link: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG_TEST, "Error parsing direct iframe results: ${e.message}")
+                }
+            } else {
+                Log.w(TAG_TEST, "html_final is blank — nothing to parse")
+            }
+
+            // 4. Bonus: video URLs captured directly from network traffic (e.g. VK CDN vkuser.net)
+            for (vurl in navResult.capturedVideoUrls) {
+                if (vurl.isNotBlank()) {
+                    Log.i(TAG_TEST, "Captured video URL: $vurl")
+                    callback(newExtractorLink("VK", "VK-Web", vurl, type = getLinkType(vurl)) {
+                        this.referer = watchUrl
+                    })
+                    found = true
                 }
             }
 
-            // If still nothing found, dump the rendered HTML + diag for debugging
+            // Debug dump if nothing found — print the FULL rendered HTML to logcat
             if (!found) {
-                Log.w(TAG_TEST, "========== NOTHING FOUND — dumping debug info ==========")
-                Log.w(TAG_TEST, "Diag: $rawDiag")
-                val htmlFinal = navResult.extractedHtml["html_final"] ?: ""
-                val watchStart = htmlFinal.indexOf("#watch")
-                if (watchStart >= 0) {
-                    Log.w(TAG_TEST, "HTML #watch region: " + htmlFinal.substring(watchStart, minOf(watchStart + 3000, htmlFinal.length)))
-                } else {
-                    Log.w(TAG_TEST, "No '#watch' marker in HTML. Dumping first 4000 chars of body.")
-                    val bodyIdx = htmlFinal.indexOf("<body")
-                    Log.w(TAG_TEST, htmlFinal.substring(if (bodyIdx >= 0) bodyIdx else 0, minOf(if (bodyIdx >= 0) bodyIdx + 4000 else 4000, htmlFinal.length)))
-                }
+                Log.w(TAG_TEST, "========== NOTHING FOUND — dumping FULL html_final to log ==========")
                 val diagData = navResult.extractedHtml["diag"] ?: ""
                 if (diagData.startsWith("DIAG_JSON:")) {
                     Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
                 }
+                Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
+                // logcat truncates lines >~4KB, so emit in safe chunks
+                val chunkSize = 3000
+                var offset = 0
+                var part = 0
+                while (offset < htmlFinal.length) {
+                    val end = minOf(offset + chunkSize, htmlFinal.length)
+                    Log.w(TAG_TEST, "--- html_final[$part] (${offset}-${end}) ---\n" + htmlFinal.substring(offset, end))
+                    offset = end
+                    part++
+                }
+                Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
             }
 
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")

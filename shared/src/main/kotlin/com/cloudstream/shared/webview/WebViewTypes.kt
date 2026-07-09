@@ -149,5 +149,6 @@ data class NavigationResult(
     val extractedHtml: Map<String, String>,
     val completedSteps: Int,
     val failedAtStep: Int? = null,
-    val error: String? = null
+    val error: String? = null,
+    val capturedVideoUrls: List<String> = emptyList()
 )
