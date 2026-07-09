@@ -1019,14 +1019,28 @@ class CimaNowProvider : BaseProvider() {
             var extracted = false
             val countingCallback: (ExtractorLink) -> Unit = { link ->
                 extracted = true
+                Log.i(TAG_FE, "loadExtractor SUCCEEDED for '$serverName' -> ${link.url.take(120)}")
                 callback(link)
             }
             try {
+                Log.i(TAG_FE, "Calling loadExtractor for server='$serverName' iframeUrl=$iframeUrl referer=${referer.take(100)}")
                 loadExtractor(iframeUrl, referer, {}, countingCallback)
-            } catch (_: Exception) {}
-            if (extracted) return
+            } catch (e: Exception) {
+                Log.w(TAG_FE, "loadExtractor threw for '$serverName': ${e.message}")
+            }
+            if (extracted) {
+                Log.i(TAG_FE, "loadExtractor produced links for '$serverName', skipping HTTP fallback")
+                return
+            }
+            Log.w(TAG_FE, "loadExtractor returned nothing for '$serverName' — trying HTTP fallback")
 
-            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = false) ?: return
+            Log.i(TAG_FE, "HTTP fetching iframe URL for '$serverName': $iframeUrl")
+            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = false)
+            if (html == null) {
+                Log.w(TAG_FE, "HTTP fallback returned null for '$serverName'")
+                return
+            }
+            Log.i(TAG_FE, "HTTP fallback got ${html.length} chars for '$serverName'")
             val doc = Jsoup.parse(html, iframeUrl)
 
             val urls = mutableListOf<String>()
@@ -1036,6 +1050,7 @@ class CimaNowProvider : BaseProvider() {
             doc.select("video[src]").forEach { urls.add(it.attr("src")) }
 
             val baseUrl = Regex("(https?://[^/]+)").find(iframeUrl)?.groupValues?.get(1) ?: ""
+            Log.i(TAG_FE, "HTTP fallback found ${urls.size} raw URLs for '$serverName'")
             for (url in urls.distinct()) {
                 val finalUrl = when {
                     url.startsWith("http") -> url
@@ -1047,6 +1062,7 @@ class CimaNowProvider : BaseProvider() {
                     val link = newExtractorLink(serverName, serverName, finalUrl, type = getLinkType(finalUrl))
                     link.referer = iframeUrl
                     callback(link)
+                    Log.i(TAG_FE, "HTTP fallback EMITTED link for '$serverName': ${finalUrl.take(100)}")
                 }
             }
         } catch (e: Exception) {
@@ -1801,6 +1817,12 @@ class CimaNowProvider : BaseProvider() {
             val htmlFinal = navResult.extractedHtml["html_final"] ?: ""
             val watchUrl = navResult.finalUrl
             var found = false
+            val foundLinks = mutableListOf<String>()
+            val loggingCallback: (ExtractorLink) -> Unit = { link ->
+                foundLinks.add(link.url)
+                Log.i(TAG_TEST, ">>> WATCH LINK: source=${link.source} name=${link.name} quality=${link.quality} url=${link.url.take(150)} referer=${link.referer.take(80)}")
+                callback(link)
+            }
 
             if (htmlFinal.isNotBlank()) {
                 val doc = Jsoup.parse(htmlFinal, watchUrl)
@@ -1815,7 +1837,7 @@ class CimaNowProvider : BaseProvider() {
                     val fullIframeUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
                     Log.i(TAG_TEST, "Found watch iframe: $fullIframeUrl")
                     try {
-                        loadExtractor(fullIframeUrl, watchUrl, { }, callback)
+                        loadExtractor(fullIframeUrl, watchUrl, { }, loggingCallback)
                     } catch (e: Exception) {
                         Log.e(TAG_TEST, "loadExtractor failed for $fullIframeUrl: ${e.message}")
                     }
@@ -1840,7 +1862,7 @@ class CimaNowProvider : BaseProvider() {
                             val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
                             if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
                                 Log.i(TAG_TEST, "Server '$serverName' iframe: $iframeUrl")
-                                fallbackExtractIframe(iframeUrl, serverName, watchUrl, callback)
+                                fallbackExtractIframe(iframeUrl, serverName, watchUrl, loggingCallback)
                                 found = true
                             }
                         } catch (e: Exception) {
@@ -1849,26 +1871,52 @@ class CimaNowProvider : BaseProvider() {
                     }
                 }
 
-                // 3. Download links
-                val downloadLinks = doc.select("li[aria-label='quality'] a[href]")
-                Log.i(TAG_TEST, "Found ${downloadLinks.size} download links in rendered HTML")
-                for (dl in downloadLinks) {
-                    try {
-                        val dlUrl = dl.attr("href")
-                        val linkText = dl.text().trim()
-                        val quality = Regex("(\\d{3,4})p?").find(linkText)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
-                        if (dlUrl.isNotBlank() && dlUrl.startsWith("http")) {
-                            Log.i(TAG_TEST, "Download link: quality=$quality url=$dlUrl")
-                            callback(newExtractorLink("CimaNow", "CimaNow", dlUrl, type = getLinkType(dlUrl)) {
-                                this.referer = watchUrl
-                                this.quality = quality
-                            })
-                            found = true
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG_TEST, "Error processing download link: ${e.message}")
-                    }
-                }
+                // 3. Download links (commented — watch-only flow)
+//                val downloadLinks = doc.select("li[aria-label='quality'] a[href]")
+//                Log.i(TAG_TEST, "Found ${downloadLinks.size} download links in rendered HTML")
+//                for (dl in downloadLinks) {
+//                    try {
+//                        var dlUrl = dl.attr("href")
+//                        val linkText = dl.text().trim()
+//                        val quality = Regex("(\\d{3,4})p?").find(linkText)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
+//                        if (dlUrl.isBlank() || !dlUrl.startsWith("http")) continue
+//
+//                        // Unwrap href.li redirect wrapper (used by forafile)
+//                        if (dlUrl.startsWith("https://href.li/?") || dlUrl.startsWith("http://href.li/?")) {
+//                            val raw = dlUrl.substringAfter("href.li/?").substringBefore("&")
+//                            if (raw.isNotBlank()) {
+//                                Log.i(TAG_TEST, "Unwrapped href.li: $raw")
+//                                dlUrl = raw
+//                            }
+//                        }
+//
+//                        Log.i(TAG_TEST, "Download link: quality=$quality url=$dlUrl")
+//
+//                        if (dlUrl.contains("forafile.com", true)) {
+//                            handleForafile(dlUrl, quality, dlUrl, callback)
+//                        } else {
+//                            var extracted = false
+//                            val countingCb: (ExtractorLink) -> Unit = { link ->
+//                                extracted = true
+//                                link.quality = quality
+//                                callback(link)
+//                            }
+//                            try {
+//                                loadExtractor(dlUrl, watchUrl, {}, countingCb)
+//                            } catch (_: Exception) {}
+//                            if (!extracted) {
+//                                val dlBase = try { java.net.URI(dlUrl).let { "${it.scheme}://${it.host}/" } } catch (_: Exception) { dlUrl }
+//                                callback(newExtractorLink("CimaNow", "CimaNow", dlUrl, type = getLinkType(dlUrl)) {
+//                                    this.referer = dlBase
+//                                    this.quality = quality
+//                                })
+//                            }
+//                        }
+//                        found = true
+//                    } catch (e: Exception) {
+//                        Log.e(TAG_TEST, "Error processing download link: ${e.message}")
+//                    }
+//                }
             } else {
                 Log.w(TAG_TEST, "html_final is blank — nothing to parse")
             }
@@ -1877,8 +1925,16 @@ class CimaNowProvider : BaseProvider() {
             for (vurl in navResult.capturedVideoUrls) {
                 if (vurl.isNotBlank()) {
                     Log.i(TAG_TEST, "Captured video URL: $vurl")
-                    callback(newExtractorLink("VK", "VK-Web", vurl, type = getLinkType(vurl)) {
-                        this.referer = watchUrl
+                    val vkHost = vurl.contains("vkuser.net") || vurl.contains("vkcdn") || vurl.contains("userapi.net") || vurl.contains("vkontakte.ru")
+                    val okHost = vurl.contains("okcdn.ru") || vurl.contains("odnoklassniki.ru")
+                    val (capturedReferer, capturedOrigin) = when {
+                        vkHost -> "https://vkvideo.ru/" to "https://vkvideo.ru/"
+                        okHost -> "https://ok.ru/" to "https://ok.ru/"
+                        else -> watchUrl to watchUrl
+                    }
+                    loggingCallback(newExtractorLink("WebView", "WebView", vurl, type = getLinkType(vurl)) {
+                        this.referer = capturedReferer
+                        this.headers = mapOf("Referer" to capturedReferer, "Origin" to capturedOrigin)
                     })
                     found = true
                 }
@@ -1905,6 +1961,10 @@ class CimaNowProvider : BaseProvider() {
                 Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
             }
 
+            if (found) {
+                Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
+                foundLinks.forEachIndexed { i, url -> Log.i(TAG_TEST, "  [$i] $url") }
+            }
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
             return found
         } catch (e: Exception) {
