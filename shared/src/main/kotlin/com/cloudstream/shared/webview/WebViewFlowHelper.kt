@@ -207,7 +207,7 @@ class WebViewFlowHelper(
         val JS_DISMISS_CONSENT = """
 (function() {
     var found = false;
-    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button');
+    var candidates = document.querySelectorAll('button, a, .btn, [role="button"], .modal-footer a, .modal-footer button, .popup-content a, .popup-content button, .swal2-confirm');
     var keywords = ['continue', 'accept', 'allow', 'agree', 'confirm', 'close', 'dismiss', 'ok', 'got it', 'أوافق', 'متابعة', 'موافق'];
     for (var i = 0; i < candidates.length; i++) {
         var el = candidates[i];
@@ -323,14 +323,25 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_SERVERS = """
 (function(){
-    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var items = document.querySelectorAll('li[aria-label="embed"], li.embed-item, ul.tabcontent#watch li, #watch li[aria-label="embed"], #watch li, li[data-index], [data-id], li[data-post]');
     var servers = [];
     for (var i = 0; i < items.length; i++) {
-        var idx = items[i].getAttribute('data-index') || '';
-        var id = items[i].getAttribute('data-id') || '';
-        var name = (items[i].textContent || '').trim().slice(0, 60);
-        servers.push({index: idx, id: id, name: name});
-        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'"');
+        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-post') || items[i].getAttribute('data-server') || '';
+        var id = items[i].getAttribute('data-id') || items[i].getAttribute('data-server-id') || '';
+        var a = items[i].querySelector('a') || items[i];
+        var href = a.href || items[i].getAttribute('data-url') || items[i].getAttribute('data-src') || '';
+        var name = (a.textContent || items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
+        servers.push({index: idx, id: id, name: name, href: href});
+        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'" href="'+href+'"');
+    }
+    if (servers.length === 0) {
+        var allLinks = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"]');
+        for (var i = 0; i < Math.min(allLinks.length, 5); i++) {
+            var name = (allLinks[i].textContent || '').trim().slice(0, 60);
+            var href = allLinks[i].href || '';
+            servers.push({index: '', id: '', name: name, href: href});
+            console.log('[Nav] Fallback link #'+i+': name="'+name+'" href="'+href+'"');
+        }
     }
     return JSON.stringify(servers);
 })();
@@ -338,16 +349,30 @@ class WebViewFlowHelper(
 
         val JS_FETCH_IFRAMES = """
 (function(){
-    var items = document.querySelectorAll('#watch li, li[data-index], [data-index]');
+    var items = document.querySelectorAll('li[aria-label="embed"], li.embed-item, ul.tabcontent#watch li, #watch li[aria-label="embed"], #watch li, li[data-index], [data-id], li[data-post]');
     var baseUrl = window.location.origin;
     var results = [];
     var done = 0;
     for (var i = 0; i < Math.min(items.length, 10); i++) {
-        var idx = items[i].getAttribute('data-index') || '';
+        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-post') || '';
         var id = items[i].getAttribute('data-id') || '';
-        var name = (items[i].textContent || '').trim().slice(0, 60);
+        var a = items[i].querySelector('a') || items[i];
+        var name = (a.textContent || items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
+        
+        // First check if there's already an iframe inside the li (rendered by page JS)
+        var iframe = items[i].querySelector('iframe');
+        if (iframe) {
+            var iframeSrc = iframe.getAttribute('data-src') || iframe.src || '';
+            console.log('[Nav] Server ' + name + ' direct iframe: ' + iframeSrc);
+            results.push({name: name, index: idx, iframe: iframeSrc, direct: true});
+            done++;
+            if (done === Math.min(items.length, 10)) { window._serverResults = JSON.stringify(results); }
+            continue;
+        }
+        
+        // Fall back to AJAX via core.php
         var ajaxUrl = baseUrl + '/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=' + idx + '&id=' + id;
-        console.log('[Nav] Fetching server ' + name + ': ' + ajaxUrl);
+        console.log('[Nav] Fetching server ' + name + ' via AJAX: ' + ajaxUrl);
         (function(srvName, srvIdx, url) {
             fetch(url, {credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': window.location.href}})
                 .then(function(r) { return r.text(); })
@@ -355,16 +380,14 @@ class WebViewFlowHelper(
                     var iframeSrc = '';
                     var match = html.match(/<iframe[^>]+src=["']([^"']+)["']/);
                     if (match) iframeSrc = match[1];
-                    console.log('[Nav] Server ' + srvName + ' iframe: ' + iframeSrc);
-                    results.push({name: srvName, index: srvIdx, iframe: iframeSrc, responseLength: html.length});
+                    console.log('[Nav] Server ' + srvName + ' AJAX iframe: ' + iframeSrc);
+                    results.push({name: srvName, index: srvIdx, iframe: iframeSrc, direct: false, responseLength: html.length});
                     done++;
-                    if (done === Math.min(document.querySelectorAll('#watch li, li[data-index], [data-index]').length, 10)) {
-                        window._serverResults = JSON.stringify(results);
-                    }
+                    if (done === Math.min(items.length, 10)) { window._serverResults = JSON.stringify(results); }
                 })
                 .catch(function(err) {
-                    console.log('[Nav] Server ' + srvName + ' error: ' + err.message);
-                    results.push({name: srvName, index: srvIdx, iframe: '', error: err.message});
+                    console.log('[Nav] Server ' + srvName + ' AJAX error: ' + err.message);
+                    results.push({name: srvName, index: srvIdx, iframe: '', direct: false, error: err.message});
                     done++;
                 });
         })(name, idx, ajaxUrl);
@@ -375,7 +398,7 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_DOWNLOADS = """
 (function(){
-    var links = document.querySelectorAll('#download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
+    var links = document.querySelectorAll('li[aria-label="quality"] a[href], #download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
     var downloads = [];
     for (var i = 0; i < links.length; i++) {
         var name = (links[i].textContent || '').trim().slice(0, 60);
@@ -405,22 +428,24 @@ class WebViewFlowHelper(
             hasSwal: typeof window.Swal !== 'undefined',
             hasJQuery: typeof window.jQuery !== 'undefined',
             hasJQueryCookie: (typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
-            watchItems: document.querySelectorAll('#watch li, li[data-index], [data-index]').length,
+            watchItems: document.querySelectorAll('li[aria-label="embed"], #watch li, li[data-index], [data-index]').length,
             visibleDialogs: 0,
             dialogButtons: []
         };
-        var modals = document.querySelectorAll('.swal2-container, .modal, .popup, .consent, [role="dialog"]');
+        var modals = document.querySelectorAll('.swal2-container, .swal2-modal, .modal, .popup, .consent, [role="dialog"]');
         for (var m = 0; m < modals.length; m++) {
             var mr = modals[m].getBoundingClientRect();
             if (mr.width > 0 && mr.height > 0 && modals[m].offsetParent !== null) {
                 diag.visibleDialogs++;
-                var btns = modals[m].querySelectorAll('button, a, [role="button"]');
+                var btns = modals[m].querySelectorAll('button, a, [role="button"], .swal2-confirm');
                 for (var b = 0; b < btns.length; b++) {
                     var t = (btns[b].innerText || btns[b].textContent || '').trim();
                     if (t.length > 0 && t.length < 40) diag.dialogButtons.push(t);
                 }
             }
         }
+        diag.allSpans = document.querySelectorAll('#watch li span, #watch li a, #watch li').length;
+        diag.watchHtml = (document.querySelector('#watch') || {}).innerHTML ? (document.querySelector('#watch').innerHTML.slice(0, 800) || 'no_watch') : 'no_watch';
         console.log('[Nav][DIAG] watching page snapshot: ' + JSON.stringify(diag));
         return 'diag_ok';
     } catch(e) {

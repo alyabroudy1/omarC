@@ -1729,11 +1729,13 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.WaitForDelay(15000L),
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Diagnostic snapshot: confirm UA spoof, cookies, consent libs, dialogs
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DIAGNOSE_WATCHING, key = "diag"),
-
-                // Dismiss consent popups if any
+                // Dismiss consent popups if any — run BEFORE diag so we capture post-dismissal state.
+                // The page loads swal2 asynchronously around ~1.3s after navigation; give it time.
+                NavigationStep.WaitForDelay(5000L),
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
+
+                // Diagnostic snapshot after consent dismissal
+                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DIAGNOSE_WATCHING, key = "diag"),
 
                 // Extract server list from the rendered page
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_SERVERS, key = "server_list"),
