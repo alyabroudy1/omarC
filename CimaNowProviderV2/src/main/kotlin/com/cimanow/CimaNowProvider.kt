@@ -1773,6 +1773,27 @@ class CimaNowProvider : BaseProvider() {
                 // auto-plays). This captures video even when the server <li> list isn't rendered.
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DIRECT_IFRAMES, key = "direct_iframes"),
 
+                // WAIT for the page's server-list JS to finish populating the server <li> elements
+                // (data-index/data-id OR data-idx/data-ix). Without this we race the async fetch
+                // and capture empty attributes -> 0 server tabs. Best-effort: still extract after
+                // timeout so behaviour is unchanged when the list is already populated.
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = """
+                        (function(){
+                            var lis = document.querySelectorAll('li[data-index], li[data-idx]');
+                            for (var i = 0; i < lis.length; i++) {
+                                var idx = (lis[i].getAttribute('data-index') || lis[i].getAttribute('data-idx') || '').trim();
+                                if (idx !== '') return true;
+                            }
+                            var emb = document.querySelectorAll('li[aria-label="embed"] iframe, iframe[src*="vkvideo"], iframe[src*="video_ext"], iframe[src*="ok.ru"]');
+                            return emb.length > 0;
+                        })()
+                    """.trimIndent(),
+                    timeoutMs = 20000L,
+                    pollIntervalMs = 1000L,
+                    abortOnFailure = false
+                ),
+
                 NavigationStep.ExtractHtml(key = "html_final")
             )
 
@@ -1849,11 +1870,13 @@ class CimaNowProvider : BaseProvider() {
 
                 // 2. Server tabs -> AJAX core.php -> iframe URL (renders the OTHER servers'
                 //    iframes that aren't auto-loaded by the page: Cima Now, Filemoon, OK, Uqload...).
-                val servers = doc.select("li[data-index]")
+                //    The page sometimes renders the attributes as data-index/data-id and sometimes
+                //    as data-idx/data-ix, so accept both spellings.
+                val servers = doc.select("li[data-index], li[data-idx]")
                 Log.i(TAG_TEST, "Found ${servers.size} server tabs in rendered HTML")
                 for (server in servers) {
-                    val index = server.attr("data-index")
-                    val id = server.attr("data-id")
+                    val index = (server.attr("data-index").ifBlank { server.attr("data-idx") }).orEmpty()
+                    val id = (server.attr("data-id").ifBlank { server.attr("data-ix") }).orEmpty()
                     val serverName = server.text().trim()
                     if (index.isNotBlank() && id.isNotBlank()) {
                         try {
