@@ -70,4 +70,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(LarozaExtractor("https://mp4.okhd.site", "OkhdSite"))
     registerExtractorAPI(LarozaExtractor("https://rty1.film77.xyz", "Film77"))
     registerExtractorAPI(LarozaExtractor("https://vidspeed.org:2096", "Vidspeed"))
+
+    // AlbaPlayer (AlbaPlayerControl base64 / Clappr.Player M3U8 extraction)
+    registerExtractorAPI(AlbaPlayerExtractor())
 }
