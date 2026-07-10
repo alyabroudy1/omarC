@@ -199,11 +199,11 @@ class NavigationEngine(
                                         ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write HTML $key: ${e.message}")
                                     }
                                     try {
-                                        val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                        val dlDir = ctx.externalCacheDir ?: ctx.cacheDir
                                         dlDir.mkdirs()
                                         val dlFile = java.io.File(dlDir, "cimanow_html_${key}.html")
                                         dlFile.writeText(html.orEmpty())
-                                        ProviderLogger.i("CimaNowHtmlDump", "writeHtml", "HTML $key written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                        ProviderLogger.i("CimaNowHtmlDump", "writeHtml", "HTML $key written to EXTCACHE ${dlFile.absolutePath} ($len bytes)")
                                     } catch (e: Exception) {
                                         ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write HTML $key to Downloads: ${e.message}")
                                     }
@@ -284,11 +284,11 @@ class NavigationEngine(
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to ${file.absolutePath} ($len bytes)")
                                 try {
-                                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                    val dlDir = ctx.externalCacheDir ?: ctx.cacheDir
                                     dlDir.mkdirs()
                                     val dlFile = java.io.File(dlDir, "cimanow_html_${dumpKey}.html")
                                     dlFile.writeText(html.orEmpty())
-                                    ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                    ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to EXTCACHE ${dlFile.absolutePath} ($len bytes)")
                                 } catch (e: Exception) {
                                     ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write failure dump to Downloads: ${e.message}")
                                 }
@@ -323,11 +323,11 @@ class NavigationEngine(
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to ${file.absolutePath} ($len bytes)")
                                 try {
-                                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                    val dlDir = ctx.externalCacheDir ?: ctx.cacheDir
                                     dlDir.mkdirs()
                                     val dlFile = java.io.File(dlDir, "cimanow_html_failure_exception.html")
                                     dlFile.writeText(html.orEmpty())
-                                    ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                    ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to EXTCACHE ${dlFile.absolutePath} ($len bytes)")
                                 } catch (e: Exception) {
                                     ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write exception dump to Downloads: ${e.message}")
                                 }
@@ -710,7 +710,7 @@ class NavigationEngine(
                                 // block Object.defineProperty from patching Element/Document DOM APIs.
                                 // This must run BEFORE the page's g_* anti-scraping script executes.
                                 // window globals survive document.open()/write()/close() replacement.
-                                val guardScript = """<script>(function(){var _d=Object.defineProperty;var _b={outerHTML:1,innerHTML:1,querySelectorAll:1,querySelector:1};Object.defineProperty=function(o,p,d){if(_b[p]&&(o===Element.prototype||o===Document.prototype||o===document.documentElement||o===document.body))return o;return _d.call(Object,o,p,d)};window.__cimaOrigJSON=JSON.stringify.bind(JSON)})()</script>"""
+                                val guardScript = """<script>(function(){var _d=Object.defineProperty;var _b={outerHTML:1,innerHTML:1,querySelectorAll:1,querySelector:1};Object.defineProperty=function(o,p,d){if(_b[p]&&(o===Element.prototype||o===Document.prototype||o===document.documentElement||o===document.body))return o;return _d.call(Object,o,p,d)};window.__cimaOrigJSON=JSON.stringify.bind(JSON);window.onerror=function(m,s,l,c,e){try{var snip='';if(s){var lines=s.split('\\n');var i=(l&&l>2)?l-2:0;snip=lines.slice(i,l+3).join('\\n').slice(0,800)}console.log('CIMA_ERR:'+m+'|line='+l+'|col='+c+'|src='+(s?s.slice(0,80):'')+'|snip='+snip)}catch(_){}}})()</script>"""
                                 val guarded = if (rewritten.contains("<head")) {
                                     rewritten.replaceFirst("<head>", "<head>$guardScript")
                                 } else if (rewritten.contains("<body") || rewritten.contains("<BODY")) {

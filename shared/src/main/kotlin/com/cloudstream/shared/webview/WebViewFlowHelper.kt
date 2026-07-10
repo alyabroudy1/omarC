@@ -348,7 +348,7 @@ class WebViewFlowHelper(
         var name = (items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
         servers.push({index: idx, id: id, name: name, href: ''});
     }
-    return (window.__cimaOrigJSON||JSON.stringify)(servers);
+    return (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(servers);
 })();
         """.trimIndent()
 
@@ -380,7 +380,7 @@ class WebViewFlowHelper(
             if (iframeSrc && iframeSrc.indexOf('about:blank') === -1) {
                 results.push({name: name, index: idx, iframe: iframeSrc, direct: true});
                 done++;
-                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
+                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(results); }
                 continue;
             }
         }
@@ -392,7 +392,7 @@ class WebViewFlowHelper(
             if (src && src.indexOf('about:blank') === -1 && src.length > 10) {
                 results.push({name: name, index: idx, iframe: src, direct: true});
                 done++;
-                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
+                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(results); }
                 break;
             }
         }
@@ -409,7 +409,7 @@ class WebViewFlowHelper(
                     if (match) iframeSrc = match[1];
                     results.push({name: srvName, index: srvIdx, iframe: iframeSrc, direct: false, responseLength: html.length});
                     done++;
-                    if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
+                    if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(results); }
                 })
                 .catch(function(err) {
                     results.push({name: srvName, index: srvIdx, iframe: '', direct: false, error: err.message});
@@ -445,7 +445,7 @@ class WebViewFlowHelper(
         var name = (a.textContent || '').trim().slice(0, 60);
         downloads.push({name: name, url: href});
     }
-    return (window.__cimaOrigJSON||JSON.stringify)(downloads);
+    return (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(downloads);
 })();
         """.trimIndent()
 
@@ -465,7 +465,7 @@ class WebViewFlowHelper(
         var name = (parent.getAttribute && parent.getAttribute('aria-label')) || parent.className || ('iframe#' + i);
         results.push({name: String(name).slice(0, 40), iframe: src, src: src});
     }
-    return (window.__cimaOrigJSON||JSON.stringify)(results);
+    return (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(results);
 })();
         """.trimIndent()
 
@@ -538,7 +538,7 @@ class WebViewFlowHelper(
             }
         }
         var dlHtml = dlSection ? dlSection.innerHTML.slice(0, 4000) : 'NO_DOWNLOAD_SECTION';
-        return 'DUMP_LINKS:' + (window.__cimaOrigJSON||JSON.stringify)({ count: out.length, links: out, downloadSection: dlHtml });
+        return 'DUMP_LINKS:' + (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())({ count: out.length, links: out, downloadSection: dlHtml });
     } catch(e) { return 'dump_err:' + e.message; }
 })();
         """.trimIndent()
@@ -596,7 +596,7 @@ class WebViewFlowHelper(
         for (var i = 0; i < Math.min(ifr.length, 8); i++) {
             diag.iframes.push((ifr[i].getAttribute('data-src') || ifr[i].src || 'none').slice(0, 120));
         }
-        return 'DIAG_JSON:' + (window.__cimaOrigJSON||JSON.stringify)(diag);
+        return 'DIAG_JSON:' + (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(diag);
     } catch(e) {
         return 'diag_error:' + e.message;
     }
