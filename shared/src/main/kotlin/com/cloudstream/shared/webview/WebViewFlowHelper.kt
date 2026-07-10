@@ -36,7 +36,8 @@ class WebViewFlowHelper(
         val servers: List<ServerInfo>,
         val downloads: List<DownloadInfo>,
         val watchPageHtml: String?,
-        val error: String?
+        val error: String?,
+        val postId: String = ""
     )
 
     suspend fun navigateMovieToWatchPage(
@@ -81,12 +82,24 @@ class WebViewFlowHelper(
             )
         }
 
-        val servers = parseServers(navResult)
+        var servers = parseServers(navResult)
         val iframeResults = fetchIframeUrls(navResult, config)
-        val serversWithIframes = servers.mapIndexed { index, server ->
+        var serversWithIframes = servers.mapIndexed { index, server ->
             server.copy(iframeUrl = iframeResults.getOrElse(index) { "" })
         }
-        val downloads = parseDownloads(navResult)
+        var downloads = parseDownloads(navResult)
+        if (servers.isEmpty() && downloads.isEmpty()) {
+            val combinedRaw = navResult.extractedHtml["extracted_all"] ?: ""
+            if (combinedRaw.isNotBlank()) {
+                ProviderLogger.d(TAG, "navigateMovieToWatchPage", "Trying combined extraction fallback")
+                val combinedParsed = parseCombinedExtraction(combinedRaw)
+                if (combinedParsed != null) {
+                    servers = combinedParsed.servers
+                    serversWithIframes = servers
+                    downloads = combinedParsed.downloads
+                }
+            }
+        }
         val watchPageHtml = navResult.extractedHtml["watch_page_raw"]
 
         ProviderLogger.i(TAG, "navigateMovieToWatchPage", "Extraction complete",
@@ -102,13 +115,20 @@ class WebViewFlowHelper(
             ProviderLogger.d(TAG, "navigateMovieToWatchPage", "  download: '${d.name}' url=${d.url.take(80)}")
         }
 
+        val rawPostId = navResult.extractedHtml["post_id"] ?: ""
+        val postId = if (rawPostId.startsWith("POSTID=")) rawPostId.removePrefix("POSTID=") else ""
+        if (postId.isNotBlank() && postId != "NOT_FOUND") {
+            ProviderLogger.d(TAG, "navigateMovieToWatchPage", "Extracted postId: $postId")
+        }
+
         return FlowResult(
             success = true,
             finalUrl = navResult.finalUrl,
             servers = serversWithIframes,
             downloads = downloads,
             watchPageHtml = watchPageHtml,
-            error = null
+            error = null,
+            postId = postId
         )
     }
 
@@ -126,28 +146,34 @@ class WebViewFlowHelper(
             // blog-post → get-link.php → /watching/?token=...) using the confirmation dialogs.
             NavigationStep.WaitForDelay(600_000L),
 
-            // Step 2: Debug DOM — log DOM state for diagnostics
+            // Step 2: Extract post id from watch page
+            NavigationStep.ExecuteJs(javascript = JS_EXTRACT_POST_ID, key = "post_id"),
+
+            // Step 3: Debug DOM — log DOM state for diagnostics
             NavigationStep.ExecuteJs(javascript = JS_DEBUG_DOM, key = "debug_dom"),
 
-            // Step 3: Extract server list (if on watching page)
+            // Step 4: Extract server list (if on watching page)
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_SERVERS, key = "server_list"),
 
-            // Step 4: Fetch iframes via core.php (if on watching page)
+            // Step 5: Extract combined (servers, downloads, iframes)
+            NavigationStep.ExecuteJs(javascript = JS_EXTRACT_ALL, key = "extracted_all"),
+
+            // Step 6: Fetch iframes via core.php (if on watching page)
             NavigationStep.ExecuteJs(javascript = JS_FETCH_IFRAMES, key = "fetch_initiated"),
 
-            // Step 5: Wait for fetches
+            // Step 7: Wait for fetches
             NavigationStep.WaitForDelay(8_000L),
 
-            // Step 6: Collect iframe results
+            // Step 8: Collect iframe results
             NavigationStep.ExecuteJs(
                 javascript = "(function(){ return window.__cimaIframeResults || '[]'; })();",
                 key = "iframe_results"
             ),
 
-            // Step 7: Extract download links
+            // Step 9: Extract download links
             NavigationStep.ExecuteJs(javascript = JS_EXTRACT_DOWNLOADS, key = "download_links"),
 
-            // Step 8: Save final watch page HTML for debugging
+            // Step 10: Save final watch page HTML for debugging
             NavigationStep.ExtractHtml(key = "watch_page_raw")
         )
     }
@@ -200,6 +226,45 @@ class WebViewFlowHelper(
         } catch (e: Exception) {
             ProviderLogger.w(TAG, "parseDownloads", "Failed: ${e.message}", "raw" to raw.take(200))
             emptyList()
+        }
+    }
+
+    private data class CombinedResult(
+        val servers: List<ServerInfo>,
+        val downloads: List<DownloadInfo>
+    )
+
+    private fun parseCombinedExtraction(raw: String): CombinedResult? {
+        return try {
+            val cleaned = JSONTokener(raw).nextValue().toString()
+            val obj = JSONObject(cleaned)
+            val servers = mutableListOf<ServerInfo>()
+            val sArr = obj.optJSONArray("servers")
+            if (sArr != null) {
+                for (i in 0 until sArr.length()) {
+                    val s = sArr.getJSONObject(i)
+                    servers.add(ServerInfo(
+                        name = s.optString("name", ""),
+                        index = s.optString("index", ""),
+                        id = s.optString("id", "")
+                    ))
+                }
+            }
+            val downloads = mutableListOf<DownloadInfo>()
+            val dArr = obj.optJSONArray("downloads")
+            if (dArr != null) {
+                for (i in 0 until dArr.length()) {
+                    val d = dArr.getJSONObject(i)
+                    downloads.add(DownloadInfo(
+                        name = d.optString("name", ""),
+                        url = d.optString("url", "")
+                    ))
+                }
+            }
+            CombinedResult(servers, downloads)
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "parseCombinedExtraction", "Failed: ${e.message}", "raw" to raw.take(200))
+            null
         }
     }
 
@@ -330,25 +395,39 @@ class WebViewFlowHelper(
 })();
         """.trimIndent()
 
+        val JS_EXTRACT_POST_ID = """
+(function(){
+    var lis=document.querySelectorAll('#watch li');
+    for(var i=0;i<lis.length;i++){var d=lis[i].getAttribute('data-id');if(d){console.log('[POSTID] found via watch li:',d);return 'POSTID='+d;}}
+    var sl=document.querySelector('link[rel="shortlink"]'); if(sl&&sl.href){var m=sl.href.match(/[?&]p=(\d+)/);if(m){console.log('[POSTID] found via shortlink:',m[1]);return 'POSTID='+m[1];}}
+    console.log('[POSTID] not found');
+    return 'POSTID=NOT_FOUND';
+})();
+        """.trimIndent()
+
         val JS_EXTRACT_SERVERS = """
 (function(){
-    var items = [];
-    var watchLis = document.querySelectorAll('#watch li');
-    for (var w = 0; w < watchLis.length; w++) {
-        var li = watchLis[w];
-        var al = li.getAttribute('aria-label') || '';
-        if (al.indexOf('embed') !== -1) { items.push(li); continue; }
-        var idx = li.getAttribute('data-index') || li.getAttribute('data-idx') || li.getAttribute('data-post') || '';
-        if (idx || al) { items.push(li); }
-    }
-    var servers = [];
-    for (var i = 0; i < items.length; i++) {
-        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-idx') || items[i].getAttribute('data-post') || '';
-        var id = items[i].getAttribute('data-id') || items[i].getAttribute('data-ix') || '';
-        var name = (items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
-        servers.push({index: idx, id: id, name: name, href: ''});
-    }
-    return (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(servers);
+    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
+    var servers=[],items=document.querySelectorAll('#watch li');
+    for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
+    console.log('[EXTRACT] servers count:',servers.length);
+    return _OJ(servers);
+})();
+        """.trimIndent()
+
+        val JS_EXTRACT_ALL = """
+(function(){
+    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
+    var servers=[],items=document.querySelectorAll('#watch li');
+    for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
+    var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
+    var as=document.getElementsByTagName('a');
+    for(var i=0;i<as.length;i++){var a=as[i],h=a.getAttribute('href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;var p=a.parentElement;if(!p)continue;var pid=p.getAttribute('id')||'',pl=p.getAttribute('aria-label')||'';var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});}
+    var iframes=[],fs=document.getElementsByTagName('iframe');
+    for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
+    var res={servers:servers,downloads:downloads,iframes:iframes};
+    console.log('[EXTRACT_ALL] servers:',servers.length,'downloads:',downloads.length,'iframes:',iframes.length);
+    return _OJ(res);
 })();
         """.trimIndent()
 
@@ -423,6 +502,7 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_DOWNLOADS = """
 (function(){
+    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
     var downloads = [];
     var anchors = document.getElementsByTagName('a');
     var dlHosts = ['jetload','forafile','vk.com/doc','frdl.my','bysetayico','upns','href.li'];
@@ -445,7 +525,8 @@ class WebViewFlowHelper(
         var name = (a.textContent || '').trim().slice(0, 60);
         downloads.push({name: name, url: href});
     }
-    return (window.__cimaOrigJSON||(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})())(downloads);
+    console.log('[DOWNLOAD] download count:',downloads.length);
+    return _OJ(downloads);
 })();
         """.trimIndent()
 
