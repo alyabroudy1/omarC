@@ -14,6 +14,7 @@ import android.util.Base64
 
 class SyriaLive : BaseProvider() {
 
+    override var name = "سيريا لايف (كورة)"
     override val baseDomain get() = "d.syrlive.com/"
     override val providerName get() = "SyriaLive"
     override var lang = "ar"
