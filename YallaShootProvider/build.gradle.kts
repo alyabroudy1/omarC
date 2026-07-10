@@ -1,4 +1,4 @@
-version = 2
+version = 3
 
 // Include shared source directory
 android {
@@ -16,7 +16,7 @@ dependencies {
 cloudstream {
     authors = listOf("omarflex")
     language = "ar"
-    status = 0  // Beta
+    status = 3  // Beta
     tvTypes = listOf("TvSeries", "Movie", "Live")
     iconUrl = "https://www.google.com/s2/favicons?domain=shoot-one.com&sz=%size%"
 }
