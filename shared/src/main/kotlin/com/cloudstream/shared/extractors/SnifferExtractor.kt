@@ -714,7 +714,7 @@ class SnifferExtractor : ExtractorApi() {
                  ProviderLogger.w(TAG, "extractM3u8Qualities", "Parsed M3U8 but found 0 attributes", "lines" to lines.size)
                  null 
             } else {
-                 links
+                 links.sortedByDescending { it.quality }
             }
         } catch (e: Exception) {
             ProviderLogger.e(TAG, "extractM3u8Qualities", "Failed to extract M3U8", e)

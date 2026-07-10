@@ -18,6 +18,57 @@ class SyriaLive : BaseProvider() {
     override val providerName get() = "SyriaLive"
     override var lang = "ar"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/syrialive.json"
+
+    companion object {
+        private fun decodePlayerPage(response: String): String {
+            val dwRegex = Regex("""document\.write\s*\(\s*"([^"]+)"\s*\)""", RegexOption.DOT_MATCHES_ALL)
+            val dwMatch = dwRegex.find(response) ?: return response
+            val encoded = dwMatch.groupValues[1]
+            val decoded = StringBuilder()
+            var i = 0
+            while (i < encoded.length) {
+                when {
+                    encoded[i] == '\\' && i + 1 < encoded.length && encoded[i + 1] == 'x' -> {
+                        if (i + 4 < encoded.length) {
+                            val hex = encoded.substring(i + 2, i + 4)
+                            try {
+                                decoded.append(hex.toInt(16).toChar())
+                            } catch (e: NumberFormatException) {
+                                decoded.append(encoded[i])
+                            }
+                            i += 4
+                        } else {
+                            decoded.append(encoded[i])
+                            i++
+                        }
+                    }
+                    encoded[i] == '\\' && i + 1 < encoded.length && encoded[i + 1] == 'u' -> {
+                        if (i + 6 < encoded.length) {
+                            val hex = encoded.substring(i + 2, i + 6)
+                            try {
+                                decoded.append(hex.toInt(16).toChar())
+                            } catch (e: NumberFormatException) {
+                                decoded.append(encoded[i])
+                            }
+                            i += 6
+                        } else {
+                            decoded.append(encoded[i])
+                            i++
+                        }
+                    }
+                    encoded[i] == '\\' && i + 1 < encoded.length -> {
+                        decoded.append(encoded[i + 1])
+                        i += 2
+                    }
+                    else -> {
+                        decoded.append(encoded[i])
+                        i++
+                    }
+                }
+            }
+            return decoded.toString()
+        }
+    }
     
     override val supportedTypes = setOf(TvType.Live, TvType.Movie)
 
@@ -178,11 +229,22 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
+        
+        // First: delegate to shared extractors (AlbaPlayerExtractor handles document.write deobfuscation)
+        if (loadExtractor(playerUrl, data, subtitleCallback, callback)) {
+            foundLinks = true
+            return foundLinks
+        }
+        
+        // Fallback: fetch page and try inline extraction with deobfuscation
         val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false) ?: return foundLinks
+        
+        // Decode document.write hex obfuscation if present
+        val decodedHtml = decodePlayerPage(playerResponse)
         
         // Check for AlbaPlayerControl base64 packed stream
         val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")
-        val albaMatch = albaRegex.find(playerResponse)
+        val albaMatch = albaRegex.find(decodedHtml)
         if (albaMatch != null) {
             val encodedString = albaMatch.groupValues[1]
             try {
@@ -210,9 +272,9 @@ class SyriaLive : BaseProvider() {
             }
         } 
         // Check for Clappr source
-        else if (playerResponse.contains("Clappr.Player")) {
+        else if (decodedHtml.contains("Clappr.Player")) {
             val clapprRegex = Regex("source\\s*:\\s*\"([^\"]+)\"")
-            val clapprMatch = clapprRegex.find(playerResponse)
+            val clapprMatch = clapprRegex.find(decodedHtml)
             if (clapprMatch != null) {
                 val m3u8Url = clapprMatch.groupValues[1]
                 

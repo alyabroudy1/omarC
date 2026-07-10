@@ -104,19 +104,21 @@ class AlbaPlayerExtractor : ExtractorApi() {
                 ProviderLogger.d(TAG, "getUrl", "No document.write obfuscation found, using raw response as-is")
             }
 
-            // Extract all server URLs from the menu, including the current one
+            // Extract all servers from the menu with their labels
             val doc = Jsoup.parse(response, url)
-            val allUrls = mutableSetOf<String>()
-            allUrls.add(url)
+            val servers = mutableListOf<Pair<String, String>>()
+            servers.add("AlbaPlayer" to url)
 
             for (btn in doc.select("ul.aplr-menu a.aplr-link")) {
                 val href = btn.attr("href")
+                val label = btn.text().trim()
                 if (href.isNotBlank() && !href.contains("javascript:")) {
-                    allUrls.add(href)
+                    val displayName = if (label.isNotBlank()) label else "Server ${servers.size}"
+                    servers.add(displayName to href)
                 }
             }
 
-            ProviderLogger.d(TAG, "getUrl", "Found ${allUrls.size} server URL(s) in menu: $allUrls")
+            ProviderLogger.d(TAG, "getUrl", "Found ${servers.size} server(s) in menu: ${servers.map { it.first }}")
 
             val origin = try {
                 val uri = java.net.URI(if (referer.isNullOrBlank()) url else referer)
@@ -126,9 +128,9 @@ class AlbaPlayerExtractor : ExtractorApi() {
             }
 
             val results = kotlinx.coroutines.coroutineScope {
-                allUrls.map { serverUrl ->
+                servers.map { (serverName, serverUrl) ->
                     async {
-                        ProviderLogger.d(TAG, "getUrl", "Starting extraction for server: $serverUrl")
+                        ProviderLogger.d(TAG, "getUrl", "Starting extraction for server '$serverName': $serverUrl")
                         try {
                             val serverRaw = if (serverUrl == url) {
                                 ProviderLogger.d(TAG, "getUrl", "Reusing cached response for current URL: $serverUrl")
@@ -139,21 +141,21 @@ class AlbaPlayerExtractor : ExtractorApi() {
                             }
 
                             if (serverRaw.isNullOrBlank()) {
-                                ProviderLogger.e(TAG, "getUrl", "Empty response for server: $serverUrl")
+                                ProviderLogger.e(TAG, "getUrl", "Empty response for server $serverName: $serverUrl")
                                 return@async false
                             }
 
                             val serverHtml = if (serverRaw.contains("document.write")) {
                                 val decoded = decodeDocumentWrite(serverRaw)
-                                ProviderLogger.d(TAG, "getUrl", "Decoded document.write for $serverUrl: ${serverRaw.length} -> ${decoded.length} chars")
+                                ProviderLogger.d(TAG, "getUrl", "Decoded document.write for $serverName: ${serverRaw.length} -> ${decoded.length} chars")
                                 decoded
                             } else {
                                 serverRaw
                             }
 
-                            extractFromPage(serverHtml, serverUrl, origin, userAgent, callback)
+                            extractFromPage(serverHtml, serverName, serverUrl, origin, userAgent, callback)
                         } catch (e: Exception) {
-                            ProviderLogger.e(TAG, "getUrl", "Error processing server $serverUrl", e)
+                            ProviderLogger.e(TAG, "getUrl", "Error processing server $serverName", e)
                             false
                         }
                     }
@@ -173,6 +175,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
 
     private suspend fun extractFromPage(
         html: String,
+        sourceName: String,
         pageUrl: String,
         origin: String,
         userAgent: String,
@@ -205,7 +208,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
                     ProviderLogger.d(TAG, "extractFromPage", "AlbaPlayerControl decoded M3U8: $m3u8Url")
 
                     val m3u8Links = M3u8Helper.generateM3u8(
-                        source = name,
+                        source = sourceName,
                         streamUrl = m3u8Url,
                         referer = pageUrl,
                         headers = streamHeaders
@@ -213,15 +216,23 @@ class AlbaPlayerExtractor : ExtractorApi() {
 
                     if (m3u8Links.isNotEmpty()) {
                         ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper generated ${m3u8Links.size} quality variants")
-                        m3u8Links.forEach { callback(it) }
+                        m3u8Links.sortedByDescending { it.quality }.forEach { link ->
+                            callback(
+                                newExtractorLink(source = sourceName, name = "$sourceName ${link.name}", url = link.url) {
+                                    this.referer = link.referer
+                                    this.quality = link.quality
+                                    this.headers = link.headers
+                                }
+                            )
+                        }
                         return true
                     }
 
                     ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper returned 0 links, emitting raw M3U8 as fallback")
                     callback(
                         newExtractorLink(
-                            source = name,
-                            name = "$name Stream",
+                            source = sourceName,
+                            name = "$sourceName Stream",
                             url = m3u8Url,
                             type = ExtractorLinkType.M3U8
                         ) {
@@ -259,7 +270,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
                 ProviderLogger.d(TAG, "extractFromPage", "Extracted M3U8 URL: $m3u8Url")
 
                 val m3u8Links = M3u8Helper.generateM3u8(
-                    source = name,
+                    source = "$sourceName",
                     streamUrl = m3u8Url,
                     referer = pageUrl,
                     headers = streamHeaders
@@ -267,15 +278,23 @@ class AlbaPlayerExtractor : ExtractorApi() {
 
                 if (m3u8Links.isNotEmpty()) {
                     ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper generated ${m3u8Links.size} quality variants")
-                    m3u8Links.forEach { callback(it) }
+                    m3u8Links.sortedByDescending { it.quality }.forEach { link ->
+                        callback(
+                            newExtractorLink(source = sourceName, name = "$sourceName ${link.name}", url = link.url) {
+                                this.referer = link.referer
+                                this.quality = link.quality
+                                this.headers = link.headers
+                            }
+                        )
+                    }
                     return true
                 }
 
                 ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper returned 0 links, emitting raw M3U8 as fallback")
                 callback(
                     newExtractorLink(
-                        source = name,
-                        name = "$name Stream",
+                        source = "$sourceName",
+                        name = "$sourceName Stream",
                         url = m3u8Url,
                         type = ExtractorLinkType.M3U8
                     ) {
