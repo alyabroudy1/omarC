@@ -340,118 +340,16 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
+        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
-        if (data.contains("agent-kim-reactivated", ignoreCase = true)) {
-            Log.i("CimaNowLoadLinks", "Triggering isolated WebView test flow for: $data")
-            return runIsolatedWebViewTest(data, callback)
-        }
-
-        val successCount = java.util.concurrent.atomic.AtomicInteger(0)
-        try {
-            val decryptedHtml = fetchDecryptedWatchPage(data)
-            if (!decryptedHtml.isNullOrBlank()) {
-                val doc = Jsoup.parse(decryptedHtml, data)
-
-                // 1. Extract watch servers
-                val servers = doc.select("li[data-index]")
-                Log.i("CimaNowLoadLinks", "Found ${servers.size} watch servers in decrypted HTML")
-
-                val deferredList = mutableListOf<Deferred<Unit>>()
-                coroutineScope {
-                    servers.forEach { server ->
-                        val index = server.attr("data-index")
-                        val id = server.attr("data-id")
-                        val serverName = server.text().trim()
-
-                        if (index.isNotBlank() && id.isNotBlank()) {
-                            val deferred = async {
-                                try {
-                                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
-                                    Log.d(TAG, "core.php GET: $ajaxUrl")
-                                    val coreHeaders = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
-                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
-                                    val playerDoc = Jsoup.parse(coreText, ajaxUrl)
-                                    val rawIframeUrl = playerDoc.select("iframe").attr("src") ?: ""
-                                    val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
-
-                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                                        successCount.incrementAndGet()
-                                        when {
-                                            iframeUrl.contains("cimanowtv", true) -> {
-                                                handlecima(iframeUrl, serverName, callback)
-                                            }
-                                            iframeUrl.contains("forafile.com", true) -> {
-                                                handleForafile(iframeUrl, 0, data, callback)
-                                            }
-                                            else -> {
-                                                fallbackExtractIframe(iframeUrl, serverName, data, callback)
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error switching server index=$index: ${e.message}")
-                                }
-                            }
-                            deferredList.add(deferred)
-                        }
-                    }
-                    deferredList.awaitAll()
-                }
-
-                /*
-                // 2. Extract download links (Commented out to prevent video player launch delays. Uncomment to re-enable)
-                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href]")
-                Log.i("CimaNowLoadLinks", "Found ${downloadLinks.size} download links in decrypted HTML")
-                for (link in downloadLinks) {
-                    try {
-                        val dlink = link.attr("href")
-                        val linkText = link.text().trim()
-                        val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
-                            ?: Qualities.Unknown.value
-
-                        if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                            Log.d(TAG, "Download link found: quality=$quality url=$dlink")
-                            when {
-                                dlink.contains("forafile.com", true) -> {
-                                    handleForafile(dlink, quality, data, callback)
-                                }
-                                dlink.contains("jetload.pp.ua", true) -> {
-                                    handleJetload(dlink, quality, data, callback)
-                                }
-                                else -> {
-                                    callback(newExtractorLink("CimaNow", "CimaNow", dlink, type = getLinkType(dlink)) {
-                                        this.referer = data
-                                        this.quality = quality
-                                    })
-                                }
-                            }
-                            successCount.incrementAndGet()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error processing download link: ${e.message}")
-                    }
-                }
-                */
-            } else {
-                Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("CimaNowLoadLinks", "Programmatic flow error: ${e.message}")
-        }
-
-        if (successCount.get() > 0) {
-            Log.i("CimaNowLoadLinks", "================ [END PROGRAMMATIC SUCCESS] ================")
-            return true
-        }
-
-        Log.w("CimaNowLoadLinks", "Programmatic flow failed to find links. Falling back to WebView...")
         val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
-        Log.i("CimaNowLoadLinks", "================ [END WebView FALLBACK Result: $webViewResult] ================")
-        return webViewResult
+        if (webViewResult) return true
+
+        Log.w("CimaNowLoadLinks", "WebView flow found no links. Trying post-id fallback...")
+        val fallbackResult = postIdFallback(data, subtitleCallback, callback)
+        Log.i("CimaNowLoadLinks", "================ [END fallback result=$fallbackResult] ================")
+        return fallbackResult
     }
 
     private suspend fun fetchDecryptedWatchPage(movieUrl: String): String? {
@@ -629,30 +527,21 @@ class CimaNowProvider : BaseProvider() {
             val referer = flowResult.finalUrl.ifBlank { data }
 
             for (server in flowResult.servers) {
-                if (server.iframeUrl.isNotBlank()) {
-                    Log.i(TAG_WV, "Processing server '${server.name}' ...")
-                    try {
-                        val iframeUrl = server.iframeUrl
-                        when {
-                            iframeUrl.contains("cimanowtv", true) -> {
-                                Log.d(TAG_WV, "  -> routing to handlecima")
-                                handlecima(iframeUrl, server.name, callback)
-                            }
-                            iframeUrl.contains("forafile.com", true) -> {
-                                Log.d(TAG_WV, "  -> routing to handleForafile")
-                                handleForafile(iframeUrl, 0, referer, callback)
-                            }
-                            else -> {
-                                Log.d(TAG_WV, "  -> routing to fallbackExtractIframe (referer=$referer)")
-                                fallbackExtractIframe(iframeUrl, server.name, referer, callback)
-                            }
-                        }
-                        found = true
-                    } catch (e: Exception) {
-                        Log.e(TAG_WV, "  ERROR processing server '${server.name}': ${e.message}")
+                Log.i(TAG_WV, "Processing server '${server.name}' ...")
+                try {
+                    var iframeUrl = server.iframeUrl
+                    if (iframeUrl.isBlank() && server.index.isNotBlank() && server.id.isNotBlank()) {
+                        Log.d(TAG_WV, "  iframeUrl blank, trying Kotlin core.php (index=${server.index}, id=${server.id})")
+                        iframeUrl = fetchCoreIframeUrl(server.index, server.id, referer)
                     }
-                } else {
-                    Log.d(TAG_WV, "Server '${server.name}' has empty iframeUrl, skipping")
+                    if (iframeUrl.isNotBlank()) {
+                        routeServer(server.name, iframeUrl, referer, callback)
+                        found = true
+                    } else {
+                        Log.w(TAG_WV, "  iframeUrl still blank after all fallbacks, skipping server '${server.name}'")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_WV, "  ERROR processing server '${server.name}': ${e.message}")
                 }
             }
 
@@ -666,6 +555,36 @@ class CimaNowProvider : BaseProvider() {
                 }
             }
 
+            if (!found && !flowResult.watchPageHtml.isNullOrBlank()) {
+                Log.i(TAG_WV, "WebView servers empty, trying Jsoup fallback on watch page HTML...")
+                try {
+                    val watchDoc = Jsoup.parse(flowResult.watchPageHtml, referer)
+                    val serverElements = watchDoc.select("#watch li[data-index]")
+                    Log.d(TAG_WV, "Jsoup found ${serverElements.size} server elements in watch page HTML")
+                    for (el in serverElements) {
+                        try {
+                            val idx = el.attr("data-index")
+                            val id = el.attr("data-id")
+                            val name = el.text().trim()
+                            Log.d(TAG_WV, "Jsoup server: name='$name' index=$idx id=$id")
+                            if (idx.isNotBlank() && id.isNotBlank()) {
+                                val iframeUrl = fetchCoreIframeUrl(idx, id, referer)
+                                if (iframeUrl.isNotBlank()) {
+                                    routeServer(name, iframeUrl, referer, callback)
+                                    found = true
+                                } else {
+                                    Log.w(TAG_WV, "  Jsoup: core.php returned empty for index=$idx id=$id")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG_WV, "  Jsoup server error: ${e.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_WV, "Jsoup parse error: ${e.message}")
+                }
+            }
+
             Log.i(TAG_WV, "========== [END] WebView fallback, found=$found ==========")
             return found
 
@@ -675,6 +594,141 @@ class CimaNowProvider : BaseProvider() {
             Log.e(TAG_WV, "WebView fallback EXCEPTION: ${e.message}")
             Log.e(TAG_WV, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
             return false
+        }
+    }
+
+    // ==================== fetchCoreIframeUrl ====================
+
+    private suspend fun fetchCoreIframeUrl(index: String, id: String, referer: String): String {
+        val TAG_CI = "CimaNowCoreFetch"
+        try {
+            val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
+            Log.d(TAG_CI, "Fetching core.php: $ajaxUrl")
+            val playerDoc = httpService.getDocument(ajaxUrl,
+                headers = mapOf("X-Requested-With" to "XMLHttpRequest", "Referer" to referer),
+                rewriteDomain = true)
+            val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
+            Log.d(TAG_CI, "iframeUrl=$iframeUrl")
+            return iframeUrl
+        } catch (e: Exception) {
+            Log.e(TAG_CI, "Error fetching core.php: ${e.message}")
+            return ""
+        }
+    }
+
+    // ==================== postIdFallback ====================
+
+    private suspend fun postIdFallback(
+        data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val TAG_PI = "PostIdFallback"
+        Log.i(TAG_PI, "Trying to extract postId from episode page: ${data.take(80)}")
+        try {
+            val pageText = httpService.getText(data, headers = mapOf(
+                "User-Agent" to httpService.userAgent,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )) ?: ""
+
+            var postId: String? = null
+
+            val shortlinkMatch = Regex("""rel=['"]shortlink['"][^>]*href=['"][^'"]*\?p=(\d+)""").find(pageText)
+            if (shortlinkMatch != null) {
+                postId = shortlinkMatch.groupValues[1]
+                Log.d(TAG_PI, "Found postId from shortlink: $postId")
+            }
+
+            if (postId == null) {
+                val jsonMatch = Regex(""""postId"\s*:\s*(\d+)""").find(pageText)
+                if (jsonMatch != null) {
+                    postId = jsonMatch.groupValues[1]
+                    Log.d(TAG_PI, "Found postId from JSON: $postId")
+                }
+            }
+
+            if (postId == null) {
+                val attrMatch = Regex("""data-post-id\s*=\s*["'](\d+)["']""").find(pageText)
+                if (attrMatch != null) {
+                    postId = attrMatch.groupValues[1]
+                    Log.d(TAG_PI, "Found postId from data-post-id: $postId")
+                }
+            }
+
+            if (postId == null) {
+                Log.w(TAG_PI, "No postId found in episode page")
+                return false
+            }
+
+            Log.i(TAG_PI, "Trying core.php with postId=$postId and common indices")
+            val indices = listOf("00", "01", "10", "11", "66", "50", "40", "60")
+            var found = false
+            for (index in indices) {
+                val iframeUrl = fetchCoreIframeUrl(index, postId, data)
+                if (iframeUrl.isNotBlank()) {
+                    routeServer("Server $index", iframeUrl, data, callback)
+                    found = true
+                }
+            }
+            return found
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG_PI, "Error: ${e.message}")
+            return false
+        }
+    }
+
+    // ==================== routeServer ====================
+
+    private suspend fun routeServer(
+        name: String,
+        iframeUrl: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val TAG_RS = "RouteServer"
+        when {
+            name.contains("Cima Now", true) || name.contains("cima", true) -> {
+                Log.d(TAG_RS, "  -> routing to handlecima")
+                handlecima(iframeUrl, name, callback)
+            }
+            name.contains("Jetload", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleJetload")
+                handleJetload(iframeUrl, 0, referer, callback)
+            }
+            name.contains("Forafile", true) || iframeUrl.contains("forafile.com", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleForafile")
+                handleForafile(iframeUrl, 0, referer, callback)
+            }
+            name.contains("VidPro", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleVidPro")
+                handleVidPro(iframeUrl, name, callback)
+            }
+            name.contains("Govid", true) || name.contains("Goovid", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleGovid")
+                handleGovid(iframeUrl, name, callback)
+            }
+            name.contains("Vidlook", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleVidlook")
+                handleVidlook(iframeUrl, name, callback)
+            }
+            name.contains("Streamwish", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleStreamwish")
+                handleStreamwish(iframeUrl, name, callback)
+            }
+            name.contains("Streamfile", true) || name.contains("Luluvid", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleStreamfileAndLuluvid")
+                handleStreamfileAndLuluvid(iframeUrl, name, callback)
+            }
+            name.contains("Vadbam", true) || name.contains("Viidshare", true) -> {
+                Log.d(TAG_RS, "  -> routing to handleVadbamAndViidshare")
+                handleVadbamAndViidshare(iframeUrl, name, callback)
+            }
+            else -> {
+                Log.d(TAG_RS, "  -> routing to fallbackExtractIframe (referer=$referer)")
+                fallbackExtractIframe(iframeUrl, name, referer, callback)
+            }
         }
     }
 
