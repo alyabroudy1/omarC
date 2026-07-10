@@ -198,6 +198,15 @@ class NavigationEngine(
                                     } catch (e: Exception) {
                                         ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write HTML $key: ${e.message}")
                                     }
+                                    try {
+                                        val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                        dlDir.mkdirs()
+                                        val dlFile = java.io.File(dlDir, "cimanow_html_${key}.html")
+                                        dlFile.writeText(html.orEmpty())
+                                        ProviderLogger.i("CimaNowHtmlDump", "writeHtml", "HTML $key written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                    } catch (e: Exception) {
+                                        ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write HTML $key to Downloads: ${e.message}")
+                                    }
                                 }
                             }
                             is NavigationStep.NavigateToWatchingUrl -> {
@@ -274,6 +283,15 @@ class NavigationEngine(
                                 val file = java.io.File(ctx.cacheDir, "cimanow_html_${dumpKey}.html")
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to ${file.absolutePath} ($len bytes)")
+                                try {
+                                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                    dlDir.mkdirs()
+                                    val dlFile = java.io.File(dlDir, "cimanow_html_${dumpKey}.html")
+                                    dlFile.writeText(html.orEmpty())
+                                    ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                } catch (e: Exception) {
+                                    ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write failure dump to Downloads: ${e.message}")
+                                }
                             }
                         } catch (de: Exception) {
                             ProviderLogger.w(TAG, "execute", "Failed to dump HTML on failure: ${de.message}")
@@ -304,6 +322,15 @@ class NavigationEngine(
                                 val file = java.io.File(ctx.cacheDir, "cimanow_html_failure_exception.html")
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to ${file.absolutePath} ($len bytes)")
+                                try {
+                                    val dlDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                                    dlDir.mkdirs()
+                                    val dlFile = java.io.File(dlDir, "cimanow_html_failure_exception.html")
+                                    dlFile.writeText(html.orEmpty())
+                                    ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to DOWNLOADS ${dlFile.absolutePath} ($len bytes)")
+                                } catch (e: Exception) {
+                                    ProviderLogger.w("CimaNowHtmlDump", "writeHtml", "Failed to write exception dump to Downloads: ${e.message}")
+                                }
                             }
                         } catch (_: Exception) {}
                     }

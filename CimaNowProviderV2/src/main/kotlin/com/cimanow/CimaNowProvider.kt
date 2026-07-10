@@ -1835,6 +1835,25 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
+            // ===== DUMP html_final BEFORE JSoup parse =====
+            Log.w(TAG_TEST, "========== DUMPING FULL html_final (${htmlFinal.length} chars) ==========")
+            val diagData = navResult.extractedHtml["diag"] ?: ""
+            if (diagData.startsWith("DIAG_JSON:")) {
+                Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
+            }
+            Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
+            val chunkSize = 3000
+            var off = 0
+            var part = 0
+            while (off < htmlFinal.length) {
+                val end = minOf(off + chunkSize, htmlFinal.length)
+                Log.w(TAG_TEST, "--- html_final[$part] (${off}-${end}) ---\n" + htmlFinal.substring(off, end))
+                off = end
+                part++
+            }
+            Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
+            // ===== END DUMP =====
+
             if (htmlFinal.isNotBlank()) {
                 val doc = Jsoup.parse(htmlFinal, watchUrl)
 
@@ -1913,28 +1932,6 @@ class CimaNowProvider : BaseProvider() {
                 Log.w(TAG_TEST, dumpLinks.take(4000))
                 Log.w(TAG_TEST, "========== END DUMP_LINKS ==========")
             }
-
-            // Always dump the FULL rendered watching-page HTML to logcat (once the iframe is
-            // present, this holds the decrypted server tabs + download section). logcat
-            // truncates large buffers, so the full copy is also written to
-            // /data/user/0/com.lagradost.cloudstream3/cache/cimanow_html_html_final.html
-            Log.w(TAG_TEST, "========== DUMPING FULL html_final (${htmlFinal.length} chars) ==========")
-            val diagData = navResult.extractedHtml["diag"] ?: ""
-            if (diagData.startsWith("DIAG_JSON:")) {
-                Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
-            }
-            Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
-            // logcat truncates lines >~4KB, so emit in safe chunks
-            val chunkSize = 3000
-            var offset = 0
-            var part = 0
-            while (offset < htmlFinal.length) {
-                val end = minOf(offset + chunkSize, htmlFinal.length)
-                Log.w(TAG_TEST, "--- html_final[$part] (${offset}-${end}) ---\n" + htmlFinal.substring(offset, end))
-                offset = end
-                part++
-            }
-            Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
 
             if (found) {
                 Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
