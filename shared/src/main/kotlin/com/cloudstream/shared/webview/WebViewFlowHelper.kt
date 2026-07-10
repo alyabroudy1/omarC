@@ -140,7 +140,7 @@ class WebViewFlowHelper(
 
             // Step 6: Collect iframe results
             NavigationStep.ExecuteJs(
-                javascript = "(function(){ return window._serverResults || '[]'; })();",
+                javascript = "(function(){ return window.__cimaIframeResults || '[]'; })();",
                 key = "iframe_results"
             ),
 
@@ -266,15 +266,14 @@ class WebViewFlowHelper(
         val JS_VISIBLE_SERVER_LINK_CONDITION = """
 (function(){
     try {
-        var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-        for (var i = 0; i < links.length; i++) {
-            var r = links[i].getBoundingClientRect();
-            var href = links[i].href || '';
-            var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
-            
-            if (r.width > 0 && r.height > 0 && links[i].offsetParent !== null && !isDisabled
+        var allLinks = document.getElementsByTagName('a');
+        for (var i = 0; i < allLinks.length; i++) {
+            var href = allLinks[i].getAttribute('href') || '';
+            if (href.indexOf('get-link') === -1 && href.indexOf('watch') === -1) continue;
+            var r = allLinks[i].getBoundingClientRect();
+            var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || allLinks[i].getAttribute('aria-disabled') === 'true' || (allLinks[i].style.pointerEvents === 'none');
+            if (r.width > 0 && r.height > 0 && allLinks[i].offsetParent !== null && !isDisabled
                 && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-                console.log('[Nav] found visible & enabled server link:', href);
                 return true;
             }
         }
@@ -285,33 +284,26 @@ class WebViewFlowHelper(
 
         val JS_FIND_SERVER_LINK = """
 (function() {
-    var links = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"], a.continue-btn, a[href*="server"], a[href*="link"], button[class*="btn"]');
-    for (var i = 0; i < links.length; i++) {
-        var rect = links[i].getBoundingClientRect();
-        var visible = rect.width > 0 && rect.height > 0 && links[i].offsetParent !== null;
-        var isDisabled = links[i].disabled || links[i].classList.contains('disabled') || links[i].getAttribute('aria-disabled') === 'true' || (links[i].style.pointerEvents === 'none');
+    var allLinks = document.getElementsByTagName('a');
+    for (var i = 0; i < allLinks.length; i++) {
+        var href = allLinks[i].getAttribute('href') || '';
+        var rect = allLinks[i].getBoundingClientRect();
+        var visible = rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null;
+        var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || allLinks[i].getAttribute('aria-disabled') === 'true' || (allLinks[i].style.pointerEvents === 'none');
         
-        console.log('[Nav] server link candidate:', links[i].href, 'visible=' + visible, 'disabled=' + isDisabled);
-        
-        if (visible && !isDisabled) {
-            var href = links[i].href || '';
-            if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) {
-                console.log('[Nav] skipping ad link:', href);
-                continue;
-            }
-            console.log('[Nav] clicking server link:', href);
-            try { links[i].click(); return 'clicked:' + href; } catch(e) { return 'error:' + e.message; }
+        if (!visible || isDisabled) continue;
+        if (href.indexOf('viiqkzqv') !== -1 || href.indexOf('wildsino') !== -1) continue;
+        if (href.indexOf('get-link') !== -1 || href.indexOf('watch') !== -1) {
+            try { allLinks[i].click(); return 'clicked:' + href; } catch(e) { return 'error:' + e.message; }
         }
     }
-    var allLinks = document.querySelectorAll('a[href]:not([href=""]):not([href^="javascript"])');
     for (var i = 0; i < allLinks.length; i++) {
+        var href = allLinks[i].getAttribute('href') || '';
+        if (!href || href === '#' || href.indexOf('http') !== 0) continue;
         var rect = allLinks[i].getBoundingClientRect();
-        var href = allLinks[i].href || '';
         var isDisabled = allLinks[i].disabled || allLinks[i].classList.contains('disabled') || (allLinks[i].style.pointerEvents === 'none');
-        
-        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled 
+        if (rect.width > 0 && rect.height > 0 && allLinks[i].offsetParent !== null && !isDisabled
             && href.indexOf('viiqkzqv') === -1 && href.indexOf('wildsino') === -1) {
-            console.log('[Nav] fallback clicking:', href);
             try { allLinks[i].click(); return 'clicked_fallback:' + href; } catch(e) {}
         }
     }
@@ -322,20 +314,17 @@ class WebViewFlowHelper(
         val JS_DEBUG_DOM = """
 (function(){
     var uls = document.querySelectorAll('ul');
-    console.log('[Nav] UL count:', uls.length);
     for (var i = 0; i < uls.length; i++) {
         console.log('[Nav] UL #'+i+': id="'+uls[i].id+'" class="'+uls[i].className+'" children='+uls[i].children.length);
     }
-    var iframes = document.querySelectorAll('iframe');
-    console.log('[Nav] IFRAME count:', iframes.length);
+    var iframes = document.getElementsByTagName('iframe');
     for (var i = 0; i < iframes.length; i++) {
         console.log('[Nav] IFRAME #'+i+': src="'+(iframes[i].src||'none')+'"');
     }
-    var watchLis = document.querySelectorAll('[data-index], li[class*="server"], li[class*="watch"]');
-    console.log('[Nav] Server LI count:', watchLis.length);
+    var watchLis = document.querySelectorAll('#watch li');
     for (var i = 0; i < watchLis.length; i++) {
-        var a = watchLis[i].querySelector('a');
-        console.log('[Nav] Server #'+i+': text="'+(watchLis[i].textContent||'').trim().slice(0,50)+'" href="'+(a?a.href:'none')+'"');
+        var li = watchLis[i];
+        console.log('[Nav] Server #'+i+': text="'+(li.textContent||'').trim().slice(0,50)+'" data-index="'+(li.getAttribute('data-index')||'')+'" data-id="'+(li.getAttribute('data-id')||'')+'"');
     }
     return 'debug_done';
 })();
@@ -343,56 +332,74 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_SERVERS = """
 (function(){
-    var items = document.querySelectorAll('li[aria-label="embed"], li.embed-item, ul.tabcontent#watch li, #watch li[aria-label="embed"], #watch li, li[data-index], [data-id], li[data-post]');
+    var items = [];
+    var watchLis = document.querySelectorAll('#watch li');
+    for (var w = 0; w < watchLis.length; w++) {
+        var li = watchLis[w];
+        var al = li.getAttribute('aria-label') || '';
+        if (al.indexOf('embed') !== -1) { items.push(li); continue; }
+        var idx = li.getAttribute('data-index') || li.getAttribute('data-idx') || li.getAttribute('data-post') || '';
+        if (idx || al) { items.push(li); }
+    }
     var servers = [];
     for (var i = 0; i < items.length; i++) {
-        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-post') || items[i].getAttribute('data-server') || '';
-        var id = items[i].getAttribute('data-id') || items[i].getAttribute('data-server-id') || '';
-        var a = items[i].querySelector('a') || items[i];
-        var href = a.href || items[i].getAttribute('data-url') || items[i].getAttribute('data-src') || '';
-        var name = (a.textContent || items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
-        servers.push({index: idx, id: id, name: name, href: href});
-        console.log('[Nav] Server #'+i+': idx='+idx+' id='+id+' name="'+name+'" href="'+href+'"');
+        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-idx') || items[i].getAttribute('data-post') || '';
+        var id = items[i].getAttribute('data-id') || items[i].getAttribute('data-ix') || '';
+        var name = (items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
+        servers.push({index: idx, id: id, name: name, href: ''});
     }
-    if (servers.length === 0) {
-        var allLinks = document.querySelectorAll('a[href*="get-link"], a[href*="download"], a[href*="watch"]');
-        for (var i = 0; i < Math.min(allLinks.length, 5); i++) {
-            var name = (allLinks[i].textContent || '').trim().slice(0, 60);
-            var href = allLinks[i].href || '';
-            servers.push({index: '', id: '', name: name, href: href});
-            console.log('[Nav] Fallback link #'+i+': name="'+name+'" href="'+href+'"');
-        }
-    }
-    return JSON.stringify(servers);
+    return (window.__cimaOrigJSON||JSON.stringify)(servers);
 })();
         """.trimIndent()
 
         val JS_FETCH_IFRAMES = """
 (function(){
-    var items = document.querySelectorAll('li[aria-label="embed"], li.embed-item, ul.tabcontent#watch li, #watch li[aria-label="embed"], #watch li, li[data-index], [data-id], li[data-post]');
+    var items = [];
+    var watchLis = document.querySelectorAll('#watch li');
+    for (var w = 0; w < watchLis.length; w++) {
+        var li = watchLis[w];
+        var idx = li.getAttribute('data-index') || li.getAttribute('data-idx') || li.getAttribute('data-post') || '';
+        var id = li.getAttribute('data-id') || li.getAttribute('data-ix') || '';
+        var al = li.getAttribute('aria-label') || '';
+        if (idx || id || al === 'embed') { items.push({el: li, index: idx, id: id}); }
+    }
     var baseUrl = window.location.origin;
     var results = [];
     var done = 0;
-    for (var i = 0; i < Math.min(items.length, 10); i++) {
-        var idx = items[i].getAttribute('data-index') || items[i].getAttribute('data-post') || '';
-        var id = items[i].getAttribute('data-id') || '';
-        var a = items[i].querySelector('a') || items[i];
-        var name = (a.textContent || items[i].textContent || items[i].getAttribute('aria-label') || '').trim().slice(0, 60);
+    var total = Math.min(items.length, 10);
+    for (var i = 0; i < total; i++) {
+        var item = items[i];
+        var idx = item.index;
+        var id = item.id;
+        var name = (item.el.textContent || item.el.getAttribute('aria-label') || '').trim().slice(0, 60);
         
-        // First check if there's already an iframe inside the li (rendered by page JS)
-        var iframe = items[i].querySelector('iframe');
-        if (iframe) {
-            var iframeSrc = iframe.getAttribute('data-src') || iframe.src || '';
-            console.log('[Nav] Server ' + name + ' direct iframe: ' + iframeSrc);
-            results.push({name: name, index: idx, iframe: iframeSrc, direct: true});
-            done++;
-            if (done === Math.min(items.length, 10)) { window._serverResults = JSON.stringify(results); }
-            continue;
+        // Check for existing iframe inside the li via getElementsByTagName (NOT patched)
+        var childIframes = item.el.getElementsByTagName('iframe');
+        if (childIframes.length > 0) {
+            var iframeSrc = childIframes[0].getAttribute('data-src') || childIframes[0].src || '';
+            if (iframeSrc && iframeSrc.indexOf('about:blank') === -1) {
+                results.push({name: name, index: idx, iframe: iframeSrc, direct: true});
+                done++;
+                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
+                continue;
+            }
         }
+        
+        // Check all iframes in the page for any pre-loaded player iframe
+        var allIframes = document.getElementsByTagName('iframe');
+        for (var f = 0; f < allIframes.length; f++) {
+            var src = allIframes[f].getAttribute('data-src') || allIframes[f].src || '';
+            if (src && src.indexOf('about:blank') === -1 && src.length > 10) {
+                results.push({name: name, index: idx, iframe: src, direct: true});
+                done++;
+                if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
+                break;
+            }
+        }
+        if (done > i) continue;
         
         // Fall back to AJAX via core.php
         var ajaxUrl = baseUrl + '/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=' + idx + '&id=' + id;
-        console.log('[Nav] Fetching server ' + name + ' via AJAX: ' + ajaxUrl);
         (function(srvName, srvIdx, url) {
             fetch(url, {credentials: 'include', headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': window.location.href}})
                 .then(function(r) { return r.text(); })
@@ -400,35 +407,45 @@ class WebViewFlowHelper(
                     var iframeSrc = '';
                     var match = html.match(/<iframe[^>]+src=["']([^"']+)["']/);
                     if (match) iframeSrc = match[1];
-                    console.log('[Nav] Server ' + srvName + ' AJAX iframe: ' + iframeSrc);
                     results.push({name: srvName, index: srvIdx, iframe: iframeSrc, direct: false, responseLength: html.length});
                     done++;
-                    if (done === Math.min(items.length, 10)) { window._serverResults = JSON.stringify(results); }
+                    if (done === total) { window.__cimaIframeResults = (window.__cimaOrigJSON||JSON.stringify)(results); }
                 })
                 .catch(function(err) {
-                    console.log('[Nav] Server ' + srvName + ' AJAX error: ' + err.message);
                     results.push({name: srvName, index: srvIdx, iframe: '', direct: false, error: err.message});
                     done++;
                 });
         })(name, idx, ajaxUrl);
     }
-    return 'fetching_' + Math.min(items.length, 10) + '_servers';
+    return 'fetching_' + total + '_servers';
 })();
         """.trimIndent()
 
         val JS_EXTRACT_DOWNLOADS = """
 (function(){
-    var links = document.querySelectorAll('li[aria-label="quality"] a[href], #download li a[href], a[href*="download"], a[href*="dl"], .download-links a[href]');
     var downloads = [];
-    for (var i = 0; i < links.length; i++) {
-        var name = (links[i].textContent || '').trim().slice(0, 60);
-        var href = links[i].href || '';
-        if (href && name) {
-            downloads.push({name: name, url: href});
-            console.log('[Nav] Download #'+i+': name="'+name+'" url="'+href+'"');
+    var anchors = document.getElementsByTagName('a');
+    var dlHosts = ['jetload','forafile','vk.com/doc','frdl.my','bysetayico','upns','href.li'];
+    for (var i = 0; i < anchors.length; i++) {
+        var a = anchors[i];
+        var href = a.getAttribute('href') || '';
+        if (!href || href === '#' || href.indexOf('http') !== 0) continue;
+        var parent = a.parentElement;
+        if (!parent) continue;
+        var parentId = parent.getAttribute('id') || '';
+        var parentLabel = parent.getAttribute('aria-label') || '';
+        var isQuality = (parentLabel === 'quality' || parentLabel === 'q_hidden');
+        var isDownload = (parentId === 'download' || parentId === 'd_hidden' || parentLabel === 'download');
+        if (!isQuality && !isDownload) {
+            var hl = href.toLowerCase();
+            var matched = false;
+            for (var k = 0; k < dlHosts.length; k++) { if (hl.indexOf(dlHosts[k]) !== -1) { matched = true; break; } }
+            if (!matched) continue;
         }
+        var name = (a.textContent || '').trim().slice(0, 60);
+        downloads.push({name: name, url: href});
     }
-    return JSON.stringify(downloads);
+    return (window.__cimaOrigJSON||JSON.stringify)(downloads);
 })();
         """.trimIndent()
 
@@ -439,7 +456,7 @@ class WebViewFlowHelper(
          */
         val JS_EXTRACT_DIRECT_IFRAMES = """
 (function(){
-    var iframes = document.querySelectorAll('iframe');
+    var iframes = document.getElementsByTagName('iframe');
     var results = [];
     for (var i = 0; i < iframes.length; i++) {
         var src = iframes[i].getAttribute('data-src') || iframes[i].src || '';
@@ -447,9 +464,8 @@ class WebViewFlowHelper(
         var parent = iframes[i].parentElement || {};
         var name = (parent.getAttribute && parent.getAttribute('aria-label')) || parent.className || ('iframe#' + i);
         results.push({name: String(name).slice(0, 40), iframe: src, src: src});
-        console.log('[Nav] Direct iframe #' + i + ': name="' + name + '" src="' + src + '"');
     }
-    return JSON.stringify(results);
+    return (window.__cimaOrigJSON||JSON.stringify)(results);
 })();
         """.trimIndent()
 
@@ -470,7 +486,7 @@ class WebViewFlowHelper(
     return new Promise(function(resolve){
         var deadline = Date.now() + 30000;
         var poll = setInterval(function(){
-            var iframes = document.querySelectorAll('iframe');
+            var iframes = document.getElementsByTagName('iframe');
             var real = null;
             for (var i = 0; i < iframes.length; i++) {
                 var s = iframes[i].getAttribute('data-src') || iframes[i].src || '';
@@ -497,8 +513,8 @@ class WebViewFlowHelper(
         val JS_DUMP_LINKS = """
 (function(){
     try {
-        var anchors = document.querySelectorAll('a[href]');
-        var hosts = ['jetload','forafile','ok.ru','vk','youtube','dailymotion','mp4','m3u8','download','fopen','uploda','mega','mediafire','4shared','1fichier','solidfiles','drive','uptobox','adminfor','ceska','fastdrive','racaty','usercdn','onlinestream','shahid','mycima','cima','filerab','vidbob','upvid','giga-down','samaup','easyload','upstream'];
+        var anchors = document.getElementsByTagName('a');
+        var hosts = ['jetload','forafile','ok.ru','vk.com/doc','youtube','dailymotion','frdl.my','bysetayico','upns','href.li','mega','mediafire','4shared','1fichier','solidfiles','drive','uptobox','adminfor','ceska','fastdrive','racaty','usercdn','onlinestream','shahid','mycima','cima','filerab','vidbob','upvid','giga-down','samaup','easyload','upstream'];
         var out = [];
         for (var i = 0; i < anchors.length; i++) {
             var a = anchors[i];
@@ -511,9 +527,18 @@ class WebViewFlowHelper(
             if (!hit && /\d+p/.test(t)) hit = true;
             if (hit) out.push({ t: t, h: h.slice(0, 400) });
         }
-        var dl = document.querySelector('#download, .download, [class*="download"], [id*="download"]');
-        var dlHtml = dl ? dl.innerHTML.slice(0, 4000) : 'NO_DOWNLOAD_SECTION';
-        return 'DUMP_LINKS:' + JSON.stringify({ count: out.length, links: out, downloadSection: dlHtml });
+        var dlSection = null;
+        var all = document.getElementsByTagName('*');
+        for (var x = 0; x < all.length; x++) {
+            var id = all[x].getAttribute('id') || '';
+            var cls = all[x].getAttribute('class') || '';
+            if (id === 'download' || id === 'd_hidden' || cls.indexOf('download') !== -1) {
+                dlSection = all[x];
+                break;
+            }
+        }
+        var dlHtml = dlSection ? dlSection.innerHTML.slice(0, 4000) : 'NO_DOWNLOAD_SECTION';
+        return 'DUMP_LINKS:' + (window.__cimaOrigJSON||JSON.stringify)({ count: out.length, links: out, downloadSection: dlHtml });
     } catch(e) { return 'dump_err:' + e.message; }
 })();
         """.trimIndent()
@@ -521,6 +546,16 @@ class WebViewFlowHelper(
         val JS_DIAGNOSE_WATCHING = """
 (function(){
     try {
+        var watchList = document.querySelectorAll('#watch li');
+        var qualityCount = 0;
+        var anchors = document.getElementsByTagName('a');
+        for (var x = 0; x < anchors.length; x++) {
+            var p = anchors[x].parentElement;
+            if (p) {
+                var pl = p.getAttribute('aria-label') || '';
+                if (pl === 'quality' || pl === 'q_hidden') qualityCount++;
+            }
+        }
         var diag = {
             url: window.location.href,
             ua: navigator.userAgent,
@@ -528,7 +563,7 @@ class WebViewFlowHelper(
             hasSwal: typeof window.Swal !== 'undefined',
             hasJQuery: typeof window.jQuery !== 'undefined',
             hasJQueryCookie: (typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
-            watchItems: document.querySelectorAll('li[aria-label="embed"], #watch li, li[data-index], [data-index], li[aria-label="quality"], a[href*="download"]').length,
+            watchItems: watchList.length + qualityCount,
             visibleDialogs: 0,
             dialogButtons: [],
             swal2Confirm: '',
@@ -536,7 +571,7 @@ class WebViewFlowHelper(
             swal2Html: '',
             iframes: []
         };
-        var modals = document.querySelectorAll('.swal2-container, .swal2-modal, .swal2-popup, .modal, .popup, .consent, [role="dialog"]');
+        var modals = document.querySelectorAll('.swal2-container, .swal2-modal, .swal2-popup, .modal, .popup');
         for (var m = 0; m < modals.length; m++) {
             var mr = modals[m].getBoundingClientRect();
             if (mr.width > 0 && mr.height > 0 && modals[m].offsetParent !== null) {
@@ -554,13 +589,14 @@ class WebViewFlowHelper(
                 }
             }
         }
-        diag.allSpans = document.querySelectorAll('#watch li span, #watch li a, #watch li').length;
-        diag.watchHtml = (document.querySelector('#watch') || {}).innerHTML ? (document.querySelector('#watch').innerHTML.slice(0, 1200) || 'no_watch') : 'no_watch';
-        var ifr = document.querySelectorAll('iframe');
+        diag.allSpans = watchList.length;
+        var watchEl = document.querySelector('#watch');
+        diag.watchHtml = watchEl ? (watchEl.innerHTML.slice(0, 1200) || 'no_watch') : 'no_watch';
+        var ifr = document.getElementsByTagName('iframe');
         for (var i = 0; i < Math.min(ifr.length, 8); i++) {
             diag.iframes.push((ifr[i].getAttribute('data-src') || ifr[i].src || 'none').slice(0, 120));
         }
-        return 'DIAG_JSON:' + JSON.stringify(diag);
+        return 'DIAG_JSON:' + (window.__cimaOrigJSON||JSON.stringify)(diag);
     } catch(e) {
         return 'diag_error:' + e.message;
     }

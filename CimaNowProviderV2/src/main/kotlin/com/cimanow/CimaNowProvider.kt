@@ -1759,7 +1759,7 @@ class CimaNowProvider : BaseProvider() {
 
                 // Retrieve iframe results
                 NavigationStep.ExecuteJs(
-                    javascript = "(function(){ return window._serverResults || '[]'; })();",
+                    javascript = "(function(){ return window.__cimaIframeResults || '[]'; })();",
                     key = "iframe_results"
                 ),
 
@@ -1862,6 +1862,10 @@ class CimaNowProvider : BaseProvider() {
                 val downloadLinks = doc.select(
                     "#download li[aria-label='quality'] a[href], " +
                     "#download a[href], " +
+                    "#d_hidden li[aria-label='q_hidden'] a[href], " +
+                    "#d_hidden a[href], " +
+                    "li[aria-label='q_hidden'] a[href], " +
+                    "li[aria-label='download'] a[href], " +
                     "a[href*='jetload'], " +
                     "a[href*='forafile'], " +
                     "a[href*='download'], " +

@@ -706,10 +706,22 @@ class NavigationEngine(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
+                                // Inject anti-anti-scraping guard: save original JSON.stringify and
+                                // block Object.defineProperty from patching Element/Document DOM APIs.
+                                // This must run BEFORE the page's g_* anti-scraping script executes.
+                                // window globals survive document.open()/write()/close() replacement.
+                                val guardScript = """<script>(function(){var _d=Object.defineProperty;var _b={outerHTML:1,innerHTML:1,querySelectorAll:1,querySelector:1};Object.defineProperty=function(o,p,d){if(_b[p]&&(o===Element.prototype||o===Document.prototype||o===document.documentElement||o===document.body))return o;return _d.call(Object,o,p,d)};window.__cimaOrigJSON=JSON.stringify.bind(JSON)})()</script>"""
+                                val guarded = if (rewritten.contains("<head")) {
+                                    rewritten.replaceFirst("<head>", "<head>$guardScript")
+                                } else if (rewritten.contains("<body") || rewritten.contains("<BODY")) {
+                                    rewritten.replaceFirst("<body", "<script>$guardScript</script><body")
+                                } else {
+                                    guardScript + rewritten
+                                }
                                 val total = scriptCount + linkCount
                                 val countLog = if (total > 0) " (rewrote $total document.write calls)" else " (no document.write found)"
-                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog")
-                                java.io.ByteArrayInputStream(rewritten.toByteArray(charset))
+                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog (guard injected)")
+                                java.io.ByteArrayInputStream(guarded.toByteArray(charset))
                             } else {
                                 conn.inputStream
                             }
