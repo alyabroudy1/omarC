@@ -407,17 +407,15 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_SERVERS = """
 (function(){
-    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
     var servers=[],items=document.querySelectorAll('#watch li');
     for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
     console.log('[EXTRACT] servers count:',servers.length);
-    return _OJ(servers);
+    return (function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})()(servers);
 })();
         """.trimIndent()
 
         val JS_EXTRACT_ALL = """
 (function(){
-    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
     var servers=[],items=document.querySelectorAll('#watch li');
     for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
     var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
@@ -427,7 +425,7 @@ class WebViewFlowHelper(
     for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
     var res={servers:servers,downloads:downloads,iframes:iframes};
     console.log('[EXTRACT_ALL] servers:',servers.length,'downloads:',downloads.length,'iframes:',iframes.length);
-    return _OJ(res);
+    return (function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})()(res);
 })();
         """.trimIndent()
 
@@ -502,7 +500,6 @@ class WebViewFlowHelper(
 
         val JS_EXTRACT_DOWNLOADS = """
 (function(){
-    var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
     var downloads = [];
     var anchors = document.getElementsByTagName('a');
     var dlHosts = ['jetload','forafile','vk.com/doc','frdl.my','bysetayico','upns','href.li'];
@@ -526,7 +523,7 @@ class WebViewFlowHelper(
         downloads.push({name: name, url: href});
     }
     console.log('[DOWNLOAD] download count:',downloads.length);
-    return _OJ(downloads);
+    return (function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})()(downloads);
 })();
         """.trimIndent()
 

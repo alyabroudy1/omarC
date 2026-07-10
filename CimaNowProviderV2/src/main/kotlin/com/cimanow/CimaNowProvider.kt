@@ -15,6 +15,8 @@ import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.regex.Pattern
 import javax.crypto.Mac
@@ -1686,6 +1688,21 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
+    private val JS_EXTRACT_ALL = """
+(function(){
+  var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
+  var servers=[],items=document.querySelectorAll('#watch li');
+  for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
+  var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
+  var as=document.getElementsByTagName('a');
+  for(var i=0;i<as.length;i++){var a=as[i],h=a.getAttribute('href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;var p=a.parentElement;if(!p)continue;var pid=p.getAttribute('id')||'',pl=p.getAttribute('aria-label')||'';var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});}
+  var iframes=[],fs=document.getElementsByTagName('iframe');
+  for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
+  var res={servers:servers,downloads:downloads,iframes:iframes};
+  return _OJ(res);
+})();
+""".trimIndent()
+
     private suspend fun runIsolatedWebViewTest(
         movieUrl: String,
         callback: (ExtractorLink) -> Unit
@@ -1753,36 +1770,9 @@ class CimaNowProvider : BaseProvider() {
                 // Diagnostic snapshot after consent dismissal
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DIAGNOSE_WATCHING, key = "diag"),
 
-                // Let the page's own JS finish loading iframes from core.php via AJAX
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_FETCH_IFRAMES, key = "fetch_initiated"),
-                NavigationStep.WaitForDelay(8000L),
-
-                // Retrieve iframe results
-                NavigationStep.ExecuteJs(
-                    javascript = "(function(){ return window.__cimaIframeResults || '[]'; })();",
-                    key = "iframe_results"
-                ),
-
-                // Extract download links
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DOWNLOADS, key = "download_links"),
-
-                // Snapshot: all <iframe> currently in the DOM (best-effort).
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_EXTRACT_DIRECT_IFRAMES, key = "direct_iframes"),
-
-                // Wait for the page to decrypt and inject the player iframe, then return the
-                // full rendered outerHTML. This captures the already-decrypted server tabs +
-                // player iframe (clicking a tab opens a popup, which is now allowed).
-                NavigationStep.ExecuteJs(
-                    javascript = WebViewFlowHelper.JS_EXTRACT_HTML_AFTER_IFRAME,
-                    key = "html_final"
-                ),
-
-                // Compact dump of all download/media <a> links + the #download section markup,
-                // so the real download-link structure is visible in the log.
-                NavigationStep.ExecuteJs(
-                    javascript = WebViewFlowHelper.JS_DUMP_LINKS,
-                    key = "dump_links"
-                )
+                // Extract all server metadata, download links, and iframes in one pass
+                // (uses unpatched getAttribute to read data-index/data-id for all servers)
+                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_ALL, key = "extracted_all"),
             )
 
             val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
@@ -1818,14 +1808,7 @@ class CimaNowProvider : BaseProvider() {
                 return false
             }
 
-            // ======================== EXTRACT FROM html_final ========================
-            // The server-tab data attributes (data-idx/data-ix) are NEVER populated by the
-            // page's JS (they remain empty strings). The server index/id values are embedded
-            // in heavily obfuscated inline JS decoded only at click time. Instead of waiting
-            // for attributes that never arrive, we extract what's actually in the HTML:
-            //   1. Download links from the #download section (Jetload, VK docs, etc.)
-            //   2. Any <iframe> in the page
-            val htmlFinal = navResult.extractedHtml["html_final"] ?: ""
+            // ======================== EXTRACT FROM extracted_all ========================
             val watchUrl = navResult.finalUrl
             var found = false
             val foundLinks = mutableListOf<String>()
@@ -1835,113 +1818,125 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
-            // ===== DUMP html_final BEFORE JSoup parse =====
-            Log.w(TAG_TEST, "========== DUMPING FULL html_final (${htmlFinal.length} chars) ==========")
+            // Log diag data for debugging
             val diagData = navResult.extractedHtml["diag"] ?: ""
             if (diagData.startsWith("DIAG_JSON:")) {
                 Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
             }
-            Log.w(TAG_TEST, "html_final length = ${htmlFinal.length}")
-            val chunkSize = 3000
-            var off = 0
-            var part = 0
-            while (off < htmlFinal.length) {
-                val end = minOf(off + chunkSize, htmlFinal.length)
-                Log.w(TAG_TEST, "--- html_final[$part] (${off}-${end}) ---\n" + htmlFinal.substring(off, end))
-                off = end
-                part++
-            }
-            Log.w(TAG_TEST, "========== END FULL html_final ($part chunks) ==========")
-            // ===== END DUMP =====
 
-            if (htmlFinal.isNotBlank()) {
-                val doc = Jsoup.parse(htmlFinal, watchUrl)
+            val extractedAllJson = navResult.extractedHtml["extracted_all"] ?: ""
+            if (extractedAllJson.isNotBlank() && extractedAllJson != "null") {
+                try {
+                    val root = JSONObject(extractedAllJson)
 
-                // 1. Download links from #download section (broadened — the site's markup
-                //    varies, so we also catch direct host anchors and quality-labelled items).
-                val downloadLinks = doc.select(
-                    "#download li[aria-label='quality'] a[href], " +
-                    "#download a[href], " +
-                    "#d_hidden li[aria-label='q_hidden'] a[href], " +
-                    "#d_hidden a[href], " +
-                    "li[aria-label='q_hidden'] a[href], " +
-                    "li[aria-label='download'] a[href], " +
-                    "a[href*='jetload'], " +
-                    "a[href*='forafile'], " +
-                    "a[href*='download'], " +
-                    "li[class*='quality'] a[href], " +
-                    "[data-quality] a[href]"
-                ).distinct()
-                Log.i(TAG_TEST, "Found ${downloadLinks.size} download links")
-                for (link in downloadLinks) {
-                    try {
-                        val dlUrl = link.attr("href")
-                        val linkText = link.text().trim()
-                        val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
-                            ?: Qualities.Unknown.value
-                        if (dlUrl.isBlank() || !dlUrl.startsWith("http")) continue
-                        Log.i(TAG_TEST, "Download link: quality=$quality url=$dlUrl")
-                        when {
-                            dlUrl.contains("jetload.pp.ua", true) -> {
-                                handleJetload(dlUrl, quality, watchUrl, loggingCallback)
-                            }
-                            dlUrl.contains("forafile.com", true) -> {
-                                handleForafile(dlUrl, quality, watchUrl, loggingCallback)
-                            }
-                            else -> {
-                                val extractorLink = newExtractorLink("CimaNow", linkText.ifBlank { "CimaNow" }, dlUrl, type = getLinkType(dlUrl))
-                                extractorLink.referer = watchUrl
-                                extractorLink.quality = quality
-                                loggingCallback(extractorLink)
-                            }
+                    // 1. Process servers — call core.php for each to get iframe URLs
+                    val servers = root.optJSONArray("servers")
+                    if (servers != null && servers.length() > 0) {
+                        Log.i(TAG_TEST, "Found ${servers.length()} servers from JS extraction")
+                        val cookieString = navResult.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                        val coreHeaders = mutableMapOf(
+                            "Referer" to watchUrl,
+                            "X-Requested-With" to "XMLHttpRequest"
+                        )
+                        if (cookieString.isNotBlank()) {
+                            coreHeaders["Cookie"] = cookieString
                         }
-                        found = true
-                    } catch (e: Exception) {
-                        Log.e(TAG_TEST, "Error processing download link: ${e.message}")
-                    }
-                }
-
-                // 2. Any <iframe> in the page (auto-loaded embed, e.g. VK if rendered)
-                val iframes = doc.select("iframe[src]")
-                Log.i(TAG_TEST, "Found ${iframes.size} iframes")
-                val iframeUrls = iframes.mapNotNull { f ->
-                    val src = f.attr("data-src").ifBlank { f.attr("src") }
-                    if (src.isNotBlank() && !src.contains("about:blank") && !src.contains("youtube.com"))
-                        if (src.startsWith("//")) "https:$src" else src
-                    else null
-                }.distinct()
-                if (iframeUrls.isNotEmpty()) {
-                    try {
                         coroutineScope {
-                            iframeUrls.map { url ->
-                                async {
-                                    try { loadExtractor(url, watchUrl, { }, loggingCallback) }
-                                    catch (e: Exception) { Log.e(TAG_TEST, "loadExtractor failed for $url: ${e.message}") }
+                            for (i in 0 until servers.length()) {
+                                val sv = servers.getJSONObject(i)
+                                val index = sv.optString("index", "").trim()
+                                val id = sv.optString("id", "").trim()
+                                val name = sv.optString("name", "").trim()
+                                if (index.isBlank() || id.isBlank()) continue
+                                launch {
+                                    try {
+                                        val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
+                                        Log.d(TAG_TEST, "core.php GET for server '$name': index=$index id=$id")
+                                        val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                        val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
+                                        val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
+                                            if (it.startsWith("//")) "https:$it" else it
+                                        } ?: ""
+                                        if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                            Log.i(TAG_TEST, "Server '$name' iframe: $iframeUrl")
+                                            fallbackExtractIframe(iframeUrl, name, watchUrl, loggingCallback)
+                                            found = true
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG_TEST, "core.php failed for server '$name': ${e.message}")
+                                    }
                                 }
-                            }.awaitAll()
+                            }
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG_TEST, "Parallel extraction threw: ${e.message}")
                     }
-                    found = true
+
+                    // 2. Process download links
+                    val downloads = root.optJSONArray("downloads")
+                    if (downloads != null && downloads.length() > 0) {
+                        Log.i(TAG_TEST, "Found ${downloads.length()} download links from JS extraction")
+                        for (i in 0 until downloads.length()) {
+                            val dl = downloads.getJSONObject(i)
+                            val dlUrl = dl.optString("url", "")
+                            val name = dl.optString("name", "").trim()
+                            if (dlUrl.isBlank() || !dlUrl.startsWith("http")) continue
+                            val quality = Regex("\\d+p").find(name)?.value?.let { getQualityFromName(it) }
+                                ?: Qualities.Unknown.value
+                            try {
+                                when {
+                                    dlUrl.contains("jetload.pp.ua", true) -> {
+                                        handleJetload(dlUrl, quality, watchUrl, loggingCallback)
+                                    }
+                                    dlUrl.contains("forafile.com", true) -> {
+                                        handleForafile(dlUrl, quality, watchUrl, loggingCallback)
+                                    }
+                                    else -> {
+                                        val extractorLink = newExtractorLink("CimaNow", name.ifBlank { "CimaNow" }, dlUrl, type = getLinkType(dlUrl))
+                                        extractorLink.referer = watchUrl
+                                        extractorLink.quality = quality
+                                        loggingCallback(extractorLink)
+                                    }
+                                }
+                                found = true
+                            } catch (e: Exception) {
+                                Log.e(TAG_TEST, "Error processing download link: ${e.message}")
+                            }
+                        }
+                    }
+
+                    // 3. Process direct iframes (already in DOM, e.g. VK embed)
+                    val iframes = root.optJSONArray("iframes")
+                    if (iframes != null && iframes.length() > 0) {
+                        val iframeUrls = mutableListOf<String>()
+                        for (i in 0 until iframes.length()) {
+                            val url = iframes.optString(i, "")
+                            if (url.isNotBlank()) iframeUrls.add(url)
+                        }
+                        if (iframeUrls.isNotEmpty()) {
+                            Log.i(TAG_TEST, "Found ${iframeUrls.size} direct iframes from JS extraction")
+                            coroutineScope {
+                                iframeUrls.map { url ->
+                                    async {
+                                        try { fallbackExtractIframe(url, "direct_embed", watchUrl, loggingCallback) }
+                                        catch (e: Exception) { Log.e(TAG_TEST, "fallbackExtractIframe failed for $url: ${e.message}") }
+                                    }
+                                }.awaitAll()
+                            }
+                            found = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_TEST, "Error parsing extracted_all JSON: ${e.message}")
+                    Log.e(TAG_TEST, "JSON start: ${extractedAllJson.take(300)}")
                 }
             } else {
-                Log.w(TAG_TEST, "html_final is blank")
-            }
-
-            // Always log the compact download-link dump (reveals the real structure).
-            val dumpLinks = navResult.extractedHtml["dump_links"] ?: ""
-            if (dumpLinks.isNotBlank()) {
-                Log.w(TAG_TEST, "========== DUMP_LINKS ==========")
-                Log.w(TAG_TEST, dumpLinks.take(4000))
-                Log.w(TAG_TEST, "========== END DUMP_LINKS ==========")
+                Log.w(TAG_TEST, "extracted_all is blank or null")
             }
 
             if (found) {
                 Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
                 foundLinks.forEachIndexed { i, url -> Log.i(TAG_TEST, "  [$i] $url") }
             } else {
-                Log.w(TAG_TEST, "========== NOTHING FOUND in html_final parse ==========")
+                Log.w(TAG_TEST, "========== NOTHING FOUND ==========")
             }
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
             return found
