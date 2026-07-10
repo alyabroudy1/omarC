@@ -1688,18 +1688,47 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
-    private val JS_EXTRACT_ALL = """
+    private val JS_COMBINED_DIAG_EXTRACT = """
 (function(){
-  var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
-  var servers=[],items=document.querySelectorAll('#watch li');
-  for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
-  var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
-  var as=document.getElementsByTagName('a');
-  for(var i=0;i<as.length;i++){var a=as[i],h=a.getAttribute('href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;var p=a.parentElement;if(!p)continue;var pid=p.getAttribute('id')||'',pl=p.getAttribute('aria-label')||'';var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});}
-  var iframes=[],fs=document.getElementsByTagName('iframe');
-  for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
-  var res={servers:servers,downloads:downloads,iframes:iframes};
-  return _OJ(res);
+    try {
+        var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
+
+        // --- EXTRACTION DATA (must run first, before anti-scraping patches) ---
+        var servers=[],items=document.querySelectorAll('#watch li');
+        for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
+        var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
+        var as=document.getElementsByTagName('a');
+        for(var i=0;i<as.length;i++){var a=as[i],h=a.getAttribute('href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;var p=a.parentElement;if(!p)continue;var pid=p.getAttribute('id')||'',pl=p.getAttribute('aria-label')||'';var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});}
+        var iframes=[],fs=document.getElementsByTagName('iframe');
+        for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
+
+        // --- DIAGNOSTIC DATA ---
+        var el=document.querySelector('#watch');
+        var anchors=document.getElementsByTagName('a');
+        var qualityCount=0;
+        for(var x=0;x<anchors.length;x++){var ap=anchors[x].parentElement;if(ap){var apl=ap.getAttribute('aria-label')||'';if(apl==='quality'||apl==='q_hidden')qualityCount++;}}
+        var diag={
+            url:window.location.href,
+            ua:navigator.userAgent,
+            cookie:(document.cookie||'').slice(0,300),
+            hasSwal:typeof window.Swal !== 'undefined',
+            hasJQuery:typeof window.jQuery !== 'undefined',
+            hasJQueryCookie:(typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
+            watchItems:items.length+qualityCount,
+            allSpans:items.length,
+            watchHtml:el?(el.innerHTML.slice(0,1200)||'no_watch'):'no_watch',
+            visibleDialogs:0,dialogButtons:[],swal2Confirm:'',swal2Title:'',swal2Html:'',ifrList:[]
+        };
+        var modals=document.querySelectorAll('.swal2-container,.swal2-modal,.swal2-popup,.modal,.popup');
+        for(var m=0;m<modals.length;m++){var mr=modals[m].getBoundingClientRect();if(mr.width>0&&mr.height>0&&modals[m].offsetParent!==null){diag.visibleDialogs++;var conf=modals[m].querySelector('.swal2-confirm');if(conf)diag.swal2Confirm=(conf.innerText||conf.textContent||'').trim().slice(0,30);var title=modals[m].querySelector('.swal2-title');if(title)diag.swal2Title=(title.innerText||title.textContent||'').trim().slice(0,60);var htmlC=modals[m].querySelector('.swal2-html-container');if(htmlC)diag.swal2Html=(htmlC.innerText||htmlC.textContent||'').trim().slice(0,120);var btns=modals[m].querySelectorAll('button,a,[role="button"],.swal2-confirm');for(var b=0;b<btns.length;b++){var t=(btns[b].innerText||btns[b].textContent||'').trim();if(t.length>0&&t.length<40)diag.dialogButtons.push(t);}}}
+        var ifr=document.getElementsByTagName('iframe');
+        for(var i=0;i<Math.min(ifr.length,8);i++){diag.ifrList.push((ifr[i].getAttribute('data-src')||ifr[i].src||'none').slice(0,120));}
+
+        var res={servers:servers,downloads:downloads,iframes:iframes,diag:diag};
+        return 'DIAG_JSON:'+_OJ(res);
+    } catch(e) {
+        return 'diag_error:'+e.message;
+    }
 })();
 """.trimIndent()
 
@@ -1773,12 +1802,9 @@ class CimaNowProvider : BaseProvider() {
                 ),
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
-                // Diagnostic snapshot after consent dismissal
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DIAGNOSE_WATCHING, key = "diag"),
-
-                // Extract all server metadata, download links, and iframes in one pass
-                // (uses unpatched getAttribute to read data-index/data-id for all servers)
-                NavigationStep.ExecuteJs(javascript = JS_EXTRACT_ALL, key = "extracted_all"),
+                // Combined diagnostic + extraction in one pass (captures data before
+                // anti-scraping patches fire, which otherwise neuter DOM APIs ~300ms after DIAG)
+                NavigationStep.ExecuteJs(javascript = JS_COMBINED_DIAG_EXTRACT, key = "combined"),
             )
 
             val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
@@ -1824,16 +1850,26 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
-            // Log diag data for debugging
-            val diagData = navResult.extractedHtml["diag"] ?: ""
-            if (diagData.startsWith("DIAG_JSON:")) {
-                Log.w(TAG_TEST, "DIAG JSON: " + diagData.removePrefix("DIAG_JSON:"))
+            // Parse combined result (diagnostic + extraction in one JSON object)
+            val combinedRaw = navResult.extractedHtml["combined"] ?: ""
+            var root: JSONObject? = null
+            if (combinedRaw.startsWith("DIAG_JSON:")) {
+                val jsonStr = combinedRaw.removePrefix("DIAG_JSON:")
+                Log.w(TAG_TEST, "Combined JSON: " + jsonStr.take(2000))
+                try {
+                    root = JSONObject(jsonStr)
+                    val diag = root.optJSONObject("diag")
+                    if (diag != null) {
+                        Log.d(TAG_TEST, "DIAG: watchItems=${diag.optInt("watchItems")}, hasSwal=${diag.optBoolean("hasSwal")}, allSpans=${diag.optInt("allSpans")}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_TEST, "Error parsing combined JSON: ${e.message}")
+                }
+            } else if (combinedRaw.isNotBlank()) {
+                Log.w(TAG_TEST, "Combined raw start: ${combinedRaw.take(200)}")
             }
 
-            val extractedAllJson = navResult.extractedHtml["extracted_all"] ?: ""
-            if (extractedAllJson.isNotBlank() && extractedAllJson != "null") {
-                try {
-                    val root = JSONObject(extractedAllJson)
+            if (root != null) {
 
                     // 1. Process servers — call core.php for each to get iframe URLs
                     val servers = root.optJSONArray("servers")
@@ -1930,14 +1966,7 @@ class CimaNowProvider : BaseProvider() {
                             found = true
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG_TEST, "Error parsing extracted_all JSON: ${e.message}")
-                    Log.e(TAG_TEST, "JSON start: ${extractedAllJson.take(300)}")
-                }
-            } else {
-                Log.w(TAG_TEST, "extracted_all is blank or null")
             }
-
             if (found) {
                 Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
                 foundLinks.forEachIndexed { i, url -> Log.i(TAG_TEST, "  [$i] $url") }
