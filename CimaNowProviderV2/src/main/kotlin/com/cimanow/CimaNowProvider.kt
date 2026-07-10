@@ -1745,26 +1745,32 @@ class CimaNowProvider : BaseProvider() {
                 //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
                 NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
-                // Step 1: Wait for the countdown timer to finish and get-link.php to fire.
-                //         The intercepted get-link.php response is captured by the request
-                //         interceptor and stored in interceptedWatchingUrl. The countdown
-                //         on this page takes ~11 seconds, so 15s should be enough.
-                NavigationStep.WaitForDelay(15000L),
-
-                // Step 2: Navigate to the watching URL captured by the interceptor.
-                //         This polls interceptedWatchingUrl for up to 15s, then calls
-                //         loadUrlInWebView. The main-frame navigation is then intercepted
-                //         by the request interceptor (protected domain + spoofed headers),
-                //         so Cloudflare doesn't block it with sec-ch-ua: "Android WebView".
+                // Step 1: Navigate to the watching URL captured by the interceptor.
+                //         This polls interceptedWatchingUrl every 500ms (up to 15s total),
+                //         navigating immediately once the countdown timer finishes and
+                //         get-link.php fires (typically ~11s). The main-frame navigation
+                //         is intercepted by the request interceptor (protected domain +
+                //         spoofed headers), so Cloudflare doesn't block it.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Let the page's own JS render servers and load iframes
-                NavigationStep.WaitForDelay(15000L),
+                // Step 2: Wait until the watching page has rendered server tabs with
+                //         decrypted data-index attributes, then capture early outerHTML
+                //         BEFORE the page's anti-scraping script patches it.
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = "document.querySelector('#watch li[data-index]') !== null",
+                    timeoutMs = 20000L,
+                    pollIntervalMs = 500L,
+                    abortOnFailure = true
+                ),
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Dismiss consent popups if any — run BEFORE diag so we capture post-dismissal state.
-                // The page loads swal2 asynchronously around ~1.3s after navigation; give it time.
-                NavigationStep.WaitForDelay(5000L),
+                // Step 3: Wait for SweetAlert2 to load, then dismiss any consent popup.
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = "typeof window.Swal !== 'undefined'",
+                    timeoutMs = 8000L,
+                    pollIntervalMs = 300L,
+                    abortOnFailure = false
+                ),
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
 
                 // Diagnostic snapshot after consent dismissal
