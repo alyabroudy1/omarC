@@ -1691,22 +1691,53 @@ class CimaNowProvider : BaseProvider() {
     private val JS_COMBINED_DIAG_EXTRACT = """
 (function(){
     try {
-        var _OJ=(function(){try{var f=document.createElement('iframe');document.documentElement.appendChild(f);var j=f.contentWindow.JSON.stringify.bind(f.contentWindow.JSON);f.remove();return j}catch(e){return JSON.stringify}})();
+        // --- HELPERS (avoid querySelectorAll / getElementsByTagName -- page patches them) ---
+        function byTag(el,tag){
+            var r=[];if(!el)return r;
+            var c=el.firstChild;
+            while(c){if(c.nodeType===1&&c.tagName===tag)r.push(c);c=c.nextSibling;}
+            return r;
+        }
+        function children(el){
+            var r=[];if(!el)return r;
+            var c=el.firstChild;
+            while(c){if(c.nodeType===1)r.push(c);c=c.nextSibling;}
+            return r;
+        }
+        function attr(el,name){try{return el.getAttribute(name)}catch(e){return''}}
 
-        // --- EXTRACTION DATA (must run first, before anti-scraping patches) ---
-        var servers=[],items=document.querySelectorAll('#watch li');
-        for(var i=0;i<items.length;i++)servers.push({index:items[i].getAttribute('data-index')||items[i].getAttribute('data-idx')||'',id:items[i].getAttribute('data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
-        var downloads=[],hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
-        var as=document.getElementsByTagName('a');
-        for(var i=0;i<as.length;i++){var a=as[i],h=a.getAttribute('href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;var p=a.parentElement;if(!p)continue;var pid=p.getAttribute('id')||'',pl=p.getAttribute('aria-label')||'';var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});}
-        var iframes=[],fs=document.getElementsByTagName('iframe');
-        for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}
+        // --- EXTRACTION DATA ---
+        var watch=document.querySelector('#watch');
+        var items=children(watch);
+        var servers=[];
+        for(var i=0;i<items.length;i++){
+            if(items[i].tagName!=='LI')continue;
+            servers.push({index:attr(items[i],'data-index')||attr(items[i],'data-idx')||'',id:attr(items[i],'data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
+        }
 
-        // --- DIAGNOSTIC DATA ---
-        var el=document.querySelector('#watch');
-        var anchors=document.getElementsByTagName('a');
+        var allLinks=[],el=document.querySelector('body'),c=el.firstChild;
+        function walk(n){if(!n)return;if(n.nodeType===1){if(n.tagName==='A')allLinks.push(n);var ch=n.firstChild;while(ch){walk(ch);ch=ch.nextSibling;}}}
+        walk(el);
+        var hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
+        var downloads=[];
+        for(var i=0;i<allLinks.length;i++){
+            var a=allLinks[i],h=attr(a,'href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;
+            var p=a.parentElement;if(!p)continue;
+            var pid=attr(p,'id')||'',pl=attr(p,'aria-label')||'';
+            var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');
+            if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}
+            downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});
+        }
+
+        var iframes=[];
+        function walkIframes(n){if(!n)return;if(n.nodeType===1){if(n.tagName==='IFRAME'){var s=attr(n,'data-src')||n.src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}var ch=n.firstChild;while(ch){walkIframes(ch);ch=ch.nextSibling;}}}
+        walkIframes(document.querySelector('body'));
+
+        // --- DIAGNOSTIC ---
         var qualityCount=0;
-        for(var x=0;x<anchors.length;x++){var ap=anchors[x].parentElement;if(ap){var apl=ap.getAttribute('aria-label')||'';if(apl==='quality'||apl==='q_hidden')qualityCount++;}}
+        for(var i=0;i<allLinks.length;i++){
+            var ap=allLinks[i].parentElement;if(ap){var apl=attr(ap,'aria-label')||'';if(apl==='quality'||apl==='q_hidden')qualityCount++;}
+        }
         var diag={
             url:window.location.href,
             ua:navigator.userAgent,
@@ -1716,16 +1747,23 @@ class CimaNowProvider : BaseProvider() {
             hasJQueryCookie:(typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
             watchItems:items.length+qualityCount,
             allSpans:items.length,
-            watchHtml:el?(el.innerHTML.slice(0,1200)||'no_watch'):'no_watch',
+            watchHtml:watch?(watch.innerHTML.slice(0,1200)||'no_watch'):'no_watch',
             visibleDialogs:0,dialogButtons:[],swal2Confirm:'',swal2Title:'',swal2Html:'',ifrList:[]
         };
-        var modals=document.querySelectorAll('.swal2-container,.swal2-modal,.swal2-popup,.modal,.popup');
-        for(var m=0;m<modals.length;m++){var mr=modals[m].getBoundingClientRect();if(mr.width>0&&mr.height>0&&modals[m].offsetParent!==null){diag.visibleDialogs++;var conf=modals[m].querySelector('.swal2-confirm');if(conf)diag.swal2Confirm=(conf.innerText||conf.textContent||'').trim().slice(0,30);var title=modals[m].querySelector('.swal2-title');if(title)diag.swal2Title=(title.innerText||title.textContent||'').trim().slice(0,60);var htmlC=modals[m].querySelector('.swal2-html-container');if(htmlC)diag.swal2Html=(htmlC.innerText||htmlC.textContent||'').trim().slice(0,120);var btns=modals[m].querySelectorAll('button,a,[role="button"],.swal2-confirm');for(var b=0;b<btns.length;b++){var t=(btns[b].innerText||btns[b].textContent||'').trim();if(t.length>0&&t.length<40)diag.dialogButtons.push(t);}}}
-        var ifr=document.getElementsByTagName('iframe');
-        for(var i=0;i<Math.min(ifr.length,8);i++){diag.ifrList.push((ifr[i].getAttribute('data-src')||ifr[i].src||'none').slice(0,120));}
+        if(watch){var modals=watch.querySelectorAll('.swal2-container,.swal2-modal,.swal2-popup,.modal,.popup');for(var m=0;m<modals.length;m++){var mr=modals[m].getBoundingClientRect();if(mr.width>0&&mr.height>0&&modals[m].offsetParent!==null){diag.visibleDialogs++;var conf=modals[m].querySelector('.swal2-confirm');if(conf)diag.swal2Confirm=(conf.innerText||conf.textContent||'').trim().slice(0,30);var ttl=modals[m].querySelector('.swal2-title');if(ttl)diag.swal2Title=(ttl.innerText||ttl.textContent||'').trim().slice(0,60);var hc=modals[m].querySelector('.swal2-html-container');if(hc)diag.swal2Html=(hc.innerText||hc.textContent||'').trim().slice(0,120);var btns=modals[m].querySelectorAll('button,a,[role="button"],.swal2-confirm');for(var b=0;b<btns.length;b++){var t=(btns[b].innerText||btns[b].textContent||'').trim();if(t.length>0&&t.length<40)diag.dialogButtons.push(t);}}}}
+        for(var i=0;i<iframes.length&&i<8;i++){diag.ifrList.push(iframes[i].slice(0,120));}
 
+        // --- SERIALIZE (use direct string concat to avoid JSON.stringify monkey-patching) ---
+        function j(v){
+            if(v===null||v===undefined)return'null';
+            if(typeof v==='string')return'"'+v.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\r/g,'\\r').replace(/\t/g,'\\t')+'"';
+            if(typeof v==='number'||typeof v==='boolean')return''+v;
+            if(Array.isArray(v)){var a=[];for(var i=0;i<v.length;i++)a.push(j(v[i]));return'['+a.join(',')+']';}
+            if(typeof v==='object'){var k=Object.keys(v),p=[];for(var i=0;i<k.length;i++){p.push(j(k[i])+':'+j(v[k[i]]));}return'{'+p.join(',')+'}';}
+            return'null';
+        }
         var res={servers:servers,downloads:downloads,iframes:iframes,diag:diag};
-        return 'DIAG_JSON:'+_OJ(res);
+        return 'DIAG_JSON:'+j(res);
     } catch(e) {
         return 'diag_error:'+e.message;
     }
