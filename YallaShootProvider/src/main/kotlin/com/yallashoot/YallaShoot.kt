@@ -5,14 +5,11 @@ import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newLiveStreamLoadResponse
 import org.jsoup.nodes.Document
-import android.util.Base64
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.cloudstream.shared.extractors.AlbaPlayerExtractor
 
 class YallaShoot : BaseProvider() {
 
@@ -258,179 +255,22 @@ class YallaShoot : BaseProvider() {
         }
         
         val playerUrl = fixYallaUrl(iframeSrc)
-        Log.d("YallaShoot", "Fetching actual player URL: $playerUrl")
-        
-        val pHeaders = mapOf(
-            "User-Agent" to userAgent,
-            "Referer" to data
-        )
-        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false) ?: return foundLinks
-        Log.d("YallaShoot", "Fetched base player HTML snippet: ${playerResponse}")
-        
-        // 1. Process default page directly
-        val (foundAlba, foundGeneric) = processMultiIframe(playerResponse, playerUrl, userAgent, subtitleCallback, callback)
-        if (foundAlba || foundGeneric) foundLinks = true
-        
-        // 2. Fetch all other servers from the menu natively
-        val playerDoc = org.jsoup.Jsoup.parse(playerResponse, playerUrl)
-        val menuLinks = playerDoc.select(".aplr-menu a.aplr-link").mapNotNull { it.attr("href") }.filter { it.isNotBlank() && it != playerUrl }
-        
-        Log.d("YallaShoot", "Identified concurrent server menu links: $menuLinks")
-        
-        // Use apmap if possible, or sequential robust loop
-        menuLinks.forEach { serverUrl ->
-            val fixedServer = fixYallaUrl(serverUrl)
-            val serverHtml = httpService.getText(fixedServer, pHeaders, rewriteDomain = false)
-            if (serverHtml != null) {
-                Log.d("YallaShoot", "Fetched secondary server payload HTML from \$fixedServer: \${serverHtml}")
-                val (fA, fG) = processMultiIframe(serverHtml, fixedServer, userAgent, subtitleCallback, callback)
-                if (fA || fG) foundLinks = true
+        Log.d("YallaShoot", "Delegating to AlbaPlayerExtractor: $playerUrl")
+
+        // Delegate to AlbaPlayerExtractor (handles hex deobfuscation, 
+        // multi-server menu, Clappr/AlbaPlayerControl extraction, quality sorting)
+        // Works regardless of domain because we use the extractor directly
+        try {
+            AlbaPlayerExtractor().getUrl(playerUrl, data, subtitleCallback, callback)
+            foundLinks = true
+        } catch (e: Exception) {
+            Log.e("YallaShoot", "AlbaPlayerExtractor failed: ${e.message}")
+            // Fallback to sniffer
+            if (awaitSnifferResult(playerUrl, data, subtitleCallback, callback, 15000L)) {
+                foundLinks = true
             }
         }
-        
-        if (!foundLinks) {
-            val sniffUrls = mutableListOf<String>()
-            if (playerUrl.isNotBlank()) sniffUrls.add(playerUrl)
-            sniffUrls.addAll(menuLinks.map { fixYallaUrl(it) })
-            
-            for (sniffUrl in sniffUrls) {
-                Log.d("YallaShoot", "Executing Sniffer fallback on: \$sniffUrl")
-                if (awaitSnifferResult(sniffUrl, data, subtitleCallback, callback, 15000L)) {
-                    foundLinks = true
-                    break
-                }
-            }
-        }
-        
+
         return foundLinks
-    }
-    
-    private suspend fun processMultiIframe(
-        html: String,
-        referer: String,
-        userAgent: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-        depth: Int = 0
-    ): Pair<Boolean, Boolean> {
-        if (depth > 2) return Pair(false, false)
-        var foundAlba = false
-        var foundGeneric = false
-        
-        // 1. Alba/Clappr Script Check
-        val albaRegex = Regex("AlbaPlayerControl\\('([^']+)'")
-        val albaMatch = albaRegex.find(html)
-        if (albaMatch != null) {
-            val encodedString = albaMatch.groupValues[1]
-            try {
-                val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
-                val m3u8Url = String(decodedBytes, Charsets.UTF_8)
-                val origin = try { "https://${java.net.URI(referer).host}" } catch(e: Exception) { referer }
-                
-                val m3u8Links = M3u8Helper.generateM3u8(
-                    source = this.name,
-                    streamUrl = m3u8Url,
-                    referer = referer,
-                    headers = mapOf(
-                        "User-Agent" to userAgent,
-                        "Referer" to referer,
-                        "Origin" to origin,
-                        "Accept" to "*/*"
-                    )
-                )
-                
-                m3u8Links.forEach { link ->
-                    Log.d("YallaShoot", "Extracted Alba M3u8 link: ${link.url}")
-                    callback(link)
-                    foundAlba = true
-                }
-            } catch (e: Exception) {
-                Log.e("YallaShoot", "Failed to decode AlbaPlayerControl: ${e.message}")
-            }
-        } else if (html.contains("Clappr.Player") || html.contains(".m3u8")) {
-            Log.d("YallaShoot", "Clappr or .m3u8 text identified in payload! Extracting...")
-            val clapprRegex = Regex("source\\s*:\\s*[\"']([^\"']+)[\"']")
-            val srcVarRegex = Regex("src\\s*=\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']")
-            val fallbackRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
-            
-            val m3u8Url = clapprRegex.find(html)?.groupValues?.get(1) 
-                ?: srcVarRegex.find(html)?.groupValues?.get(1)
-                ?: fallbackRegex.find(html)?.groupValues?.get(1)
-            
-            Log.d("YallaShoot", "Regex matched Master M3U8 URL: \$m3u8Url")
-                
-            if (m3u8Url != null) {
-                val origin = try { "https://\${java.net.URI(referer).host}" } catch(e: Exception) { referer }
-                val headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Referer" to referer,
-                    "Origin" to origin,
-                    "Accept" to "*/*"
-                )
-                
-                val m3u8Links = M3u8Helper.generateM3u8(
-                    source = this.name,
-                    streamUrl = m3u8Url,
-                    referer = referer,
-                    headers = headers
-                )
-                
-                Log.d("YallaShoot", "M3u8Helper returned \${m3u8Links.size} links.")
-                
-                if (m3u8Links.isEmpty()) {
-                    Log.w("YallaShoot", "M3u8Helper failed to parse playlist (possible chunklist)! Emitting raw fallback ExtractorLink.")
-                    callback(
-                        newExtractorLink(
-                            source = this.name,
-                            name = this.name,
-                            url = m3u8Url,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = referer
-                            this.headers = headers
-                            this.quality = 1
-                        }
-                    )
-                    foundAlba = true
-                } else {
-                    m3u8Links.forEach { link ->
-                        Log.d("YallaShoot", "Extracted Clappr M3u8 link: \${link.url}")
-                        callback(link)
-                        foundAlba = true
-                    }
-                }
-            } else {
-                Log.e("YallaShoot", "Failed to extract M3u8 string from regexes!")
-            }
-        }
-        
-        // 2. Generic Iframes embedded inside the server payload (like popcdn.day)
-        val innerDoc = org.jsoup.Jsoup.parse(html, referer)
-        innerDoc.select("iframe").forEach { iframe ->
-            val src = iframe.attr("src")
-            // Prevent recursive loop if it extracts an iframe containing its own default embed or matches referer perfectly
-            if (src.isNotBlank() && !src.contains("?serv=0") && src != referer) { 
-                Log.d("YallaShoot", "Forwarding generic embedded iframe to loadExtractor: $src")
-                loadExtractor(src, referer, subtitleCallback, callback)
-                foundGeneric = true
-                
-                // Heavily obfuscated streams often nest player scripts inside multiple generic iframes (e.g., tv7.koora.com)
-                // Cloudstream's loadExtractor will FAIL to parse them if there is no built-in Extractor plugin for that domain.
-                // We recursively fetch them here to manually intercept AlbaPlayer/Clappr payloads natively!
-                try {
-                    val pHeaders = mapOf("Referer" to referer, "User-Agent" to userAgent)
-                    val innerHtml = httpService.getText(src, pHeaders, rewriteDomain = false)
-                    if (innerHtml != null) {
-                        Log.d("YallaShoot", "Nested iframe successfully fetched from $src, recursively attempting manual extraction...")
-                        val (nestedAlba, nestedGeneric) = processMultiIframe(innerHtml, src, userAgent, subtitleCallback, callback, depth + 1)
-                        if (nestedAlba || nestedGeneric) foundGeneric = true
-                    }
-                } catch (e: Exception) {
-                    Log.w("YallaShoot", "Failed to fetch nested generic iframe payload: ${e.message}")
-                }
-            }
-        }
-        
-        return Pair(foundAlba, foundGeneric)
     }
 }

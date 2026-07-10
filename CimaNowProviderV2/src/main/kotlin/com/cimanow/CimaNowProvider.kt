@@ -1783,17 +1783,24 @@ class CimaNowProvider : BaseProvider() {
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
                 // Step 2: Wait until the watching page has rendered server tabs with
-                //         decrypted data-index attributes, then capture early outerHTML
-                //         BEFORE the page's anti-scraping script patches it.
+                //         decrypted data-index attributes.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "document.querySelector('#watch li[data-index]') !== null",
                     timeoutMs = 20000L,
                     pollIntervalMs = 500L,
                     abortOnFailure = true
                 ),
+
+                // Step 3: Extract servers/downloads/iframes/diag BEFORE reading outerHTML,
+                //         because reading outerHTML triggers the anti-scraping script which
+                //         asynchronously patches querySelectorAll/getAttribute.
+                NavigationStep.ExecuteJs(javascript = JS_COMBINED_DIAG_EXTRACT, key = "combined"),
+
+                // Step 4: Capture early outerHTML (still useful for debugging, even though
+                //         anti-scraping may patch it after this point).
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Step 3: Wait for SweetAlert2 to load, then dismiss any consent popup.
+                // Step 5: Wait for SweetAlert2 to load, then dismiss any consent popup.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "typeof window.Swal !== 'undefined'",
                     timeoutMs = 8000L,
@@ -1801,10 +1808,6 @@ class CimaNowProvider : BaseProvider() {
                     abortOnFailure = false
                 ),
                 NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
-
-                // Combined diagnostic + extraction in one pass (captures data before
-                // anti-scraping patches fire, which otherwise neuter DOM APIs ~300ms after DIAG)
-                NavigationStep.ExecuteJs(javascript = JS_COMBINED_DIAG_EXTRACT, key = "combined"),
             )
 
             val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
