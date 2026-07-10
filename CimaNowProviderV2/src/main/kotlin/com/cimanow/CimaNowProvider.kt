@@ -1796,7 +1796,7 @@ class CimaNowProvider : BaseProvider() {
             val navResult = httpService.navigationEngine.execute(
                 steps = steps,
                 userAgent = userAgent,
-                mode = Mode.FULLSCREEN,
+                mode = Mode.HEADLESS,
                 overallTimeoutMs = 180000L,
                 allowedDomains = allowedDomains,
                 destinationLockPatterns = destinationLockRegexes
