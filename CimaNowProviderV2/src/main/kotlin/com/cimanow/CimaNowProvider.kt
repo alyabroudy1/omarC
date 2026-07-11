@@ -1749,12 +1749,36 @@ class CimaNowProvider : BaseProvider() {
     // The page MUST keep innerHTML real for its own rendering -- it cannot patch it without breaking UI.
     private val JS_CAPTURE_INNERHTML = """
 (function(){
-    try {
-        var w=document.querySelector('#watch');
-        return 'RAW_HTML:'+(w?w.innerHTML:'');
-    } catch(e) {
-        return 'raw_html_error:'+e.message;
+    var w=document.querySelector('#watch');
+    if(w&&w.children.length>0&&w.querySelector('li[data-index]')){
+        return 'RAW_HTML:'+w.innerHTML;
     }
+    return new Promise(function(resolve,reject){
+        var deadline=Date.now()+25000;
+        var observer=new MutationObserver(function(){
+            var w2=document.querySelector('#watch');
+            if(w2&&w2.children.length>0&&w2.querySelector('li[data-index]')){
+                observer.disconnect();
+                clearInterval(timer);
+                resolve('RAW_HTML:'+w2.innerHTML);
+            }
+        });
+        var target=document.querySelector('#watch')||document.body;
+        observer.observe(target,{childList:true,subtree:true,attributes:true});
+        var timer=setInterval(function(){
+            var w3=document.querySelector('#watch');
+            if(w3&&w3.children.length>0&&w3.querySelector('li[data-index]')){
+                observer.disconnect();
+                clearInterval(timer);
+                resolve('RAW_HTML:'+w3.innerHTML);
+            }
+            if(Date.now()>deadline){
+                observer.disconnect();
+                clearInterval(timer);
+                resolve('RAW_HTML:TIMEOUT');
+            }
+        },300);
+    });
 })();
 """.trimIndent()
 
@@ -1808,18 +1832,10 @@ class CimaNowProvider : BaseProvider() {
                 //         spoofed headers), so Cloudflare doesn't block it.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Wait until the watching page has rendered server tabs with
-                //         decrypted data-index attributes.
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = "document.querySelector('#watch li[data-index]') !== null",
-                    timeoutMs = 20000L,
-                    pollIntervalMs = 500L,
-                    abortOnFailure = true
-                ),
-
-                // Step 3: Extract servers/downloads/iframes/diag BEFORE reading outerHTML,
-                //         because reading outerHTML triggers the anti-scraping script which
-                //         asynchronously patches querySelectorAll/getAttribute.
+                // Step 2: Poll-and-capture watch.innerHTML using a Promise with MutationObserver.
+                //         This waits for the page to populate #watch with server <li> elements
+                //         AND captures the content in the same synchronous JS context, before the
+                //         anti-scraping async timer can clear the content. Returns RAW_HTML: prefix.
                 NavigationStep.ExecuteJs(javascript = JS_CAPTURE_INNERHTML, key = "raw_html"),
 
                 // Step 4: Capture early outerHTML (still useful for debugging, even though
