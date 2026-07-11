@@ -152,6 +152,18 @@ class YallaShoot : BaseProvider() {
             homePageList.add(HomePageList("مباريات اليوم", todayMatches, isHorizontalImages = true))
         }
         
+        try {
+            val yesterdayDoc = httpService.getDocument("$mainUrl/matches-yesterday/", rewriteDomain = true)
+            if (yesterdayDoc != null) {
+                val yesterdayMatches = parseMatchesFromDocument(yesterdayDoc)
+                if (yesterdayMatches.isNotEmpty()) {
+                    homePageList.add(HomePageList("مباريات الأمس", yesterdayMatches, isHorizontalImages = true))
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("YallaShoot", "Failed to fetch yesterday's matches: ${e.message}")
+        }
+        
         return newHomePageResponse(homePageList, false)
     }
 
