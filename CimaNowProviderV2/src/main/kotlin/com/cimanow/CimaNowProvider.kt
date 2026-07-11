@@ -347,7 +347,7 @@ class CimaNowProvider : BaseProvider() {
         Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
-        if (data.contains("agent-kim-reactivated", ignoreCase = true)) {
+        if (data.contains("test", ignoreCase = true)) {
             Log.i("CimaNowLoadLinks", "Triggering isolated WebView test flow for: $data")
             return runIsolatedWebViewTest(data, callback)
         }
@@ -596,10 +596,8 @@ class CimaNowProvider : BaseProvider() {
 
         try {
             val config = WebViewFlowHelper.Config(
-                // All domains allowed for debugging — the redirect confirmation dialog gives manual control
                 allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li", "viiukuhe.com", "ayhal.com"),
                 destinationLockPatterns = listOf("/watching/"),
-                // Extended timeout to allow manual navigation through the redirect chain
                 overallTimeoutMs = 600_000L
             )
             Log.d(TAG_WV, "Config: allowedDomains=${config.allowedDomains}, destPatterns=${config.destinationLockPatterns}, timeoutMs=${config.overallTimeoutMs}")
