@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import org.jsoup.nodes.Document
+import org.jsoup.Jsoup
 import android.util.Base64
 
 class SyriaLive : BaseProvider() {
@@ -200,12 +201,14 @@ class SyriaLive : BaseProvider() {
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent
 
-        // 1. Fetch exact match/movie page (no domain rewrite — keep original domain)
+        // 1. Fetch exact match/movie page via getText (bypasses RequestQueue
+        //    follower rewrite entirely, keeping the original domain)
         val reqHeaders = mapOf(
             "User-Agent" to userAgent,
             "Referer" to "https://www.google.com/"
         )
-        val doc = httpService.getDocument(data, reqHeaders, rewriteDomain = false) ?: return false
+        val html = httpService.getText(data, reqHeaders, rewriteDomain = false) ?: return false
+        val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst(".entry-content iframe")
         val iframeSrc = iframeElement?.attr("src")
