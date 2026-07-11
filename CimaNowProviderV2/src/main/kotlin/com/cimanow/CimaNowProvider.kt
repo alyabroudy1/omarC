@@ -15,8 +15,7 @@ import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.json.JSONArray
-import org.json.JSONObject
+
 import java.io.ByteArrayOutputStream
 import java.util.regex.Pattern
 import javax.crypto.Mac
@@ -1688,84 +1687,16 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
-    private val JS_COMBINED_DIAG_EXTRACT = """
+    // Minimal JS: only read innerHTML. ALL parsing happens in Kotlin (outside WebView JS context).
+    // This avoids every JS API the page may patch (getAttribute, querySelectorAll, String.match, etc.).
+    // The page MUST keep innerHTML real for its own rendering -- it cannot patch it without breaking UI.
+    private val JS_CAPTURE_INNERHTML = """
 (function(){
     try {
-        // --- HELPERS (avoid querySelectorAll / getElementsByTagName -- page patches them) ---
-        function byTag(el,tag){
-            var r=[];if(!el)return r;
-            var c=el.firstChild;
-            while(c){if(c.nodeType===1&&c.tagName===tag)r.push(c);c=c.nextSibling;}
-            return r;
-        }
-        function children(el){
-            var r=[];if(!el)return r;
-            var c=el.firstChild;
-            while(c){if(c.nodeType===1)r.push(c);c=c.nextSibling;}
-            return r;
-        }
-        function attr(el,name){try{return el.getAttribute(name)}catch(e){return''}}
-
-        // --- EXTRACTION DATA ---
-        var watch=document.querySelector('#watch');
-        var items=children(watch);
-        var servers=[];
-        for(var i=0;i<items.length;i++){
-            if(items[i].tagName!=='LI')continue;
-            servers.push({index:attr(items[i],'data-index')||attr(items[i],'data-idx')||'',id:attr(items[i],'data-id')||'',name:(items[i].textContent||'').trim().slice(0,50)});
-        }
-
-        var allLinks=[],el=document.querySelector('body'),c=el.firstChild;
-        function walk(n){if(!n)return;if(n.nodeType===1){if(n.tagName==='A')allLinks.push(n);var ch=n.firstChild;while(ch){walk(ch);ch=ch.nextSibling;}}}
-        walk(el);
-        var hosts=['jetload','forafile','vk.com/doc','frdl.my','bysetayico','href.li'];
-        var downloads=[];
-        for(var i=0;i<allLinks.length;i++){
-            var a=allLinks[i],h=attr(a,'href')||'';if(!h||h==='#'||h.indexOf('http')!==0)continue;
-            var p=a.parentElement;if(!p)continue;
-            var pid=attr(p,'id')||'',pl=attr(p,'aria-label')||'';
-            var isQ=(pl==='quality'||pl==='q_hidden'),isD=(pid==='download'||pid==='d_hidden'||pl==='download');
-            if(!isQ&&!isD){var hl=h.toLowerCase(),hit=false;for(var k=0;k<hosts.length;k++){if(hl.indexOf(hosts[k])!==-1){hit=true;break;}}if(!hit)continue;}
-            downloads.push({name:(a.textContent||'').trim().slice(0,50),url:h});
-        }
-
-        var iframes=[];
-        function walkIframes(n){if(!n)return;if(n.nodeType===1){if(n.tagName==='IFRAME'){var s=attr(n,'data-src')||n.src||'';if(s&&s.indexOf('about:blank')===-1)iframes.push(s);}var ch=n.firstChild;while(ch){walkIframes(ch);ch=ch.nextSibling;}}}
-        walkIframes(document.querySelector('body'));
-
-        // --- DIAGNOSTIC ---
-        var qualityCount=0;
-        for(var i=0;i<allLinks.length;i++){
-            var ap=allLinks[i].parentElement;if(ap){var apl=attr(ap,'aria-label')||'';if(apl==='quality'||apl==='q_hidden')qualityCount++;}
-        }
-        var diag={
-            url:window.location.href,
-            ua:navigator.userAgent,
-            cookie:(document.cookie||'').slice(0,300),
-            hasSwal:typeof window.Swal !== 'undefined',
-            hasJQuery:typeof window.jQuery !== 'undefined',
-            hasJQueryCookie:(typeof window.jQuery !== 'undefined' && typeof window.jQuery.cookie !== 'undefined'),
-            watchItems:items.length+qualityCount,
-            allSpans:items.length,
-            watchHtml:watch?(watch.innerHTML.slice(0,1200)||'no_watch'):'no_watch',
-            visibleDialogs:0,dialogButtons:[],swal2Confirm:'',swal2Title:'',swal2Html:'',ifrList:[]
-        };
-        if(watch){var modals=watch.querySelectorAll('.swal2-container,.swal2-modal,.swal2-popup,.modal,.popup');for(var m=0;m<modals.length;m++){var mr=modals[m].getBoundingClientRect();if(mr.width>0&&mr.height>0&&modals[m].offsetParent!==null){diag.visibleDialogs++;var conf=modals[m].querySelector('.swal2-confirm');if(conf)diag.swal2Confirm=(conf.innerText||conf.textContent||'').trim().slice(0,30);var ttl=modals[m].querySelector('.swal2-title');if(ttl)diag.swal2Title=(ttl.innerText||ttl.textContent||'').trim().slice(0,60);var hc=modals[m].querySelector('.swal2-html-container');if(hc)diag.swal2Html=(hc.innerText||hc.textContent||'').trim().slice(0,120);var btns=modals[m].querySelectorAll('button,a,[role="button"],.swal2-confirm');for(var b=0;b<btns.length;b++){var t=(btns[b].innerText||btns[b].textContent||'').trim();if(t.length>0&&t.length<40)diag.dialogButtons.push(t);}}}}
-        for(var i=0;i<iframes.length&&i<8;i++){diag.ifrList.push(iframes[i].slice(0,120));}
-
-        // --- SERIALIZE (use direct string concat to avoid JSON.stringify monkey-patching) ---
-        function j(v){
-            if(v===null||v===undefined)return'null';
-            if(typeof v==='string')return'"'+v.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n').replace(/\r/g,'\\r').replace(/\t/g,'\\t')+'"';
-            if(typeof v==='number'||typeof v==='boolean')return''+v;
-            if(Array.isArray(v)){var a=[];for(var i=0;i<v.length;i++)a.push(j(v[i]));return'['+a.join(',')+']';}
-            if(typeof v==='object'){var k=Object.keys(v),p=[];for(var i=0;i<k.length;i++){p.push(j(k[i])+':'+j(v[k[i]]));}return'{'+p.join(',')+'}';}
-            return'null';
-        }
-        var res={servers:servers,downloads:downloads,iframes:iframes,diag:diag};
-        return 'DIAG_JSON:'+j(res);
+        var w=document.querySelector('#watch');
+        return 'RAW_HTML:'+(w?w.innerHTML:'');
     } catch(e) {
-        return 'diag_error:'+e.message;
+        return 'raw_html_error:'+e.message;
     }
 })();
 """.trimIndent()
@@ -1832,7 +1763,7 @@ class CimaNowProvider : BaseProvider() {
                 // Step 3: Extract servers/downloads/iframes/diag BEFORE reading outerHTML,
                 //         because reading outerHTML triggers the anti-scraping script which
                 //         asynchronously patches querySelectorAll/getAttribute.
-                NavigationStep.ExecuteJs(javascript = JS_COMBINED_DIAG_EXTRACT, key = "combined"),
+                NavigationStep.ExecuteJs(javascript = JS_CAPTURE_INNERHTML, key = "raw_html"),
 
                 // Step 4: Capture early outerHTML (still useful for debugging, even though
                 //         anti-scraping may patch it after this point).
@@ -1891,122 +1822,128 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
-            // Parse combined result (diagnostic + extraction in one JSON object)
-            val combinedRaw = navResult.extractedHtml["combined"] ?: ""
-            var root: JSONObject? = null
-            if (combinedRaw.startsWith("DIAG_JSON:")) {
-                val jsonStr = combinedRaw.removePrefix("DIAG_JSON:")
-                Log.w(TAG_TEST, "Combined JSON: " + jsonStr.take(2000))
-                try {
-                    root = JSONObject(jsonStr)
-                    val diag = root.optJSONObject("diag")
-                    if (diag != null) {
-                        Log.d(TAG_TEST, "DIAG: watchItems=${diag.optInt("watchItems")}, hasSwal=${diag.optBoolean("hasSwal")}, allSpans=${diag.optInt("allSpans")}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG_TEST, "Error parsing combined JSON: ${e.message}")
-                }
-            } else if (combinedRaw.isNotBlank()) {
-                Log.w(TAG_TEST, "Combined raw start: ${combinedRaw.take(200)}")
+            // ======================== OFFLINE PARSING IN KOTLIN ========================
+            // The JS only returns raw innerHTML as a string. All regex extraction happens here
+            // in Kotlin, completely outside the WebView's JS environment. The page's anti-scraping
+            // can detect and patch ANY function we run via evaluateJavascript, but it has zero
+            // visibility into Kotlin-side string processing.
+
+            val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
+            val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
+                val html = rawHtmlData.removePrefix("RAW_HTML:")
+                Log.i(TAG_TEST, "Captured watch.innerHTML: ${html.length} chars, preview: ${html.take(300)}")
+                html
+            } else {
+                Log.w(TAG_TEST, "No raw HTML captured (${rawHtmlData.take(100)})")
+                ""
             }
 
-            if (root != null) {
+            data class ServerInfo(val index: String, val id: String, val name: String)
 
-                    // 1. Process servers — call core.php for each to get iframe URLs
-                    val servers = root.optJSONArray("servers")
-                    if (servers != null && servers.length() > 0) {
-                        Log.i(TAG_TEST, "Found ${servers.length()} servers from JS extraction")
-                        val cookieString = navResult.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                        val coreHeaders = mutableMapOf(
-                            "Referer" to watchUrl,
-                            "X-Requested-With" to "XMLHttpRequest"
-                        )
-                        if (cookieString.isNotBlank()) {
-                            coreHeaders["Cookie"] = cookieString
-                        }
-                        coroutineScope {
-                            for (i in 0 until servers.length()) {
-                                val sv = servers.getJSONObject(i)
-                                val index = sv.optString("index", "").trim()
-                                val id = sv.optString("id", "").trim()
-                                val name = sv.optString("name", "").trim()
-                                if (index.isBlank() || id.isBlank()) continue
-                                launch {
-                                    try {
-                                        val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
-                                        Log.d(TAG_TEST, "core.php GET for server '$name': index=$index id=$id")
-                                        val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
-                                        val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
-                                        val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
-                                            if (it.startsWith("//")) "https:$it" else it
-                                        } ?: ""
-                                        if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                                            Log.i(TAG_TEST, "Server '$name' iframe: $iframeUrl")
-                                            fallbackExtractIframe(iframeUrl, name, watchUrl, loggingCallback)
-                                            found = true
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG_TEST, "core.php failed for server '$name': ${e.message}")
+            if (watchHtml.isNotBlank()) {
+                // Parse servers: <li data-index="XX" data-id="YY">Name</li>
+                val liRegex = Regex("<li[^>]*>(.*?)</li>", RegexOption.IGNORE_CASE)
+                val servers = liRegex.findAll(watchHtml).mapNotNull { match ->
+                    val fullTag = match.value
+                    val content = match.groupValues[1]
+                    val idx = Regex("""data-index\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE).find(fullTag)?.groupValues?.get(1)?.trim() ?: ""
+                    val id = Regex("""data-id\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE).find(fullTag)?.groupValues?.get(1)?.trim() ?: ""
+                    if (idx.isBlank() && id.isBlank()) null else ServerInfo(idx, id, content.replace(Regex("<[^>]*>"), "").trim().take(50))
+                }.toList()
+
+                // Parse iframes: <iframe src="...">
+                val iframeRegex = Regex("""<iframe\s+[^>]*?src\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE)
+                val iframeUrls = iframeRegex.findAll(watchHtml).map { it.groupValues[1] }.filter { it.isNotBlank() && !it.contains("about:blank") }.toList()
+
+                // Parse download links: <a href="...">...</a> with quality/download context
+                val aRegex = Regex("""<a\s+[^>]*?href\s*=\s*["']([^"']*?)["'][^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE)
+                val downloadHosts = listOf("jetload", "forafile", "vk.com/doc", "frdl.my", "bysetayico", "href.li")
+                val downloads = aRegex.findAll(watchHtml).mapNotNull { match ->
+                    val href = match.groupValues[1]
+                    if (href.isBlank() || href == "#" || !href.startsWith("http")) return@mapNotNull null
+                    val name = match.groupValues[2].replace(Regex("<[^>]*>"), "").trim().take(50)
+                    val fullMatch = match.value
+                    val hasDownloadId = Regex("""id\s*=\s*["'](download|d_hidden)["']""", RegexOption.IGNORE_CASE).containsMatchIn(fullMatch)
+                    val hasQualityLabel = Regex("""aria-label\s*=\s*["'](quality|q_hidden|download)["']""", RegexOption.IGNORE_CASE).containsMatchIn(fullMatch)
+                    if (hasDownloadId || hasQualityLabel) return@mapNotNull Pair(href, name)
+                    val hl = href.lowercase()
+                    if (downloadHosts.any { hl.contains(it) }) Pair(href, name) else null
+                }.toList()
+
+                Log.i(TAG_TEST, "Parsed ${servers.size} servers, ${iframeUrls.size} iframes, ${downloads.size} downloads from raw HTML")
+
+                // 1. Process servers — call core.php for each to get iframe URLs
+                if (servers.isNotEmpty()) {
+                    Log.i(TAG_TEST, "Found ${servers.size} servers from raw HTML")
+                    val cookieString = navResult.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                    val coreHeaders = mutableMapOf(
+                        "Referer" to watchUrl,
+                        "X-Requested-With" to "XMLHttpRequest"
+                    )
+                    if (cookieString.isNotBlank()) {
+                        coreHeaders["Cookie"] = cookieString
+                    }
+                    coroutineScope {
+                        for (sv in servers) {
+                            if (sv.index.isBlank() || sv.id.isBlank()) continue
+                            launch {
+                                try {
+                                    val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=${sv.index}&id=${sv.id}"
+                                    Log.d(TAG_TEST, "core.php GET for server '${sv.name}': index=${sv.index} id=${sv.id}")
+                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                    val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
+                                    val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
+                                        if (it.startsWith("//")) "https:$it" else it
+                                    } ?: ""
+                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                        Log.i(TAG_TEST, "Server '${sv.name}' iframe: $iframeUrl")
+                                        fallbackExtractIframe(iframeUrl, sv.name, watchUrl, loggingCallback)
+                                        found = true
                                     }
+                                } catch (e: Exception) {
+                                    Log.e(TAG_TEST, "core.php failed for server '${sv.name}': ${e.message}")
                                 }
                             }
                         }
                     }
+                }
 
-                    // 2. Process download links
-                    val downloads = root.optJSONArray("downloads")
-                    if (downloads != null && downloads.length() > 0) {
-                        Log.i(TAG_TEST, "Found ${downloads.length()} download links from JS extraction")
-                        for (i in 0 until downloads.length()) {
-                            val dl = downloads.getJSONObject(i)
-                            val dlUrl = dl.optString("url", "")
-                            val name = dl.optString("name", "").trim()
-                            if (dlUrl.isBlank() || !dlUrl.startsWith("http")) continue
-                            val quality = Regex("\\d+p").find(name)?.value?.let { getQualityFromName(it) }
-                                ?: Qualities.Unknown.value
-                            try {
-                                when {
-                                    dlUrl.contains("jetload.pp.ua", true) -> {
-                                        handleJetload(dlUrl, quality, watchUrl, loggingCallback)
-                                    }
-                                    dlUrl.contains("forafile.com", true) -> {
-                                        handleForafile(dlUrl, quality, watchUrl, loggingCallback)
-                                    }
-                                    else -> {
-                                        val extractorLink = newExtractorLink("CimaNow", name.ifBlank { "CimaNow" }, dlUrl, type = getLinkType(dlUrl))
-                                        extractorLink.referer = watchUrl
-                                        extractorLink.quality = quality
-                                        loggingCallback(extractorLink)
-                                    }
+                // 2. Process download links
+                if (downloads.isNotEmpty()) {
+                    Log.i(TAG_TEST, "Found ${downloads.size} download links from raw HTML")
+                    for ((dlUrl, name) in downloads) {
+                        val quality = Regex("""\d+p""").find(name)?.value?.let { getQualityFromName(it) } ?: Qualities.Unknown.value
+                        try {
+                            when {
+                                dlUrl.contains("jetload.pp.ua", true) -> handleJetload(dlUrl, quality, watchUrl, loggingCallback)
+                                dlUrl.contains("forafile.com", true) -> handleForafile(dlUrl, quality, watchUrl, loggingCallback)
+                                else -> {
+                                    val extractorLink = newExtractorLink("CimaNow", name.ifBlank { "CimaNow" }, dlUrl, type = getLinkType(dlUrl))
+                                    extractorLink.referer = watchUrl
+                                    extractorLink.quality = quality
+                                    loggingCallback(extractorLink)
                                 }
-                                found = true
-                            } catch (e: Exception) {
-                                Log.e(TAG_TEST, "Error processing download link: ${e.message}")
-                            }
-                        }
-                    }
-
-                    // 3. Process direct iframes (already in DOM, e.g. VK embed)
-                    val iframes = root.optJSONArray("iframes")
-                    if (iframes != null && iframes.length() > 0) {
-                        val iframeUrls = mutableListOf<String>()
-                        for (i in 0 until iframes.length()) {
-                            val url = iframes.optString(i, "")
-                            if (url.isNotBlank()) iframeUrls.add(url)
-                        }
-                        if (iframeUrls.isNotEmpty()) {
-                            Log.i(TAG_TEST, "Found ${iframeUrls.size} direct iframes from JS extraction")
-                            coroutineScope {
-                                iframeUrls.map { url ->
-                                    async {
-                                        try { fallbackExtractIframe(url, "direct_embed", watchUrl, loggingCallback) }
-                                        catch (e: Exception) { Log.e(TAG_TEST, "fallbackExtractIframe failed for $url: ${e.message}") }
-                                    }
-                                }.awaitAll()
                             }
                             found = true
+                        } catch (e: Exception) {
+                            Log.e(TAG_TEST, "Error processing download link: ${e.message}")
                         }
                     }
+                }
+
+                // 3. Process direct iframes (e.g. VK embed)
+                if (iframeUrls.isNotEmpty()) {
+                    Log.i(TAG_TEST, "Found ${iframeUrls.size} direct iframes from raw HTML")
+                    coroutineScope {
+                        iframeUrls.map { url ->
+                            async {
+                                try { fallbackExtractIframe(url, "direct_embed", watchUrl, loggingCallback) }
+                                catch (e: Exception) { Log.e(TAG_TEST, "fallbackExtractIframe failed for $url: ${e.message}") }
+                            }
+                        }.awaitAll()
+                    }
+                    found = true
+                }
             }
             if (found) {
                 Log.i(TAG_TEST, "=== ALL WATCH LINKS (${foundLinks.size}) ===")
