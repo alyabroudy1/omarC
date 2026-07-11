@@ -11,6 +11,9 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.WebViewFlowHelper
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.extractors.CimaNowTVEmbed
+import com.cloudstream.shared.extractors.UpnshareEmbed
+import com.cloudstream.shared.extractors.VKVideoEmbed
 import kotlinx.coroutines.*
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -1017,25 +1020,79 @@ class CimaNowProvider : BaseProvider() {
     ) {
         val TAG_FE = "FallbackExtract"
         try {
+            // Try dedicated extractors first (before loadExtractor)
+            val host = Regex("https?://([^/]+)").find(iframeUrl)?.groupValues?.get(1) ?: ""
             var extracted = false
-            val countingCallback: (ExtractorLink) -> Unit = { link ->
+
+            val countingCb: (ExtractorLink) -> Unit = { link ->
                 extracted = true
-                Log.i(TAG_FE, "loadExtractor SUCCEEDED for '$serverName' -> ${link.url.take(120)}")
+                Log.i(TAG_FE, "Dedicated extractor SUCCEEDED for '$serverName' -> ${link.url.take(120)}")
                 callback(link)
             }
-            try {
-                Log.i(TAG_FE, "Calling loadExtractor for server='$serverName' iframeUrl=$iframeUrl referer=${referer.take(100)}")
-                loadExtractor(iframeUrl, referer, {}, countingCallback)
-            } catch (e: Exception) {
-                Log.w(TAG_FE, "loadExtractor threw for '$serverName': ${e.message}")
-            }
-            if (extracted) {
-                Log.i(TAG_FE, "loadExtractor produced links for '$serverName', skipping HTTP fallback")
-                return
-            }
-            Log.w(TAG_FE, "loadExtractor returned nothing for '$serverName' — trying HTTP fallback")
 
-            Log.i(TAG_FE, "HTTP fetching iframe URL for '$serverName': $iframeUrl")
+            // ── CimaNowTV embed (random subdomain *.cimanowtv.com/e/{id}) ──
+            if (!extracted && (host.endsWith(".cimanowtv.com") || host == "cimanowtv.com")) {
+                Log.i(TAG_FE, "Trying CimaNowTVEmbed for '$serverName'")
+                try {
+                    CimaNowTVEmbed().getUrl(iframeUrl, referer, {}, countingCb)
+                } catch (e: Exception) {
+                    Log.w(TAG_FE, "CimaNowTVEmbed threw for '$serverName': ${e.message}")
+                }
+                if (extracted) {
+                    Log.i(TAG_FE, "CimaNowTVEmbed succeeded for '$serverName'")
+                    return
+                }
+            }
+
+            // ── Upnshare embed (cimanow.upns.online/#hash) ──
+            if (!extracted && (host.contains("upns.online") || host.contains("upns."))) {
+                Log.i(TAG_FE, "Trying UpnshareEmbed for '$serverName'")
+                try {
+                    UpnshareEmbed().getUrl(iframeUrl, referer, {}, countingCb)
+                } catch (e: Exception) {
+                    Log.w(TAG_FE, "UpnshareEmbed threw for '$serverName': ${e.message}")
+                }
+                if (extracted) {
+                    Log.i(TAG_FE, "UpnshareEmbed succeeded for '$serverName'")
+                    return
+                }
+            }
+
+            // ── VK Video embed (vkvideo.ru or vk.com) ──
+            if (!extracted && (host.contains("vkvideo") || host.contains("vk.com"))) {
+                Log.i(TAG_FE, "Trying VKVideoEmbed for '$serverName'")
+                try {
+                    VKVideoEmbed().getUrl(iframeUrl, referer, {}, countingCb)
+                } catch (e: Exception) {
+                    Log.w(TAG_FE, "VKVideoEmbed threw for '$serverName': ${e.message}")
+                }
+                if (extracted) {
+                    Log.i(TAG_FE, "VKVideoEmbed succeeded for '$serverName'")
+                    return
+                }
+            }
+
+            // ── Standard registered extractor ──
+            if (!extracted) {
+                val countingCallback: (ExtractorLink) -> Unit = { link ->
+                    extracted = true
+                    Log.i(TAG_FE, "loadExtractor SUCCEEDED for '$serverName' -> ${link.url.take(120)}")
+                    callback(link)
+                }
+                try {
+                    Log.i(TAG_FE, "Calling loadExtractor for server='$serverName' iframeUrl=$iframeUrl")
+                    loadExtractor(iframeUrl, referer, {}, countingCallback)
+                } catch (e: Exception) {
+                    Log.w(TAG_FE, "loadExtractor threw for '$serverName': ${e.message}")
+                }
+                if (extracted) {
+                    Log.i(TAG_FE, "loadExtractor produced links for '$serverName', skipping HTTP fallback")
+                    return
+                }
+            }
+
+            // ── HTTP fallback: fetch page and scrape video URLs ──
+            Log.w(TAG_FE, "No extractor matched for '$serverName' — trying HTTP fallback for $iframeUrl")
             val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = false)
             if (html == null) {
                 Log.w(TAG_FE, "HTTP fallback returned null for '$serverName'")

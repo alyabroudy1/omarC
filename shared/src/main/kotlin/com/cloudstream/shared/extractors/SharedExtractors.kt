@@ -1,10 +1,15 @@
 package com.cloudstream.shared.extractors
 
 import com.lagradost.cloudstream3.extractors.MixDrop
+import com.lagradost.cloudstream3.extractors.Uqload
 import com.lagradost.cloudstream3.plugins.Plugin
 
 class MixDropTop : MixDrop() {
     override var mainUrl = "https://mixdrop.top"
+}
+
+class UqloadIs : Uqload() {
+    override var mainUrl = "https://uqload.is"
 }
 
 /**
@@ -37,6 +42,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ByseExtractor("bysezataos.com", "Bysezataos"))
     registerExtractorAPI(ByseExtractor("byseztajaos.com", "Byseztajaos"))
     registerExtractorAPI(ByseExtractor("byseztajos.com", "Byseztajos"))
+    registerExtractorAPI(ByseExtractor("bysetayico.com", "Bysetayico"))
     
     // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
@@ -55,6 +61,9 @@ fun Plugin.registerSharedExtractors() {
 
     // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top)
     registerExtractorAPI(MixDropTop())
+
+    // Uqload and proxies (built-in covers uqload.com / uqload.co)
+    registerExtractorAPI(UqloadIs())
 
     // Luluvid
     registerExtractorAPI(LuluvidExtractor())
