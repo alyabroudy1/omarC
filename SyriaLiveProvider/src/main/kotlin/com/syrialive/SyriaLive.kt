@@ -80,7 +80,7 @@ class SyriaLive : BaseProvider() {
     private fun fixSyriaUrl(url: String): String {
         if (url.isEmpty()) return ""
         if (url.startsWith("data:") || url.startsWith("intent:")) return url
-        
+
         return try {
             val uri = java.net.URI(url)
             // Preserve external domains (like player.syria-player.live)
@@ -200,12 +200,12 @@ class SyriaLive : BaseProvider() {
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent
 
-        // 1. Fetch exact match/movie page
+        // 1. Fetch exact match/movie page (no domain rewrite — keep original domain)
         val reqHeaders = mapOf(
             "User-Agent" to userAgent,
             "Referer" to "https://www.google.com/"
         )
-        val doc = httpService.getDocument(data, reqHeaders, rewriteDomain = true) ?: return false
+        val doc = httpService.getDocument(data, reqHeaders, rewriteDomain = false) ?: return false
         
         val iframeElement = doc.selectFirst(".entry-content iframe")
         val iframeSrc = iframeElement?.attr("src")
