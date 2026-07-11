@@ -785,10 +785,23 @@ class ProviderHttpService private constructor(
         val currentDomain = sessionState.domain
 
         return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
-            val rewritten = url.replace(urlDomain, currentDomain)
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
-                "from" to urlDomain, "to" to currentDomain)
-            rewritten
+            try {
+                val uri = URI(url)
+                val host = uri.host
+                val rewritten = if (host != null) {
+                    url.replace(host, currentDomain)
+                } else {
+                    url.replace(urlDomain, currentDomain)
+                }
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+                    "from" to urlDomain, "to" to currentDomain)
+                rewritten
+            } catch (e: Exception) {
+                val rewritten = url.replace(urlDomain, currentDomain)
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+                    "from" to urlDomain, "to" to currentDomain)
+                rewritten
+            }
         } else {
             url
         }
