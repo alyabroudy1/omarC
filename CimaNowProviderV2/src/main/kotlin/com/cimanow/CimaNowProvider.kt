@@ -1745,38 +1745,23 @@ class CimaNowProvider : BaseProvider() {
     // Minimal JS: only read innerHTML. ALL parsing happens in Kotlin (outside WebView JS context).
     // This avoids every JS API the page may patch (getAttribute, querySelectorAll, String.match, etc.).
     // The page MUST keep innerHTML real for its own rendering -- it cannot patch it without breaking UI.
+    // Synchronous polling — sleeps in JS until #watch is populated, then captures atomically.
+    // evaluateJavascript CANNOT resolve Promises, so we use a blocking loop instead.
+    // The anti-scraping clears #watch via setTimeout(0), but since we never return control
+    // to the event loop during the poll, the timeout callback never fires. Content appears
+    // synchronously (same tick as decryption), and we capture it immediately.
     private val JS_CAPTURE_INNERHTML = """
 (function(){
-    var w=document.querySelector('#watch');
-    if(w&&w.children.length>0&&w.querySelector('li[data-index]')){
-        return 'RAW_HTML:'+w.innerHTML;
+    var deadline=Date.now()+25000;
+    while(Date.now()<deadline){
+        var w=document.querySelector('#watch');
+        if(w&&w.children.length>0&&w.querySelector('li[data-index]')){
+            return 'RAW_HTML:'+w.innerHTML;
+        }
+        var t=Date.now();
+        while(Date.now()-t<50){}
     }
-    return new Promise(function(resolve,reject){
-        var deadline=Date.now()+25000;
-        var observer=new MutationObserver(function(){
-            var w2=document.querySelector('#watch');
-            if(w2&&w2.children.length>0&&w2.querySelector('li[data-index]')){
-                observer.disconnect();
-                clearInterval(timer);
-                resolve('RAW_HTML:'+w2.innerHTML);
-            }
-        });
-        var target=document.querySelector('#watch')||document.body;
-        observer.observe(target,{childList:true,subtree:true,attributes:true});
-        var timer=setInterval(function(){
-            var w3=document.querySelector('#watch');
-            if(w3&&w3.children.length>0&&w3.querySelector('li[data-index]')){
-                observer.disconnect();
-                clearInterval(timer);
-                resolve('RAW_HTML:'+w3.innerHTML);
-            }
-            if(Date.now()>deadline){
-                observer.disconnect();
-                clearInterval(timer);
-                resolve('RAW_HTML:TIMEOUT');
-            }
-        },300);
-    });
+    return '';
 })();
 """.trimIndent()
 
@@ -1818,29 +1803,19 @@ class CimaNowProvider : BaseProvider() {
             val referer = "https://rm.freex2line.online/redirectingfree/"
 
             val steps = listOf(
-                // Step 0: Load the timer HTML directly (no network request for the page itself,
-                //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
                 NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
-                // Step 1: Navigate to the watching URL captured by the interceptor.
-                //         This polls interceptedWatchingUrl every 500ms (up to 15s total),
-                //         navigating immediately once the countdown timer finishes and
-                //         get-link.php fires (typically ~11s). The main-frame navigation
-                //         is intercepted by the request interceptor (protected domain +
-                //         spoofed headers), so Cloudflare doesn't block it.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Poll-and-capture watch.innerHTML using a Promise with MutationObserver.
-                //         This waits for the page to populate #watch with server <li> elements
-                //         AND captures the content in the same synchronous JS context, before the
-                //         anti-scraping async timer can clear the content. Returns RAW_HTML: prefix.
+                // Busy-wait in JS until #watch is populated, then captures atomically in the
+                // same evaluateJavascript call. The blocking loop prevents the anti-scraping's
+                // setTimeout(0) from ever firing, so there's NO race condition.
                 NavigationStep.ExecuteJs(javascript = JS_CAPTURE_INNERHTML, key = "raw_html"),
 
-                // Step 4: Capture early outerHTML (still useful for debugging, even though
-                //         anti-scraping may patch it after this point).
+                // Full page HTML capture — used as fallback if JS capture missed content.
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Step 5: Wait for SweetAlert2 to load, then dismiss any consent popup.
+                // Dismiss consent popup.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "typeof window.Swal !== 'undefined'",
                     timeoutMs = 8000L,
@@ -1899,14 +1874,30 @@ class CimaNowProvider : BaseProvider() {
             // can detect and patch ANY function we run via evaluateJavascript, but it has zero
             // visibility into Kotlin-side string processing.
 
+            // Primary: synchronous busy-wait JS that polls #watch and captures atomically
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
-            val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
+            var watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
                 val html = rawHtmlData.removePrefix("RAW_HTML:")
                 Log.i(TAG_TEST, "Captured watch.innerHTML: ${html.length} chars, preview: ${html.take(300)}")
                 html
             } else {
-                Log.w(TAG_TEST, "No raw HTML captured (${rawHtmlData.take(100)})")
+                Log.w(TAG_TEST, "No raw HTML captured from JS (${rawHtmlData.take(100)})")
                 ""
+            }
+
+            // Fallback: parse #watch from full page HTML capture
+            if (watchHtml.isBlank()) {
+                val fullHtml = navResult.extractedHtml["html_watch"] ?: ""
+                if (fullHtml.isNotBlank()) {
+                    val watchMatch = Regex("<div[^>]*?id=['\"]?watch['\"]?[^>]*?>([\\s\\S]*?)</div>", setOf(RegexOption.IGNORE_CASE))
+                        .find(fullHtml)
+                    if (watchMatch != null) {
+                        watchHtml = watchMatch.groupValues[1].trim()
+                        Log.i(TAG_TEST, "FALLBACK: Extracted watch content from html_watch: ${watchHtml.length} chars, preview: ${watchHtml.take(300)}")
+                    } else {
+                        Log.w(TAG_TEST, "FALLBACK: No #watch div found in html_watch (${fullHtml.length} chars)")
+                    }
+                }
             }
 
             data class ServerInfo(val index: String, val id: String, val name: String)
