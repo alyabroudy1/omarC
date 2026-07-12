@@ -1460,6 +1460,11 @@ class NavigationEngine(
                         }
                         return _origWrite(html);
                     };
+                    // Spoof native function signature — the decryption script checks
+                    // document.write.toString().indexOf('[native code]') and bails if false.
+                    document.write.toString = function() { return 'function write() { [native code] }'; };
+                    try { Object.defineProperty(document.write, 'name', { value: 'write', configurable: true }); } catch(e) {}
+                    try { Object.defineProperty(document.write, 'length', { value: 1, configurable: true }); } catch(e) {}
                     console.log('[CW] document.write hook active');
                 } catch(e) {
                     console.error('[CW] document.write hook failed: ' + e.message);
