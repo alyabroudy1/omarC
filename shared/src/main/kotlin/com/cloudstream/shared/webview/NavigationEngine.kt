@@ -1214,7 +1214,7 @@ class NavigationEngine(
                 (function(){
                     try {
                         if (!($jsCondition)) { return ''; }
-                        $snapshotJs
+                        return $snapshotJs
                     } catch(e) { return 'raw_html_error:' + e.message; }
                 })();
             """.trimIndent()
