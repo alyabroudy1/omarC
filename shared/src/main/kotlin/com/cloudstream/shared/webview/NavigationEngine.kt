@@ -25,6 +25,15 @@ class NavigationEngine(
     /** Set when a redirect is pending user approval via the confirmation dialog */
     @Volatile
     var pendingRedirectUrl: String? = null
+
+    /**
+     * The raw HTML body of the last intercepted main-frame request (cimanow.cc /watching/).
+     * Populated by shouldInterceptRequest when it intercepts a main-frame text/html response.
+     * Consumed after execute() completes to parse server data directly from the HTTP response
+     * bytes, bypassing the WebView's JS environment entirely.
+     */
+    @Volatile
+    var capturedMainFrameHtml: String? = null
     var autoApproveAllRedirects: Boolean = false
 
     /** Last baseUrl used by a LoadHtml step — used as the Referer when navigating
@@ -55,6 +64,7 @@ class NavigationEngine(
             pendingRedirectUrl = null
             autoApproveAllRedirects = false
             lastHtmlBaseUrl = null
+            capturedMainFrameHtml = null
             capturedVideoUrls.clear()
 
             val activity = activityProvider()
@@ -184,6 +194,21 @@ class NavigationEngine(
                                     }
                                 }
                             }
+                            is NavigationStep.WaitForDomConditionAndSnapshot -> {
+                                val snap = waitForDomConditionAndSnapshot(
+                                    webView, step.jsCondition,
+                                    step.snapshotJs, step.timeoutMs, step.pollIntervalMs
+                                )
+                                extractedHtml[step.key] = snap ?: ""
+                                if (snap == null) {
+                                    ProviderLogger.w(TAG, "execute", "Step $index: WaitForDomConditionAndSnapshot timed out")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "WaitForDomConditionAndSnapshot timed out"
+                                        break
+                                    }
+                                }
+                            }
                             is NavigationStep.ExtractHtml -> {
                                 val html = extractHtmlFromWebView(webView, step.selector)
                                 val key = step.key.ifBlank { step.selector ?: "full_page_${index}" }
@@ -307,7 +332,8 @@ class NavigationEngine(
                         completedSteps = completedSteps,
                         failedAtStep = failedStep,
                         error = errorMsg,
-                        capturedVideoUrls = capturedVideoUrls.toList()
+                        capturedVideoUrls = capturedVideoUrls.toList(),
+                        mainFrameHtml = capturedMainFrameHtml
                     ))
                 }
             } catch (e: Exception) {
@@ -696,6 +722,10 @@ class NavigationEngine(
                             // (which blocks sweetalert2, jquery-cookie, lazyload).
                             val bodyStream: java.io.InputStream = if (request.isForMainFrame && isCimaDomain && mime == "text/html") {
                                 val html = conn.inputStream.bufferedReader(charset).readText()
+                                // Profi #5: Capture the raw server-rendered HTML before any
+                                // anti-bot JS can clear/patch it. This is parsed in Kotlin
+                                // after execute() completes, bypassing the WebView JS entirely.
+                                this@NavigationEngine.capturedMainFrameHtml = html
                                 val scriptCount = Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*><\\/script>\s*'\s*\)""").findAll(html).count()
                                 val linkCount = Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)""").findAll(html).count()
                                 var rewritten = html.replace(
@@ -1144,6 +1174,49 @@ class NavigationEngine(
         }
         ProviderLogger.w(TAG, "waitForDomCondition", "TIMEOUT after ${pollCount} polls")
         return false
+    }
+
+    /**
+     * Atomically polls a DOM condition in the same evaluateJavascript that captures the
+     * snapshot — eliminating the race window between "condition met" and "read innerHTML"
+     * that anti-bot scripts (like cimanow's 0CYA6X1KhKIS.js) exploit.
+     *
+     * The [snapshotJs] should return a non-empty string when the condition is met,
+     * or an empty/false string when the condition has not yet been satisfied.
+     *
+     * @return the snapshot string when condition was met, or null on timeout/error.
+     */
+    private suspend fun waitForDomConditionAndSnapshot(
+        webView: WebView,
+        jsCondition: String,
+        snapshotJs: String,
+        timeoutMs: Long,
+        pollIntervalMs: Long
+    ): String? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var pollCount = 0
+        while (System.currentTimeMillis() < deadline) {
+            pollCount++
+            val combinedJs = """
+                (function(){
+                    try {
+                        if (!($jsCondition)) { return ''; }
+                        $snapshotJs
+                    } catch(e) { return 'raw_html_error:' + e.message; }
+                })();
+            """.trimIndent()
+            val result = executeJsInWebView(webView, combinedJs)
+            val snapshot = result ?: ""
+            ProviderLogger.d(TAG, "waitForDomConditionAndSnapshot",
+                "poll#$pollCount condition=${jsCondition.take(60)} snapshot=${snapshot.take(100)} remaining=${deadline - System.currentTimeMillis()}ms")
+            if (snapshot.isNotBlank() && !snapshot.startsWith("raw_html_error:")) {
+                ProviderLogger.i(TAG, "waitForDomConditionAndSnapshot", "MET after ${pollCount} polls, snapshot ${snapshot.length} chars")
+                return snapshot
+            }
+            delay(pollIntervalMs)
+        }
+        ProviderLogger.w(TAG, "waitForDomConditionAndSnapshot", "TIMEOUT after ${pollCount} polls")
+        return null
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

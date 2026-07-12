@@ -137,6 +137,20 @@ sealed class NavigationStep {
         val selector: String? = null,
         val key: String = ""
     ) : NavigationStep()
+
+    /**
+     * Atomically polls a DOM condition and, when met, captures a snapshot via snapshotJs
+     * in a single evaluateJavascript call — eliminating the race window between
+     * "condition met" and "read innerHTML" that anti-bot scripts exploit.
+     */
+    data class WaitForDomConditionAndSnapshot(
+        val jsCondition: String,
+        val snapshotJs: String,
+        val key: String,
+        val timeoutMs: Long = 15_000L,
+        val pollIntervalMs: Long = 500L,
+        val abortOnFailure: Boolean = true
+    ) : NavigationStep()
 }
 
 /**
@@ -150,5 +164,9 @@ data class NavigationResult(
     val completedSteps: Int,
     val failedAtStep: Int? = null,
     val error: String? = null,
-    val capturedVideoUrls: List<String> = emptyList()
+    val capturedVideoUrls: List<String> = emptyList(),
+    /** Raw HTML of the last intercepted main-frame response (e.g. cimanow.cc /watching/).
+     *  Populated by the request interceptor. Contains the server-rendered DOM before the
+     *  page's anti-bot JS can clear/patch it. */
+    val mainFrameHtml: String? = null
 )

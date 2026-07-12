@@ -1744,9 +1744,20 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
-    // Minimal JS: only read innerHTML. ALL parsing happens in Kotlin (outside WebView JS context).
-    // This avoids every JS API the page may patch (getAttribute, querySelectorAll, String.match, etc.).
-    // The page MUST keep innerHTML real for its own rendering -- it cannot patch it without breaking UI.
+    // Atomic snapshot JS — runs in a single evaluateJavascript together with the condition
+    // check, so the anti-bot script has zero async windows to clear #watch between them.
+    // Uses deep clone (cloneNode(true)) to produce a detached DOM copy that no
+    // MutationObserver on the live document can observe.
+    private val SNAPSHOT_WATCH = """
+(function(){
+    var w = document.querySelector('#watch');
+    if (!w) return '';
+    var snap = w.cloneNode(true);
+    return 'RAW_HTML:' + snap.outerHTML;
+})();
+""".trimIndent()
+
+    // Legacy fallback (backup if the combined step somehow fails)
     private val JS_CAPTURE_INNERHTML = """
 (function(){
     try {
@@ -1806,27 +1817,29 @@ class CimaNowProvider : BaseProvider() {
                 //         get-link.php fires (typically ~11s). The main-frame navigation
                 //         is intercepted by the request interceptor (protected domain +
                 //         spoofed headers), so Cloudflare doesn't block it.
+                //         Profi #5: the interceptor also stashes the raw HTTP response HTML
+                //         into capturedMainFrameHtml, which we parse in Kotlin below.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Wait until the watching page has rendered server tabs with
-                //         decrypted data-index attributes.
-                NavigationStep.WaitForDomCondition(
-                    jsCondition = "document.querySelector('#watch li[data-index]') !== null",
+                // Step 2: Atomically wait for the DOM condition AND capture the snapshot
+                //         in a single evaluateJavascript call (Profi #1). This eliminates
+                //         the race window where the anti-bot script (0CYA6X1KhKIS.js) clears
+                //         #watch between the condition check and the innerHTML read.
+                //         Uses deep clone (cloneNode(true)) to produce a detached DOM subtree
+                //         that no MutationObserver on the live document can observe.
+                NavigationStep.WaitForDomConditionAndSnapshot(
+                    jsCondition = "(function(){ var lis=document.querySelectorAll('#watch li[data-index]'); if(!lis||lis.length===0)return false; for(var i=0;i<lis.length;i++){ var idx=lis[i].getAttribute('data-index')||''; var id=lis[i].getAttribute('data-id')||''; if(idx.trim().length>0&&id.trim().length>0)return true; } return false; })()",
+                    snapshotJs = SNAPSHOT_WATCH,
+                    key = "raw_html",
                     timeoutMs = 20000L,
                     pollIntervalMs = 500L,
                     abortOnFailure = true
                 ),
 
-                // Step 3: Extract servers/downloads/iframes/diag BEFORE reading outerHTML,
-                //         because reading outerHTML triggers the anti-scraping script which
-                //         asynchronously patches querySelectorAll/getAttribute.
-                NavigationStep.ExecuteJs(javascript = JS_CAPTURE_INNERHTML, key = "raw_html"),
-
-                // Step 4: Capture early outerHTML (still useful for debugging, even though
-                //         anti-scraping may patch it after this point).
+                // Step 3: Capture full-page outerHTML for debugging (not used for parsing)
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Step 5: Wait for SweetAlert2 to load, then dismiss any consent popup.
+                // Step 4: Wait for SweetAlert2 to load, then dismiss any consent popup.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "typeof window.Swal !== 'undefined'",
                     timeoutMs = 8000L,
@@ -1884,14 +1897,24 @@ class CimaNowProvider : BaseProvider() {
             // in Kotlin, completely outside the WebView's JS environment. The page's anti-scraping
             // can detect and patch ANY function we run via evaluateJavascript, but it has zero
             // visibility into Kotlin-side string processing.
+            //
+            // Primary source (Profi #5): raw HTML captured from the HTTP response by the
+            // request interceptor — contains the server-rendered DOM before any anti-bot
+            // JS can clear/patch it.
+            // Fallback source (Profi #1): atomic JS snapshot via cloneNode.
 
+            val mainFrameHtml = navResult.mainFrameHtml
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
-            val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
+
+            val watchHtml: String = if (!mainFrameHtml.isNullOrBlank()) {
+                Log.i(TAG_TEST, "Using captured mainFrameHtml: ${mainFrameHtml.length} chars (server-rendered, pre anti-bot)")
+                mainFrameHtml
+            } else if (rawHtmlData.startsWith("RAW_HTML:")) {
                 val html = rawHtmlData.removePrefix("RAW_HTML:")
-                Log.i(TAG_TEST, "Captured watch.innerHTML: ${html.length} chars, preview: ${html.take(300)}")
+                Log.i(TAG_TEST, "Using JS snapshot as fallback: ${html.length} chars, preview: ${html.take(300)}")
                 html
             } else {
-                Log.w(TAG_TEST, "No raw HTML captured (${rawHtmlData.take(100)})")
+                Log.w(TAG_TEST, "No HTML captured. mainFrameHtml=${mainFrameHtml != null}, rawHtmlData=${rawHtmlData.take(100)}")
                 ""
             }
 
