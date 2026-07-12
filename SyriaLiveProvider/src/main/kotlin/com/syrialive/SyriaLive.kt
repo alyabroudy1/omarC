@@ -78,6 +78,39 @@ class SyriaLive : BaseProvider() {
         return SyriaLiveParser()
     }
 
+    private fun parseMatchContainers(doc: org.jsoup.nodes.Document): List<SearchResponse> {
+        val matches = mutableListOf<SearchResponse>()
+        doc.select(".match-container").forEach { element ->
+            val rightTeam = element.selectFirst(".right-team .team-name")?.text()
+            val leftTeam = element.selectFirst(".left-team .team-name")?.text()
+
+            if (rightTeam != null && leftTeam != null) {
+                val result = element.selectFirst(".result")?.text() ?: "VS"
+                val matchTime = element.selectFirst(".match-time")?.text() ?: ""
+                val status = element.selectFirst(".date.end")?.text() ?: ""
+                val title = "$rightTeam $result $leftTeam"
+                val subtitle = when {
+                    status.isNotBlank() && matchTime.isNotBlank() -> "$matchTime • $status"
+                    matchTime.isNotBlank() -> matchTime
+                    status.isNotBlank() -> status
+                    else -> null
+                }
+
+                val url = element.selectFirst("a")?.attr("href")?.let { fixSyriaUrl(it) }
+
+                val posterImg = element.selectFirst(".right-team img")
+                val poster = posterImg?.attr("data-src")?.ifBlank { posterImg.attr("src") } ?: ""
+
+                if (url != null) {
+                    matches.add(newMovieSearchResponse(if (subtitle != null) "$title — $subtitle" else title, url, TvType.Live) {
+                        this.posterUrl = fixSyriaUrl(poster)
+                    })
+                }
+            }
+        }
+        return matches
+    }
+
     private fun fixSyriaUrl(url: String): String {
         if (url.isEmpty()) return ""
         if (url.startsWith("data:") || url.startsWith("intent:")) return url
@@ -120,34 +153,26 @@ class SyriaLive : BaseProvider() {
         val homePageList = mutableListOf<HomePageList>()
 
         // 1. Matches (complex structure)
-        val matches = mutableListOf<SearchResponse>()
-        doc.select(".match-container").forEach { element ->
-            val rightTeam = element.selectFirst(".right-team .team-name")?.text()
-            val leftTeam = element.selectFirst(".left-team .team-name")?.text()
-            
-            if (rightTeam != null && leftTeam != null) {
-                val result = element.selectFirst(".result")?.text() ?: "VS"
-                val matchTime = element.selectFirst(".match-time")?.text() ?: ""
-                val title = "$rightTeam $result $leftTeam"
-                
-                val url = element.selectFirst("a")?.attr("href")?.let { fixSyriaUrl(it) }
-                
-                val posterImg = element.selectFirst(".right-team img")
-                val poster = posterImg?.attr("data-src")?.ifBlank { posterImg.attr("src") } ?: ""
-                
-                if (url != null) {
-                    matches.add(newMovieSearchResponse(title, url, TvType.Live) {
-                        this.posterUrl = fixSyriaUrl(poster)
-                    })
-                }
-            }
-        }
-        
-        if (matches.isNotEmpty()) {
-            homePageList.add(HomePageList("مباريات اليوم", matches, isHorizontalImages = true))
+        val todayMatches = parseMatchContainers(doc)
+        if (todayMatches.isNotEmpty()) {
+            homePageList.add(HomePageList("مباريات اليوم", todayMatches, isHorizontalImages = true))
         }
 
-        // 2. News/Movies (standard structure)
+        // 2. Tomorrow's matches
+        try {
+            val tomorrowUrl = mainUrl.trimEnd('/') + "/matches-tomorrow/"
+            val tomorrowDoc = httpService.getDocument(tomorrowUrl, rewriteDomain = true)
+            if (tomorrowDoc != null) {
+                val tomorrowMatches = parseMatchContainers(tomorrowDoc)
+                if (tomorrowMatches.isNotEmpty()) {
+                    homePageList.add(HomePageList("مباريات الغد", tomorrowMatches, isHorizontalImages = true))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(name, "Failed to fetch tomorrow matches: ${e.message}")
+        }
+
+        // 3. News/Movies (standard structure)
         val news = mutableListOf<SearchResponse>()
         doc.select(".AY-PItem").forEach { element ->
             val titleNode = element.selectFirst(".AY-PostTitle a")
