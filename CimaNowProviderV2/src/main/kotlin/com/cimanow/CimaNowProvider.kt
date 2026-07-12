@@ -1751,6 +1751,9 @@ class CimaNowProvider : BaseProvider() {
     // MutationObserver on the live document can observe.
     private val SNAPSHOT_WATCH = """
 (function(){
+    if (window.__decryptedHtml && window.__decryptedHtml.length > 200) {
+        return 'RAW_HTML:' + window.__decryptedHtml;
+    }
     var w = document.querySelector('#watch');
     if (!w) return '';
     var snap = w.cloneNode(true);
@@ -1822,13 +1825,13 @@ class CimaNowProvider : BaseProvider() {
                 //         into capturedMainFrameHtml, which we parse in Kotlin below.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Try to capture the DOM snapshot, but DO NOT abort on failure.
-                //         The anti-bot script (0CYA6X1KhKIS.js) clears #watch immediately
-                //         after page load, so this will almost always time out.
-                //         We rely on mainFrameHtml (captured by the request interceptor
-                //         from the raw HTTP response, pre anti-bot JS) instead.
+                // Step 2: Capture the decrypted DOM via document.write interceptor.
+                //         The injected script hooks document.write to store the unmodified
+                //         decrypted page HTML (with <li data-index=".."> entries) in
+                //         window.__decryptedHtml BEFORE the anti-bot can strip it.
+                //         Falls back to the live DOM snapshot if the hook wasn't triggered.
                 NavigationStep.WaitForDomConditionAndSnapshot(
-                    jsCondition = "(function(){ var lis=document.querySelectorAll('#watch li[data-index]'); if(!lis||lis.length===0)return false; for(var i=0;i<lis.length;i++){ var idx=lis[i].getAttribute('data-index')||''; var id=lis[i].getAttribute('data-id')||''; if(idx.trim().length>0&&id.trim().length>0)return true; } return false; })()",
+                    jsCondition = "(function(){ if(window.__decryptedHtml&&window.__decryptedHtml.length>200)return true; var lis=document.querySelectorAll('#watch li[data-index]'); if(!lis||lis.length===0)return false; for(var i=0;i<lis.length;i++){ var idx=lis[i].getAttribute('data-index')||''; var id=lis[i].getAttribute('data-id')||''; if(idx.trim().length>0&&id.trim().length>0)return true; } return false; })()",
                     snapshotJs = SNAPSHOT_WATCH,
                     key = "raw_html",
                     timeoutMs = 20000L,
@@ -1936,23 +1939,23 @@ class CimaNowProvider : BaseProvider() {
                 Log.d(TAG_TEST, "No playable video URLs from interceptor (${capturedVideoUrls.size} total captured)")
             }
 
-            // ======================== 2. OFFLINE PARSING OF mainFrameHtml ========================
-            // Primary source: raw HTML captured from the HTTP response by the
-            // request interceptor — contains the server-rendered DOM before any anti-bot
-            // JS can clear/patch it.
-            // Fallback source: atomic JS snapshot via cloneNode (rarely works).
+            // ======================== 2. OFFLINE PARSING OF captured HTML ========================
+            // Primary source: decrypted HTML captured by the document.write interceptor
+            // (injected via NavigationEngine.ANTI_ANTI_BOT_JS) which stores the unmodified
+            // page content in window.__decryptedHtml BEFORE the anti-bot runs.
+            // Fallback source: mainFrameHtml (encrypted server HTML from HTTP interceptor).
 
             val mainFrameHtml = navResult.mainFrameHtml
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
 
-            // Prefer the JS snapshot if available — the anti-anti-bot script injected into the
-            // HTML response (NavigationEngine.ANTI_ANTI_BOT_JS) lets the DOM decryption complete
-            // and prevents the anti-bot from clearing #watch, so the snapshot contains real
-            // server entries. Fall back to mainFrameHtml (encrypted server HTML) only if the
-            // snapshot is empty.
+            // Prefer the JS snapshot if available — the document.write interceptor
+            // (NavigationEngine.ANTI_ANTI_BOT_JS) captures the decrypted page HTML into
+            // window.__decryptedHtml before the anti-bot can strip <li> entries.
+            // Fall back to mainFrameHtml (encrypted server HTML) only if the snapshot is empty.
             val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
                 val html = rawHtmlData.removePrefix("RAW_HTML:")
-                Log.i(TAG_TEST, "Using JS snapshot: ${html.length} chars (decrypted DOM, anti-bot neutralized)")
+                val source = if (html.contains("data-index")) "decrypted" else "DOM"
+                Log.i(TAG_TEST, "Using JS snapshot: ${html.length} chars ($source, anti-bot bypassed)")
                 html
             } else if (!mainFrameHtml.isNullOrBlank()) {
                 Log.i(TAG_TEST, "Using captured mainFrameHtml: ${mainFrameHtml.length} chars (fallback, pre anti-bot)")

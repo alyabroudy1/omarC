@@ -736,8 +736,9 @@ class NavigationEngine(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
-                                // Inject anti-anti-bot script at the start of <head> so it runs before
-                                // the page's own JS (including the anti-bot overrides).
+                                // Inject document.write interceptor at the start of <head> so it runs
+                                // before the page's own JS (including the decryption/anti-bot scripts).
+                                // Captures the decrypted HTML string BEFORE the anti-bot strips it.
                                 // Must be done AFTER document.write rewriting (above) to keep injection clean.
                                 val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
                                 val injected = if (rewritten.contains("<head>")) {
@@ -747,7 +748,7 @@ class NavigationEngine(
                                     "$antiBotTag$rewritten"
                                 }
                                 ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                    "Injected anti-anti-bot script for cimanow.cc main-frame (${antiBotTag.length} chars)")
+                                    "Injected document.write interceptor for cimanow.cc main-frame (${antiBotTag.length} chars)")
                                 val total = scriptCount + linkCount
                                 val countLog = if (total > 0) " (rewrote $total document.write calls)" else " (no document.write found)"
                                 ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog")
@@ -1438,47 +1439,38 @@ class NavigationEngine(
          *     hooks block those cleanup actions, preserving the server entries
          *     in the DOM for the WaitForDomConditionAndSnapshot poll.
          */
+        /**
+         * Intercepts document.write to capture the decrypted page HTML (which contains
+         * <li data-index=".." data-id=".."> server entries) BEFORE the anti-bot
+         * generated script can strip them. The captured HTML is stored in
+         * window.__decryptedHtml and consumed by the provider's snapshot step.
+         */
         private val ANTI_ANTI_BOT_JS = """
             (function(){
-                var frozen = 0;
-
-                // ── (A) DOMParser getter/setter trap ──
                 try {
-                    var realParse = DOMParser.prototype.parseFromString;
-                    if (Object.getOwnPropertyDescriptor(DOMParser.prototype, 'parseFromString').configurable) {
-                        Object.defineProperty(DOMParser.prototype, 'parseFromString', {
-                            get: function() { return realParse; },
-                            set: function(fn) { /* silently discard */ },
-                            configurable: false,
-                            enumerable: true
-                        });
-                        frozen++;
-                        console.log('[CW] DOMParser trap active');
-                    }
-                } catch(e) { console.error('[CW] DOMParser trap failed: ' + e.message); }
-
-                // ── (B) Freeze querySelectorAll, setAttribute, getAttribute ──
-                ['querySelectorAll', 'setAttribute', 'getAttribute'].forEach(function(name) {
-                    try {
-                        var proto = Element.prototype;
-                        var desc = Object.getOwnPropertyDescriptor(proto, name);
-                        if (desc && !(desc.writable === false && desc.configurable === false)) {
-                            Object.defineProperty(proto, name, {
-                                configurable: false,
-                                writable: false,
-                                value: proto[name]
-                            });
-                            frozen++;
+                    var _origWrite = document.write.bind(document);
+                    var _captured = false;
+                    document.write = function(html) {
+                        if (!_captured && html && typeof html === 'string' && html.length > 500) {
+                            _captured = true;
+                            window.__decryptedHtml = html;
+                            console.log('[CW] Captured decrypted HTML: ' + html.length + ' chars');
+                            console.log('[CW] Has data-index: ' + (html.indexOf('data-index') !== -1));
+                            console.log('[CW] Has li tag: ' + (html.indexOf('<li') !== -1));
                         }
-                    } catch(e) { console.error('[CW] freeze ' + name + ' failed: ' + e.message); }
-                });
-
-                // ── (C) Hook remove → no-op for LI[data-index / data-id] ──
+                        return _origWrite(html);
+                    };
+                    console.log('[CW] document.write hook active');
+                } catch(e) {
+                    console.error('[CW] document.write hook failed: ' + e.message);
+                }
+                // Backup: block LI.remove in case the above doesn't capture (e.g.
+                // if the page uses innerHTML instead of document.write).
                 try {
                     var _remove = Element.prototype.remove;
                     Element.prototype.remove = function() {
                         if (this.tagName === 'LI' && (this.hasAttribute('data-index') || this.hasAttribute('data-id'))) {
-                            console.log('[CW] Blocked remove: idx=' + this.getAttribute('data-index') + ' id=' + this.getAttribute('data-id'));
+                            console.log('[CW] Blocked LI remove (backup)');
                             return;
                         }
                         return _remove.call(this);
@@ -1486,38 +1478,7 @@ class NavigationEngine(
                     Object.defineProperty(Element.prototype, 'remove', {
                         configurable: false, writable: false, value: Element.prototype.remove
                     });
-                    frozen++;
-                } catch(e) { console.error('[CW] remove hook failed: ' + e.message); }
-
-                // ── (C) Hook innerHTML setter to block clearing #watch ──
-                try {
-                    var target = HTMLElement.prototype;
-                    var htmlDesc = Object.getOwnPropertyDescriptor(target, 'innerHTML');
-                    if (!htmlDesc || !htmlDesc.set) {
-                        target = Element.prototype;
-                        htmlDesc = Object.getOwnPropertyDescriptor(target, 'innerHTML');
-                    }
-                    if (htmlDesc && htmlDesc.set) {
-                        var origSet = htmlDesc.set;
-                        var origGet = htmlDesc.get;
-                        Object.defineProperty(target, 'innerHTML', {
-                            set: function(v) {
-                                if (this.id === 'watch' && v === '') {
-                                    console.log('[CW] Blocked innerHTML clear on #watch');
-                                    return;
-                                }
-                                return origSet.call(this, v);
-                            },
-                            get: function() {
-                                return origGet ? origGet.call(this) : '';
-                            },
-                            configurable: false
-                        });
-                        frozen++;
-                    }
-                } catch(e) { console.error('[CW] innerHTML hook failed: ' + e.message); }
-
-                console.log('[CW] Anti-anti-bot active: ' + frozen + ' protections');
+                } catch(e) {}
             })();
         """.trimIndent()
 
