@@ -1411,34 +1411,69 @@ class NavigationEngine(
          *   - Element.prototype.remove             (anti-bot removes server LIs)
          *   - HTMLElement.prototype.innerHTML      (anti-bot clears #watch.innerHTML)
          */
+        /**
+         * Anti-anti-bot script injected at the top of <head> for cimanow.cc.
+         * Runs before the page's own JS and uses a THREE-STRATEGY approach:
+         *
+         * (A) DOMParser.prototype.parseFromString – getter/setter trap.
+         *     The anti-bot script (3578-line inline block) contains BOTH the
+         *     DOMParser override AND the legitimate decryption code in the same
+         *     script. Freezing the property would crash the script (TypeError)
+         *     and prevent the decryption from ever running.
+         *     Instead, we install a getter that ALWAYS returns the original
+         *     parseFromString, and a setter that silently discards any
+         *     override attempt. The anti-bot assignment "succeeds" (no error),
+         *     the script continues, and the legitimate code gets the real
+         *     parseFromString that preserves <li> elements.
+         *
+         * (B) Element.prototype (querySelectorAll, setAttribute, getAttribute) – frozen.
+         *     The anti-bot overrides these in separate scripts or in the external
+         *     0CYA6X1KhKIS.js file. Freezing them prevents subsequent overrides.
+         *     These are safe to freeze because they're in DIFFERENT script tags
+         *     from the DOMParser trap (no crash cascade).
+         *
+         * (C) Element.prototype.remove + innerHTML – hooked.
+         *     The anti-bot's MutationObserver walks the DOM and calls .remove()
+         *     on LI[data-index] elements and sets #watch.innerHTML=''. These
+         *     hooks block those cleanup actions, preserving the server entries
+         *     in the DOM for the WaitForDomConditionAndSnapshot poll.
+         */
         private val ANTI_ANTI_BOT_JS = """
             (function(){
-                var freezed = 0;
-                function freezeProp(proto, name) {
-                    try {
-                        var desc = Object.getOwnPropertyDescriptor(proto, name);
-                        if (!desc || (desc.writable === false && desc.configurable === false)) return;
-                        var orig = proto[name];
-                        Object.defineProperty(proto, name, {
+                var frozen = 0;
+
+                // ── (A) DOMParser getter/setter trap ──
+                try {
+                    var realParse = DOMParser.prototype.parseFromString;
+                    if (Object.getOwnPropertyDescriptor(DOMParser.prototype, 'parseFromString').configurable) {
+                        Object.defineProperty(DOMParser.prototype, 'parseFromString', {
+                            get: function() { return realParse; },
+                            set: function(fn) { /* silently discard */ },
                             configurable: false,
-                            writable: false,
-                            value: orig
+                            enumerable: true
                         });
-                        freezed++;
-                    } catch(e) {
-                        console.error('[CW] freeze ' + name + ' failed: ' + e.message);
+                        frozen++;
+                        console.log('[CW] DOMParser trap active');
                     }
-                }
+                } catch(e) { console.error('[CW] DOMParser trap failed: ' + e.message); }
 
-                // Prevent anti-bot from overriding DOMParser (strips <li> from parsed HTML)
-                try { freezeProp(DOMParser.prototype, 'parseFromString'); } catch(e) {}
+                // ── (B) Freeze querySelectorAll, setAttribute, getAttribute ──
+                ['querySelectorAll', 'setAttribute', 'getAttribute'].forEach(function(name) {
+                    try {
+                        var proto = Element.prototype;
+                        var desc = Object.getOwnPropertyDescriptor(proto, name);
+                        if (desc && !(desc.writable === false && desc.configurable === false)) {
+                            Object.defineProperty(proto, name, {
+                                configurable: false,
+                                writable: false,
+                                value: proto[name]
+                            });
+                            frozen++;
+                        }
+                    } catch(e) { console.error('[CW] freeze ' + name + ' failed: ' + e.message); }
+                });
 
-                // Prevent anti-bot from hiding server entries in query results
-                try { freezeProp(Element.prototype, 'querySelectorAll'); } catch(e) {}
-                try { freezeProp(Element.prototype, 'setAttribute'); } catch(e) {}
-                try { freezeProp(Element.prototype, 'getAttribute'); } catch(e) {}
-
-                // Hook remove to no-op for LI[data-index / data-id]
+                // ── (C) Hook remove → no-op for LI[data-index / data-id] ──
                 try {
                     var _remove = Element.prototype.remove;
                     Element.prototype.remove = function() {
@@ -1451,10 +1486,10 @@ class NavigationEngine(
                     Object.defineProperty(Element.prototype, 'remove', {
                         configurable: false, writable: false, value: Element.prototype.remove
                     });
-                    freezed++;
+                    frozen++;
                 } catch(e) { console.error('[CW] remove hook failed: ' + e.message); }
 
-                // Hook innerHTML setter to block clearing #watch (anti-bot does this.innerHTML='')
+                // ── (C) Hook innerHTML setter to block clearing #watch ──
                 try {
                     var target = HTMLElement.prototype;
                     var htmlDesc = Object.getOwnPropertyDescriptor(target, 'innerHTML');
@@ -1464,6 +1499,7 @@ class NavigationEngine(
                     }
                     if (htmlDesc && htmlDesc.set) {
                         var origSet = htmlDesc.set;
+                        var origGet = htmlDesc.get;
                         Object.defineProperty(target, 'innerHTML', {
                             set: function(v) {
                                 if (this.id === 'watch' && v === '') {
@@ -1473,18 +1509,15 @@ class NavigationEngine(
                                 return origSet.call(this, v);
                             },
                             get: function() {
-                                var d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerHTML');
-                                if (d && d.get) return d.get.call(this);
-                                d = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
-                                return d && d.get ? d.get.call(this) : '';
+                                return origGet ? origGet.call(this) : '';
                             },
                             configurable: false
                         });
-                        freezed++;
+                        frozen++;
                     }
                 } catch(e) { console.error('[CW] innerHTML hook failed: ' + e.message); }
 
-                console.log('[CW] Anti-anti-bot active: ' + freezed + ' protections');
+                console.log('[CW] Anti-anti-bot active: ' + frozen + ' protections');
             })();
         """.trimIndent()
 
