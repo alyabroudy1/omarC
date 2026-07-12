@@ -736,10 +736,22 @@ class NavigationEngine(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
+                                // Inject anti-anti-bot script at the start of <head> so it runs before
+                                // the page's own JS (including the anti-bot overrides).
+                                // Must be done AFTER document.write rewriting (above) to keep injection clean.
+                                val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
+                                val injected = if (rewritten.contains("<head>")) {
+                                    rewritten.replaceFirst("<head>", "<head>$antiBotTag")
+                                } else {
+                                    // No <head> tag — prepend so the browser still parses it first
+                                    "$antiBotTag$rewritten"
+                                }
+                                ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                    "Injected anti-anti-bot script for cimanow.cc main-frame (${antiBotTag.length} chars)")
                                 val total = scriptCount + linkCount
                                 val countLog = if (total > 0) " (rewrote $total document.write calls)" else " (no document.write found)"
                                 ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog")
-                                java.io.ByteArrayInputStream(rewritten.toByteArray(charset))
+                                java.io.ByteArrayInputStream(injected.toByteArray(charset))
                             } else {
                                 conn.inputStream
                             }
@@ -1384,6 +1396,97 @@ class NavigationEngine(
 
     companion object {
         private const val TAG = "NavigationEngine"
+
+        /**
+         * Anti-anti-bot script injected at the top of <head> for cimanow.cc.
+         * Runs before the page's own JS (including the anti-bot) and makes critical
+         * prototype properties immutable, preventing the anti-bot from overriding
+         * them to strip/clear server entries from the DOM.
+         *
+         * Protects:
+         *   - DOMParser.prototype.parseFromString  (anti-bot strips <li> from parsed docs)
+         *   - Element.prototype.querySelectorAll   (anti-bot returns empty for #watch queries)
+         *   - Element.prototype.setAttribute       (anti-bot intercepts data-index writes)
+         *   - Element.prototype.getAttribute       (anti-bot hides data-index reads)
+         *   - Element.prototype.remove             (anti-bot removes server LIs)
+         *   - HTMLElement.prototype.innerHTML      (anti-bot clears #watch.innerHTML)
+         */
+        private val ANTI_ANTI_BOT_JS = """
+            (function(){
+                var freezed = 0;
+                function freezeProp(proto, name) {
+                    try {
+                        var desc = Object.getOwnPropertyDescriptor(proto, name);
+                        if (!desc || (desc.writable === false && desc.configurable === false)) return;
+                        var orig = proto[name];
+                        Object.defineProperty(proto, name, {
+                            configurable: false,
+                            writable: false,
+                            value: orig
+                        });
+                        freezed++;
+                    } catch(e) {
+                        console.error('[CW] freeze ' + name + ' failed: ' + e.message);
+                    }
+                }
+
+                // Prevent anti-bot from overriding DOMParser (strips <li> from parsed HTML)
+                try { freezeProp(DOMParser.prototype, 'parseFromString'); } catch(e) {}
+
+                // Prevent anti-bot from hiding server entries in query results
+                try { freezeProp(Element.prototype, 'querySelectorAll'); } catch(e) {}
+                try { freezeProp(Element.prototype, 'setAttribute'); } catch(e) {}
+                try { freezeProp(Element.prototype, 'getAttribute'); } catch(e) {}
+
+                // Hook remove to no-op for LI[data-index / data-id]
+                try {
+                    var _remove = Element.prototype.remove;
+                    Element.prototype.remove = function() {
+                        if (this.tagName === 'LI' && (this.hasAttribute('data-index') || this.hasAttribute('data-id'))) {
+                            console.log('[CW] Blocked remove: idx=' + this.getAttribute('data-index') + ' id=' + this.getAttribute('data-id'));
+                            return;
+                        }
+                        return _remove.call(this);
+                    };
+                    Object.defineProperty(Element.prototype, 'remove', {
+                        configurable: false, writable: false, value: Element.prototype.remove
+                    });
+                    freezed++;
+                } catch(e) { console.error('[CW] remove hook failed: ' + e.message); }
+
+                // Hook innerHTML setter to block clearing #watch (anti-bot does this.innerHTML='')
+                try {
+                    var target = HTMLElement.prototype;
+                    var htmlDesc = Object.getOwnPropertyDescriptor(target, 'innerHTML');
+                    if (!htmlDesc || !htmlDesc.set) {
+                        target = Element.prototype;
+                        htmlDesc = Object.getOwnPropertyDescriptor(target, 'innerHTML');
+                    }
+                    if (htmlDesc && htmlDesc.set) {
+                        var origSet = htmlDesc.set;
+                        Object.defineProperty(target, 'innerHTML', {
+                            set: function(v) {
+                                if (this.id === 'watch' && v === '') {
+                                    console.log('[CW] Blocked innerHTML clear on #watch');
+                                    return;
+                                }
+                                return origSet.call(this, v);
+                            },
+                            get: function() {
+                                var d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerHTML');
+                                if (d && d.get) return d.get.call(this);
+                                d = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+                                return d && d.get ? d.get.call(this) : '';
+                            },
+                            configurable: false
+                        });
+                        freezed++;
+                    }
+                } catch(e) { console.error('[CW] innerHTML hook failed: ' + e.message); }
+
+                console.log('[CW] Anti-anti-bot active: ' + freezed + ' protections');
+            })();
+        """.trimIndent()
 
         private val SPOOFING_JS = """
             (function(){

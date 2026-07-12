@@ -11,6 +11,7 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.WebViewFlowHelper
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.webview.VideoUrlClassifier
 import com.cloudstream.shared.extractors.CimaNowTVEmbed
 import com.cloudstream.shared.extractors.UpnshareEmbed
 import com.cloudstream.shared.extractors.VKVideoEmbed
@@ -1900,19 +1901,39 @@ class CimaNowProvider : BaseProvider() {
             // The request interceptor captures video stream URLs (e.g. VK CDN, ok.ru)
             // directly from network requests. These are available even if the DOM
             // was cleared by anti-bot JS.
+            // We filter using VideoUrlClassifier (same logic as the SnifferExtractor)
+            // to skip segments (.ts, .m4s, .key), images, ads, DRM, and other non-video assets.
             val capturedVideoUrls = navResult.capturedVideoUrls
-            if (capturedVideoUrls.isNotEmpty()) {
-                Log.i(TAG_TEST, "Processing ${capturedVideoUrls.size} captured video URLs from interceptor")
-                for (videoUrl in capturedVideoUrls.distinct()) {
-                    if (videoUrl.isBlank()) continue
-                    Log.i(TAG_TEST, ">>> CAPTURED VIDEO URL: ${videoUrl.take(150)}")
-                    val link = newExtractorLink("CimaNow", "CimaNow", videoUrl, type = getLinkType(videoUrl))
-                    link.referer = watchUrl
-                    callback(link)
-                    found = true
+            val playableUrls = capturedVideoUrls.distinct().filter { url ->
+                url.isNotBlank() &&
+                !VideoUrlClassifier.isSegmentOrAsset(url) &&
+                !VideoUrlClassifier.isBlacklisted(url) &&
+                VideoUrlClassifier.isVideoUrl(url)
+            }
+            if (playableUrls.isNotEmpty()) {
+                Log.i(TAG_TEST, "Processing ${playableUrls.size} playable video URLs from interceptor (filtered from ${capturedVideoUrls.size} total)")
+                for (videoUrl in playableUrls) {
+                    Log.i(TAG_TEST, ">>> CAPTURED VIDEO: ${videoUrl.take(150)}")
+                    if (videoUrl.contains(".m3u8", ignoreCase = true)) {
+                        M3u8Helper.generateM3u8(
+                            source = "CimaNow",
+                            streamUrl = videoUrl,
+                            referer = watchUrl,
+                            headers = mapOf("User-Agent" to httpService.userAgent)
+                        ).forEach { link ->
+                            Log.i(TAG_TEST, ">>> M3U8 quality: ${link.quality}p -> ${link.url.take(100)}")
+                            callback(link)
+                            found = true
+                        }
+                    } else {
+                        val link = newExtractorLink("CimaNow", "CimaNow", videoUrl, type = getLinkType(videoUrl))
+                        link.referer = watchUrl
+                        callback(link)
+                        found = true
+                    }
                 }
             } else {
-                Log.w(TAG_TEST, "No captured video URLs from interceptor")
+                Log.d(TAG_TEST, "No playable video URLs from interceptor (${capturedVideoUrls.size} total captured)")
             }
 
             // ======================== 2. OFFLINE PARSING OF mainFrameHtml ========================
@@ -1924,13 +1945,18 @@ class CimaNowProvider : BaseProvider() {
             val mainFrameHtml = navResult.mainFrameHtml
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
 
-            val watchHtml: String = if (!mainFrameHtml.isNullOrBlank()) {
-                Log.i(TAG_TEST, "Using captured mainFrameHtml: ${mainFrameHtml.length} chars (server-rendered, pre anti-bot)")
-                mainFrameHtml
-            } else if (rawHtmlData.startsWith("RAW_HTML:")) {
+            // Prefer the JS snapshot if available — the anti-anti-bot script injected into the
+            // HTML response (NavigationEngine.ANTI_ANTI_BOT_JS) lets the DOM decryption complete
+            // and prevents the anti-bot from clearing #watch, so the snapshot contains real
+            // server entries. Fall back to mainFrameHtml (encrypted server HTML) only if the
+            // snapshot is empty.
+            val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
                 val html = rawHtmlData.removePrefix("RAW_HTML:")
-                Log.i(TAG_TEST, "Using JS snapshot as fallback: ${html.length} chars, preview: ${html.take(300)}")
+                Log.i(TAG_TEST, "Using JS snapshot: ${html.length} chars (decrypted DOM, anti-bot neutralized)")
                 html
+            } else if (!mainFrameHtml.isNullOrBlank()) {
+                Log.i(TAG_TEST, "Using captured mainFrameHtml: ${mainFrameHtml.length} chars (fallback, pre anti-bot)")
+                mainFrameHtml
             } else {
                 Log.w(TAG_TEST, "No HTML captured. mainFrameHtml=${mainFrameHtml != null}, rawHtmlData=${rawHtmlData.take(100)}")
                 ""
