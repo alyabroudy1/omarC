@@ -347,7 +347,115 @@ class CimaNowProvider : BaseProvider() {
         Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
 
-        return runIsolatedWebViewTest(data, callback)
+        if (data.contains("agent-kim-reactivated", ignoreCase = true)) {
+            Log.i("CimaNowLoadLinks", "Triggering isolated WebView test flow for: $data")
+            return runIsolatedWebViewTest(data, callback)
+        }
+
+        val successCount = java.util.concurrent.atomic.AtomicInteger(0)
+        try {
+            val decryptedHtml = fetchDecryptedWatchPage(data)
+            if (!decryptedHtml.isNullOrBlank()) {
+                val doc = Jsoup.parse(decryptedHtml, data)
+
+                // 1. Extract watch servers
+                val servers = doc.select("li[data-index]")
+                Log.i("CimaNowLoadLinks", "Found ${servers.size} watch servers in decrypted HTML")
+
+                val deferredList = mutableListOf<Deferred<Unit>>()
+                coroutineScope {
+                    servers.forEach { server ->
+                        val index = server.attr("data-index")
+                        val id = server.attr("data-id")
+                        val serverName = server.text().trim()
+
+                        if (index.isNotBlank() && id.isNotBlank()) {
+                            val deferred = async {
+                                try {
+                                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
+                                    Log.d(TAG, "core.php GET: $ajaxUrl")
+                                    val coreHeaders = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
+                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                    val playerDoc = Jsoup.parse(coreText, ajaxUrl)
+                                    val rawIframeUrl = playerDoc.select("iframe").attr("src") ?: ""
+                                    val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
+
+                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                        successCount.incrementAndGet()
+                                        when {
+                                            iframeUrl.contains("cimanowtv", true) -> {
+                                                handlecima(iframeUrl, serverName, callback)
+                                            }
+                                            iframeUrl.contains("forafile.com", true) -> {
+                                                handleForafile(iframeUrl, 0, data, callback)
+                                            }
+                                            else -> {
+                                                fallbackExtractIframe(iframeUrl, serverName, data, callback)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Error switching server index=$index: ${e.message}")
+                                }
+                            }
+                            deferredList.add(deferred)
+                        }
+                    }
+                    deferredList.awaitAll()
+                }
+
+                /*
+                // 2. Extract download links (Commented out to prevent video player launch delays. Uncomment to re-enable)
+                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href]")
+                Log.i("CimaNowLoadLinks", "Found ${downloadLinks.size} download links in decrypted HTML")
+                for (link in downloadLinks) {
+                    try {
+                        val dlink = link.attr("href")
+                        val linkText = link.text().trim()
+                        val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
+                            ?: Qualities.Unknown.value
+
+                        if (dlink.isNotBlank() && dlink.startsWith("http")) {
+                            Log.d(TAG, "Download link found: quality=$quality url=$dlink")
+                            when {
+                                dlink.contains("forafile.com", true) -> {
+                                    handleForafile(dlink, quality, data, callback)
+                                }
+                                dlink.contains("jetload.pp.ua", true) -> {
+                                    handleJetload(dlink, quality, data, callback)
+                                }
+                                else -> {
+                                    callback(newExtractorLink("CimaNow", "CimaNow", dlink, type = getLinkType(dlink)) {
+                                        this.referer = data
+                                        this.quality = quality
+                                    })
+                                }
+                            }
+                            successCount.incrementAndGet()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing download link: ${e.message}")
+                    }
+                }
+                */
+            } else {
+                Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("CimaNowLoadLinks", "Programmatic flow error: ${e.message}")
+        }
+
+        if (successCount.get() > 0) {
+            Log.i("CimaNowLoadLinks", "================ [END PROGRAMMATIC SUCCESS] ================")
+            return true
+        }
+
+        Log.w("CimaNowLoadLinks", "Programmatic flow failed to find links. Falling back to WebView...")
+        val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
+        Log.i("CimaNowLoadLinks", "================ [END WebView FALLBACK Result: $webViewResult] ================")
+        return webViewResult
     }
 
     private suspend fun fetchDecryptedWatchPage(movieUrl: String): String? {
@@ -488,8 +596,10 @@ class CimaNowProvider : BaseProvider() {
 
         try {
             val config = WebViewFlowHelper.Config(
+                // All domains allowed for debugging — the redirect confirmation dialog gives manual control
                 allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li", "viiukuhe.com", "ayhal.com"),
                 destinationLockPatterns = listOf("/watching/"),
+                // Extended timeout to allow manual navigation through the redirect chain
                 overallTimeoutMs = 600_000L
             )
             Log.d(TAG_WV, "Config: allowedDomains=${config.allowedDomains}, destPatterns=${config.destinationLockPatterns}, timeoutMs=${config.overallTimeoutMs}")
@@ -1637,23 +1747,14 @@ class CimaNowProvider : BaseProvider() {
     // Minimal JS: only read innerHTML. ALL parsing happens in Kotlin (outside WebView JS context).
     // This avoids every JS API the page may patch (getAttribute, querySelectorAll, String.match, etc.).
     // The page MUST keep innerHTML real for its own rendering -- it cannot patch it without breaking UI.
-    // Synchronous polling — sleeps in JS until #watch is populated, then captures atomically.
-    // evaluateJavascript CANNOT resolve Promises, so we use a blocking loop instead.
-    // The anti-scraping clears #watch via setTimeout(0), but since we never return control
-    // to the event loop during the poll, the timeout callback never fires. Content appears
-    // synchronously (same tick as decryption), and we capture it immediately.
     private val JS_CAPTURE_INNERHTML = """
 (function(){
-    var deadline=Date.now()+25000;
-    while(Date.now()<deadline){
+    try {
         var w=document.querySelector('#watch');
-        if(w&&w.children.length>0&&w.querySelector('li[data-index]')){
-            return 'RAW_HTML:'+w.innerHTML;
-        }
-        var t=Date.now();
-        while(Date.now()-t<50){}
+        return 'RAW_HTML:'+(w?w.innerHTML:'');
+    } catch(e) {
+        return 'raw_html_error:'+e.message;
     }
-    return '';
 })();
 """.trimIndent()
 
@@ -1695,19 +1796,37 @@ class CimaNowProvider : BaseProvider() {
             val referer = "https://rm.freex2line.online/redirectingfree/"
 
             val steps = listOf(
+                // Step 0: Load the timer HTML directly (no network request for the page itself,
+                //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
                 NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
+                // Step 1: Navigate to the watching URL captured by the interceptor.
+                //         This polls interceptedWatchingUrl every 500ms (up to 15s total),
+                //         navigating immediately once the countdown timer finishes and
+                //         get-link.php fires (typically ~11s). The main-frame navigation
+                //         is intercepted by the request interceptor (protected domain +
+                //         spoofed headers), so Cloudflare doesn't block it.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Busy-wait in JS until #watch is populated, then captures atomically in the
-                // same evaluateJavascript call. The blocking loop prevents the anti-scraping's
-                // setTimeout(0) from ever firing, so there's NO race condition.
+                // Step 2: Wait until the watching page has rendered server tabs with
+                //         decrypted data-index attributes.
+                NavigationStep.WaitForDomCondition(
+                    jsCondition = "document.querySelector('#watch li[data-index]') !== null",
+                    timeoutMs = 20000L,
+                    pollIntervalMs = 500L,
+                    abortOnFailure = true
+                ),
+
+                // Step 3: Extract servers/downloads/iframes/diag BEFORE reading outerHTML,
+                //         because reading outerHTML triggers the anti-scraping script which
+                //         asynchronously patches querySelectorAll/getAttribute.
                 NavigationStep.ExecuteJs(javascript = JS_CAPTURE_INNERHTML, key = "raw_html"),
 
-                // Full page HTML capture — used as fallback if JS capture missed content.
+                // Step 4: Capture early outerHTML (still useful for debugging, even though
+                //         anti-scraping may patch it after this point).
                 NavigationStep.ExtractHtml(key = "html_watch"),
 
-                // Dismiss consent popup.
+                // Step 5: Wait for SweetAlert2 to load, then dismiss any consent popup.
                 NavigationStep.WaitForDomCondition(
                     jsCondition = "typeof window.Swal !== 'undefined'",
                     timeoutMs = 8000L,
@@ -1766,30 +1885,14 @@ class CimaNowProvider : BaseProvider() {
             // can detect and patch ANY function we run via evaluateJavascript, but it has zero
             // visibility into Kotlin-side string processing.
 
-            // Primary: synchronous busy-wait JS that polls #watch and captures atomically
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
-            var watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
+            val watchHtml: String = if (rawHtmlData.startsWith("RAW_HTML:")) {
                 val html = rawHtmlData.removePrefix("RAW_HTML:")
                 Log.i(TAG_TEST, "Captured watch.innerHTML: ${html.length} chars, preview: ${html.take(300)}")
                 html
             } else {
-                Log.w(TAG_TEST, "No raw HTML captured from JS (${rawHtmlData.take(100)})")
+                Log.w(TAG_TEST, "No raw HTML captured (${rawHtmlData.take(100)})")
                 ""
-            }
-
-            // Fallback: parse #watch from full page HTML capture
-            if (watchHtml.isBlank()) {
-                val fullHtml = navResult.extractedHtml["html_watch"] ?: ""
-                if (fullHtml.isNotBlank()) {
-                    val watchMatch = Regex("<div[^>]*?id=['\"]?watch['\"]?[^>]*?>([\\s\\S]*?)</div>", setOf(RegexOption.IGNORE_CASE))
-                        .find(fullHtml)
-                    if (watchMatch != null) {
-                        watchHtml = watchMatch.groupValues[1].trim()
-                        Log.i(TAG_TEST, "FALLBACK: Extracted watch content from html_watch: ${watchHtml.length} chars, preview: ${watchHtml.take(300)}")
-                    } else {
-                        Log.w(TAG_TEST, "FALLBACK: No #watch div found in html_watch (${fullHtml.length} chars)")
-                    }
-                }
             }
 
             data class ServerInfo(val index: String, val id: String, val name: String)
