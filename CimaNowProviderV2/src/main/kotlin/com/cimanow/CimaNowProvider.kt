@@ -1821,19 +1821,18 @@ class CimaNowProvider : BaseProvider() {
                 //         into capturedMainFrameHtml, which we parse in Kotlin below.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Atomically wait for the DOM condition AND capture the snapshot
-                //         in a single evaluateJavascript call (Profi #1). This eliminates
-                //         the race window where the anti-bot script (0CYA6X1KhKIS.js) clears
-                //         #watch between the condition check and the innerHTML read.
-                //         Uses deep clone (cloneNode(true)) to produce a detached DOM subtree
-                //         that no MutationObserver on the live document can observe.
+                // Step 2: Try to capture the DOM snapshot, but DO NOT abort on failure.
+                //         The anti-bot script (0CYA6X1KhKIS.js) clears #watch immediately
+                //         after page load, so this will almost always time out.
+                //         We rely on mainFrameHtml (captured by the request interceptor
+                //         from the raw HTTP response, pre anti-bot JS) instead.
                 NavigationStep.WaitForDomConditionAndSnapshot(
                     jsCondition = "(function(){ var lis=document.querySelectorAll('#watch li[data-index]'); if(!lis||lis.length===0)return false; for(var i=0;i<lis.length;i++){ var idx=lis[i].getAttribute('data-index')||''; var id=lis[i].getAttribute('data-id')||''; if(idx.trim().length>0&&id.trim().length>0)return true; } return false; })()",
                     snapshotJs = SNAPSHOT_WATCH,
                     key = "raw_html",
                     timeoutMs = 20000L,
                     pollIntervalMs = 500L,
-                    abortOnFailure = true
+                    abortOnFailure = false
                 ),
 
                 // Step 3: Capture full-page outerHTML for debugging (not used for parsing)
@@ -1876,13 +1875,18 @@ class CimaNowProvider : BaseProvider() {
             navResult.extractedHtml.filterKeys { it.startsWith("html") }.forEach { (key, html) ->
                 Log.i(TAG_TEST, "  $key: ${html.length} chars")
             }
+            Log.i(TAG_TEST, "mainFrameHtml available: ${!navResult.mainFrameHtml.isNullOrBlank()}, length: ${navResult.mainFrameHtml?.length ?: 0}")
+            Log.i(TAG_TEST, "capturedVideoUrls count: ${navResult.capturedVideoUrls.size}")
 
+            // Don't return early on failure — the interceptor may have captured
+            // mainFrameHtml (server-rendered DOM pre anti-bot) and/or video URLs
+            // (e.g. VK CDN) even when DOM polling times out.
             if (!navResult.success) {
-                Log.e(TAG_TEST, "Isolated flow failed: ${navResult.error}")
-                return false
+                Log.w(TAG_TEST, "Isolated flow had step failures: ${navResult.error}")
+                Log.w(TAG_TEST, "Continuing anyway to parse mainFrameHtml and capturedVideoUrls...")
             }
 
-            // ======================== EXTRACT FROM extracted_all ========================
+            // ======================== EXTRACT FROM CAPTURED DATA ========================
             val watchUrl = navResult.finalUrl
             var found = false
             val foundLinks = mutableListOf<String>()
@@ -1892,16 +1896,30 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
-            // ======================== OFFLINE PARSING IN KOTLIN ========================
-            // The JS only returns raw innerHTML as a string. All regex extraction happens here
-            // in Kotlin, completely outside the WebView's JS environment. The page's anti-scraping
-            // can detect and patch ANY function we run via evaluateJavascript, but it has zero
-            // visibility into Kotlin-side string processing.
-            //
-            // Primary source (Profi #5): raw HTML captured from the HTTP response by the
+            // ======================== 1. CAPTURED VIDEO URLS (from interceptor) ========================
+            // The request interceptor captures video stream URLs (e.g. VK CDN, ok.ru)
+            // directly from network requests. These are available even if the DOM
+            // was cleared by anti-bot JS.
+            val capturedVideoUrls = navResult.capturedVideoUrls
+            if (capturedVideoUrls.isNotEmpty()) {
+                Log.i(TAG_TEST, "Processing ${capturedVideoUrls.size} captured video URLs from interceptor")
+                for (videoUrl in capturedVideoUrls.distinct()) {
+                    if (videoUrl.isBlank()) continue
+                    Log.i(TAG_TEST, ">>> CAPTURED VIDEO URL: ${videoUrl.take(150)}")
+                    val link = newExtractorLink("CimaNow", "CimaNow", videoUrl, type = getLinkType(videoUrl))
+                    link.referer = watchUrl
+                    callback(link)
+                    found = true
+                }
+            } else {
+                Log.w(TAG_TEST, "No captured video URLs from interceptor")
+            }
+
+            // ======================== 2. OFFLINE PARSING OF mainFrameHtml ========================
+            // Primary source: raw HTML captured from the HTTP response by the
             // request interceptor — contains the server-rendered DOM before any anti-bot
             // JS can clear/patch it.
-            // Fallback source (Profi #1): atomic JS snapshot via cloneNode.
+            // Fallback source: atomic JS snapshot via cloneNode (rarely works).
 
             val mainFrameHtml = navResult.mainFrameHtml
             val rawHtmlData = navResult.extractedHtml["raw_html"] ?: ""
