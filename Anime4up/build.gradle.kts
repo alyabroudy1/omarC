@@ -3,6 +3,14 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+version = 2
+cloudstream {
+    authors = listOf("omarflex")
+    language = "ar"
+    status = 3  // Beta
+    tvTypes = listOf("Anime")
+    iconUrl = "https://www.google.com/s2/favicons?domain=3iskk.xyz&sz=%size%"
+}
 android {
     namespace = "com.anime4up"
     compileSdk = 34
