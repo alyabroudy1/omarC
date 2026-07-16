@@ -42,9 +42,9 @@ class GessehProvider : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "آخر الحلقات",
-        "$mainUrl/category/alarshif/" to "المسلسلات",
-        "$mainUrl/category/yeni-filmler/" to "افلام تركية",
-        "$mainUrl/category/discover/" to "جميع المسلسلات",
+        "$mainUrl/category/alarshif" to "المسلسلات",
+        "$mainUrl/category/yeni-filmler" to "افلام تركية",
+        "$mainUrl/category/discover" to "جميع المسلسلات",
     )
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
