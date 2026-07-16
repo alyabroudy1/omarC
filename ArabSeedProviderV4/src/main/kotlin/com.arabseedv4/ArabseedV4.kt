@@ -16,15 +16,11 @@ class ArabseedV4 : BaseProvider() {
     override val paginationFormat get() = "page/%d/"
 
     override val mainPage = mainPageOf(
-        "$mainUrl/main0/" to "الرئيسية",
-        "$mainUrl/main0/" to "الرئيسية",
-        "$mainUrl/recently/" to "مضاف حديثا",
-        "$mainUrl/movies/" to "أفلام",
-        "$mainUrl/main0/" to "المسلسلات",
-        "$mainUrl/category/افلام-انيميشن/" to "افلام انيميشن",
-        "$mainUrl/category/cartoon-series/" to "مسلسلات كرتون",
-        "$mainUrl/category/arabic-series-2/" to "مسلسلات عربي",
-        "$mainUrl/category/arabic-movies-6/" to "افلام عربي",
+        "$mainUrl/category/films/" to "مضاف حديثا",
+        "$mainUrl/category/films/foreign-movies/" to "أفلام أجنبية",
+        "$mainUrl/category/films/turkish-movies/" to "أفلام تركية",
+        "$mainUrl/category/tv/" to "المسلسلات",
+        "$mainUrl/category/anime/anime-movies/" to "افلام انيميشن",
     )
 
     override fun getParser(): NewBaseParser {
@@ -40,7 +36,7 @@ class ArabseedV4 : BaseProvider() {
         return coroutineScope {
             listOf("movies", "series").map { type ->
                 async {
-                    val url = "$mainUrl/find/?word=$encoded&type=$type"
+                    val url = "$mainUrl/?s=$encoded&type=$type"
                     android.util.Log.d("ArabseedV4", "searchLazy: requesting $url")
                     try {
                         val doc = httpService.getDocumentNoFallback(url, rewriteDomain = true)
