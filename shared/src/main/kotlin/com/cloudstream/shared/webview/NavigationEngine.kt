@@ -1465,6 +1465,28 @@ class NavigationEngine(
                     document.write.toString = function() { return 'function write() { [native code] }'; };
                     try { Object.defineProperty(document.write, 'name', { value: 'write', configurable: true }); } catch(e) {}
                     try { Object.defineProperty(document.write, 'length', { value: 1, configurable: true }); } catch(e) {}
+                    // Lock document.write against simple-assignment replacement
+                    // (anti-bot scripts sometimes overwrite document.write before
+                    // the decryption script can call our wrapped version).
+                    // configurable:true so Object.defineProperty can still override.
+                    Object.defineProperty(document, 'write', {
+                        writable: false, configurable: true
+                    });
+                    // Emergency fallback: capture body.innerHTML at the earliest microtask
+                    // after synchronous parsing, BEFORE the anti-bot's setTimeout(applyStrip, 500).
+                    setTimeout(function() {
+                        if (!_captured && document.body) {
+                            var html = document.body.innerHTML;
+                            if (html && html.length > 200 && html.indexOf('data-index') !== -1) {
+                                window.__decryptedHtml = html;
+                                _captured = true;
+                                console.log('[CW] Emergency capture (timeout): ' + html.length + ' chars');
+                            }
+                            if (!_captured) {
+                                console.log('[CW] Fallback check: body.length=' + html.length + ' no data-index');
+                            }
+                        }
+                    }, 0);
                     console.log('[CW] document.write hook active');
                 } catch(e) {
                     console.error('[CW] document.write hook failed: ' + e.message);
