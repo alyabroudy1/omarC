@@ -10,38 +10,44 @@ import com.cloudstream.shared.parsing.WatchServerSelector
 class CimawbasParser : NewBaseParser() {
 
     override val mainPageConfig = MainPageConfig(
-        container = "li.Small--Box",
-        title = CssSelector(".title", "text"),
-        url = CssSelector("a", "href"),
-        poster = CssSelector(".Poster img", "data-src, src")
+        container = "ul#pm-grid li",
+        title = CssSelector("div.caption h3 a", "text"),
+        url = CssSelector("div.caption h3 a", "href"),
+        poster = CssSelector(".pm-video-thumb a img", "src")
     )
 
-    override val searchConfig = mainPageConfig
+    override val searchConfig = MainPageConfig(
+        container = "ul#pm-grid li",
+        title = CssSelector("div.caption h3 a", "text"),
+        url = CssSelector("div.caption h3 a", "href"),
+        poster = CssSelector(".pm-video-thumb a img", "src")
+    )
 
     override val loadPageConfig = LoadPageConfig(
-        title = CssSelector("h1.PostTitle", "text"),
-        poster = CssSelector(".left .image img", "data-src, src"),
-        plot = CssSelector(".StoryArea p", "text"),
-        year = CssSelector(".TaxContent a[href*='release-year']", "text"),
-        rating = CssSelector(".imdbR span", "text"),
-        tags = CssSelector(".TaxContent .genre a", "text")
+        title = CssSelector("h1.PostTitle, .single-title h1, .watch-title h1", "text"),
+        poster = CssSelector(".poster img, .watch-poster img, .single-poster img", "src"),
+        plot = CssSelector(".StoryArea p, .watch-description, .single-description", "text"),
+        year = CssSelector(".TaxContent a[href*='release-year'], .year, .watch-year", "text"),
+        rating = CssSelector(".imdbR span, .rating", "text"),
+        tags = CssSelector(".TaxContent .genre a, .genres a, .Tags a", "text"),
+        parentSeriesUrl = CssSelector(".Series--Section a, a.single-serie-btn, .series-link a", "href")
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = ".allepcont .row a",
-        title = CssSelector(".ep-info h2", "text"),
-        url = CssSelector("a", "href"),
-        episode = CssSelector(".epnum", "text", "([^0-9])")
+        container = ".allepcont .row a, .EpisodesList a, .episodes-list a, .series-episodes a",
+        title = CssSelector(".ep-info h2, episodetitle, .episode-title", "text"),
+        url = CssSelector("", "href"),
+        episode = CssSelector(".epnum, episodetitle, .episode-num", "text", regex = "(\\d+)")
     )
 
     override val watchServersSelectors = WatchServerSelector(
-        url = CssSelector("", ""),
-        id = CssSelector("", ""),
-        title = CssSelector("", ""),
-        iframe = CssSelector("", "")
+        url = CssSelector("li", "data-embed"),
+        id = CssSelector("li", "id"),
+        title = CssSelector("strong", "text"),
+        iframe = CssSelector("li", "data-embed")
     )
 
     override fun getSearchUrl(domain: String, query: String): String {
-        return "$domain/?s=$query&page=1"
+        return "$domain/search.php?keywords=$query&video-id="
     }
 }
