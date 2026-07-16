@@ -65,7 +65,9 @@ class KrmzyProvider : BaseProvider() {
         }
         println("[Krmzy] resolveSayyarhUrl: found base64 param: ${urlParam.take(50)}...")
         return try {
-            val decoded = String(Base64.decode(urlParam, Base64.DEFAULT), Charsets.UTF_8).trim()
+            val decodedParam = java.net.URLDecoder.decode(urlParam, "UTF-8")
+            println("[Krmzy] resolveSayyarhUrl: URL-decoded param: ${decodedParam.take(50)}...")
+            val decoded = String(Base64.decode(decodedParam, Base64.DEFAULT), Charsets.UTF_8).trim()
             println("[Krmzy] resolveSayyarhUrl: decoded to: $decoded")
             if (decoded.startsWith("http")) decoded else url
         } catch (e: Exception) {

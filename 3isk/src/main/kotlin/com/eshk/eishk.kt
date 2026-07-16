@@ -206,8 +206,7 @@ class eishk : BaseProvider() {
                     if (content.contains("eval(")) {
                         val m = Regex("""eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\)\s*\{""").find(content)
                         if (m != null) {
-                            val start = m.range.first
-                            val sample = if (content.length > start + 10000) content.substring(start, start + 10000) else content.substring(start)
+                            val sample = content.substring(m.range.first)
                             val (unpacked, err) = unpackPackerFromEval(sample)
                             if (unpacked != null) {
                                 MEDIA_REGEX.findAll(unpacked).forEach { found.add(it.groupValues[1]) }
@@ -254,31 +253,63 @@ class eishk : BaseProvider() {
             embedUrl: String,
             refererFromPrevPage: String,
             headersBase: Map<String, String>,
-            serverLabel: String = "unknown"
+            serverLabel: String = "unknown",
+            maxDepth: Int = 2
         ): Set<String> {
             val result = mutableSetOf<String>()
-            try {
-                val hdrs = headersBase.toMutableMap()
-                hdrs["Referer"] = refererFromPrevPage
-                val docIf1 = httpService.getDocument(embedUrl, headers = hdrs) ?: return result
-                val text1 = docIf1.html()
 
-                MEDIA_REGEX.findAll(text1).forEach { result.add(it.groupValues[1]) }
+            suspend fun extractFromPage(
+                pageUrl: String,
+                referer: String,
+                depth: Int
+            ) {
+                if (depth > maxDepth) return
+                try {
+                    val hdrs = headersBase.toMutableMap()
+                    hdrs["Referer"] = referer
+                    val doc = httpService.getDocument(pageUrl, headers = hdrs) ?: return
+                    val html = doc.html()
 
-                analyzeAndSaveEvalScripts(text1).forEach { result.add(it) }
+                    MEDIA_REGEX.findAll(html).forEach { result.add(it.groupValues[1]) }
+                    analyzeAndSaveEvalScripts(html).forEach { result.add(it) }
 
-                val iframe1Srcs = getAllIframeSrcs(docIf1)
-                if (iframe1Srcs.isNotEmpty()) {
-                    val iframe2Src = iframe1Srcs[0]
-                    val hdrs2 = hdrs.toMutableMap()
-                    hdrs2["Referer"] = embedUrl
-                    val docFinal = httpService.getDocument(iframe2Src, headers = hdrs2)
-                    if (docFinal != null) {
-                        val t = docFinal.html()
-                        MEDIA_REGEX.findAll(t).forEach { result.add(it.groupValues[1]) }
-                        analyzeAndSaveEvalScripts(t).forEach { result.add(it) }
+                    // Try aa.3isk.icu or similar POST flow on this page
+                    try {
+                        val mMyurl = Regex("""var\s+myUrl\s*=\s*["']([^"']+)["']""").find(html)
+                        val mInputVal = Regex("""myInput\.value\s*=\s*["']([^"']+)["']""").find(html)
+                        if (mMyurl != null && mInputVal != null) {
+                            val postUrl = mMyurl.groupValues[1]
+                            val inputVal = mInputVal.groupValues[1]
+                            val mMydUrl = Regex("""var\s+mydUrl\s*=\s*["']([^"']*)["']""").find(html)
+                            val uVal = mMydUrl?.groupValues?.get(1) ?: ""
+                            val postData = mapOf("news" to inputVal, "u" to uVal, "submit" to "submit")
+                            val postHeaders = headersBase.toMutableMap()
+                            postHeaders["Referer"] = pageUrl
+                            val postResp = httpService.postText(postUrl, postData, referer = pageUrl, headers = postHeaders)
+                            if (postResp != null) {
+                                val postDoc = org.jsoup.Jsoup.parse(postResp)
+                                val postHtml = postDoc.html()
+                                MEDIA_REGEX.findAll(postHtml).forEach { result.add(it.groupValues[1]) }
+                                analyzeAndSaveEvalScripts(postHtml).forEach { result.add(it) }
+                                // Follow iframes from POST response
+                                getAllIframeSrcs(postDoc).forEach { iframe ->
+                                    extractFromPage(iframe, postUrl, depth + 1)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+
+                    // Follow ALL iframes on the page (not just the first one)
+                    getAllIframeSrcs(doc).forEach { iframe ->
+                        extractFromPage(iframe, pageUrl, depth + 1)
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "extractFromPage($serverLabel, depth=$depth) failed: ${e.message}")
                 }
+            }
+
+            try {
+                extractFromPage(embedUrl, refererFromPrevPage, 0)
             } catch (e: Exception) {
                 Log.w(TAG, "processSingleEmbedServer($serverLabel) failed: ${e.message}")
             }

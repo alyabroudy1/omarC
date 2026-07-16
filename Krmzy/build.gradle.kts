@@ -1,3 +1,4 @@
+version = 2
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -37,4 +38,12 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
     cloudstream("com.lagradost:cloudstream3:pre-release")
+}
+
+cloudstream {
+    authors = listOf("omarflex")
+    language = "ar"
+    status = 3  // Beta
+    tvTypes = listOf("TvSeries", "Movie")
+    iconUrl = "https://www.google.com/s2/favicons?domain=krmzy.net&sz=%size%"
 }
