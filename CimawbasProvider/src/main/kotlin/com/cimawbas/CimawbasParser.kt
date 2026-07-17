@@ -13,19 +13,19 @@ class CimawbasParser : NewBaseParser() {
         container = "ul#pm-grid li",
         title = CssSelector("div.caption h3 a", "text"),
         url = CssSelector("div.caption h3 a", "href"),
-        poster = CssSelector(".pm-video-thumb a img", "src")
+        poster = CssSelector(".pm-video-thumb a img", "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
         container = "ul#pm-grid li",
         title = CssSelector("div.caption h3 a", "text"),
         url = CssSelector("div.caption h3 a", "href"),
-        poster = CssSelector(".pm-video-thumb a img", "src")
+        poster = CssSelector(".pm-video-thumb a img", "data-src, src")
     )
 
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector("h1.PostTitle, .single-title h1, .watch-title h1", "text"),
-        poster = CssSelector(".poster img, .watch-poster img, .single-poster img", "src"),
+        poster = CssSelector(".poster img, .watch-poster img, .single-poster img", "data-src, src"),
         plot = CssSelector(".StoryArea p, .watch-description, .single-description", "text"),
         year = CssSelector(".TaxContent a[href*='release-year'], .year, .watch-year", "text"),
         rating = CssSelector(".imdbR span, .rating", "text"),
