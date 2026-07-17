@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 
 class Cimawbas : BaseProvider() {
     override val baseDomain get() = "vid.mycima.cc"
+    override var name = "سيما وبس"
     override val providerName get() = "Cimawbas"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/cimawbas.json"
     override val paginationFormat get() = "?&page=%d"
