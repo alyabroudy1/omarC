@@ -25,7 +25,7 @@ class CimawbasParser : NewBaseParser() {
 
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector("h1.PostTitle, .single-title h1, .watch-title h1", "text"),
-        poster = CssSelector(".poster img, .watch-poster img, .single-poster img", "data-src, src"),
+        poster = CssSelector("meta[property='og:image']", "content"),
         plot = CssSelector(".StoryArea p, .watch-description, .single-description", "text"),
         year = CssSelector(".TaxContent a[href*='release-year'], .year, .watch-year", "text"),
         rating = CssSelector(".imdbR span, .rating", "text"),

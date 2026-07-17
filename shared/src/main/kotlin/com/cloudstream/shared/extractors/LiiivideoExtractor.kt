@@ -5,7 +5,8 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 class LiiivideoExtractor : ExtractorApi() {
     override val name = "Liiivideo"
@@ -33,13 +34,15 @@ class LiiivideoExtractor : ExtractorApi() {
 
         Log.d(tag, "Found M3U8: ${m3u8Url.take(80)}")
 
-        for (link in M3u8Helper.generateM3u8(
-            source = name,
-            streamUrl = m3u8Url,
-            referer = referer ?: "$mainUrl/",
-            name = name
-        )) {
-            callback(link)
-        }
+        callback(
+            newExtractorLink(
+                source = name,
+                name = name,
+                url = m3u8Url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = referer ?: "$mainUrl/"
+            }
+        )
     }
 }
