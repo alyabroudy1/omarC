@@ -1445,7 +1445,14 @@ class NavigationEngine(
                 try {
                     var _origWrite = document.write.bind(document);
                     var _captured = false;
-                    document.write = function(html) {
+                    // Use a getter/setter accessor so document.write can NEVER be replaced,
+                    // not even with Object.defineProperty (configurable:false).
+                    // The getter always returns our wrapper; the setter wraps any replacement.
+                    var _wrapper = function(html) {
+                        console.log('[CW] document.write called: length=' + (html ? html.length : 0) + ' type=' + (typeof html) + ' captured=' + _captured);
+                        if (html && typeof html === 'string' && html.length > 0) {
+                            console.log('[CW] Write preview: ' + html.substring(0, 200).replace(/\n/g, '\\n'));
+                        }
                         if (!_captured && html && typeof html === 'string' && html.length > 500) {
                             _captured = true;
                             window.__decryptedHtml = html;
@@ -1457,20 +1464,30 @@ class NavigationEngine(
                     };
                     // Spoof native function signature — the decryption script checks
                     // document.write.toString().indexOf('[native code]') and bails if false.
-                    document.write.toString = function() { return 'function write() { [native code] }'; };
-                    try { Object.defineProperty(document.write, 'name', { value: 'write', configurable: true }); } catch(e) {}
-                    try { Object.defineProperty(document.write, 'length', { value: 1, configurable: true }); } catch(e) {}
-                    // Lock document.write against ANY replacement — both simple assignment
-                    // (writable:false) AND Object.defineProperty (configurable:false).
-                    // This ensures the decryption script's document.write call always
-                    // goes through our wrapper.
+                    _wrapper.toString = function() { return 'function write() { [native code] }'; };
+                    try { Object.defineProperty(_wrapper, 'name', { value: 'write', configurable: true }); } catch(e) {}
+                    try { Object.defineProperty(_wrapper, 'length', { value: 1, configurable: true }); } catch(e) {}
                     Object.defineProperty(document, 'write', {
-                        writable: false, configurable: false
+                        get: function() { return _wrapper; },
+                        set: function(v) {
+                            // Anti-bot trying to replace document.write — wrap their function
+                            var _newWrite = v;
+                            console.log('[CW] document.write replaced by anti-bot, re-wrapping');
+                            _wrapper = function(html) {
+                                if (!_captured && html && typeof html === 'string' && html.length > 500) {
+                                    _captured = true;
+                                    window.__decryptedHtml = html;
+                                    console.log('[CW] Captured decrypted HTML: ' + html.length + ' chars');
+                                }
+                                return _newWrite(html);
+                            };
+                            _wrapper.toString = function() { return 'function write() { [native code] }'; };
+                        },
+                        configurable: false
                     });
-                    // Emergency fallback: poll body.innerHTML every 50ms up to 10 times
-                    // (500ms total) to catch the decrypted content if document.write
-                    // somehow still gets bypassed.  Runs BEFORE the anti-bot's
-                    // setTimeout(applyStrip, 500) timer fires.
+                    // Emergency fallback: poll body.innerHTML every 50ms up to 15 times
+                    // (750ms total) to catch decrypted content if document.write
+                    // somehow still gets bypassed.
                     var _pollCount = 0;
                     var _pollTimer = setInterval(function() {
                         _pollCount++;
@@ -1491,6 +1508,16 @@ class NavigationEngine(
                         if (_pollCount >= 15) clearInterval(_pollTimer);
                     }, 50);
                     console.log('[CW] document.write hook active');
+                    console.log('[CW] Write is getter: ' + (Object.getOwnPropertyDescriptor(document, 'write') !== undefined));
+                    console.log('[CW] toString check: ' + document.write.toString().indexOf('[native code]'));
+                    console.log('[CW] First 50 of toString: ' + document.write.toString().substring(0, 50).replace(/\n/g, '\\n'));
+                    // Delayed check to see when body is populated
+                    setTimeout(function() {
+                        console.log('[CW] Delayed body check: length=' + (document.body ? document.body.innerHTML.length : 0));
+                        if (document.body) {
+                            console.log('[CW] Body has data-index: ' + (document.body.innerHTML.indexOf('data-index') !== -1));
+                        }
+                    }, 100);
                 } catch(e) {
                     console.error('[CW] document.write hook failed: ' + e.message);
                 }
