@@ -32,7 +32,7 @@ class Cimawbas : BaseProvider() {
         val embedRegex = Regex("""src=['"]([^'"]+)['"]""")
         val vidRegex = Regex("""[?&]vid=([^&]+)""")
 
-        fun extractServers(doc: org.jsoup.nodes.Document): Boolean {
+        suspend fun extractServers(doc: org.jsoup.nodes.Document): Boolean {
             var found = false
 
             val selectors = listOf(
@@ -83,7 +83,7 @@ class Cimawbas : BaseProvider() {
         val vidMatch = vidRegex.find(data)
         if (vidMatch != null) {
             val vid = vidMatch.groupValues[1]
-            val playUrl = "${getBaseUrl()}/play.php?vid=$vid"
+            val playUrl = "https://${baseDomain}/play.php?vid=$vid"
             val playDoc = httpService.getDocument(playUrl, rewriteDomain = true)
             if (playDoc != null && extractServers(playDoc)) return true
         }
