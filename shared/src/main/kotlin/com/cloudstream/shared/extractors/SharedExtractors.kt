@@ -82,4 +82,7 @@ fun Plugin.registerSharedExtractors() {
 
     // AlbaPlayer (AlbaPlayerControl base64 / Clappr.Player M3U8 extraction)
     registerExtractorAPI(AlbaPlayerExtractor())
+
+    // Liiivideo (Playerjs HLS extraction from vipserver.liiivideo.com)
+    registerExtractorAPI(LiiivideoExtractor())
 }
