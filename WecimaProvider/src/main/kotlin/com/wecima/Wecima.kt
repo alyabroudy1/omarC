@@ -70,8 +70,10 @@ class Wecima : BaseProvider() {
         }
     }
 
-    // searchLazy uses default (GET /?s=query) — if CF blocks it, a placeholder appears;
-    // tapping it triggers searchNormal which POSTs to /search for correct results.
+    override suspend fun searchLazy(query: String): List<SearchResponse> {
+        httpService.ensureInitialized()
+        return searchPost(query)
+    }
 
     override suspend fun fetchExtraEpisodes(
         doc: org.jsoup.nodes.Document,
