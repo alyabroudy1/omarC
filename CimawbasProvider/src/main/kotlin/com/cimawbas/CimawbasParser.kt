@@ -13,14 +13,14 @@ class CimawbasParser : NewBaseParser() {
         container = "ul#pm-grid li",
         title = CssSelector("div.caption h3 a", "text"),
         url = CssSelector("div.caption h3 a", "href"),
-        poster = CssSelector(".pm-video-thumb a img", "data-src, src")
+        poster = CssSelector("img", "data-src, src")
     )
 
     override val searchConfig = MainPageConfig(
         container = "ul#pm-grid li",
         title = CssSelector("div.caption h3 a", "text"),
         url = CssSelector("div.caption h3 a", "href"),
-        poster = CssSelector(".pm-video-thumb a img", "data-src, src")
+        poster = CssSelector("img", "data-src, src")
     )
 
     override val loadPageConfig = LoadPageConfig(

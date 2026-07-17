@@ -534,6 +534,33 @@ class ProviderHttpService private constructor(
         return headers
     }
 
+    fun getImageHeadersFull(targetDomain: String? = null): Map<String, String> {
+        val domain = targetDomain ?: sessionState.domain
+        
+        val cookies = if (targetDomain != null && targetDomain != sessionState.domain) {
+            com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(targetDomain)
+        } else {
+            sessionState.cookies
+        }
+        
+        return buildMap {
+            put("User-Agent", sessionState.userAgent)
+            put("Referer", "https://$domain/")
+            put("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+            put("Accept-Language", "en-US,en;q=0.9")
+            put("Sec-Ch-Ua", WebConfig.buildSecChUa(sessionState.userAgent))
+            put("Sec-Ch-Ua-Mobile", "?1")
+            put("Sec-Ch-Ua-Platform", "\"Android\"")
+            put("Sec-Fetch-Dest", "image")
+            put("Sec-Fetch-Mode", "no-cors")
+            put("Sec-Fetch-Site", "same-site")
+            
+            if (cookies.isNotEmpty()) {
+                put("Cookie", cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+            }
+        }
+    }
+
     // ==================== INTERNAL ====================
 
     internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
