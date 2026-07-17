@@ -48,7 +48,5 @@ dependencies {
 
     implementation("androidx.preference:preference-ktx:1.2.1")
 
-        cloudstream("com.lagradost:cloudstream3:pre-release")
-
 
 }

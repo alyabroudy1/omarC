@@ -15,7 +15,7 @@ buildscript {
         classpath("com.android.tools.build:gradle:8.7.3")
         // Cloudstream gradle plugin which makes everything work and builds plugins
         classpath("com.github.recloudstream.gradle:gradle:81b1d424d2")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.21")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
     }
     
 
@@ -77,10 +77,8 @@ subprojects {
     dependencies {
         val cloudstream by configurations
         val implementation by configurations
-        val compileOnly by configurations
-
         // Stubs for all cloudstream classes
-        cloudstream("com.lagradost:cloudstream3:pre-release")
+        cloudstream("com.lagradost:cloudstream3:v4.5.4")
 
         // These dependencies can include any of those which are added by the app,
         // but you don't need to include any of them if you don't need them.
@@ -95,8 +93,6 @@ subprojects {
         implementation("androidx.appcompat:appcompat:1.6.1")
         implementation("com.google.android.material:material:1.9.0")
         implementation("org.mozilla:rhino:1.7.14") // JS Engine for extractors
-        // Required for Kotlin 2.4+ JSpecify nullability annotation support
-        compileOnly("org.jspecify:jspecify:1.0.0")
     }
 }
 

@@ -36,6 +36,5 @@ dependencies {
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
-    cloudstream("com.lagradost:cloudstream3:pre-release")
     implementation("com.google.code.gson:gson:2.10.1")
 }
