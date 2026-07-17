@@ -57,6 +57,6 @@ class WecimaParser : NewBaseParser() {
     )
 
     override fun getSearchUrl(domain: String, query: String): String {
-        return "$domain/filtering/?keywords=$query"
+        return "$domain/?s=$query"
     }
 }

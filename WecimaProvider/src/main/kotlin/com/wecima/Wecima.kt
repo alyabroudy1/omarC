@@ -5,11 +5,14 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.api.Log
 import org.jsoup.Jsoup
+import org.json.JSONObject
 import java.net.URLEncoder
 
 class Wecima : BaseProvider() {
     override val baseDomain get() = "wecima.ac"
+    override var name = "وي سيما"
     override val providerName get() = "Wecima"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/wecima.json"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
@@ -23,7 +26,52 @@ class Wecima : BaseProvider() {
 
     override fun getParser(): NewBaseParser = WecimaParser()
 
+    private suspend fun searchPost(query: String): List<SearchResponse> {
+        val jsonText = httpService.postText(
+            "$mainUrl/search", mapOf("q" to query),
+            referer = mainUrl,
+            headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+            rewriteDomain = true
+        )
+        if (jsonText.isNullOrBlank()) return emptyList()
 
+        val json = JSONObject(jsonText)
+        if (!json.optBoolean("status", false)) return emptyList()
+
+        val results = json.optJSONArray("results") ?: return emptyList()
+        val items = mutableListOf<SearchResponse>()
+
+        for (i in 0 until results.length()) {
+            val item = results.getJSONObject(i)
+            val title = item.optString("title", "") ?: continue
+            val slug = item.optString("slug", "") ?: continue
+            if (title.isBlank() || slug.isBlank()) continue
+            val posterUrl = item.optString("image").ifBlank { null }
+            val isTv = item.optInt("istv", 0) == 1
+            val url = if (isTv) "$mainUrl/series/$slug" else "$mainUrl/watch/$slug"
+
+            items.add(
+                newMovieSearchResponse(title, url, if (isTv) TvType.TvSeries else TvType.Movie) {
+                    this.posterUrl = posterUrl
+                    this.posterHeaders = httpService.getImageHeaders()
+                }
+            )
+        }
+        return items
+    }
+
+    override suspend fun searchNormal(query: String): List<SearchResponse> {
+        try {
+            httpService.ensureInitialized()
+            return searchPost(query)
+        } catch (e: Exception) {
+            Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
+            return emptyList()
+        }
+    }
+
+    // searchLazy uses default (GET /?s=query) — if CF blocks it, a placeholder appears;
+    // tapping it triggers searchNormal which POSTs to /search for correct results.
 
     override suspend fun fetchExtraEpisodes(
         doc: org.jsoup.nodes.Document,
