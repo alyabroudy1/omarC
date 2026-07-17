@@ -736,17 +736,12 @@ class NavigationEngine(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
-                                // Inject document.write interceptor at the start of <head> so it runs
-                                // before the page's own JS (including the decryption/anti-bot scripts).
-                                // Captures the decrypted HTML string BEFORE the anti-bot strips it.
-                                // Must be done AFTER document.write rewriting (above) to keep injection clean.
+                                // Inject document.write interceptor at the very beginning of the HTML
+                                // so it is the VERY FIRST script the browser parses — before any
+                                // anti-bot script (e.g. DisableDevtool) that might save a reference
+                                // to the native document.write and later bypass our wrapper.
                                 val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
-                                val injected = if (rewritten.contains("<head>")) {
-                                    rewritten.replaceFirst("<head>", "<head>$antiBotTag")
-                                } else {
-                                    // No <head> tag — prepend so the browser still parses it first
-                                    "$antiBotTag$rewritten"
-                                }
+                                val injected = "$antiBotTag$rewritten"
                                 ProviderLogger.w(TAG, "shouldInterceptRequest",
                                     "Injected document.write interceptor for cimanow.cc main-frame (${antiBotTag.length} chars)")
                                 val total = scriptCount + linkCount
@@ -1465,28 +1460,36 @@ class NavigationEngine(
                     document.write.toString = function() { return 'function write() { [native code] }'; };
                     try { Object.defineProperty(document.write, 'name', { value: 'write', configurable: true }); } catch(e) {}
                     try { Object.defineProperty(document.write, 'length', { value: 1, configurable: true }); } catch(e) {}
-                    // Lock document.write against simple-assignment replacement
-                    // (anti-bot scripts sometimes overwrite document.write before
-                    // the decryption script can call our wrapped version).
-                    // configurable:true so Object.defineProperty can still override.
+                    // Lock document.write against ANY replacement — both simple assignment
+                    // (writable:false) AND Object.defineProperty (configurable:false).
+                    // This ensures the decryption script's document.write call always
+                    // goes through our wrapper.
                     Object.defineProperty(document, 'write', {
-                        writable: false, configurable: true
+                        writable: false, configurable: false
                     });
-                    // Emergency fallback: capture body.innerHTML at the earliest microtask
-                    // after synchronous parsing, BEFORE the anti-bot's setTimeout(applyStrip, 500).
-                    setTimeout(function() {
-                        if (!_captured && document.body) {
+                    // Emergency fallback: poll body.innerHTML every 50ms up to 10 times
+                    // (500ms total) to catch the decrypted content if document.write
+                    // somehow still gets bypassed.  Runs BEFORE the anti-bot's
+                    // setTimeout(applyStrip, 500) timer fires.
+                    var _pollCount = 0;
+                    var _pollTimer = setInterval(function() {
+                        _pollCount++;
+                        if (_captured) { clearInterval(_pollTimer); return; }
+                        if (document.body) {
                             var html = document.body.innerHTML;
                             if (html && html.length > 200 && html.indexOf('data-index') !== -1) {
                                 window.__decryptedHtml = html;
                                 _captured = true;
-                                console.log('[CW] Emergency capture (timeout): ' + html.length + ' chars');
+                                console.log('[CW] Emergency capture (poll #' + _pollCount + '): ' + html.length + ' chars');
+                                clearInterval(_pollTimer);
+                                return;
                             }
-                            if (!_captured) {
-                                console.log('[CW] Fallback check: body.length=' + html.length + ' no data-index');
+                            if (_pollCount === 1) {
+                                console.log('[CW] Poll check #1: body.length=' + html.length + ' no data-index');
                             }
                         }
-                    }, 0);
+                        if (_pollCount >= 15) clearInterval(_pollTimer);
+                    }, 50);
                     console.log('[CW] document.write hook active');
                 } catch(e) {
                     console.error('[CW] document.write hook failed: ' + e.message);
