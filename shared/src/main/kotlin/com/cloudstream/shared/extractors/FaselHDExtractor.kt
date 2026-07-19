@@ -172,6 +172,7 @@ class FaselHDExtractor : ExtractorApi() {
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+                .dns(com.cloudstream.shared.network.PreferIpv6Dns())
                 .build()
 
             val foundM3u8 = linkedSetOf<String>()

@@ -222,6 +222,7 @@ class ProviderHttpService private constructor(
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
             .build()
         return directClient.newCall(request).execute()
     }
@@ -618,6 +619,7 @@ class ProviderHttpService private constructor(
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
@@ -696,6 +698,7 @@ class ProviderHttpService private constructor(
 
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()

@@ -38,7 +38,10 @@ data class ProviderConfig(
     val requestTimeoutMs: Long = 30_000,
     
     /** Video sniff timeout in ms */
-    val videoSniffTimeoutMs: Long = 35_000
+    val videoSniffTimeoutMs: Long = 35_000,
+
+    /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
+    val preferIpv6: Boolean = false
 )
 
 /**

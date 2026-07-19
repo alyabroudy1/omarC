@@ -44,6 +44,9 @@ abstract class BaseProvider : MainAPI() {
     /** Custom User-Agent override (null = use system mobile UA) */
     open val userAgent: String? = null
 
+    /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
+    open val preferIpv6: Boolean = false
+
     /** Pagination URL format for main page (null = no pagination, e.g. "page/%d/") */
     open val paginationFormat: String? = null
 
@@ -63,6 +66,7 @@ abstract class BaseProvider : MainAPI() {
                 syncWorkerUrl = getSyncWorkerUrl(),
                 skipHeadless = true,
                 userAgent = userAgent,
+                preferIpv6 = preferIpv6,
             ),
             parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }

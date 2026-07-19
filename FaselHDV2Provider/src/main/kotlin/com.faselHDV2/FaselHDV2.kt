@@ -18,6 +18,7 @@ class FaselHDV2 : BaseProvider() {
     override val baseDomain get() = "faselhds.biz"
     override val providerName get() = "FaselHD"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/faselhd.json"
+    override val preferIpv6 get() = true
 
     override val mainPage = mainPageOf(
         "/all-movies" to "جميع الافلام",
