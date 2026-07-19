@@ -246,7 +246,7 @@ class YallaShoot : BaseProvider() {
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst(".entry-content iframe, .posts-body iframe, iframe.cf, iframe")
-        val iframeSrc = iframeElement?.attr("src")?.trim()
+        val iframeSrc = iframeElement?.attr("abs:src")?.trim() ?: iframeElement?.attr("src")?.trim()
         
         Log.d("YallaShoot", "Extracting from Data URL: $data")
         Log.d("YallaShoot", "Base iframe element HTML: ${iframeElement?.outerHtml()}")
@@ -254,8 +254,8 @@ class YallaShoot : BaseProvider() {
         
         // Extract external players
         for (btn in doc.select(".video-serv a")) {
-            val href = btn.attr("href")
-            if (href.isNotBlank()) {
+            val href = btn.attr("abs:href")?.trim() ?: btn.attr("href")?.trim()
+            if (!href.isNullOrBlank()) {
                 val fixedUrl = fixYallaUrl(href)
                 loadExtractor(fixedUrl, data, subtitleCallback, callback)
                 foundLinks = true

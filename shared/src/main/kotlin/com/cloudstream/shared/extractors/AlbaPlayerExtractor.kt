@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.cloudstream.shared.logging.ProviderLogger
@@ -89,7 +88,8 @@ class AlbaPlayerExtractor : ExtractorApi() {
                 headers["Referer"] = referer
             }
 
-            val rawResponse = app.get(url, headers = headers).text
+            var currentUrl = url
+            var rawResponse = app.get(currentUrl, headers = headers).text
             if (rawResponse.isBlank()) {
                 ProviderLogger.e(TAG, "getUrl", "Empty response from AlbaPlayer URL")
                 return
@@ -97,20 +97,47 @@ class AlbaPlayerExtractor : ExtractorApi() {
             ProviderLogger.d(TAG, "getUrl", "Raw response length: ${rawResponse.length}, starts with: ${rawResponse.take(100)}")
 
             // Decode document.write hex obfuscation if present
-            val response = decodeDocumentWrite(rawResponse)
+            var response = decodeDocumentWrite(rawResponse)
             if (response != rawResponse) {
                 ProviderLogger.d(TAG, "getUrl", "document.write obfuscation decoded: ${rawResponse.length} -> ${response.length} chars")
             } else {
                 ProviderLogger.d(TAG, "getUrl", "No document.write obfuscation found, using raw response as-is")
             }
 
+            var doc = Jsoup.parse(response, currentUrl)
+
+            // Follow nested wrapper iframes (e.g. if the page only contains a player iframe)
+            var iframeLimit = 3
+            while (iframeLimit > 0) {
+                val hasStream = response.contains("Clappr.Player") || response.contains("AlbaPlayerControl") || response.contains(".m3u8")
+                val hasMenu = doc.select("ul.aplr-menu a.aplr-link").isNotEmpty()
+
+                if (!hasStream && !hasMenu) {
+                    val iframe = doc.selectFirst("iframe")
+                    val iframeSrc = iframe?.attr("abs:src")?.trim()
+                    if (!iframeSrc.isNullOrBlank()) {
+                        ProviderLogger.d(TAG, "getUrl", "Found wrapper iframe, following to: $iframeSrc")
+                        headers["Referer"] = currentUrl
+                        val nextRawResponse = app.get(iframeSrc, headers = headers).text
+                        if (nextRawResponse.isNotBlank()) {
+                            currentUrl = iframeSrc
+                            rawResponse = nextRawResponse
+                            response = decodeDocumentWrite(rawResponse)
+                            doc = Jsoup.parse(response, currentUrl)
+                            iframeLimit--
+                            continue
+                        }
+                    }
+                }
+                break
+            }
+
             // Extract all servers from the menu with their labels
-            val doc = Jsoup.parse(response, url)
             val servers = mutableListOf<Pair<String, String>>()
-            servers.add("AlbaPlayer" to url)
+            servers.add("AlbaPlayer" to currentUrl)
 
             for (btn in doc.select("ul.aplr-menu a.aplr-link")) {
-                val href = btn.attr("href")
+                val href = btn.attr("abs:href")
                 val label = btn.text().trim()
                 if (href.isNotBlank() && !href.contains("javascript:")) {
                     val displayName = if (label.isNotBlank()) label else "Server ${servers.size}"
@@ -121,7 +148,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
             ProviderLogger.d(TAG, "getUrl", "Found ${servers.size} server(s) in menu: ${servers.map { it.first }}")
 
             val origin = try {
-                val uri = java.net.URI(if (referer.isNullOrBlank()) url else referer)
+                val uri = java.net.URI(if (referer.isNullOrBlank()) currentUrl else referer)
                 "${uri.scheme}://${uri.host}"
             } catch (e: Exception) {
                 "https://player.syria-player.live"
@@ -132,7 +159,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
                     async {
                         ProviderLogger.d(TAG, "getUrl", "Starting extraction for server '$serverName': $serverUrl")
                         try {
-                            val serverRaw = if (serverUrl == url) {
+                            val serverRaw = if (serverUrl == currentUrl) {
                                 ProviderLogger.d(TAG, "getUrl", "Reusing cached response for current URL: $serverUrl")
                                 rawResponse
                             } else {
@@ -207,32 +234,10 @@ class AlbaPlayerExtractor : ExtractorApi() {
                     val m3u8Url = String(decodedBytes, Charsets.UTF_8)
                     ProviderLogger.d(TAG, "extractFromPage", "AlbaPlayerControl decoded M3U8: $m3u8Url")
 
-                    val m3u8Links = M3u8Helper.generateM3u8(
-                        source = sourceName,
-                        streamUrl = m3u8Url,
-                        referer = pageUrl,
-                        headers = streamHeaders
-                    )
-
-                    if (m3u8Links.isNotEmpty()) {
-                        ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper generated ${m3u8Links.size} quality variants")
-                        m3u8Links.sortedByDescending { it.quality }.forEach { link ->
-                            callback(
-                                newExtractorLink(source = sourceName, name = "$sourceName ${link.name}", url = link.url) {
-                                    this.referer = link.referer
-                                    this.quality = link.quality
-                                    this.headers = link.headers
-                                }
-                            )
-                        }
-                        return true
-                    }
-
-                    ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper returned 0 links, emitting raw M3U8 as fallback")
                     callback(
                         newExtractorLink(
                             source = sourceName,
-                            name = "$sourceName Stream",
+                            name = sourceName,
                             url = m3u8Url,
                             type = ExtractorLinkType.M3U8
                         ) {
@@ -269,32 +274,10 @@ class AlbaPlayerExtractor : ExtractorApi() {
             if (m3u8Url != null) {
                 ProviderLogger.d(TAG, "extractFromPage", "Extracted M3U8 URL: $m3u8Url")
 
-                val m3u8Links = M3u8Helper.generateM3u8(
-                    source = "$sourceName",
-                    streamUrl = m3u8Url,
-                    referer = pageUrl,
-                    headers = streamHeaders
-                )
-
-                if (m3u8Links.isNotEmpty()) {
-                    ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper generated ${m3u8Links.size} quality variants")
-                    m3u8Links.sortedByDescending { it.quality }.forEach { link ->
-                        callback(
-                            newExtractorLink(source = sourceName, name = "$sourceName ${link.name}", url = link.url) {
-                                this.referer = link.referer
-                                this.quality = link.quality
-                                this.headers = link.headers
-                            }
-                        )
-                    }
-                    return true
-                }
-
-                ProviderLogger.d(TAG, "extractFromPage", "M3u8Helper returned 0 links, emitting raw M3U8 as fallback")
                 callback(
                     newExtractorLink(
-                        source = "$sourceName",
-                        name = "$sourceName Stream",
+                        source = sourceName,
+                        name = sourceName,
                         url = m3u8Url,
                         type = ExtractorLinkType.M3U8
                     ) {
