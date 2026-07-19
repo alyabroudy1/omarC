@@ -41,10 +41,7 @@ data class ProviderConfig(
     val videoSniffTimeoutMs: Long = 35_000,
 
     /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
-    val preferIpv6: Boolean = false,
-
-    /** Route all requests through WebView (Chromium) instead of OkHttp */
-    val forceWebViewRequests: Boolean = false
+    val preferIpv6: Boolean = false
 )
 
 /**

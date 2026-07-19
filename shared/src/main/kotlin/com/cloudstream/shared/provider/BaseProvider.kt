@@ -47,9 +47,6 @@ abstract class BaseProvider : MainAPI() {
     /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
     open val preferIpv6: Boolean = false
 
-    /** Route all requests through WebView (Chromium) instead of OkHttp */
-    open val forceWebViewRequests: Boolean = false
-
     /** Pagination URL format for main page (null = no pagination, e.g. "page/%d/") */
     open val paginationFormat: String? = null
 
@@ -70,7 +67,6 @@ abstract class BaseProvider : MainAPI() {
                 skipHeadless = true,
                 userAgent = userAgent,
                 preferIpv6 = preferIpv6,
-                forceWebViewRequests = forceWebViewRequests,
             ),
             parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }
