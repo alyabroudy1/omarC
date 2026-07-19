@@ -566,6 +566,54 @@ class ProviderHttpService private constructor(
 
     internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
         val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
+        if (config.forceWebViewRequests) {
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "executeDirectRequest", "WebView routing forced", "url" to targetUrl.take(80))
+            
+            // Build headers with correct cookies
+            val urlDomain = try {
+                java.net.URL(targetUrl).host
+            } catch (e: Exception) {
+                null
+            }
+            val cookiesForDomain = if (urlDomain != null && urlDomain != sessionState.domain) {
+                com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(urlDomain)
+            } else {
+                sessionState.cookies
+            }
+            val headers = buildMap {
+                put("User-Agent", sessionState.userAgent)
+                put("Referer", "https://${urlDomain ?: sessionState.domain}/")
+                put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                put("Accept-Language", "en-US,en;q=0.9")
+                put("Sec-Ch-Ua", WebConfig.buildSecChUa(sessionState.userAgent))
+                put("Sec-Ch-Ua-Mobile", "?1")
+                put("Sec-Ch-Ua-Platform", "\"Android\"")
+                put("Upgrade-Insecure-Requests", "1")
+                put("Sec-Fetch-Dest", "document")
+                put("Sec-Fetch-Mode", "navigate")
+                put("Sec-Fetch-Site", "none")
+                put("Sec-Fetch-User", "?1")
+                if (cookiesForDomain.isNotEmpty()) {
+                    put("Cookie", cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" })
+                }
+            }.toMutableMap()
+            for ((k, v) in customHeaders) {
+                headers[k] = v
+            }
+            
+            val response = chromiumFetcher.fetch(targetUrl, headers)
+            if (response.cookies.isNotEmpty()) {
+                updateCookies(response.cookies, fromWebView = true)
+            }
+            return if (response.success) {
+                RequestResult.success(response.body, response.statusCode, response.finalUrl ?: targetUrl)
+            } else if (response.isCloudflareBlocked) {
+                RequestResult.cloudflareBlocked(response.statusCode, response.finalUrl ?: targetUrl)
+            } else {
+                RequestResult.success(response.body, response.statusCode, response.finalUrl ?: targetUrl)
+            }
+        }
+
         return try {
             
             // Check if URL domain is an alias and get appropriate cookies
