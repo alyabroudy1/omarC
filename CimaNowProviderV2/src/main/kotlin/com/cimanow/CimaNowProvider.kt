@@ -1984,9 +1984,26 @@ class CimaNowProvider : BaseProvider() {
             data class ServerInfo(val index: String, val id: String, val name: String)
 
             if (watchHtml.isNotBlank()) {
+                // Check if the raw HTML needs sandbox decryption (no data-index = still encrypted)
+                val htmlForParsing = if (!watchHtml.contains("data-index")) {
+                    Log.i(TAG_TEST, "⚙️ SANDBOX FALLBACK: watchHtml (${watchHtml.length} chars) has no data-index — running through decryptViaSandbox...")
+                    val sandboxResult = decryptViaSandbox(watchHtml)
+                    if (sandboxResult != null && sandboxResult.contains("data-index")) {
+                        Log.i(TAG_TEST, "✅ SANDBOX SUCCESS: decrypted HTML has data-index (${sandboxResult.length} chars)")
+                        sandboxResult
+                    } else {
+                        Log.w(TAG_TEST, "⚠️ SANDBOX returned ${sandboxResult?.length ?: 0} chars, data-index present: ${sandboxResult?.contains("data-index") ?: false}")
+                        // Still use the sandbox result if it's non-empty, otherwise fall back to original
+                        if (sandboxResult != null && sandboxResult.length > 200) sandboxResult else watchHtml
+                    }
+                } else {
+                    Log.i(TAG_TEST, "✅ watchHtml already contains data-index — skipping sandbox")
+                    watchHtml
+                }
+
                 // Parse servers: <li data-index="XX" data-id="YY">Name</li>
                 val liRegex = Regex("<li[^>]*>(.*?)</li>", RegexOption.IGNORE_CASE)
-                val servers = liRegex.findAll(watchHtml).mapNotNull { match ->
+                val servers = liRegex.findAll(htmlForParsing).mapNotNull { match ->
                     val fullTag = match.value
                     val content = match.groupValues[1]
                     val idx = Regex("""data-index\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE).find(fullTag)?.groupValues?.get(1)?.trim() ?: ""
@@ -1996,12 +2013,12 @@ class CimaNowProvider : BaseProvider() {
 
                 // Parse iframes: <iframe src="...">
                 val iframeRegex = Regex("""<iframe\s+[^>]*?src\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE)
-                val iframeUrls = iframeRegex.findAll(watchHtml).map { it.groupValues[1] }.filter { it.isNotBlank() && !it.contains("about:blank") }.toList()
+                val iframeUrls = iframeRegex.findAll(htmlForParsing).map { it.groupValues[1] }.filter { it.isNotBlank() && !it.contains("about:blank") }.toList()
 
                 // Parse download links: <a href="...">...</a> with quality/download context
                 val aRegex = Regex("""<a\s+[^>]*?href\s*=\s*["']([^"']*?)["'][^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE)
                 val downloadHosts = listOf("jetload", "forafile", "vk.com/doc", "frdl.my", "bysetayico", "href.li")
-                val downloads = aRegex.findAll(watchHtml).mapNotNull { match ->
+                val downloads = aRegex.findAll(htmlForParsing).mapNotNull { match ->
                     val href = match.groupValues[1]
                     if (href.isBlank() || href == "#" || !href.startsWith("http")) return@mapNotNull null
                     val name = match.groupValues[2].replace(Regex("<[^>]*>"), "").trim().take(50)
@@ -2013,7 +2030,7 @@ class CimaNowProvider : BaseProvider() {
                     if (downloadHosts.any { hl.contains(it) }) Pair(href, name) else null
                 }.toList()
 
-                Log.i(TAG_TEST, "Parsed ${servers.size} servers, ${iframeUrls.size} iframes, ${downloads.size} downloads from raw HTML")
+                Log.i(TAG_TEST, "Parsed ${servers.size} servers, ${iframeUrls.size} iframes, ${downloads.size} downloads from ${if (htmlForParsing !== watchHtml) "SANDBOX-DECRYPTED" else "raw"} HTML")
 
                 // 1. Process servers — call core.php for each to get iframe URLs
                 if (servers.isNotEmpty()) {
