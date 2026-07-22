@@ -1270,15 +1270,102 @@ class NavigationEngine(
             ProviderLogger.e(TAG, "executeJsSandbox", "No activity available")
             return null
         }
-        val webView = createWebView(activity, "")
+        val webView = createWebView(activity, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         try {
             webView.settings.blockNetworkLoads = true
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
+
             Handler(Looper.getMainLooper()).post {
                 webView.loadUrl("about:blank")
             }
-            // Ensure about:blank is loaded before evaluating JS
-            delay(100)
-            return executeJsInWebView(webView, "(function() { $javascript })();")
+            delay(150)
+
+            val wrapperScript = """
+                (function() {
+                    try {
+                        window.__captured = '';
+                        window.__decryptedHtml = '';
+
+                        // 1. Create document.write / writeln polyfill with native toString spoofing
+                        var _capturedOutput = '';
+                        function _customWrite(html) {
+                            if (html === null || html === undefined) return;
+                            var str = String(html);
+                            _capturedOutput += str;
+                            window.__captured += str;
+                            window.__decryptedHtml += str;
+                        }
+
+                        _customWrite.toString = function() { return 'function write() { [native code] }'; };
+                        try { Object.defineProperty(_customWrite, 'name', { value: 'write', configurable: true }); } catch(e) {}
+                        try { Object.defineProperty(_customWrite, 'length', { value: 1, configurable: true }); } catch(e) {}
+
+                        // Define un-overwritable document.write property
+                        try {
+                            Object.defineProperty(document, 'write', {
+                                get: function() { return _customWrite; },
+                                set: function(v) {
+                                    // Anti-bot attempt to overwrite document.write - wrap their function
+                                    var _oldWrite = _customWrite;
+                                    var _antiWrite = v;
+                                    _customWrite = function(h) {
+                                        _oldWrite(h);
+                                        if (typeof _antiWrite === 'function') {
+                                            try { _antiWrite(h); } catch(e) {}
+                                        }
+                                    };
+                                    _customWrite.toString = function() { return 'function write() { [native code] }'; };
+                                },
+                                configurable: true,
+                                enumerable: true
+                            });
+                        } catch(e) {
+                            document.write = _customWrite;
+                        }
+
+                        // 2. Element.remove anti-tamper override (prevent anti-bot from wiping DOM elements)
+                        try {
+                            var _origRemove = Element.prototype.remove;
+                            Element.prototype.remove = function() {
+                                if (this && (this.tagName === 'LI' || this.hasAttribute('data-index') || this.hasAttribute('data-id'))) {
+                                    return; // Block element removal
+                                }
+                                if (_origRemove) return _origRemove.apply(this, arguments);
+                            };
+                        } catch(e) {}
+
+                        // 3. Disable Anti-Devtool traps
+                        try {
+                            Object.defineProperty(window, 'DisableDevtool', {
+                                get: function() { return function(o) { return { ignore: function() { return true; } }; }; },
+                                set: function() {},
+                                configurable: true
+                            });
+                        } catch(e) {}
+
+                        // 4. Execute payload JavaScript inside try-catch
+                        try {
+                            $javascript
+                        } catch(err) {
+                            console.error('[Sandbox Payload Error]', err);
+                        }
+
+                        // Return captured output (or body innerHTML fallback if empty)
+                        if (window.__captured && window.__captured.length > 50) {
+                            return window.__captured;
+                        }
+                        if (document.body && document.body.innerHTML && document.body.innerHTML.length > 50) {
+                            return document.body.innerHTML;
+                        }
+                        return window.__captured || '';
+                    } catch(outerErr) {
+                        return 'SANDBOX_ERROR: ' + outerErr.message;
+                    }
+                })();
+            """.trimIndent()
+
+            return executeJsInWebView(webView, wrapperScript)
         } finally {
             Handler(Looper.getMainLooper()).post {
                 try {

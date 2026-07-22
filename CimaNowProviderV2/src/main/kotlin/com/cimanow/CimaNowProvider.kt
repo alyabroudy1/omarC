@@ -359,22 +359,33 @@ class CimaNowProvider : BaseProvider() {
             if (!decryptedHtml.isNullOrBlank()) {
                 val doc = Jsoup.parse(decryptedHtml, data)
 
-                // 1. Extract watch servers
+                // 1. Extract Post ID
+                val postId = doc.select("li[data-id]").firstOrNull()?.attr("data-id")
+                    ?: doc.select("input[name=post_id]").firstOrNull()?.attr("value")
+                    ?: Regex("""data-id\s*=\s*["']([^"']+?)["']""").find(decryptedHtml)?.groupValues?.get(1)
+                    ?: "Unknown"
+
+                Log.i("CimaNowPostId", "=== [POST ID EXTRACTED] === Post ID: $postId (page: $data)")
+
+                // 2. Extract watch servers
                 val servers = doc.select("li[data-index]")
-                Log.i("CimaNowLoadLinks", "Found ${servers.size} watch servers in decrypted HTML")
+                Log.i("CimaNowWatchServers", "Found ${servers.size} watch servers in decrypted HTML for Post ID: $postId")
+                servers.forEachIndexed { i, s ->
+                    Log.d("CimaNowWatchServers", "  Server #$i: index=${s.attr("data-index")}, id=${s.attr("data-id")}, name='${s.text().trim()}'")
+                }
 
                 val deferredList = mutableListOf<Deferred<Unit>>()
                 coroutineScope {
                     servers.forEach { server ->
                         val index = server.attr("data-index")
-                        val id = server.attr("data-id")
+                        val id = server.attr("data-id").ifBlank { postId }
                         val serverName = server.text().trim()
 
                         if (index.isNotBlank() && id.isNotBlank()) {
                             val deferred = async {
                                 try {
                                     val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
-                                    Log.d(TAG, "core.php GET: $ajaxUrl")
+                                    Log.d(TAG, "core.php GET for server '$serverName': $ajaxUrl")
                                     val coreHeaders = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
                                     val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
                                     val playerDoc = Jsoup.parse(coreText, ajaxUrl)
@@ -382,6 +393,7 @@ class CimaNowProvider : BaseProvider() {
                                     val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
 
                                     if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                        Log.i("CimaNowWatchServers", "✅ Resolved iframe for '$serverName' (index=$index, id=$id) -> $iframeUrl")
                                         successCount.incrementAndGet()
                                         when {
                                             iframeUrl.contains("cimanowtv", true) -> {
@@ -394,9 +406,11 @@ class CimaNowProvider : BaseProvider() {
                                                 fallbackExtractIframe(iframeUrl, serverName, data, callback)
                                             }
                                         }
+                                    } else {
+                                        Log.w("CimaNowWatchServers", "⚠️ Empty iframe URL for server '$serverName' (index=$index, id=$id)")
                                     }
                                 } catch (e: Exception) {
-                                    Log.e(TAG, "Error switching server index=$index: ${e.message}")
+                                    Log.e("CimaNowWatchServers", "❌ Error switching server index=$index, id=$id: ${e.message}")
                                 }
                             }
                             deferredList.add(deferred)
@@ -405,10 +419,9 @@ class CimaNowProvider : BaseProvider() {
                     deferredList.awaitAll()
                 }
 
-                /*
-                // 2. Extract download links (Commented out to prevent video player launch delays. Uncomment to re-enable)
-                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href]")
-                Log.i("CimaNowLoadLinks", "Found ${downloadLinks.size} download links in decrypted HTML")
+                // 3. Extract download links
+                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href], a[href*='forafile'], a[href*='jetload'], a[href*='bysetayico'], a[href*='frdl.my']")
+                Log.i("CimaNowDownloadLinks", "Found ${downloadLinks.size} download links in decrypted HTML for Post ID: $postId")
                 for (link in downloadLinks) {
                     try {
                         val dlink = link.attr("href")
@@ -417,7 +430,7 @@ class CimaNowProvider : BaseProvider() {
                             ?: Qualities.Unknown.value
 
                         if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                            Log.d(TAG, "Download link found: quality=$quality url=$dlink")
+                            Log.i("CimaNowDownloadLinks", "✅ Processing download link: quality=$quality, name='$linkText', url=$dlink")
                             when {
                                 dlink.contains("forafile.com", true) -> {
                                     handleForafile(dlink, quality, data, callback)
@@ -435,10 +448,11 @@ class CimaNowProvider : BaseProvider() {
                             successCount.incrementAndGet()
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error processing download link: ${e.message}")
+                        Log.e("CimaNowDownloadLinks", "❌ Error processing download link: ${e.message}")
                     }
                 }
-                */
+
+                Log.i("CimaNowSummary", "=== [EXTRACTION SUMMARY] === Post ID: $postId | Watch Servers: ${servers.size} | Download Links: ${downloadLinks.size} | Total Successes: ${successCount.get()}")
             } else {
                 Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
             }
@@ -1513,17 +1527,19 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_SB, "Extracted ${scripts.size} scripts, total size: ${scripts.sumOf { it.length }}")
 
             val combinedJs = buildString {
-                append("window.__captured='';var _ow=document.write;document.write=function(h){window.__captured+=h;};document.writeln=function(h){window.__captured+=h+'\\n';};")
-                for (s in scripts) { append("try{").append(s).append("}catch(e){}") }
-                append("document.write=_ow;return window.__captured;")
+                for (s in scripts) {
+                    append("try {\n")
+                    append(s)
+                    append("\n} catch(e) {}\n")
+                }
             }
 
             val result = httpService.navigationEngine.executeJsSandbox(combinedJs)
-            if (result != null && result.length > 50) {
+            if (result != null && result.length > 50 && !result.startsWith("SANDBOX_ERROR:")) {
                 Log.i(TAG_SB, "Sandbox decrypt succeeded, length: ${result.length}")
                 return result
             } else {
-                Log.w(TAG_SB, "Sandbox returned empty/short: ${result?.length ?: 0}")
+                Log.w(TAG_SB, "Sandbox returned empty/short/error: ${result?.take(100) ?: 0}")
             }
         } catch (e: Exception) {
             Log.e(TAG_SB, "Sandbox error: ${e.message}")
