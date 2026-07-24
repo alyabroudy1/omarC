@@ -1,6 +1,30 @@
 # CimaNow Watch Page Decryption Handover & Cheatsheet
 
-This cheatsheet is written for developers and future AI agents to immediately understand, debug, and update the **CimaNow** decryption flow if the site changes its encryption parameters again.
+> **⚠️ CURRENT IMPLEMENTATION (2026-07) — read this first. Sections 2–4 below are HISTORICAL.**
+>
+> We do **not** decrypt in Kotlin and we do **not** eval extracted scripts. The **WebView runs the
+> page's own decryptor**; we only feed it the bytes and read the result. `loadLinks` →
+> `resolveViaWebViewSandbox`:
+> 1. HTTP-navigate the freex chain to the timer (blog-post) page (`navigateToTimerPageViaHttp`).
+> 2. `NavigationEngine.execute(...)` follows countdown → `get-link.php` → the `/watching/` URL and
+>    captures its raw (still-encrypted) HTTP response (`mainFrameHtml`).
+> 3. `decryptViaSandbox` → `NavigationEngine.renderHtmlInSandbox` renders that HTML as a **real
+>    navigation** to the `/watching/` URL (NOT `loadDataWithBaseURL`) with the blog-post page as
+>    `Referer`, lets the inline decryptor run untouched, and reads the decrypted `<li data-index>`
+>    server list back via an **in-page reader over `addJavascriptInterface`**.
+> 4. Parse with **Jsoup**; resolve each server via `core.php` + extractors; parse `#download`.
+>
+> **Why it must be shaped exactly this way** — the watch page's anti-bot (decoded 2026-07):
+> - Decryptor aborts if `Function.prototype.toString.call(document.write)` lacks `[native code]` →
+>   **never hook `document.write`**.
+> - Decryptor aborts if `location.hostname` is empty → must be a real navigation to `/watching/`.
+> - An LZString-obfuscated gate runs `if(document.referrer.indexOf('rm.freex2line.online')===-1)
+>   location.replace('/home')`, which aborts the `document.write` parse before the server list →
+>   **must load with the freex blog-post page as Referer**.
+> - After decrypting it installs `isBot()` = stack contains `evaluatejavascript`, or `<anonymous>`
+>   with no `http` → sabotages `querySelectorAll`/`innerHTML`/etc. So DOM reads via
+>   `evaluateJavascript` are defeated; only an **inline page-context script (http stack)** reads real
+>   data. (Full mechanism also recorded in the agent memory `cimanow-antibot-mechanism`.)
 
 ---
 

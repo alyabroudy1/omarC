@@ -2,7 +2,6 @@ package com.cimanow
 
 import android.content.Context
 import android.util.Base64
-import android.widget.Toast
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -22,8 +21,6 @@ import org.jsoup.nodes.Element
 
 import java.io.ByteArrayOutputStream
 import java.util.regex.Pattern
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 
 class CimaNowProvider : BaseProvider() {
@@ -61,8 +58,6 @@ class CimaNowProvider : BaseProvider() {
         mainUrl + "/category/افلام-تركية/page/" to "أفلام تركية",
         mainUrl + "/category/مسلسلات-تركية/page/" to "مسلسلات تركية"
     )
-
-    private data class SvgObject(val stream: String, val hash: String)
 
     private fun getIntFromText(text: String): Int? {
         return Regex("\\d+").find(text)?.value?.toIntOrNull()
@@ -345,450 +340,12 @@ class CimaNowProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS v7] ================")
+        Log.i("CimaNowLoadLinks", "================ [START LOADLINKS] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
-
-        if (data.contains("agent-kim-reactivated", ignoreCase = true)) {
-            Log.i("CimaNowLoadLinks", "Triggering isolated WebView test flow for: $data")
-            return runIsolatedWebViewTest(data, callback)
-        }
-
-        val successCount = java.util.concurrent.atomic.AtomicInteger(0)
-        try {
-            val decryptedHtml = fetchDecryptedWatchPage(data)
-            if (!decryptedHtml.isNullOrBlank()) {
-                val doc = Jsoup.parse(decryptedHtml, data)
-
-                // 1. Extract Post ID
-                val postId = doc.select("li[data-id]").firstOrNull()?.attr("data-id")
-                    ?: doc.select("input[name=post_id]").firstOrNull()?.attr("value")
-                    ?: Regex("""data-id\s*=\s*["']([^"']+?)["']""").find(decryptedHtml)?.groupValues?.get(1)
-                    ?: "Unknown"
-
-                Log.i("CimaNowPostId", "=== [POST ID EXTRACTED] === Post ID: $postId (page: $data)")
-
-                // 2. Extract watch servers
-                val servers = doc.select("li[data-index]")
-                Log.i("CimaNowWatchServers", "Found ${servers.size} watch servers in decrypted HTML for Post ID: $postId")
-                servers.forEachIndexed { i, s ->
-                    Log.d("CimaNowWatchServers", "  Server #$i: index=${s.attr("data-index")}, id=${s.attr("data-id")}, name='${s.text().trim()}'")
-                }
-
-                val deferredList = mutableListOf<Deferred<Unit>>()
-                coroutineScope {
-                    servers.forEach { server ->
-                        val index = server.attr("data-index")
-                        val id = server.attr("data-id").ifBlank { postId }
-                        val serverName = server.text().trim()
-
-                        if (index.isNotBlank() && id.isNotBlank()) {
-                            val deferred = async {
-                                try {
-                                    val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$index&id=$id"
-                                    Log.d(TAG, "core.php GET for server '$serverName': $ajaxUrl")
-                                    val coreHeaders = mapOf("Referer" to data, "X-Requested-With" to "XMLHttpRequest")
-                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
-                                    val playerDoc = Jsoup.parse(coreText, ajaxUrl)
-                                    val rawIframeUrl = playerDoc.select("iframe").attr("src") ?: ""
-                                    val iframeUrl = if (rawIframeUrl.startsWith("//")) "https:$rawIframeUrl" else rawIframeUrl
-
-                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                                        Log.i("CimaNowWatchServers", "✅ Resolved iframe for '$serverName' (index=$index, id=$id) -> $iframeUrl")
-                                        successCount.incrementAndGet()
-                                        when {
-                                            iframeUrl.contains("cimanowtv", true) -> {
-                                                handlecima(iframeUrl, serverName, callback)
-                                            }
-                                            iframeUrl.contains("forafile.com", true) -> {
-                                                handleForafile(iframeUrl, 0, data, callback)
-                                            }
-                                            else -> {
-                                                fallbackExtractIframe(iframeUrl, serverName, data, callback)
-                                            }
-                                        }
-                                    } else {
-                                        Log.w("CimaNowWatchServers", "⚠️ Empty iframe URL for server '$serverName' (index=$index, id=$id)")
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e("CimaNowWatchServers", "❌ Error switching server index=$index, id=$id: ${e.message}")
-                                }
-                            }
-                            deferredList.add(deferred)
-                        }
-                    }
-                    deferredList.awaitAll()
-                }
-
-                // 3. Extract download links
-                val downloadLinks = doc.select("#download li a[href], a[href*=download], a[href*=dl], .download-links a[href], a[href*='forafile'], a[href*='jetload'], a[href*='bysetayico'], a[href*='frdl.my']")
-                Log.i("CimaNowDownloadLinks", "Found ${downloadLinks.size} download links in decrypted HTML for Post ID: $postId")
-                for (link in downloadLinks) {
-                    try {
-                        val dlink = link.attr("href")
-                        val linkText = link.text().trim()
-                        val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
-                            ?: Qualities.Unknown.value
-
-                        if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                            Log.i("CimaNowDownloadLinks", "✅ Processing download link: quality=$quality, name='$linkText', url=$dlink")
-                            when {
-                                dlink.contains("forafile.com", true) -> {
-                                    handleForafile(dlink, quality, data, callback)
-                                }
-                                dlink.contains("jetload.pp.ua", true) -> {
-                                    handleJetload(dlink, quality, data, callback)
-                                }
-                                else -> {
-                                    callback(newExtractorLink("CimaNow", "CimaNow", dlink, type = getLinkType(dlink)) {
-                                        this.referer = data
-                                        this.quality = quality
-                                    })
-                                }
-                            }
-                            successCount.incrementAndGet()
-                        }
-                    } catch (e: Exception) {
-                        Log.e("CimaNowDownloadLinks", "❌ Error processing download link: ${e.message}")
-                    }
-                }
-
-                Log.i("CimaNowSummary", "=== [EXTRACTION SUMMARY] === Post ID: $postId | Watch Servers: ${servers.size} | Download Links: ${downloadLinks.size} | Total Successes: ${successCount.get()}")
-            } else {
-                Log.w("CimaNowLoadLinks", "Programmatic watch HTML decryption returned empty result")
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("CimaNowLoadLinks", "Programmatic flow error: ${e.message}")
-        }
-
-        if (successCount.get() > 0) {
-            Log.i("CimaNowLoadLinks", "================ [END PROGRAMMATIC SUCCESS] ================")
-            return true
-        }
-
-        Log.w("CimaNowLoadLinks", "Programmatic flow failed to find links. Falling back to WebView...")
-        val webViewResult = tryWebViewFallback(data, subtitleCallback, callback)
-        Log.i("CimaNowLoadLinks", "================ [END WebView FALLBACK Result: $webViewResult] ================")
-        return webViewResult
-    }
-
-    private suspend fun fetchDecryptedWatchPage(movieUrl: String): String? {
-        val TAG_DP = "CimaNowDecryptedPage"
-        try {
-            Log.i(TAG_DP, "1. Fetching movie page: $movieUrl")
-            val cacheBuster = "?_ts=${System.currentTimeMillis()}"
-            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl$cacheBuster"
-            val rawHeaders = mapOf(
-                "User-Agent" to httpService.userAgent,
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            val movieHtml = httpService.getRaw(fetchUrl, headers = rawHeaders).body?.string() ?: return null
-
-            val freexMatcher = Pattern.compile("href=[\"'](https?://[^\"']*freex2line[^\"']*)[\"']").matcher(movieHtml)
-            if (!freexMatcher.find()) {
-                Log.e(TAG_DP, "Freex URL not found in movie page")
-                return null
-            }
-            val freexUrl = freexMatcher.group(1)
-            Log.d(TAG_DP, "Found Freex URL: $freexUrl")
-
-            val sessionHeaders = mutableMapOf<String, String>()
-            sessionHeaders["User-Agent"] = httpService.userAgent
-
-            Log.i(TAG_DP, "2. Requesting loadon: $freexUrl")
-            val loadonResp = httpService.getRaw(freexUrl, headers = sessionHeaders)
-            val loadonBody = loadonResp.body?.string() ?: ""
-
-            // Extract any cookies set by loadon
-            val cookies = mutableMapOf<String, String>()
-            for (header in loadonResp.headers("Set-Cookie")) {
-                val eqIdx = header.indexOf('=')
-                if (eqIdx > 0) {
-                    val semiIdx = header.indexOf(';')
-                    val value = if (semiIdx > 0) header.substring(eqIdx + 1, semiIdx) else header.substring(eqIdx + 1)
-                    cookies[header.substring(0, eqIdx)] = value
-                }
-            }
-            loadonResp.close()
-
-            if (cookies.isNotEmpty()) {
-                sessionHeaders["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            }
-
-            Log.i(TAG_DP, "3. Requesting redirectingfree")
-            sessionHeaders["Referer"] = freexUrl
-            val redirResp = httpService.getRaw("https://rm.freex2line.online/redirectingfree/", headers = sessionHeaders)
-            redirResp.close()
-
-            Log.i(TAG_DP, "4. Requesting blog-post.html")
-            sessionHeaders["Referer"] = "https://rm.freex2line.online/redirectingfree/"
-            val blogResp = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = sessionHeaders)
-            val blogHtml = blogResp.body?.string() ?: ""
-            blogResp.close()
-
-            // Extract ch, ri, ke, se variables
-            val chVar = reMatch(blogHtml, "ch:\\s*['\"]([^'\"]+)['\"]") ?: return null
-            val riVar = reMatch(blogHtml, "ri:\\s*['\"]([^'\"]+)['\"]") ?: return null
-            val keVar = reMatch(blogHtml, "ke:\\s*['\"]([^'\"]+)['\"]") ?: return null
-            val seVar = reMatch(blogHtml, "se:\\s*['\"]([^'\"]+)['\"]") ?: return null
-
-            val ctxMatcher = Pattern.compile("window\\['ctx_[^']+'\\]\\s*=\\s*\\{([^}]+)\\}").matcher(blogHtml)
-            if (!ctxMatcher.find()) {
-                Log.e(TAG_DP, "ctx not found in blog-post.html")
-                return null
-            }
-            val ctxContent = ctxMatcher.group(1)
-            val ch = reMatch(ctxContent, "'$chVar'\\s*:\\s*'([^']+)'") ?: return null
-            val ri = reMatch(ctxContent, "'$riVar'\\s*:\\s*'([^']+)'") ?: return null
-            val ke = reMatch(ctxContent, "'$keVar'\\s*:\\s*'([^']+)'") ?: return null
-            val se = reMatch(ctxContent, "'$seVar'\\s*:\\s*'([^']+)'") ?: return null
-
-            // Decrypt key
-            val keDecoded = Base64.decode(ke, Base64.DEFAULT)
-            val keyBytes = ByteArray(keDecoded.size)
-            for (i in keDecoded.indices) {
-                keyBytes[i] = (keDecoded[i].toInt() xor se[i % se.length].code).toByte()
-            }
-            val keyHex = String(keyBytes, Charsets.UTF_8)
-
-            val fp = "TW96aWxsYS81Ll9f"
-            val msg = ri + ch + fp
-            val hmacBytes = hmacSha256(keyHex.toByteArray(Charsets.UTF_8), msg.toByteArray(Charsets.UTF_8))
-            val hmacToken = Base64.encodeToString(hmacBytes, Base64.NO_WRAP)
-
-            Log.i(TAG_DP, "Waiting 12 seconds for delay bypass...")
-            delay(12000)
-
-            Log.i(TAG_DP, "5. Requesting get-link.php")
-            val ajaxUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php?request_id=$ri&hmac_token=${java.net.URLEncoder.encode(hmacToken, "UTF-8")}&ch=$ch&fp=$fp"
-            sessionHeaders["X-Requested-With"] = "XMLHttpRequest"
-            sessionHeaders["Referer"] = "https://rm.freex2line.online/2020/02/blog-post.html/"
-
-            val ajaxResp = httpService.getRaw(ajaxUrl, headers = sessionHeaders)
-            val ajaxText = ajaxResp.body?.string() ?: ""
-            ajaxResp.close()
-
-            val watchUrl = ajaxText.trim().replace("\ufeff", "")
-            Log.i(TAG_DP, "Resolved Watch URL: $watchUrl")
-
-            // The watch page is reached from the freex blog-post page; that URL is its Referer
-            // (see HAR). Derive it from the freex host we already extracted rather than hardcoding.
-            val freexHost = try { java.net.URI(freexUrl).host } catch (_: Exception) { null } ?: "rm.freex2line.online"
-            val watchReferer = "https://$freexHost/2020/02/blog-post.html/"
-
-            Log.i(TAG_DP, "6. Fetching watch page: $watchUrl (referer=$watchReferer)")
-            sessionHeaders.remove("X-Requested-With")
-            sessionHeaders["Referer"] = watchReferer
-            val watchResp = httpService.getRaw(watchUrl, headers = sessionHeaders)
-            val watchHtml = watchResp.body?.string() ?: ""
-            watchResp.close()
-
-            Log.i(TAG_DP, "7. Decrypting watch page HTML")
-            var decrypted = decryptWatchHtml(watchHtml)
-            if (decrypted == null) {
-                Log.w(TAG_DP, "Phase 1 (strategies) failed, trying Phase 2 (JS Sandbox)...")
-                decrypted = decryptViaSandbox(watchHtml, watchUrl, watchReferer)
-            }
-            if (decrypted == null) {
-                Log.e(TAG_DP, "Phase 2 (sandbox) failed too, falling through to WebView phase 3")
-                return null
-            }
-            return decrypted
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG_DP, "fetchDecryptedWatchPage error: ${e.message}")
-        }
-        return null
-    }
-
-    // ==================== WebView Fallback ====================
-
-    private suspend fun tryWebViewFallback(
-        data: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val TAG_WV = "CimaNowWebViewFallback"
-        Log.i(TAG_WV, "========== [START] WebView navigation fallback ==========")
-        Log.i(TAG_WV, "URL: $data")
-
-        try {
-            val config = WebViewFlowHelper.Config(
-                // All domains allowed for debugging — the redirect confirmation dialog gives manual control
-                allowedDomains = listOf("cimanow.cc", "freex2line.online", "rm.freex2line.online", "href.li", "viiukuhe.com", "ayhal.com"),
-                destinationLockPatterns = listOf("/watching/"),
-                // Extended timeout to allow manual navigation through the redirect chain
-                overallTimeoutMs = 600_000L
-            )
-            Log.d(TAG_WV, "Config: allowedDomains=${config.allowedDomains}, destPatterns=${config.destinationLockPatterns}, timeoutMs=${config.overallTimeoutMs}")
-
-            Log.i(TAG_WV, "Invoking WebView navigation (this may take up to ${config.overallTimeoutMs / 1000}s)...")
-            val flowResult = webViewFlowHelper.navigateMovieToWatchPage(data, config)
-
-            if (!flowResult.success) {
-                Log.w(TAG_WV, "WebView flow FAILED: ${flowResult.error}")
-                Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
-                Log.d(TAG_WV, "  servers extracted: ${flowResult.servers.size}")
-                return false
-            }
-
-            Log.i(TAG_WV, "WebView flow SUCCEEDED")
-            Log.d(TAG_WV, "  finalUrl: ${flowResult.finalUrl.take(100)}")
-            Log.d(TAG_WV, "  servers count: ${flowResult.servers.size}")
-            Log.d(TAG_WV, "  downloads count: ${flowResult.downloads.size}")
-
-            flowResult.servers.forEachIndexed { i, s ->
-                Log.d(TAG_WV, "  server[$i]: name='${s.name}' index=${s.index} id=${s.id} hasIframe=${s.iframeUrl.isNotBlank()}")
-                if (s.iframeUrl.isNotBlank()) {
-                    Log.d(TAG_WV, "    iframeUrl: ${s.iframeUrl.take(100)}")
-                }
-            }
-            flowResult.downloads.forEachIndexed { i, d ->
-                Log.d(TAG_WV, "  download[$i]: name='${d.name}' url=${d.url.take(100)}")
-            }
-
-            var found = false
-            val referer = flowResult.finalUrl.ifBlank { data }
-
-            for (server in flowResult.servers) {
-                if (server.iframeUrl.isNotBlank()) {
-                    Log.i(TAG_WV, "Processing server '${server.name}' ...")
-                    try {
-                        val iframeUrl = server.iframeUrl
-                        when {
-                            iframeUrl.contains("cimanowtv", true) -> {
-                                Log.d(TAG_WV, "  -> routing to handlecima")
-                                handlecima(iframeUrl, server.name, callback)
-                            }
-                            iframeUrl.contains("forafile.com", true) -> {
-                                Log.d(TAG_WV, "  -> routing to handleForafile")
-                                handleForafile(iframeUrl, 0, referer, callback)
-                            }
-                            else -> {
-                                Log.d(TAG_WV, "  -> routing to fallbackExtractIframe (referer=$referer)")
-                                fallbackExtractIframe(iframeUrl, server.name, referer, callback)
-                            }
-                        }
-                        found = true
-                    } catch (e: Exception) {
-                        Log.e(TAG_WV, "  ERROR processing server '${server.name}': ${e.message}")
-                    }
-                } else {
-                    Log.d(TAG_WV, "Server '${server.name}' has empty iframeUrl, skipping")
-                }
-            }
-
-            for (download in flowResult.downloads) {
-                if (download.url.isNotBlank()) {
-                    Log.i(TAG_WV, "Processing download '${download.name}' -> ${download.url.take(100)}")
-                    callback(
-                        newExtractorLink(download.name, download.name, download.url, type = getLinkType(download.url))
-                    )
-                    found = true
-                }
-            }
-
-            Log.i(TAG_WV, "========== [END] WebView fallback, found=$found ==========")
-            return found
-
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG_WV, "WebView fallback EXCEPTION: ${e.message}")
-            Log.e(TAG_WV, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
-            return false
-        }
-    }
-
-    // ==================== processServerElement ====================
-
-    private suspend fun processServerElement(
-        serverElement: Element,
-        finalCimaNowUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val TAG_PS = "ProcessSrvElement"
-        Log.w(TAG_PS, "Called but should be dead code (v5 bypasses watch page)")
-        try {
-            val dataIndex = serverElement.attr("data-index")
-            val dataId = serverElement.attr("data-id")
-            val serverName = serverElement.text().trim()
-
-            Log.i(TAG_PS, "Server: name='$serverName', index=$dataIndex, id=$dataId")
-
-            val ajaxUrl = "$mainUrl/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=$dataIndex&id=$dataId"
-            val playerDoc = try {
-                httpService.getDocument(ajaxUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest"), rewriteDomain = true)
-            } catch (_: Exception) { null }
-
-            val iframeUrl = playerDoc?.select("iframe")?.attr("src") ?: ""
-
-            if (serverName.contains("Cima Now", true) || serverName.contains("cima", true)) {
-                handlecima(iframeUrl, serverName, callback)
-            } else if (serverName.contains("VidPro", true)) {
-                handleVidPro(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Govid", true) || serverName.contains("Goovid", true)) {
-                handleGovid(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Vidlook", true)) {
-                handleVidlook(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Streamwish", true)) {
-                handleStreamwish(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Streamfile", true) || serverName.contains("Luluvid", true)) {
-                handleStreamfileAndLuluvid(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Vadbam", true) || serverName.contains("Viidshare", true)) {
-                handleVadbamAndViidshare(iframeUrl, serverName, callback)
-            } else if (serverName.contains("Jetload", true)) {
-                handleJetload(iframeUrl, 0, finalCimaNowUrl, callback)
-            } else if (serverName.contains("Forafile", true) || iframeUrl.contains("forafile.com")) {
-                handleForafile(iframeUrl, 0, finalCimaNowUrl, callback)
-            } else {
-                for (link in serverElement.select("a")) {
-                    val dlink = link.attr("href")
-                    if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                        val quality = Regex("\\d+p").find(link.text())?.value?.let { getQualityFromName(it) }
-                            ?: Qualities.Unknown.value
-                        callback(newExtractorLink(serverName, serverName, dlink, type = getLinkType(dlink)) {
-                            this.referer = finalCimaNowUrl
-                            this.quality = quality
-                        })
-                    }
-                }
-                if (iframeUrl.isNotBlank()) {
-                    loadExtractor(iframeUrl, finalCimaNowUrl, subtitleCallback, callback)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing server: ${e.message}")
-        }
-    }
-
-    // ==================== processDownloadLink ====================
-
-    private suspend fun processDownloadLink(
-        aTag: Element,
-        finalCimaNowUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            val dlink = aTag.attr("href")
-            val linkText = aTag.text()
-            val quality = Regex("\\d+p").find(linkText)?.value?.let { getQualityFromName(it) }
-                ?: Qualities.Unknown.value
-
-            if (dlink.isNotBlank() && dlink.startsWith("http")) {
-                Log.d(TAG, "Download link: quality=$quality url=$dlink")
-                callback(newExtractorLink("CimaNow", "CimaNow", dlink, type = getLinkType(dlink)) {
-                    this.referer = finalCimaNowUrl
-                    this.quality = quality
-                })
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing download link: ${e.message}")
-        }
+        // The WebView does all decryption; see resolveViaWebViewSandbox.
+        val found = resolveViaWebViewSandbox(data, subtitleCallback, callback)
+        Log.i("CimaNowLoadLinks", "================ [END LOADLINKS found=$found] ================")
+        return found
     }
 
     // ==================== handlecima ====================
@@ -1191,323 +748,6 @@ class CimaNowProvider : BaseProvider() {
         }
     }
 
-    // ==================== Utilities ====================
-
-    private fun reMatch(html: String, regex: String): String? {
-        return try {
-            val matcher = Pattern.compile(regex).matcher(html)
-            if (matcher.find()) matcher.group(1) else null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        val secretKey = SecretKeySpec(key, "HmacSHA256")
-        mac.init(secretKey)
-        return mac.doFinal(data)
-    }
-
-    /**
-     * Decrypts the watch page HTML (from /watching/?token=...) containing the server lists and iframes.
-     * The watch HTML contains an encrypted string consisting of base64 blocks split by '@'.
-     *
-     * How to debug/fix when the decryption method changes:
-     * 1. Check the dynamic key computation:
-     *    - Currently, the key is the sum of integer elements inside `var _oArr = [...]` (e.g. 39597 + 39598 + 39597 = 118792).
-     *    - Fallback: Key is calculated as `_dk1 - _dk2` if they are present.
-     *    - If they change the variable name `_oArr`, update the regex matching the key array.
-     * 2. Check the encrypted data format:
-     *    - Currently, it extracts the variable containing the string with '@' separators (e.g., var _b5178 = 'base64@base64@...').
-     *    - It splits by '@', base64 decodes each block, extracts all digit characters, parses them as an integer, XORs it with the key, and converts it to a character.
-     *    - If they change the separator '@' or base64 layout, adjust the splitting and parsing loop accordingly.
-     * 3. Look at the Android Logcat under the tags:
-     *    - "CimaNowDecryptedPage": For redirection, HMAC token generation, and decryption status logs.
-     *    - "CimaNowLoadLinks": For parsing success counts and failover WebView triggers.
-     */
-    private fun decryptWatchHtml(html: String): String? {
-        try {
-            // Phase 1a: AtobConfigStrategy - atob() encoded config format
-            try {
-                val atobCfgMatcher = Pattern.compile("atob\\s*\\(\\s*'([A-Za-z0-9+/=]+)'\\s*\\)").matcher(html)
-                if (atobCfgMatcher.find()) {
-                    val atobCfgEncoded = atobCfgMatcher.group(1)
-                    val atobCfgDecoded = String(Base64.decode(atobCfgEncoded, Base64.DEFAULT))
-                    if (atobCfgDecoded.matches(Regex("^\\d+,\\d+,\\d+,\\d+,[0-9a-f]+$"))) {
-                        val cfg = atobCfgDecoded.split(",")
-                        val aBase = cfg[0].toInt()
-                        val aModulo = cfg[1].toInt()
-                        val aSubtract = cfg.getOrNull(2)?.toIntOrNull() ?: 0
-                        val aBaseN = cfg.getOrNull(3)?.toIntOrNull() ?: 10
-                        val aHex = cfg.getOrNull(4) ?: ""
-                        val aKey = aBase + (aHex.toInt(16) % aModulo)
-
-                        val dm = Pattern.compile("split\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)").matcher(html)
-                        val aDelim = if (dm.find()) dm.group(1) else "*"
-
-                        var payloadStr: String? = null
-
-                        val joinM = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\.join\\(\\s*['\"]*['\"]\\s*\\)").matcher(html)
-                        if (joinM.find()) {
-                            val varName = joinM.group(1)
-                            val arrayM = Pattern.compile("var\\s+$varName\\s*=\\s*\\[(.*?)\\];", Pattern.DOTALL).matcher(html)
-                            if (arrayM.find()) {
-                                val sm = Pattern.compile("'([^']*)'").matcher(arrayM.group(1) ?: "")
-                                val sb = StringBuilder()
-                                while (sm.find()) sb.append(sm.group(1) ?: "")
-                                if (sb.isNotEmpty()) payloadStr = sb.toString()
-                            }
-                        }
-
-                        if (payloadStr == null || payloadStr.length < 100) {
-                            val vm = Pattern.compile("var\\s+(_[a-zA-Z0-9_]{3,10})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
-                            while (vm.find()) {
-                                val vc = vm.group(2) ?: continue
-                                if (vc.length > 500 && vc.contains(aDelim)) {
-                                    val sm = Pattern.compile("'([^']*)'").matcher(vc)
-                                    val sb = StringBuilder()
-                                    while (sm.find()) sb.append(sm.group(1))
-                                    if (sb.isNotEmpty() && sb.length > 100) {
-                                        payloadStr = sb.toString()
-                                        break
-                                    }
-                                }
-                            }
-                        }
-
-                        if (payloadStr != null && payloadStr.length > 50) {
-                            val parts = payloadStr.split(Regex(Pattern.quote(aDelim)))
-                            val decrypted = StringBuilder()
-                            for (p in parts) {
-                                if (p.isBlank()) continue
-                                try {
-                                    val decoded = Base64.decode(p, Base64.DEFAULT)
-                                    val decStr = String(decoded, Charsets.ISO_8859_1)
-                                    val pIn = decStr.split('-')
-                                    if (pIn.size >= 2) {
-                                        val num = pIn[1].toLong(aBaseN).toInt()
-                                        val fC = (num - aSubtract) xor aKey
-                                        decrypted.append(fC.toChar())
-                                    }
-                                } catch (_: Exception) {}
-                            }
-                            if (decrypted.isNotBlank()) {
-                                Log.d(TAG, "AtobConfig decrypt success, len: ${decrypted.length}")
-                                return decrypted.toString()
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "AtobConfigStrategy error: ${e.message}")
-            }
-
-            // Phase 1b: Try finding _pHsh and kV (new July 2026 format)
-            val pHshMatcher = Pattern.compile("var\\s+_pHsh\\s*=\\s*['\"]([0-9a-fA-F]+)['\"]").matcher(html)
-            val kvMatcher = Pattern.compile("kV\\s*=\\s*(\\d+)").matcher(html)
-            if (pHshMatcher.find()) {
-                val pHsh = pHshMatcher.group(1)
-                
-                // Parse _kV calculation dynamically to handle future value changes
-                val formulaMatcher = Pattern.compile("_kV\\s*=\\s*(\\d+)\\s*\\+\\s*\\(parseInt\\(_pHsh\\.substring\\(0,\\s*6\\),\\s*16\\)\\s*%\\s*(\\d+)\\)").matcher(html)
-                var computedKv = 50000
-                var modulo = 100000
-                if (formulaMatcher.find()) {
-                    computedKv = formulaMatcher.group(1).toIntOrNull() ?: 50000
-                    modulo = formulaMatcher.group(2).toIntOrNull() ?: 100000
-                } else if (kvMatcher.find()) {
-                    computedKv = kvMatcher.group(1).toIntOrNull() ?: 50000
-                }
-                
-                val hexPart = try { pHsh.substring(0, 6) } catch (_: Exception) { "" }
-                val parsedHex = try { hexPart.toInt(16) } catch (_: Exception) { 0 }
-                val keyVal = computedKv + (parsedHex % modulo)
-                
-                val arrayName = try { "_" + pHsh.substring(2, 7) } catch (_: Exception) { "" }
-                if (arrayName.isNotEmpty()) {
-                    val startKeyword = "var $arrayName"
-                    val startIdx = html.indexOf(startKeyword)
-                    if (startIdx != -1) {
-                        val subHtml = html.substring(startIdx)
-                        var endIdx = subHtml.indexOf(";var")
-                        if (endIdx == -1) {
-                            endIdx = subHtml.indexOf(";\nvar")
-                        }
-                        if (endIdx == -1) {
-                            endIdx = subHtml.indexOf(";var _aArr")
-                        }
-                        val varBlock = if (endIdx != -1) subHtml.substring(0, endIdx) else subHtml
-                        
-                        // Extract all string literals inside single quotes
-                        val strMatcher = Pattern.compile("'([^']*)'").matcher(varBlock)
-                        val sb = StringBuilder()
-                        while (strMatcher.find()) {
-                            sb.append(strMatcher.group(1))
-                        }
-                        val arrayStr = sb.toString()
-                        val parts = arrayStr.split('|')
-                        
-                        val decryptedChars = StringBuilder()
-                        for (p in parts) {
-                            if (p.isBlank()) continue
-                            try {
-                                val decodedBytes = Base64.decode(p, Base64.DEFAULT)
-                                val decStr = String(decodedBytes, Charsets.ISO_8859_1)
-                                val pIn = decStr.split('-')
-                                if (pIn.size >= 2) {
-                                    val num = pIn[1].toLong(36).toInt()
-                                    val fC = (num - 1337) xor keyVal
-                                    decryptedChars.append(fC.toChar())
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        val decrypted = decryptedChars.toString()
-                        if (decrypted.isNotBlank()) {
-                            Log.d(TAG, "Successfully decrypted watch page using July 2026 format, length: ${decrypted.length}")
-                            return decrypted
-                        }
-                    }
-                }
-            }
-
-            // --- Fallback to old formats ---
-            var key: Int? = null
-
-            // 1. Try _x\d+ dynamic sum key first (latest logic)
-            val xVarMatcher = Pattern.compile("var\\s+(_x\\d+)\\s*=\\s*(\\d+)").matcher(html)
-            var xSum = 0
-            var hasXVars = false
-            while (xVarMatcher.find()) {
-                xSum += xVarMatcher.group(2).toIntOrNull() ?: 0
-                hasXVars = true
-            }
-            if (hasXVars) {
-                key = xSum
-                Log.d(TAG, "Key Detection (Fallback): Found _x variables, sum key: $key")
-            }
-
-            if (key == null) {
-                // 2. Try _oArr sum key
-                val oArrMatcher = Pattern.compile("var\\s+_oArr\\s*=\\s*\\[([\\d,\\s]+)\\]").matcher(html)
-                if (oArrMatcher.find()) {
-                    key = oArrMatcher.group(1).split(",").map { it.trim().toIntOrNull() ?: 0 }.sum()
-                    Log.d(TAG, "Key Detection (Fallback): Found _oArr, sum key: $key")
-                }
-            }
-
-            if (key == null) {
-                // 3. Try _dk1 and _dk2
-                val dk1Matcher = Pattern.compile("var\\s+_dk1\\s*=\\s*(\\d+);").matcher(html)
-                val dk2Matcher = Pattern.compile("var\\s+_dk2\\s*=\\s*(\\d+);").matcher(html)
-                if (dk1Matcher.find() && dk2Matcher.find()) {
-                    val dk1 = dk1Matcher.group(1).toIntOrNull() ?: 0
-                    val dk2 = dk2Matcher.group(1).toIntOrNull() ?: 0
-                    key = dk1 - dk2
-                    Log.d(TAG, "Key Detection (Fallback): Found _dk1 and _dk2, diff key: $key")
-                }
-            }
-
-            if (key == null) {
-                Log.e(TAG, "decryptWatchHtml (Fallback): Key not found")
-                return null
-            }
-
-            // Find base64 variable containing '*' or '@'
-            val varMatcher = Pattern.compile("var\\s+(_[a-zA-Z0-9_]{3,10})\\s*=\\s*(.*?);", Pattern.DOTALL).matcher(html)
-            var rawVal = ""
-            var delimiter = "@"
-            while (varMatcher.find()) {
-                val valContent = varMatcher.group(2)
-                if (valContent.length > 1000) {
-                    if (valContent.contains("*")) {
-                        rawVal = valContent
-                        delimiter = "*"
-                        break
-                    } else if (valContent.contains("@")) {
-                        rawVal = valContent
-                        delimiter = "@"
-                        break
-                    }
-                }
-            }
-
-            if (rawVal.isBlank()) {
-                Log.e(TAG, "decryptWatchHtml (Fallback): Base64 variable not found")
-                return null
-            }
-
-            // Extract string literals
-            val strMatcher = Pattern.compile("'([^']*)'").matcher(rawVal)
-            val sb = StringBuilder()
-            while (strMatcher.find()) {
-                sb.append(strMatcher.group(1))
-            }
-
-            val parts = sb.toString().split(delimiter)
-            
-            // 4. Operator Auto-detection (XOR vs Subtraction)
-            var firstDigits: Int? = null
-            for (p in parts) {
-                if (p.isNotBlank()) {
-                    try {
-                        val decodedBytes = Base64.decode(p, Base64.DEFAULT)
-                        val decStr = String(decodedBytes, Charsets.ISO_8859_1)
-                        val digits = decStr.filter { it.isDigit() }
-                        if (digits.isNotEmpty()) {
-                            firstDigits = digits.toInt()
-                            break
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
-
-            if (firstDigits == null) {
-                Log.e(TAG, "decryptWatchHtml (Fallback): Failed to get first digits for operator auto-detection")
-                return null
-            }
-
-            val valXor = firstDigits xor key
-            val valSub = firstDigits - key
-            val useXor = if (valXor in 10..127) {
-                true
-            } else if (valSub in 10..127) {
-                false
-            } else {
-                true // Fallback to XOR
-            }
-            Log.d(TAG, "Operator Detection (Fallback): useXor=$useXor (XOR=$valXor, SUB=$valSub)")
-
-            val decryptedChars = StringBuilder()
-
-            for (p in parts) {
-                if (p.isBlank()) continue
-                try {
-                    val decodedBytes = Base64.decode(p, Base64.DEFAULT)
-                    val decStr = String(decodedBytes, Charsets.ISO_8859_1)
-                    val digits = decStr.filter { it.isDigit() }
-                    if (digits.isNotEmpty()) {
-                        val num = digits.toInt()
-                        val code = if (useXor) (num xor key) else (num - key)
-                        decryptedChars.append(code.toChar())
-                    }
-                } catch (_: Exception) {}
-            }
-
-            val decrypted = decryptedChars.toString()
-            if (decrypted.isBlank()) return null
-
-            val bytes = ByteArray(decrypted.length)
-            for (i in 0 until decrypted.length) {
-                bytes[i] = decrypted[i].code.toByte()
-            }
-            return String(bytes, Charsets.UTF_8)
-        } catch (e: Exception) {
-            Log.e(TAG, "decryptWatchHtml error: ${e.message}")
-        }
-        return null
-    }
-
     /**
      * True only when the HTML contains a real server-list element (<li ... data-index=...>),
      * NOT merely the substring "data-index". The bare substring also appears in injected
@@ -1517,18 +757,17 @@ class CimaNowProvider : BaseProvider() {
         Regex("<li\\b[^>]*\\bdata-index\\s*=", RegexOption.IGNORE_CASE).containsMatchIn(html)
 
     /**
-     * Phase 2 decryption: render the captured (still-encrypted) watch-page HTML in a WebView and
-     * let the page's OWN decryptor run — the WebView does all the work; we never decrypt in Kotlin.
+     * Decrypt the captured (still-encrypted) watch-page HTML by letting the page's OWN decryptor
+     * run in a WebView — the WebView does all the work; nothing is decrypted in Kotlin.
      *
-     * Anti-detection strategy (the whole point): present as an ordinary in-app browser and touch
-     * nothing the adaptive anti-bot can fingerprint. renderHtmlInSandbox runs in STEALTH mode —
-     * no document.write/prototype/DOMParser tampering (all trivially detectable and the likely
-     * reason decryption was being withheld) — and captures the server list passively via a
-     * MutationObserver. We also render under the REAL /watching/ URL as baseUrl so any self-URL
-     * check inside the decryptor passes, and reuse the session's mobile UA for consistency.
+     * Delegates to NavigationEngine.renderHtmlInSandbox, which (per the decoded anti-bot): serves
+     * the HTML as a real navigation to [pageUrl] (so document.write/open commit and location.host
+     * is set), sets document.referrer via [referrer] (to pass the /home redirect gate), and reads
+     * the decrypted server list back through an in-page reader over a JavascriptInterface (never
+     * via evaluateJavascript, which the page's isBot() stack-check would sabotage).
      *
      * @param watchHtml captured watch-page HTML (still encrypted)
-     * @param pageUrl   the real /watching/?token=… URL — used as the document's base/origin
+     * @param pageUrl   the real /watching/?token=… URL — served as the document's URL/origin
      * @param referrer  the Referer the watch page was actually reached with (the freex blog-post
      *                  page). The decrypted page redirects to /home unless document.referrer
      *                  matches that host, which aborts the parse — so this must mirror the real
@@ -1818,12 +1057,22 @@ class CimaNowProvider : BaseProvider() {
 })();
 """.trimIndent()
 
-    private suspend fun runIsolatedWebViewTest(
+    /**
+     * Official link resolver. The WebView does ALL decryption:
+     *   1. HTTP-navigate the freex redirect chain to the timer (blog-post) page.
+     *   2. Render it in the NavigationEngine, which follows the countdown → get-link.php → the
+     *      cimanow /watching/ URL and captures its raw (still-encrypted) HTTP response.
+     *   3. Decrypt that HTML in an isolated WebView via decryptViaSandbox (page's own JS runs,
+     *      stealth in-page reader returns the server list — see NavigationEngine.renderHtmlInSandbox).
+     *   4. Parse servers/downloads/iframes with Jsoup and resolve each (core.php → extractors).
+     */
+    private suspend fun resolveViaWebViewSandbox(
         movieUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val TAG_TEST = "CimaNowIsolatedTest"
-        Log.i(TAG_TEST, "========== [START] HYBRID WebView Test Flow ==========")
+        val TAG_TEST = "CimaNowResolve"
+        Log.i(TAG_TEST, "========== [START] WebView sandbox resolve ==========")
         Log.i(TAG_TEST, "Target URL: $movieUrl")
 
         try {
@@ -2035,34 +1284,29 @@ class CimaNowProvider : BaseProvider() {
                     watchHtml
                 }
 
-                // Parse servers: <li data-index="XX" data-id="YY">Name</li>
-                val liRegex = Regex("<li[^>]*>(.*?)</li>", RegexOption.IGNORE_CASE)
-                val servers = liRegex.findAll(htmlForParsing).mapNotNull { match ->
-                    val fullTag = match.value
-                    val content = match.groupValues[1]
-                    val idx = Regex("""data-index\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE).find(fullTag)?.groupValues?.get(1)?.trim() ?: ""
-                    val id = Regex("""data-id\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE).find(fullTag)?.groupValues?.get(1)?.trim() ?: ""
-                    if (idx.isBlank() && id.isBlank()) null else ServerInfo(idx, id, content.replace(Regex("<[^>]*>"), "").trim().take(50))
-                }.toList()
+                // Parse with Jsoup — robust across multi-line/attribute-order variation (the old
+                // regex parser missed the multi-line <a>…</a> download anchors → 0 downloads).
+                val doc = Jsoup.parse(htmlForParsing, watchUrl.ifBlank { movieUrl })
 
-                // Parse iframes: <iframe src="...">
-                val iframeRegex = Regex("""<iframe\s+[^>]*?src\s*=\s*["']([^"']*?)["']""", RegexOption.IGNORE_CASE)
-                val iframeUrls = iframeRegex.findAll(htmlForParsing).map { it.groupValues[1] }.filter { it.isNotBlank() && !it.contains("about:blank") }.toList()
+                // Servers: <li data-index="XX" data-id="YY">Name</li>
+                val servers = doc.select("li[data-index]").mapNotNull { el ->
+                    val idx = el.attr("data-index").trim()
+                    val id = el.attr("data-id").trim()
+                    if (idx.isBlank() && id.isBlank()) null else ServerInfo(idx, id, el.text().trim().take(50))
+                }
 
-                // Parse download links: <a href="...">...</a> with quality/download context
-                val aRegex = Regex("""<a\s+[^>]*?href\s*=\s*["']([^"']*?)["'][^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE)
-                val downloadHosts = listOf("jetload", "forafile", "vk.com/doc", "frdl.my", "bysetayico", "href.li")
-                val downloads = aRegex.findAll(htmlForParsing).mapNotNull { match ->
-                    val href = match.groupValues[1]
-                    if (href.isBlank() || href == "#" || !href.startsWith("http")) return@mapNotNull null
-                    val name = match.groupValues[2].replace(Regex("<[^>]*>"), "").trim().take(50)
-                    val fullMatch = match.value
-                    val hasDownloadId = Regex("""id\s*=\s*["'](download|d_hidden)["']""", RegexOption.IGNORE_CASE).containsMatchIn(fullMatch)
-                    val hasQualityLabel = Regex("""aria-label\s*=\s*["'](quality|q_hidden|download)["']""", RegexOption.IGNORE_CASE).containsMatchIn(fullMatch)
-                    if (hasDownloadId || hasQualityLabel) return@mapNotNull Pair(href, name)
-                    val hl = href.lowercase()
-                    if (downloadHosts.any { hl.contains(it) }) Pair(href, name) else null
-                }.toList()
+                // Direct iframes (e.g. VK embed rendered straight into the DOM)
+                val iframeUrls = doc.select("iframe[src]").map { it.attr("src") }
+                    .filter { it.isNotBlank() && !it.contains("about:blank") }
+
+                // Download links: every anchor inside #download, plus known file hosts anywhere.
+                val downloads = doc.select(
+                    "#download a[href], a[href*='jetload'], a[href*='forafile'], a[href*='vk.com/doc'], a[href*='frdl.my'], a[href*='bysetayico']"
+                ).mapNotNull { a ->
+                    val href = a.attr("href")
+                    if (href.isBlank() || !href.startsWith("http")) return@mapNotNull null
+                    Pair(href, a.text().trim().take(50))
+                }.distinctBy { it.first }
 
                 Log.i(TAG_TEST, "Parsed ${servers.size} servers, ${iframeUrls.size} iframes, ${downloads.size} downloads from ${if (htmlForParsing !== watchHtml) "SANDBOX-DECRYPTED" else "raw"} HTML")
 
