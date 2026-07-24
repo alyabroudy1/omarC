@@ -583,7 +583,7 @@ class CimaNowProvider : BaseProvider() {
             var decrypted = decryptWatchHtml(watchHtml)
             if (decrypted == null) {
                 Log.w(TAG_DP, "Phase 1 (strategies) failed, trying Phase 2 (JS Sandbox)...")
-                decrypted = decryptViaSandbox(watchHtml)
+                decrypted = decryptViaSandbox(watchHtml, watchUrl)
             }
             if (decrypted == null) {
                 Log.e(TAG_DP, "Phase 2 (sandbox) failed too, falling through to WebView phase 3")
@@ -1504,34 +1504,43 @@ class CimaNowProvider : BaseProvider() {
     }
 
     /**
-     * Phase 2 decryption: render the captured (still-encrypted) watch-page HTML in an isolated,
-     * network-blocked WebView and let the page's own inline decryptor run natively, then poll
-     * the DOM for the decrypted server list (<li data-index=".." data-id="..">).
-     *
-     * This delegates to NavigationEngine.renderHtmlInSandbox, which:
-     *   - injects a document.write/writeln capture hook BEFORE the page scripts,
-     *   - polls for async/deferred output (not a single synchronous read),
-     *   - reads the result out of the live DOM (any mutation API works, not just document.write),
-     *   - avoids evaluateJavascript size ceilings and let/const scoping breakage.
+     * True only when the HTML contains a real server-list element (<li ... data-index=...>),
+     * NOT merely the substring "data-index". The bare substring also appears in injected
+     * hook/script text, so a substring check yields a false positive.
      */
-    private suspend fun decryptViaSandbox(watchHtml: String): String? {
+    private fun hasServerEntries(html: String): Boolean =
+        Regex("<li\\b[^>]*\\bdata-index\\s*=", RegexOption.IGNORE_CASE).containsMatchIn(html)
+
+    /**
+     * Phase 2 decryption: render the captured (still-encrypted) watch-page HTML in a WebView and
+     * let the page's OWN decryptor run — the WebView does all the work; we never decrypt in Kotlin.
+     *
+     * Anti-detection strategy (the whole point): present as an ordinary in-app browser and touch
+     * nothing the adaptive anti-bot can fingerprint. renderHtmlInSandbox runs in STEALTH mode —
+     * no document.write/prototype/DOMParser tampering (all trivially detectable and the likely
+     * reason decryption was being withheld) — and captures the server list passively via a
+     * MutationObserver. We also render under the REAL /watching/ URL as baseUrl so any self-URL
+     * check inside the decryptor passes, and reuse the session's mobile UA for consistency.
+     *
+     * @param watchHtml captured watch-page HTML (still encrypted)
+     * @param pageUrl   the real /watching/?token=… URL — used as the document's base/origin
+     */
+    private suspend fun decryptViaSandbox(watchHtml: String, pageUrl: String): String? {
         val TAG_SB = "CimaNowSandbox"
-        Log.i(TAG_SB, "Phase 2: JS Sandbox (render-and-poll) starting — input ${watchHtml.length} chars")
+        Log.i(TAG_SB, "Phase 2: WebView stealth render starting — input ${watchHtml.length} chars, base=$pageUrl")
         if (watchHtml.isBlank()) {
             Log.w(TAG_SB, "Empty watchHtml — nothing to decrypt")
             return null
         }
         return try {
-            // Success = the hook captured decrypted HTML, or live DOM already shows server LIs.
-            val successCondition =
-                "(window.__decryptedHtml && window.__decryptedHtml.length > 200) || document.querySelectorAll('li[data-index]').length > 0"
-
             val result = httpService.navigationEngine.renderHtmlInSandbox(
                 html = watchHtml,
-                baseUrl = "https://cimanow.cc/",
-                successConditionJs = successCondition,
-                timeoutMs = 10_000L,
-                pollIntervalMs = 250L
+                baseUrl = pageUrl.ifBlank { "https://cimanow.cc/" },
+                userAgent = httpService.userAgent,
+                timeoutMs = 25_000L,
+                pollIntervalMs = 300L,
+                stealth = true,
+                blockNetwork = false
             )
 
             when {
@@ -1539,18 +1548,16 @@ class CimaNowProvider : BaseProvider() {
                     Log.w(TAG_SB, "Sandbox returned no HTML")
                     null
                 }
-                result.contains("data-index") -> {
-                    Log.i(TAG_SB, "✅ Sandbox decrypt succeeded — ${result.length} chars, has data-index")
-                    result
-                }
-                result.length > 200 -> {
-                    // Non-empty but no server list: decryption may have partially run or the page
-                    // format changed. Hand it back so the caller can still attempt parsing/logging.
-                    Log.w(TAG_SB, "⚠️ Sandbox HTML has no data-index (${result.length} chars) — decryption incomplete or format changed")
+                hasServerEntries(result) -> {
+                    Log.i(TAG_SB, "✅ Sandbox decrypt succeeded — ${result.length} chars, real <li data-index> present")
                     result
                 }
                 else -> {
-                    Log.w(TAG_SB, "Sandbox HTML too short to be useful (${result.length} chars)")
+                    // No real server elements. The page's inline decryptor did not emit the
+                    // server list (see the render heartbeat: li=0/dh=0 for the whole window).
+                    // Returning this HTML would only trip a substring false-positive downstream,
+                    // so report failure honestly and let higher-level fallbacks decide.
+                    Log.w(TAG_SB, "❌ Sandbox produced no <li data-index> elements (${result.length} chars) — decryptor did not run/emit")
                     null
                 }
             }
@@ -1999,20 +2006,23 @@ class CimaNowProvider : BaseProvider() {
             data class ServerInfo(val index: String, val id: String, val name: String)
 
             if (watchHtml.isNotBlank()) {
-                // Check if the raw HTML needs sandbox decryption (no data-index = still encrypted)
-                val htmlForParsing = if (!watchHtml.contains("data-index")) {
-                    Log.i(TAG_TEST, "⚙️ SANDBOX FALLBACK: watchHtml (${watchHtml.length} chars) has no data-index — running through decryptViaSandbox...")
-                    val sandboxResult = decryptViaSandbox(watchHtml)
-                    if (sandboxResult != null && sandboxResult.contains("data-index")) {
-                        Log.i(TAG_TEST, "✅ SANDBOX SUCCESS: decrypted HTML has data-index (${sandboxResult.length} chars)")
+                // Real server elements already present? (substring "data-index" is NOT enough —
+                // see hasServerEntries.) If not, the HTML is still encrypted → try the sandbox.
+                val htmlForParsing = if (!hasServerEntries(watchHtml)) {
+                    Log.i(TAG_TEST, "⚙️ SANDBOX FALLBACK: watchHtml (${watchHtml.length} chars) has no <li data-index> — running through decryptViaSandbox...")
+                    val sandboxResult = decryptViaSandbox(watchHtml, watchUrl.ifBlank { movieUrl })
+                    if (sandboxResult != null && hasServerEntries(sandboxResult)) {
+                        Log.i(TAG_TEST, "✅ SANDBOX SUCCESS: decrypted HTML has real <li data-index> (${sandboxResult.length} chars)")
                         sandboxResult
                     } else {
-                        Log.w(TAG_TEST, "⚠️ SANDBOX returned ${sandboxResult?.length ?: 0} chars, data-index present: ${sandboxResult?.contains("data-index") ?: false}")
-                        // Still use the sandbox result if it's non-empty, otherwise fall back to original
-                        if (sandboxResult != null && sandboxResult.length > 200) sandboxResult else watchHtml
+                        // Decryption did not yield server elements — parsing the raw/rendered HTML
+                        // will find 0 servers. Keep watchHtml so downstream logging is consistent,
+                        // but expect NOTHING FOUND unless another source (video URLs) populated links.
+                        Log.w(TAG_TEST, "⚠️ SANDBOX did not produce server elements — decryptor did not run/emit; parsing will likely find nothing")
+                        watchHtml
                     }
                 } else {
-                    Log.i(TAG_TEST, "✅ watchHtml already contains data-index — skipping sandbox")
+                    Log.i(TAG_TEST, "✅ watchHtml already contains real <li data-index> — skipping sandbox")
                     watchHtml
                 }
 
