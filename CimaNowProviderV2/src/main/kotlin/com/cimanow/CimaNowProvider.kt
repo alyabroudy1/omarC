@@ -1503,48 +1503,63 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
+    /**
+     * Phase 2 decryption: render the captured (still-encrypted) watch-page HTML in an isolated,
+     * network-blocked WebView and let the page's own inline decryptor run natively, then poll
+     * the DOM for the decrypted server list (<li data-index=".." data-id="..">).
+     *
+     * This delegates to NavigationEngine.renderHtmlInSandbox, which:
+     *   - injects a document.write/writeln capture hook BEFORE the page scripts,
+     *   - polls for async/deferred output (not a single synchronous read),
+     *   - reads the result out of the live DOM (any mutation API works, not just document.write),
+     *   - avoids evaluateJavascript size ceilings and let/const scoping breakage.
+     */
     private suspend fun decryptViaSandbox(watchHtml: String): String? {
         val TAG_SB = "CimaNowSandbox"
-        Log.i(TAG_SB, "Phase 2: JS Sandbox decryption starting...")
-        try {
-            val scriptPattern = Pattern.compile("<script[^>]*>(.*?)</script>", Pattern.DOTALL)
-            val matcher = scriptPattern.matcher(watchHtml)
-            val scripts = mutableListOf<String>()
-            while (matcher.find()) {
-                var content = matcher.group(1)?.trim() ?: continue
-                if (content.isNotBlank()) {
-                    if (content.startsWith("<!--")) content = content.removePrefix("<!--").trim()
-                    if (content.endsWith("-->")) content = content.removeSuffix("-->").trim()
-                    if (content.startsWith("//<![CDATA[")) content = content.removePrefix("//<![CDATA[").trim()
-                    if (content.endsWith("//]]>")) content = content.removeSuffix("//]]>").trim()
-                    scripts.add(content)
+        Log.i(TAG_SB, "Phase 2: JS Sandbox (render-and-poll) starting — input ${watchHtml.length} chars")
+        if (watchHtml.isBlank()) {
+            Log.w(TAG_SB, "Empty watchHtml — nothing to decrypt")
+            return null
+        }
+        return try {
+            // Success = the hook captured decrypted HTML, or live DOM already shows server LIs.
+            val successCondition =
+                "(window.__decryptedHtml && window.__decryptedHtml.length > 200) || document.querySelectorAll('li[data-index]').length > 0"
+
+            val result = httpService.navigationEngine.renderHtmlInSandbox(
+                html = watchHtml,
+                baseUrl = "https://cimanow.cc/",
+                successConditionJs = successCondition,
+                timeoutMs = 10_000L,
+                pollIntervalMs = 250L
+            )
+
+            when {
+                result.isNullOrBlank() -> {
+                    Log.w(TAG_SB, "Sandbox returned no HTML")
+                    null
+                }
+                result.contains("data-index") -> {
+                    Log.i(TAG_SB, "✅ Sandbox decrypt succeeded — ${result.length} chars, has data-index")
+                    result
+                }
+                result.length > 200 -> {
+                    // Non-empty but no server list: decryption may have partially run or the page
+                    // format changed. Hand it back so the caller can still attempt parsing/logging.
+                    Log.w(TAG_SB, "⚠️ Sandbox HTML has no data-index (${result.length} chars) — decryption incomplete or format changed")
+                    result
+                }
+                else -> {
+                    Log.w(TAG_SB, "Sandbox HTML too short to be useful (${result.length} chars)")
+                    null
                 }
             }
-            if (scripts.isEmpty()) {
-                Log.e(TAG_SB, "No scripts found in watch page")
-                return null
-            }
-            Log.d(TAG_SB, "Extracted ${scripts.size} scripts, total size: ${scripts.sumOf { it.length }}")
-
-            val combinedJs = buildString {
-                for (s in scripts) {
-                    append("try {\n")
-                    append(s)
-                    append("\n} catch(e) {}\n")
-                }
-            }
-
-            val result = httpService.navigationEngine.executeJsSandbox(combinedJs)
-            if (result != null && result.length > 50 && !result.startsWith("SANDBOX_ERROR:")) {
-                Log.i(TAG_SB, "Sandbox decrypt succeeded, length: ${result.length}")
-                return result
-            } else {
-                Log.w(TAG_SB, "Sandbox returned empty/short/error: ${result?.take(100) ?: 0}")
-            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG_SB, "Sandbox error: ${e.message}")
+            null
         }
-        return null
     }
 
     // ==================== Hybrid Approach: HTTP Nav → WebView Timer ====================

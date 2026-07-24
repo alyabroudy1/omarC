@@ -1259,125 +1259,177 @@ class NavigationEngine(
     }
 
     /**
-     * Creates a sandboxed WebView (no network), loads about:blank, and executes JavaScript.
-     * Returns the result of the JS execution. The WebView is destroyed after execution.
-     * Safe to call from any coroutine context.
+     * Renders captured (still-encrypted) page HTML in an isolated, network-blocked WebView and
+     * lets the page's own inline decryptor scripts execute NATIVELY, then polls the live DOM
+     * until [successConditionJs] is satisfied (or [timeoutMs] elapses), and returns the
+     * decrypted HTML.
+     *
+     * This replaces the previous "extract <script> blocks, concatenate, eval on about:blank,
+     * read once" approach, which had four structural defects:
+     *   1. It read the output a single synchronous frame after eval, so any decryptor that
+     *      deferred its output (setTimeout / onload / Promise / countdown) yielded nothing.
+     *   2. It only captured document.write output — a page using innerHTML/appendChild/
+     *      insertAdjacentHTML produced nothing.
+     *   3. It injected multi-MB payloads through evaluateJavascript (size ceiling / truncation).
+     *   4. Per-script try/catch wrapping broke let/const/class scoping shared across scripts.
+     *
+     * Native rendering fixes all four: the WebView parses and runs the scripts itself (no size
+     * ceiling, correct scoping, any DOM-mutation API works), and polling catches async output.
+     *
+     * A capture pre-hook ([SPOOFING_JS] + [ANTI_ANTI_BOT_JS] + [SANDBOX_WRITELN_OPEN_CLOSE_JS])
+     * is injected at the very top of <head> so it runs BEFORE the page scripts, stashing the
+     * decrypted HTML into window.__decryptedHtml before any anti-bot can strip the DOM.
+     *
+     * Safe to call from any coroutine context (switches to Dispatchers.Main internally).
+     *
+     * @param html               the captured (still-encrypted) page HTML
+     * @param baseUrl            base URL for loadDataWithBaseURL (the origin the scripts see)
+     * @param successConditionJs boolean JS expression; polling stops early when it returns true
+     * @param timeoutMs          max time to poll before giving up (default 10s)
+     * @param pollIntervalMs     delay between polls (default 250ms)
+     * @return the decrypted HTML (hook-captured value preferred, else the settled DOM), or null
      */
-    suspend fun executeJsSandbox(javascript: String): String? {
+    suspend fun renderHtmlInSandbox(
+        html: String,
+        baseUrl: String,
+        successConditionJs: String,
+        timeoutMs: Long = 10_000L,
+        pollIntervalMs: Long = 250L
+    ): String? = withContext(Dispatchers.Main) {
+        val m = "renderHtmlInSandbox"
         val activity = activityProvider()?.let {
             if (it.isFinishing) null else it
         } ?: run {
-            ProviderLogger.e(TAG, "executeJsSandbox", "No activity available")
-            return null
+            ProviderLogger.e(TAG, m, "No activity available — cannot create sandbox WebView")
+            return@withContext null
         }
+        if (html.isBlank()) {
+            ProviderLogger.w(TAG, m, "Empty html — nothing to render")
+            return@withContext null
+        }
+
+        val injectedHtml = injectSandboxPreHook(html)
+        ProviderLogger.i(TAG, m, "Sandbox render starting",
+            "htmlLen" to html.length, "injectedLen" to injectedHtml.length, "baseUrl" to baseUrl,
+            "timeoutMs" to timeoutMs, "pollIntervalMs" to pollIntervalMs)
+
+        // WebView construction and all its access must happen on the main (Looper) thread.
         val webView = createWebView(activity, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         try {
+            // Full isolation: block all network so the ONLY thing that runs is the page's own
+            // decryptor operating on the bytes we already have.
             webView.settings.blockNetworkLoads = true
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
 
-            Handler(Looper.getMainLooper()).post {
-                webView.loadUrl("about:blank")
-            }
-            delay(150)
-
-            val wrapperScript = """
-                (function() {
-                    try {
-                        window.__captured = '';
-                        window.__decryptedHtml = '';
-
-                        // 1. Create document.write / writeln polyfill with native toString spoofing
-                        var _capturedOutput = '';
-                        function _customWrite(html) {
-                            if (html === null || html === undefined) return;
-                            var str = String(html);
-                            _capturedOutput += str;
-                            window.__captured += str;
-                            window.__decryptedHtml += str;
-                        }
-
-                        _customWrite.toString = function() { return 'function write() { [native code] }'; };
-                        try { Object.defineProperty(_customWrite, 'name', { value: 'write', configurable: true }); } catch(e) {}
-                        try { Object.defineProperty(_customWrite, 'length', { value: 1, configurable: true }); } catch(e) {}
-
-                        // Define un-overwritable document.write property
-                        try {
-                            Object.defineProperty(document, 'write', {
-                                get: function() { return _customWrite; },
-                                set: function(v) {
-                                    // Anti-bot attempt to overwrite document.write - wrap their function
-                                    var _oldWrite = _customWrite;
-                                    var _antiWrite = v;
-                                    _customWrite = function(h) {
-                                        _oldWrite(h);
-                                        if (typeof _antiWrite === 'function') {
-                                            try { _antiWrite(h); } catch(e) {}
-                                        }
-                                    };
-                                    _customWrite.toString = function() { return 'function write() { [native code] }'; };
-                                },
-                                configurable: true,
-                                enumerable: true
-                            });
-                        } catch(e) {
-                            document.write = _customWrite;
-                        }
-
-                        // 2. Element.remove anti-tamper override (prevent anti-bot from wiping DOM elements)
-                        try {
-                            var _origRemove = Element.prototype.remove;
-                            Element.prototype.remove = function() {
-                                if (this && (this.tagName === 'LI' || this.hasAttribute('data-index') || this.hasAttribute('data-id'))) {
-                                    return; // Block element removal
-                                }
-                                if (_origRemove) return _origRemove.apply(this, arguments);
-                            };
-                        } catch(e) {}
-
-                        // 3. Disable Anti-Devtool traps
-                        try {
-                            Object.defineProperty(window, 'DisableDevtool', {
-                                get: function() { return function(o) { return { ignore: function() { return true; } }; }; },
-                                set: function() {},
-                                configurable: true
-                            });
-                        } catch(e) {}
-
-                        // 4. Execute payload JavaScript inside try-catch
-                        try {
-                            $javascript
-                        } catch(err) {
-                            console.error('[Sandbox Payload Error]', err);
-                        }
-
-                        // Return captured output (or body innerHTML fallback if empty)
-                        if (window.__captured && window.__captured.length > 50) {
-                            return window.__captured;
-                        }
-                        if (document.body && document.body.innerHTML && document.body.innerHTML.length > 50) {
-                            return document.body.innerHTML;
-                        }
-                        return window.__captured || '';
-                    } catch(outerErr) {
-                        return 'SANDBOX_ERROR: ' + outerErr.message;
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    val u = request.url?.toString().orEmpty()
+                    // Allow the primary document; starve everything else (defence in depth on
+                    // top of blockNetworkLoads) and log what the page tried to reach.
+                    if (u.isNotEmpty() && !u.startsWith("data:") && u != baseUrl) {
+                        ProviderLogger.d(TAG, m, "Blocked subresource", "url" to u.take(120))
+                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                     }
-                })();
-            """.trimIndent()
+                    return null
+                }
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    // Keep the loaded document stable — a script navigating away would drop our
+                    // captured window.__decryptedHtml before we read it.
+                    ProviderLogger.d(TAG, m, "Blocked navigation", "url" to (request.url?.toString()?.take(120) ?: ""))
+                    return true
+                }
+            }
+            webView.webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(cm: ConsoleMessage): Boolean {
+                    // The [CW] capture-hook logs surface here — the primary debug signal.
+                    ProviderLogger.d(TAG, "$m/console", cm.message().take(300), "src" to (cm.lineNumber()))
+                    return true
+                }
+            }
 
-            return executeJsInWebView(webView, wrapperScript)
+            ProviderLogger.d(TAG, m, "Loading HTML via loadDataWithBaseURL — scripts will run natively")
+            webView.loadDataWithBaseURL(baseUrl, injectedHtml, "text/html", "UTF-8", null)
+
+            // Poll the success condition until met or the deadline passes. delay() suspends
+            // without blocking main, so the WebView keeps rendering/executing between polls.
+            val condition = "(function(){ try { return !!($successConditionJs); } catch(e){ return false; } })()"
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            var polls = 0
+            var met = false
+            while (SystemClock.elapsedRealtime() < deadline) {
+                delay(pollIntervalMs)
+                polls++
+                val res = executeJsInWebView(webView, condition)
+                val remaining = deadline - SystemClock.elapsedRealtime()
+                if (res == "true") {
+                    ProviderLogger.i(TAG, m, "Success condition met", "poll" to polls, "remainingMs" to remaining)
+                    met = true
+                    break
+                }
+                // Heartbeat every ~1s so a stuck render is diagnosable from logs.
+                if (polls % 4 == 0) {
+                    val diag = executeJsInWebView(webView,
+                        "(function(){ try { return JSON.stringify({dh:(window.__decryptedHtml||'').length,body:(document.body?document.body.innerHTML.length:0),li:document.querySelectorAll('li[data-index]').length}); } catch(e){ return 'diag_err:'+e.message; } })()")
+                    ProviderLogger.d(TAG, m, "Poll heartbeat", "poll" to polls, "remainingMs" to remaining, "diag" to (diag ?: "null"))
+                }
+            }
+            if (!met) ProviderLogger.w(TAG, m, "Timed out before success condition", "polls" to polls, "timeoutMs" to timeoutMs)
+
+            // Prefer the hook-captured HTML (grabbed at document.write time, before any anti-bot
+            // strip); fall back to the settled live DOM.
+            val captured = executeJsInWebView(webView,
+                "(function(){ try { return (window.__decryptedHtml && window.__decryptedHtml.length > 200) ? window.__decryptedHtml : ''; } catch(e){ return ''; } })()")
+            if (!captured.isNullOrBlank() && captured.length > 200) {
+                ProviderLogger.i(TAG, m, "Returning hook-captured HTML",
+                    "len" to captured.length, "hasDataIndex" to captured.contains("data-index"), "conditionMet" to met)
+                return@withContext captured
+            }
+
+            val dom = executeJsInWebView(webView,
+                "(function(){ try { return document.documentElement.outerHTML; } catch(e){ return ''; } })()")
+            if (!dom.isNullOrBlank()) {
+                ProviderLogger.i(TAG, m, "Returning settled DOM snapshot (hook empty)",
+                    "len" to dom.length, "hasDataIndex" to dom.contains("data-index"), "conditionMet" to met)
+                return@withContext dom
+            }
+
+            ProviderLogger.w(TAG, m, "No usable HTML — hook empty and DOM snapshot empty")
+            return@withContext null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ProviderLogger.e(TAG, m, "Sandbox render failed", e)
+            return@withContext null
         } finally {
-            Handler(Looper.getMainLooper()).post {
-                try {
-                    webView.stopLoading()
-                    webView.loadUrl("about:blank")
-                    webView.clearHistory()
-                    webView.removeAllViews()
-                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-                    webView.destroy()
-                } catch (_: Exception) {}
+            // Already on the main thread (withContext(Dispatchers.Main)) — tear down directly.
+            try {
+                webView.stopLoading()
+                webView.loadUrl("about:blank")
+                webView.clearHistory()
+                webView.removeAllViews()
+                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                webView.destroy()
+                ProviderLogger.d(TAG, m, "Sandbox WebView destroyed")
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Injects the sandbox capture pre-hook at the very top of <head> so it runs before the
+     * page's own scripts (including the anti-bot). Falls back to prepending when there is no
+     * <head>, so the hook still wins the race.
+     */
+    private fun injectSandboxPreHook(html: String): String {
+        val hook = "<script>$SPOOFING_JS\n$ANTI_ANTI_BOT_JS\n$SANDBOX_WRITELN_OPEN_CLOSE_JS\n$SANDBOX_DOM_CAPTURE_JS</script>"
+        val headIdx = html.indexOf("<head", ignoreCase = true)
+        if (headIdx >= 0) {
+            val headEnd = html.indexOf('>', headIdx)
+            if (headEnd >= 0) {
+                return html.substring(0, headEnd + 1) + hook + html.substring(headEnd + 1)
             }
         }
+        return hook + html
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1623,6 +1675,59 @@ class NavigationEngine(
                         configurable: false, writable: false, value: Element.prototype.remove
                     });
                 } catch(e) {}
+            })();
+        """.trimIndent()
+
+        /**
+         * Supplements [ANTI_ANTI_BOT_JS] for the render-in-sandbox path: routes document.writeln
+         * through the (hooked) document.write so newline/deferred writes are captured too, and
+         * neutralizes document.open/close so a payload calling document.open() cannot reset the
+         * document and drop our write override before we read window.__decryptedHtml.
+         */
+        private val SANDBOX_WRITELN_OPEN_CLOSE_JS = """
+            (function(){
+                try { document.writeln = function(h){ document.write((h == null ? '' : String(h)) + '\n'); }; } catch(e) {}
+                try { document.open = function(){ return document; }; } catch(e) {}
+                try { document.close = function(){}; } catch(e) {}
+            })();
+        """.trimIndent()
+
+        /**
+         * Clear-resistant, method-agnostic capture for CimaNow's adaptive anti-bot, which
+         * "clears the content directly" shortly after the decryptor injects it. Rather than
+         * relying only on the document.write hook (defeated if the page injects via
+         * innerHTML/appendChild) or reading the settled DOM (defeated if content is already
+         * cleared), a MutationObserver snapshots the server list the INSTANT any
+         * li[data-index] appears — before the anti-bot's clear runs — regardless of how it was
+         * inserted. First win latches window.__decryptedHtml and disconnects.
+         */
+        private val SANDBOX_DOM_CAPTURE_JS = """
+            (function(){
+                try {
+                    var _grab = function(){
+                        try {
+                            if (window.__decryptedHtml && window.__decryptedHtml.length > 200) return true;
+                            var lis = document.querySelectorAll('li[data-index]');
+                            if (!lis || lis.length === 0) return false;
+                            var container = document.getElementById('watch') || document.body || document.documentElement;
+                            var html = container ? container.innerHTML : '';
+                            if (html && html.indexOf('data-index') !== -1) {
+                                window.__decryptedHtml = html;
+                                console.log('[CW] MutationObserver captured ' + html.length + ' chars (li=' + lis.length + ')');
+                                return true;
+                            }
+                        } catch(e) { console.error('[CW] grab error: ' + e.message); }
+                        return false;
+                    };
+                    if (typeof MutationObserver !== 'undefined') {
+                        var _obs = new MutationObserver(function(){ if (_grab()) { try { _obs.disconnect(); } catch(e){} } });
+                        try {
+                            _obs.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-index','data-id'] });
+                            console.log('[CW] MutationObserver armed');
+                        } catch(e) { console.error('[CW] observe failed: ' + e.message); }
+                    }
+                    _grab();
+                } catch(e) { console.error('[CW] DOM capture hook failed: ' + e.message); }
             })();
         """.trimIndent()
 
