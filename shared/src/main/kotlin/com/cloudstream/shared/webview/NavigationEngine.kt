@@ -1282,8 +1282,12 @@ class NavigationEngine(
      * Safe to call from any coroutine context (switches to Dispatchers.Main internally).
      *
      * @param html      the captured (still-encrypted) watch-page HTML
-     * @param baseUrl   base URL for loadDataWithBaseURL — MUST be the real https://…/watching/ URL
+     * @param baseUrl   the real https://…/watching/ URL (served to the WebView as a real navigation)
      * @param userAgent session UA; the WebView tells ("Version/4.0","wv") are stripped for hygiene
+     * @param referrer  Referer for the navigation — sets document.referrer. REQUIRED for CimaNow:
+     *                  the decrypted page runs `if(document.referrer.indexOf('rm.freex2line.online')
+     *                  ===-1) location.replace('/home')`, which aborts the parse before the server
+     *                  list. Pass a URL containing that host so the check passes.
      * @param timeoutMs max time to wait for the in-page reader to report back (default 25s)
      * @return the decrypted document.body HTML (containing the <li data-index> server list), or null
      */
@@ -1291,6 +1295,7 @@ class NavigationEngine(
         html: String,
         baseUrl: String,
         userAgent: String,
+        referrer: String = "",
         timeoutMs: Long = 25_000L
     ): String? = withContext(Dispatchers.Main) {
         val m = "renderHtmlInSandbox"
@@ -1328,7 +1333,7 @@ class NavigationEngine(
         val readerScript = """
             <script>
             (function(){
-              try { console.log('[RD] init stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
+              try { console.log('[RD] init referrer=' + document.referrer + ' stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,200)); } catch(e){}
               var tries = 0;
               var timer = setInterval(function(){
                 tries++;
@@ -1425,8 +1430,12 @@ class NavigationEngine(
                 }
             }
 
-            ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched")
-            webView.loadUrl(baseUrl)
+            ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched", "referrer" to referrer.ifBlank { "<none>" })
+            if (referrer.isNotBlank()) {
+                webView.loadUrl(baseUrl, mapOf("Referer" to referrer))
+            } else {
+                webView.loadUrl(baseUrl)
+            }
 
             val body = withTimeoutOrNull(timeoutMs + 4000) { captured.await() }
             when {

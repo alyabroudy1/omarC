@@ -572,9 +572,14 @@ class CimaNowProvider : BaseProvider() {
             val watchUrl = ajaxText.trim().replace("\ufeff", "")
             Log.i(TAG_DP, "Resolved Watch URL: $watchUrl")
 
-            Log.i(TAG_DP, "6. Fetching watch page: $watchUrl")
+            // The watch page is reached from the freex blog-post page; that URL is its Referer
+            // (see HAR). Derive it from the freex host we already extracted rather than hardcoding.
+            val freexHost = try { java.net.URI(freexUrl).host } catch (_: Exception) { null } ?: "rm.freex2line.online"
+            val watchReferer = "https://$freexHost/2020/02/blog-post.html/"
+
+            Log.i(TAG_DP, "6. Fetching watch page: $watchUrl (referer=$watchReferer)")
             sessionHeaders.remove("X-Requested-With")
-            sessionHeaders["Referer"] = "https://rm.freex2line.online/2020/02/blog-post.html/"
+            sessionHeaders["Referer"] = watchReferer
             val watchResp = httpService.getRaw(watchUrl, headers = sessionHeaders)
             val watchHtml = watchResp.body?.string() ?: ""
             watchResp.close()
@@ -583,7 +588,7 @@ class CimaNowProvider : BaseProvider() {
             var decrypted = decryptWatchHtml(watchHtml)
             if (decrypted == null) {
                 Log.w(TAG_DP, "Phase 1 (strategies) failed, trying Phase 2 (JS Sandbox)...")
-                decrypted = decryptViaSandbox(watchHtml, watchUrl)
+                decrypted = decryptViaSandbox(watchHtml, watchUrl, watchReferer)
             }
             if (decrypted == null) {
                 Log.e(TAG_DP, "Phase 2 (sandbox) failed too, falling through to WebView phase 3")
@@ -1524,10 +1529,14 @@ class CimaNowProvider : BaseProvider() {
      *
      * @param watchHtml captured watch-page HTML (still encrypted)
      * @param pageUrl   the real /watching/?token=… URL — used as the document's base/origin
+     * @param referrer  the Referer the watch page was actually reached with (the freex blog-post
+     *                  page). The decrypted page redirects to /home unless document.referrer
+     *                  matches that host, which aborts the parse — so this must mirror the real
+     *                  navigation, NOT be hardcoded. See the HAR: watching → Referer blog-post.html/.
      */
-    private suspend fun decryptViaSandbox(watchHtml: String, pageUrl: String): String? {
+    private suspend fun decryptViaSandbox(watchHtml: String, pageUrl: String, referrer: String): String? {
         val TAG_SB = "CimaNowSandbox"
-        Log.i(TAG_SB, "Phase 2: WebView stealth render starting — input ${watchHtml.length} chars, base=$pageUrl")
+        Log.i(TAG_SB, "Phase 2: WebView stealth render starting — input ${watchHtml.length} chars, base=$pageUrl, referrer=$referrer")
         if (watchHtml.isBlank()) {
             Log.w(TAG_SB, "Empty watchHtml — nothing to decrypt")
             return null
@@ -1537,6 +1546,7 @@ class CimaNowProvider : BaseProvider() {
                 html = watchHtml,
                 baseUrl = pageUrl.ifBlank { "https://cimanow.cc/" },
                 userAgent = httpService.userAgent,
+                referrer = referrer,
                 timeoutMs = 25_000L
             )
 
@@ -2007,7 +2017,9 @@ class CimaNowProvider : BaseProvider() {
                 // see hasServerEntries.) If not, the HTML is still encrypted → try the sandbox.
                 val htmlForParsing = if (!hasServerEntries(watchHtml)) {
                     Log.i(TAG_TEST, "⚙️ SANDBOX FALLBACK: watchHtml (${watchHtml.length} chars) has no <li data-index> — running through decryptViaSandbox...")
-                    val sandboxResult = decryptViaSandbox(watchHtml, watchUrl.ifBlank { movieUrl })
+                    // baseUrl (the freex blog-post page) is exactly the Referer the watch page was
+                    // navigated with — pass it so document.referrer passes the /home redirect gate.
+                    val sandboxResult = decryptViaSandbox(watchHtml, watchUrl.ifBlank { movieUrl }, baseUrl)
                     if (sandboxResult != null && hasServerEntries(sandboxResult)) {
                         Log.i(TAG_TEST, "✅ SANDBOX SUCCESS: decrypted HTML has real <li data-index> (${sandboxResult.length} chars)")
                         sandboxResult
