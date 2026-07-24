@@ -1380,6 +1380,8 @@ class NavigationEngine(
         }
 
         val webView = createWebView(activity, browserUa)
+        val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
+        val mainServed = java.util.concurrent.atomic.AtomicBoolean(false)
         try {
             webView.settings.blockNetworkLoads = false   // behave like a real in-app browser
             webView.settings.javaScriptEnabled = true
@@ -1387,9 +1389,29 @@ class NavigationEngine(
             webView.addJavascriptInterface(bridge, "CS_BRIDGE")
 
             webView.webViewClient = object : WebViewClient() {
+                // Serve the captured HTML as the response to a NORMAL navigation to the real
+                // watching URL. Unlike loadDataWithBaseURL, this makes it a genuinely-navigated
+                // document, so the decryptor's document.open()/write()/close() full-document
+                // replacement commits correctly (under loadDataWithBaseURL it only partially
+                // writes and the <li data-index> server list never lands). We still never hit the
+                // network for the main doc (Cloudflare would block the WebView) — we feed our own
+                // bytes — while location.hostname/origin/stack all read as the real https URL.
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    if (request.isForMainFrame && mainServed.compareAndSet(false, true)) {
+                        ProviderLogger.d(TAG, m, "Serving captured main document", "url" to (request.url?.toString()?.take(100) ?: ""), "bytes" to injectedBytes.size)
+                        return WebResourceResponse("text/html", "utf-8", java.io.ByteArrayInputStream(injectedBytes)).apply {
+                            responseHeaders = mapOf("Content-Type" to "text/html; charset=utf-8")
+                        }
+                    }
+                    // Subresources (jQuery, anti-bot .js, etc.) load from the network as usual. Even
+                    // if Cloudflare blocks some for the WebView, the server <li> list is static in
+                    // the decrypted HTML and does not depend on them.
+                    return null
+                }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    // Keep the loaded document stable — a navigation away would tear down the DOM
-                    // before the reader captures it. Subresources still load normally.
+                    // Block secondary navigations (e.g. the page trying to go to /home) — they would
+                    // tear down the DOM before the reader captures it. The initial loadUrl() below
+                    // does not go through this callback.
                     ProviderLogger.d(TAG, m, "Blocked navigation", "url" to (request.url?.toString()?.take(120) ?: ""))
                     return true
                 }
@@ -1403,8 +1425,8 @@ class NavigationEngine(
                 }
             }
 
-            ProviderLogger.d(TAG, m, "Loading via loadDataWithBaseURL — page decrypts untouched, reader captures in-page")
-            webView.loadDataWithBaseURL(baseUrl, injectedHtml, "text/html", "UTF-8", null)
+            ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched")
+            webView.loadUrl(baseUrl)
 
             val body = withTimeoutOrNull(timeoutMs + 4000) { captured.await() }
             when {
