@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
-import com.cloudstream.shared.webview.WebViewFlowHelper
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoUrlClassifier
@@ -39,10 +38,6 @@ class CimaNowProvider : BaseProvider() {
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
     private val TAG = "CimaNowDebug"
-
-    private val webViewFlowHelper by lazy {
-        WebViewFlowHelper(httpService.navigationEngine)
-    }
 
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
@@ -1029,33 +1024,6 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
-    // Atomic snapshot JS — runs in a single evaluateJavascript together with the condition
-    // check, so the anti-bot script has zero async windows to clear #watch between them.
-    // Uses deep clone (cloneNode(true)) to produce a detached DOM copy that no
-    // MutationObserver on the live document can observe.
-    private val SNAPSHOT_WATCH = """
-(function(){
-    if (window.__decryptedHtml && window.__decryptedHtml.length > 200) {
-        return 'RAW_HTML:' + window.__decryptedHtml;
-    }
-    var w = document.querySelector('#watch');
-    if (!w) return '';
-    var snap = w.cloneNode(true);
-    return 'RAW_HTML:' + snap.outerHTML;
-})();
-""".trimIndent()
-
-    // Legacy fallback (backup if the combined step somehow fails)
-    private val JS_CAPTURE_INNERHTML = """
-(function(){
-    try {
-        var w=document.querySelector('#watch');
-        return 'RAW_HTML:'+(w?w.innerHTML:'');
-    } catch(e) {
-        return 'raw_html_error:'+e.message;
-    }
-})();
-""".trimIndent()
 
     /**
      * Official link resolver. The WebView does ALL decryption:
@@ -1109,41 +1077,24 @@ class CimaNowProvider : BaseProvider() {
                 //          bypassing Cloudflare's sec-ch-ua: "Android WebView" check entirely)
                 NavigationStep.LoadHtml(html = timerHtml, baseUrl = baseUrl, referer = referer),
 
-                // Step 1: Navigate to the watching URL captured by the interceptor.
-                //         This polls interceptedWatchingUrl every 500ms (up to 15s total),
-                //         navigating immediately once the countdown timer finishes and
-                //         get-link.php fires (typically ~11s). The main-frame navigation
-                //         is intercepted by the request interceptor (protected domain +
-                //         spoofed headers), so Cloudflare doesn't block it.
-                //         Profi #5: the interceptor also stashes the raw HTTP response HTML
-                //         into capturedMainFrameHtml, which we parse in Kotlin below.
+                // Step 1: Navigate to the watching URL once the countdown timer fires get-link.php.
+                //         The request interceptor stashes the raw HTTP response (capturedMainFrameHtml)
+                //         — that encrypted HTML is ALL we need; decryption happens later in the sandbox.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Capture the decrypted DOM via document.write interceptor.
-                //         The injected script hooks document.write to store the unmodified
-                //         decrypted page HTML (with <li data-index=".."> entries) in
-                //         window.__decryptedHtml BEFORE the anti-bot can strip it.
-                //         Falls back to the live DOM snapshot if the hook wasn't triggered.
-                NavigationStep.WaitForDomConditionAndSnapshot(
-                    jsCondition = "(function(){ if(window.__decryptedHtml&&window.__decryptedHtml.length>200)return true; var lis=document.querySelectorAll('#watch li[data-index]'); if(!lis||lis.length===0)return false; for(var i=0;i<lis.length;i++){ var idx=lis[i].getAttribute('data-index')||''; var id=lis[i].getAttribute('data-id')||''; if(idx.trim().length>0&&id.trim().length>0)return true; } return false; })()",
-                    snapshotJs = SNAPSHOT_WATCH,
-                    key = "raw_html",
-                    timeoutMs = 20000L,
-                    pollIntervalMs = 500L,
-                    abortOnFailure = false
-                ),
-
-                // Step 3: Capture full-page outerHTML for debugging (not used for parsing)
-                NavigationStep.ExtractHtml(key = "html_watch"),
-
-                // Step 4: Wait for SweetAlert2 to load, then dismiss any consent popup.
+                // Step 2: Brief settle so the interceptor finishes capturing the watching-page
+                //         response, then we're done with the nav. We deliberately do NOT poll for
+                //         in-nav decryption or SweetAlert here: THIS WebView carries the
+                //         anti-anti-bot document.write hook, which trips the decryptor's
+                //         "[native code]" self-check so it never decrypts — the previous 20s DOM
+                //         snapshot + 8s Swal waits always timed out (~28s wasted). decryptViaSandbox
+                //         does the real decryption in <1s.
                 NavigationStep.WaitForDomCondition(
-                    jsCondition = "typeof window.Swal !== 'undefined'",
-                    timeoutMs = 8000L,
-                    pollIntervalMs = 300L,
+                    jsCondition = "document.readyState === 'complete'",
+                    timeoutMs = 6000L,
+                    pollIntervalMs = 250L,
                     abortOnFailure = false
                 ),
-                NavigationStep.ExecuteJs(javascript = WebViewFlowHelper.JS_DISMISS_CONSENT, key = "consent"),
             )
 
             val movieHost = try { java.net.URI(movieUrl).host } catch(_: Exception) { null }
@@ -1346,9 +1297,12 @@ class CimaNowProvider : BaseProvider() {
                     }
                 }
 
-                // 2. Process download links
-                if (downloads.isNotEmpty()) {
-                    Log.i(TAG_TEST, "Found ${downloads.size} download links from raw HTML")
+                // 2. Process download links — ONLY as a fallback when there are no watch links
+                //    (no servers and no direct embed iframes). Watch/stream links are preferred;
+                //    the download list is passed to the player only when nothing else is available.
+                val haveWatchLinks = servers.isNotEmpty() || iframeUrls.isNotEmpty()
+                if (!haveWatchLinks && downloads.isNotEmpty()) {
+                    Log.i(TAG_TEST, "No watch links — falling back to ${downloads.size} download links")
                     for ((dlUrl, name) in downloads) {
                         val quality = Regex("""\d+p""").find(name)?.value?.let { getQualityFromName(it) } ?: Qualities.Unknown.value
                         try {

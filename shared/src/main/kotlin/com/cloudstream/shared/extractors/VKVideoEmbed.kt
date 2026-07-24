@@ -89,7 +89,7 @@ class VKVideoEmbed : ExtractorApi() {
         ProviderLogger.i(TAG, "getUrl", "Starting WebView sniff for VK URL: ${url.take(80)}")
         val result = engine.runSession(
             url = url,
-            mode = Mode.FULLSCREEN,
+            mode = Mode.HEADLESS,   // sniff in the background — no visible WebView popping up
             userAgent = snifferUa,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 45000L,
