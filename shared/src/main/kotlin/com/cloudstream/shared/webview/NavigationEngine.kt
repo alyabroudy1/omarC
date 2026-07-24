@@ -1261,23 +1261,26 @@ class NavigationEngine(
     /**
      * Renders captured (still-encrypted) watch-page HTML in a WebView, lets the page's OWN
      * decryptor run completely untouched, and reads the decrypted server list back via an in-page
-     * reader over a JavascriptInterface. The WebView does all decryption; nothing is decrypted in
-     * Kotlin.
+     * reader that exfiltrates through window.prompt() → onJsPrompt. The WebView does all decryption
+     * (which the site rotates hourly); nothing is decrypted in Kotlin.
      *
      * This is shaped directly by the site's decoded anti-bot (see CimaNow watch page):
      *   - The decryptor aborts unless document.write is native
      *     (Function.prototype.toString.call(document.write) must contain "[native code]"), so we
      *     must NOT hook document.write — hence no capture hooks of any kind.
      *   - The decryptor aborts unless location.hostname is non-empty, so [baseUrl] MUST be the real
-     *     https://…/watching/ URL (loadDataWithBaseURL sets the document origin from it).
+     *     https://…/watching/ URL. We serve it as a genuine navigation (shouldInterceptRequest),
+     *     NOT loadDataWithBaseURL (which is a "data" document — document.open/write won't commit).
+     *   - The decryptor aborts if it sees our footprint as a window global — it checks
+     *     window.CS_BRIDGE / window.__decryptedHtml / window.__captured. So we add NO
+     *     JavascriptInterface and set NOTHING on window: the reader is a bare IIFE and exfiltrates
+     *     via prompt() (native, leaves no global).
      *   - After decrypting, the page installs an isBot() guard that sabotages querySelectorAll /
-     *     getElementById / innerHTML / getAttribute / JSON.stringify whenever the CALL STACK
-     *     contains "evaluatejavascript", or is "<anonymous>" with no "http". That is exactly the
-     *     stack of webView.evaluateJavascript() and out-of-band injected code — so reading the DOM
-     *     from Kotlin is defeated by design. An inline <script> that ships INSIDE the loaded
-     *     document, however, has a stack attributed to the http(s) base URL → isBot()===false →
-     *     its reads return the real data. We inject exactly such a reader and it posts the result
-     *     back through addJavascriptInterface("CS_BRIDGE").
+     *     innerHTML / getAttribute / JSON.stringify whenever the CALL STACK contains
+     *     "evaluatejavascript", or is "<anonymous>" with no "http". That is exactly the stack of
+     *     webView.evaluateJavascript() and out-of-band injected code — so reading the DOM from
+     *     Kotlin is defeated by design. An inline <script> shipped INSIDE the served document has a
+     *     stack attributed to the http(s) URL → isBot()===false → its reads return the real data.
      *
      * Safe to call from any coroutine context (switches to Dispatchers.Main internally).
      *
@@ -1323,12 +1326,15 @@ class NavigationEngine(
         // The page's anti-bot (decoded from the watch page) sabotages DOM access whose call stack
         // contains "evaluatejavascript", or is "<anonymous>" with no "http" — i.e. exactly the
         // stacks produced by webView.evaluateJavascript() and by out-of-band injected code. It does
-        // NOT sabotage the page's own inline scripts (their stack is attributed to the document's
-        // http(s) URL). So we do NOT read the DOM from Kotlin. Instead we inject an inline <script>
-        // into the document itself (which inherits the real https://…/watching/ base URL, giving it
-        // an "http" stack → isBot()===false), let it read the decrypted server list, and hand the
-        // HTML back over a JavascriptInterface. We never touch document.write (breaking its
-        // "[native code]" self-check would abort the decryptor) — the page decrypts untouched.
+        // NOT sabotage the page's own inline scripts (their stack is the document's http(s) URL).
+        //
+        // CRITICALLY, the decryptor also aborts if it sees ANY of our footprints as window globals
+        // (it checks `window.CS_BRIDGE`, `window.__decryptedHtml`, `window.__captured`). So the
+        // reader must leave NOTHING on window: it is a bare IIFE, and it exfiltrates via
+        // window.prompt() (a native call, no global) which we capture in onJsPrompt. We never hook
+        // document.write (breaking its "[native code]" self-check would abort the decryptor) — the
+        // page decrypts with its own (hourly-changing) logic completely untouched, and we only read
+        // the resulting DOM from a legitimate in-page stack.
         val maxTries = (timeoutMs / 250).coerceAtLeast(4)
         val readerScript = """
             <script>
@@ -1343,16 +1349,21 @@ class NavigationEngine(
                   if (n > 0) {
                     clearInterval(timer);
                     try { console.log('[RD] read stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
-                    var body = document.body ? document.body.innerHTML : '';
-                    console.log('[RD] captured li=' + n + ' bodyLen=' + body.length);
-                    if (window.CS_BRIDGE && window.CS_BRIDGE.onResult) window.CS_BRIDGE.onResult(body);
+                    // Compact payload: only the server list (#watch) + downloads (#download). Small
+                    // enough for prompt(), and enough for Kotlin to resolve everything.
+                    var w = document.getElementById('watch');
+                    var d = document.getElementById('download');
+                    var frag = (w ? w.outerHTML : '') + (d ? d.outerHTML : '');
+                    if (!frag) { var b = document.body; frag = b ? b.innerHTML : ''; }
+                    console.log('[RD] captured li=' + n + ' fragLen=' + frag.length);
+                    window.prompt('__CSX__' + frag);
                     return;
                   }
                   if (tries % 8 === 0) console.log('[RD] waiting tries=' + tries + ' bodyLen=' + (document.body?document.body.innerHTML.length:0) + ' title=' + (document.title||'').slice(0,40));
                   if (tries >= $maxTries) {
                     clearInterval(timer);
                     console.log('[RD] give up after ' + tries + ' tries, bodyLen=' + (document.body?document.body.innerHTML.length:0));
-                    if (window.CS_BRIDGE && window.CS_BRIDGE.onResult) window.CS_BRIDGE.onResult('');
+                    window.prompt('__CSX__');
                   }
                 } catch(e) { console.log('[RD] err ' + e.message); }
               }, 250);
@@ -1360,8 +1371,8 @@ class NavigationEngine(
             </script>
         """.trimIndent()
 
-        // Inject the reader at the very top of <head> so CS_BRIDGE polling is armed before the
-        // page's decryptor runs (the setInterval fires after the decryptor has written the list).
+        // Inject the reader at the very top of <head> so its poll is armed before the page's
+        // decryptor runs (the setInterval fires after the decryptor has written the list).
         val injectedHtml = run {
             val headIdx = html.indexOf("<head", ignoreCase = true)
             if (headIdx >= 0) {
@@ -1376,13 +1387,6 @@ class NavigationEngine(
             "timeoutMs" to timeoutMs, "maxTries" to maxTries, "ua" to browserUa.take(50))
 
         val captured = CompletableDeferred<String?>()
-        val bridge = object {
-            @android.webkit.JavascriptInterface
-            fun onResult(bodyHtml: String?) {
-                // Called on a WebView binder thread — CompletableDeferred is thread-safe.
-                if (!captured.isCompleted) captured.complete(bodyHtml)
-            }
-        }
 
         val webView = createWebView(activity, browserUa)
         val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
@@ -1391,7 +1395,8 @@ class NavigationEngine(
             webView.settings.blockNetworkLoads = false   // behave like a real in-app browser
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
-            webView.addJavascriptInterface(bridge, "CS_BRIDGE")
+            // NB: deliberately NO addJavascriptInterface — it would create a window global the
+            // decryptor now sniffs for (window.CS_BRIDGE) and abort. Exfil is via onJsPrompt below.
 
             webView.webViewClient = object : WebViewClient() {
                 // Serve the captured HTML as the response to a NORMAL navigation to the real
@@ -1428,6 +1433,24 @@ class NavigationEngine(
                     ProviderLogger.d(TAG, "$m/console", cm.message().take(300), "src" to (cm.lineNumber()))
                     return true
                 }
+                // Exfiltration channel: the in-page reader calls prompt('__CSX__'+fragment). This
+                // leaves no window global for the decryptor to detect (unlike addJavascriptInterface).
+                override fun onJsPrompt(
+                    view: WebView?, url: String?, message: String?, defaultValue: String?,
+                    result: android.webkit.JsPromptResult?
+                ): Boolean {
+                    val msg = message ?: ""
+                    if (msg.startsWith("__CSX__")) {
+                        val payload = msg.removePrefix("__CSX__")
+                        ProviderLogger.d(TAG, m, "Reader prompt received", "len" to payload.length)
+                        if (!captured.isCompleted) captured.complete(payload)
+                        result?.confirm("")
+                        return true
+                    }
+                    // Suppress any other page prompts (no dialog in headless).
+                    result?.confirm("")
+                    return true
+                }
             }
 
             ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched", "referrer" to referrer.ifBlank { "<none>" })
@@ -1460,7 +1483,6 @@ class NavigationEngine(
             null
         } finally {
             try {
-                webView.removeJavascriptInterface("CS_BRIDGE")
                 webView.stopLoading()
                 webView.loadUrl("about:blank")
                 webView.clearHistory()
