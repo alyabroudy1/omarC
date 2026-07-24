@@ -1082,16 +1082,25 @@ class CimaNowProvider : BaseProvider() {
                 //         — that encrypted HTML is ALL we need; decryption happens later in the sandbox.
                 NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
 
-                // Step 2: Brief settle so the interceptor finishes capturing the watching-page
-                //         response, then we're done with the nav. We deliberately do NOT poll for
-                //         in-nav decryption or SweetAlert here: THIS WebView carries the
-                //         anti-anti-bot document.write hook, which trips the decryptor's
-                //         "[native code]" self-check so it never decrypts — the previous 20s DOM
-                //         snapshot + 8s Swal waits always timed out (~28s wasted). decryptViaSandbox
-                //         does the real decryption in <1s.
+                // Step 2: Wait until the WebView is actually ON the watching page — i.e. the
+                //         navigation committed and the request interceptor has fetched+stashed the
+                //         raw watching-page response (capturedMainFrameHtml). That encrypted HTML is
+                //         ALL we need; decryption happens later in the sandbox (<1s).
+                //
+                //         MUST key on location, NOT document.readyState: right after Step 1 issues
+                //         loadUrl, the WebView still shows the (fully-loaded) timer page, so a
+                //         readyState==='complete' check passes INSTANTLY against the stale page and
+                //         the nav ends before the watching response is even fetched. The watching
+                //         URL only appears in location once the response commits — which happens
+                //         AFTER the interceptor captured the body — so this is a reliable barrier.
+                //
+                //         We deliberately do NOT poll for in-nav decryption or SweetAlert: THIS
+                //         WebView carries the anti-anti-bot document.write hook, which trips the
+                //         decryptor's "[native code]" self-check so it never decrypts — the previous
+                //         20s DOM snapshot + 8s Swal waits always timed out (~28s wasted).
                 NavigationStep.WaitForDomCondition(
-                    jsCondition = "document.readyState === 'complete'",
-                    timeoutMs = 6000L,
+                    jsCondition = "(''+window.location.href).indexOf('/watching/') > -1",
+                    timeoutMs = 12000L,
                     pollIntervalMs = 250L,
                     abortOnFailure = false
                 ),
