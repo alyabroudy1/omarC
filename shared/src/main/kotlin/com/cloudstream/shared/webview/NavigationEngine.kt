@@ -1259,44 +1259,39 @@ class NavigationEngine(
     }
 
     /**
-     * Renders captured (still-encrypted) page HTML in a WebView and lets the page's OWN decryptor
-     * run NATIVELY, then reads the resulting server list back — the WebView does all decryption;
-     * nothing is decrypted in Kotlin.
+     * Renders captured (still-encrypted) watch-page HTML in a WebView, lets the page's OWN
+     * decryptor run completely untouched, and reads the decrypted server list back via an in-page
+     * reader over a JavascriptInterface. The WebView does all decryption; nothing is decrypted in
+     * Kotlin.
      *
-     * Anti-detection design (the whole point). The page's adaptive anti-bot withholds decryption
-     * when it senses automation, and it fingerprints userland tampering (document.write hooks,
-     * prototype freezes, injected MutationObservers were all tried and burned). So in [stealth]
-     * mode we do the opposite of tampering:
-     *   - inject only [WEBVIEW_AUTHENTICITY_JS] (webdriver=false, window.chrome, plugins,
-     *     languages, permissions) so the WebView presents like a real Chrome-mobile browser,
-     *   - sanitize the UA (drop the "Version/4.0"/"wv" WebView tells),
-     *   - allow network so it behaves like a genuine in-app browser (unless [blockNetwork]),
-     *   - read the DOM from OUTSIDE via evaluateJavascript polling (invisible to the page — no
-     *     in-page observer to fingerprint), and never touch the anti-bot's own logic.
-     *
-     * loadDataWithBaseURL also lets the scripts run under the real [baseUrl] origin (pass the
-     * actual /watching/ URL) so any self-URL check inside the decryptor passes, and sidesteps the
-     * evaluateJavascript size ceiling / scoping problems of the old eval-the-scripts approach.
+     * This is shaped directly by the site's decoded anti-bot (see CimaNow watch page):
+     *   - The decryptor aborts unless document.write is native
+     *     (Function.prototype.toString.call(document.write) must contain "[native code]"), so we
+     *     must NOT hook document.write — hence no capture hooks of any kind.
+     *   - The decryptor aborts unless location.hostname is non-empty, so [baseUrl] MUST be the real
+     *     https://…/watching/ URL (loadDataWithBaseURL sets the document origin from it).
+     *   - After decrypting, the page installs an isBot() guard that sabotages querySelectorAll /
+     *     getElementById / innerHTML / getAttribute / JSON.stringify whenever the CALL STACK
+     *     contains "evaluatejavascript", or is "<anonymous>" with no "http". That is exactly the
+     *     stack of webView.evaluateJavascript() and out-of-band injected code — so reading the DOM
+     *     from Kotlin is defeated by design. An inline <script> that ships INSIDE the loaded
+     *     document, however, has a stack attributed to the http(s) base URL → isBot()===false →
+     *     its reads return the real data. We inject exactly such a reader and it posts the result
+     *     back through addJavascriptInterface("CS_BRIDGE").
      *
      * Safe to call from any coroutine context (switches to Dispatchers.Main internally).
      *
-     * @param html           the captured (still-encrypted) page HTML
-     * @param baseUrl        base URL for loadDataWithBaseURL — pass the real /watching/ URL
-     * @param userAgent      session UA; the WebView tells ("Version/4.0","wv") are stripped
-     * @param timeoutMs      max time to poll before giving up (default 20s)
-     * @param pollIntervalMs delay between polls (default 300ms)
-     * @param stealth        true = authenticity shim only; false = legacy aggressive hooks
-     * @param blockNetwork   true = starve subresources (more detectable); default false
-     * @return the server-list HTML snapshot, or null
+     * @param html      the captured (still-encrypted) watch-page HTML
+     * @param baseUrl   base URL for loadDataWithBaseURL — MUST be the real https://…/watching/ URL
+     * @param userAgent session UA; the WebView tells ("Version/4.0","wv") are stripped for hygiene
+     * @param timeoutMs max time to wait for the in-page reader to report back (default 25s)
+     * @return the decrypted document.body HTML (containing the <li data-index> server list), or null
      */
     suspend fun renderHtmlInSandbox(
         html: String,
         baseUrl: String,
         userAgent: String,
-        timeoutMs: Long = 20_000L,
-        pollIntervalMs: Long = 300L,
-        stealth: Boolean = true,
-        blockNetwork: Boolean = false
+        timeoutMs: Long = 25_000L
     ): String? = withContext(Dispatchers.Main) {
         val m = "renderHtmlInSandbox"
         val activity = activityProvider()?.let {
@@ -1310,105 +1305,131 @@ class NavigationEngine(
             return@withContext null
         }
 
-        val injectedHtml = injectSandboxPreHook(html, stealth)
-        ProviderLogger.i(TAG, m, "Sandbox render starting",
-            "htmlLen" to html.length, "injectedLen" to injectedHtml.length, "baseUrl" to baseUrl,
-            "stealth" to stealth, "blockNetwork" to blockNetwork,
-            "timeoutMs" to timeoutMs, "pollIntervalMs" to pollIntervalMs, "ua" to userAgent.take(40))
-
-        // Strip the WebView giveaways from the UA: "Version/4.0" and the "; wv" token do not
-        // appear in a real Chrome-mobile UA and are primary WebView-detection signals. Everything
-        // else (device, Chrome major) is kept so the UA stays internally consistent.
+        // Strip the WebView giveaways from the UA: "Version/4.0" and the "; wv" token do not appear
+        // in a real Chrome-mobile UA. (This site's isBot() is stack-based, not UA-based, so this is
+        // just hygiene for Cloudflare / other layers.)
         val browserUa = userAgent
             .replace(Regex("\\s*Version/\\S+"), "")
             .replace("; wv", "")
             .replace(Regex("\\s{2,}"), " ")
             .trim()
-        ProviderLogger.d(TAG, m, "UA sanitized", "from" to userAgent.take(60), "to" to browserUa.take(60))
 
-        // WebView construction and all its access must happen on the main (Looper) thread.
+        // ── In-page reader ──────────────────────────────────────────────────────────────────
+        // The page's anti-bot (decoded from the watch page) sabotages DOM access whose call stack
+        // contains "evaluatejavascript", or is "<anonymous>" with no "http" — i.e. exactly the
+        // stacks produced by webView.evaluateJavascript() and by out-of-band injected code. It does
+        // NOT sabotage the page's own inline scripts (their stack is attributed to the document's
+        // http(s) URL). So we do NOT read the DOM from Kotlin. Instead we inject an inline <script>
+        // into the document itself (which inherits the real https://…/watching/ base URL, giving it
+        // an "http" stack → isBot()===false), let it read the decrypted server list, and hand the
+        // HTML back over a JavascriptInterface. We never touch document.write (breaking its
+        // "[native code]" self-check would abort the decryptor) — the page decrypts untouched.
+        val maxTries = (timeoutMs / 250).coerceAtLeast(4)
+        val readerScript = """
+            <script>
+            (function(){
+              try { console.log('[RD] init stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
+              var tries = 0;
+              var timer = setInterval(function(){
+                tries++;
+                try {
+                  var lis = document.querySelectorAll('li[data-index]');
+                  var n = lis ? lis.length : 0;
+                  if (n > 0) {
+                    clearInterval(timer);
+                    try { console.log('[RD] read stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
+                    var body = document.body ? document.body.innerHTML : '';
+                    console.log('[RD] captured li=' + n + ' bodyLen=' + body.length);
+                    if (window.CS_BRIDGE && window.CS_BRIDGE.onResult) window.CS_BRIDGE.onResult(body);
+                    return;
+                  }
+                  if (tries % 8 === 0) console.log('[RD] waiting tries=' + tries + ' bodyLen=' + (document.body?document.body.innerHTML.length:0) + ' title=' + (document.title||'').slice(0,40));
+                  if (tries >= $maxTries) {
+                    clearInterval(timer);
+                    console.log('[RD] give up after ' + tries + ' tries, bodyLen=' + (document.body?document.body.innerHTML.length:0));
+                    if (window.CS_BRIDGE && window.CS_BRIDGE.onResult) window.CS_BRIDGE.onResult('');
+                  }
+                } catch(e) { console.log('[RD] err ' + e.message); }
+              }, 250);
+            })();
+            </script>
+        """.trimIndent()
+
+        // Inject the reader at the very top of <head> so CS_BRIDGE polling is armed before the
+        // page's decryptor runs (the setInterval fires after the decryptor has written the list).
+        val injectedHtml = run {
+            val headIdx = html.indexOf("<head", ignoreCase = true)
+            if (headIdx >= 0) {
+                val headEnd = html.indexOf('>', headIdx)
+                if (headEnd >= 0) html.substring(0, headEnd + 1) + readerScript + html.substring(headEnd + 1)
+                else readerScript + html
+            } else readerScript + html
+        }
+
+        ProviderLogger.i(TAG, m, "Bridge render starting",
+            "htmlLen" to html.length, "injectedLen" to injectedHtml.length, "baseUrl" to baseUrl,
+            "timeoutMs" to timeoutMs, "maxTries" to maxTries, "ua" to browserUa.take(50))
+
+        val captured = CompletableDeferred<String?>()
+        val bridge = object {
+            @android.webkit.JavascriptInterface
+            fun onResult(bodyHtml: String?) {
+                // Called on a WebView binder thread — CompletableDeferred is thread-safe.
+                if (!captured.isCompleted) captured.complete(bodyHtml)
+            }
+        }
+
         val webView = createWebView(activity, browserUa)
         try {
-            // In stealth mode we let the page behave exactly like a real in-app browser session:
-            // network on, nothing intercepted except top-level navigation (which would drop our
-            // capture). Blocking subresources is a detectable anomaly, so it is opt-in only.
-            webView.settings.blockNetworkLoads = blockNetwork
+            webView.settings.blockNetworkLoads = false   // behave like a real in-app browser
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
+            webView.addJavascriptInterface(bridge, "CS_BRIDGE")
 
             webView.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                    val u = request.url?.toString().orEmpty()
-                    if (blockNetwork && u.isNotEmpty() && !u.startsWith("data:") && u != baseUrl) {
-                        ProviderLogger.d(TAG, m, "Blocked subresource", "url" to u.take(120))
-                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
-                    }
-                    return null
-                }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    // Keep the loaded document stable — a script navigating away (or reloading the
-                    // real /watching/ URL, which Cloudflare would block on WebView headers) would
-                    // drop our captured window.__decryptedHtml before we read it.
+                    // Keep the loaded document stable — a navigation away would tear down the DOM
+                    // before the reader captures it. Subresources still load normally.
                     ProviderLogger.d(TAG, m, "Blocked navigation", "url" to (request.url?.toString()?.take(120) ?: ""))
                     return true
                 }
             }
             webView.webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(cm: ConsoleMessage): Boolean {
-                    // The [STEALTH]/[CW] hook logs surface here — the primary debug signal.
+                    // [RD] reader logs surface here — crucially the reader's own call-stack, which
+                    // confirms whether the page's isBot() would treat our reads as legitimate.
                     ProviderLogger.d(TAG, "$m/console", cm.message().take(300), "src" to (cm.lineNumber()))
                     return true
                 }
             }
 
-            ProviderLogger.d(TAG, m, "Loading HTML via loadDataWithBaseURL — page JS runs untouched")
+            ProviderLogger.d(TAG, m, "Loading via loadDataWithBaseURL — page decrypts untouched, reader captures in-page")
             webView.loadDataWithBaseURL(baseUrl, injectedHtml, "text/html", "UTF-8", null)
 
-            // Read the DOM from OUTSIDE via evaluateJavascript — the page's JS cannot observe an
-            // external querySelectorAll poll, so this adds no detectable footprint. Success = real
-            // li[data-index] elements are live in the DOM (i.e. the page decrypted the list).
-            val condition = "(function(){ try { return document.querySelectorAll('li[data-index]').length > 0; } catch(e){ return false; } })()"
-            val deadline = SystemClock.elapsedRealtime() + timeoutMs
-            var polls = 0
-            var met = false
-            while (SystemClock.elapsedRealtime() < deadline) {
-                delay(pollIntervalMs)
-                polls++
-                val res = executeJsInWebView(webView, condition)
-                val remaining = deadline - SystemClock.elapsedRealtime()
-                if (res == "true") {
-                    ProviderLogger.i(TAG, m, "Success — server list present in DOM", "poll" to polls, "remainingMs" to remaining)
-                    met = true
-                    break
+            val body = withTimeoutOrNull(timeoutMs + 4000) { captured.await() }
+            when {
+                body == null -> {
+                    ProviderLogger.w(TAG, m, "Reader never reported back (timed out)")
+                    null
                 }
-                // Heartbeat every ~1.2s so a stuck render is diagnosable from logs.
-                if (polls % 4 == 0) {
-                    val diag = executeJsInWebView(webView,
-                        "(function(){ try { return JSON.stringify({body:(document.body?document.body.innerHTML.length:0),li:document.querySelectorAll('li[data-index]').length,title:(document.title||'').slice(0,40)}); } catch(e){ return 'diag_err:'+e.message; } })()")
-                    ProviderLogger.d(TAG, m, "Poll heartbeat", "poll" to polls, "remainingMs" to remaining, "diag" to (diag ?: "null"))
+                body.isBlank() -> {
+                    ProviderLogger.w(TAG, m, "Reader reported empty — server list never appeared in-page")
+                    null
+                }
+                else -> {
+                    ProviderLogger.i(TAG, m, "Reader delivered body HTML", "len" to body.length,
+                        "hasLiDataIndex" to Regex("<li\\b[^>]*\\bdata-index", RegexOption.IGNORE_CASE).containsMatchIn(body))
+                    body
                 }
             }
-            if (!met) ProviderLogger.w(TAG, m, "Timed out before server list appeared", "polls" to polls, "timeoutMs" to timeoutMs)
-
-            // Snapshot the server container / body innerHTML (NOT documentElement — that would
-            // re-include our injected <head> shim script and pollute downstream validation).
-            val dom = executeJsInWebView(webView,
-                "(function(){ try { var c = document.getElementById('watch') || document.body; return c ? c.innerHTML : ''; } catch(e){ return ''; } })()")
-            if (!dom.isNullOrBlank()) {
-                ProviderLogger.i(TAG, m, "Returning DOM snapshot", "len" to dom.length, "conditionMet" to met)
-                return@withContext dom
-            }
-
-            ProviderLogger.w(TAG, m, "No usable HTML — DOM snapshot empty")
-            return@withContext null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            ProviderLogger.e(TAG, m, "Sandbox render failed", e)
-            return@withContext null
+            ProviderLogger.e(TAG, m, "Bridge render failed", e)
+            null
         } finally {
-            // Already on the main thread (withContext(Dispatchers.Main)) — tear down directly.
             try {
+                webView.removeJavascriptInterface("CS_BRIDGE")
                 webView.stopLoading()
                 webView.loadUrl("about:blank")
                 webView.clearHistory()
@@ -1418,28 +1439,6 @@ class NavigationEngine(
                 ProviderLogger.d(TAG, m, "Sandbox WebView destroyed")
             } catch (_: Exception) {}
         }
-    }
-
-    /**
-     * Injects the sandbox capture pre-hook at the very top of <head> so it runs before the
-     * page's own scripts. In stealth mode this is the passive, fingerprint-free [SANDBOX_STEALTH_JS];
-     * otherwise it is the aggressive tampering profile. Falls back to prepending when there is no
-     * <head>, so the hook still wins the race.
-     */
-    private fun injectSandboxPreHook(html: String, stealth: Boolean): String {
-        val hook = if (stealth) {
-            "<script>$WEBVIEW_AUTHENTICITY_JS</script>"
-        } else {
-            "<script>$SPOOFING_JS\n$ANTI_ANTI_BOT_JS\n$SANDBOX_WRITELN_OPEN_CLOSE_JS\n$SANDBOX_DOM_CAPTURE_JS</script>"
-        }
-        val headIdx = html.indexOf("<head", ignoreCase = true)
-        if (headIdx >= 0) {
-            val headEnd = html.indexOf('>', headIdx)
-            if (headEnd >= 0) {
-                return html.substring(0, headEnd + 1) + hook + html.substring(headEnd + 1)
-            }
-        }
-        return hook + html
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1685,105 +1684,6 @@ class NavigationEngine(
                         configurable: false, writable: false, value: Element.prototype.remove
                     });
                 } catch(e) {}
-            })();
-        """.trimIndent()
-
-        /**
-         * Supplements [ANTI_ANTI_BOT_JS] for the render-in-sandbox path: routes document.writeln
-         * through the (hooked) document.write so newline/deferred writes are captured too, and
-         * neutralizes document.open/close so a payload calling document.open() cannot reset the
-         * document and drop our write override before we read window.__decryptedHtml.
-         */
-        private val SANDBOX_WRITELN_OPEN_CLOSE_JS = """
-            (function(){
-                try { document.writeln = function(h){ document.write((h == null ? '' : String(h)) + '\n'); }; } catch(e) {}
-                try { document.open = function(){ return document; }; } catch(e) {}
-                try { document.close = function(){}; } catch(e) {}
-            })();
-        """.trimIndent()
-
-        /**
-         * Clear-resistant, method-agnostic capture for CimaNow's adaptive anti-bot, which
-         * "clears the content directly" shortly after the decryptor injects it. Rather than
-         * relying only on the document.write hook (defeated if the page injects via
-         * innerHTML/appendChild) or reading the settled DOM (defeated if content is already
-         * cleared), a MutationObserver snapshots the server list the INSTANT any
-         * li[data-index] appears — before the anti-bot's clear runs — regardless of how it was
-         * inserted. First win latches window.__decryptedHtml and disconnects.
-         */
-        private val SANDBOX_DOM_CAPTURE_JS = """
-            (function(){
-                try {
-                    var _grab = function(){
-                        try {
-                            if (window.__decryptedHtml && window.__decryptedHtml.length > 200) return true;
-                            var lis = document.querySelectorAll('li[data-index]');
-                            if (!lis || lis.length === 0) return false;
-                            var container = document.getElementById('watch') || document.body || document.documentElement;
-                            var html = container ? container.innerHTML : '';
-                            if (html && html.indexOf('data-index') !== -1) {
-                                window.__decryptedHtml = html;
-                                console.log('[CW] MutationObserver captured ' + html.length + ' chars (li=' + lis.length + ')');
-                                return true;
-                            }
-                        } catch(e) { console.error('[CW] grab error: ' + e.message); }
-                        return false;
-                    };
-                    if (typeof MutationObserver !== 'undefined') {
-                        var _obs = new MutationObserver(function(){ if (_grab()) { try { _obs.disconnect(); } catch(e){} } });
-                        try {
-                            _obs.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-index','data-id'] });
-                            console.log('[CW] MutationObserver armed');
-                        } catch(e) { console.error('[CW] observe failed: ' + e.message); }
-                    }
-                    _grab();
-                } catch(e) { console.error('[CW] DOM capture hook failed: ' + e.message); }
-            })();
-        """.trimIndent()
-
-        /**
-         * WebView environment-authenticity shim for the stealth render path.
-         *
-         * This does NOT tamper with the anti-bot's logic (document.write, Element.prototype,
-         * DOMParser, DisableDevtool, MutationObserver capture were all tried and burned — userland
-         * tampering is timing/shape-detectable and gets fingerprinted after one success). Instead
-         * it only NORMALIZES the environment so the WebView presents like a genuine Chrome-mobile
-         * browser, which is what actually makes the page's own decryptor run:
-         *   - navigator.webdriver → false (accessor on the prototype, matching real Chrome shape)
-         *   - window.chrome defined (WebView ships without it; a classic WebView/automation tell)
-         *   - navigator.plugins / languages non-empty and plausible (headless/WebView are empty)
-         *   - navigator.permissions.query normalized (headless throws / mismatches Notification)
-         *
-         * Nothing here is page-observable as tampering, and we do NOT read the DOM from inside —
-         * the server list is read passively from OUTSIDE via evaluateJavascript polling, which the
-         * page's JS cannot detect. The page decrypts untouched.
-         */
-        private val WEBVIEW_AUTHENTICITY_JS = """
-            (function(){
-                try {
-                    try { Object.defineProperty(Navigator.prototype, 'webdriver', { get: function(){ return false; }, configurable: true }); } catch(e) {}
-                    if (!window.chrome) {
-                        window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: { isInstalled: false } };
-                    }
-                    try {
-                        if (!navigator.plugins || navigator.plugins.length === 0) {
-                            Object.defineProperty(Navigator.prototype, 'plugins', { get: function(){ return [1,2,3,4,5]; }, configurable: true });
-                            Object.defineProperty(Navigator.prototype, 'mimeTypes', { get: function(){ return [1,2,3]; }, configurable: true });
-                        }
-                    } catch(e) {}
-                    try { Object.defineProperty(Navigator.prototype, 'languages', { get: function(){ return ['ar','en-US','en']; }, configurable: true }); } catch(e) {}
-                    try {
-                        if (navigator.permissions && navigator.permissions.query) {
-                            var _q = navigator.permissions.query.bind(navigator.permissions);
-                            navigator.permissions.query = function(p){
-                                return (p && p.name === 'notifications')
-                                    ? Promise.resolve({ state: (typeof Notification !== 'undefined' ? Notification.permission : 'default') })
-                                    : _q(p);
-                            };
-                        }
-                    } catch(e) {}
-                    console.log('[AUTH] shim applied: chrome=' + (!!window.chrome) + ' webdriver=' + navigator.webdriver + ' plugins=' + navigator.plugins.length + ' langs=' + navigator.languages.join(','));
-                } catch(e) { console.error('[AUTH] shim failed: ' + e.message); }
             })();
         """.trimIndent()
 

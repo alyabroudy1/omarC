@@ -1537,10 +1537,7 @@ class CimaNowProvider : BaseProvider() {
                 html = watchHtml,
                 baseUrl = pageUrl.ifBlank { "https://cimanow.cc/" },
                 userAgent = httpService.userAgent,
-                timeoutMs = 25_000L,
-                pollIntervalMs = 300L,
-                stealth = true,
-                blockNetwork = false
+                timeoutMs = 25_000L
             )
 
             when {
