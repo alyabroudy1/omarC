@@ -37,44 +37,35 @@ class VKVideoEmbed : ExtractorApi() {
             if (ctx != null) android.webkit.WebSettings.getDefaultUserAgent(ctx) else SessionProvider.getUserAgent()
         } catch (e: Exception) { SessionProvider.getUserAgent() }
 
+        // ── Fast path: video_ext.php returns the player params inline ────────────────────────
+        // vk serves this endpoint ONLY to requests that look like an embedded iframe. Without
+        // `Sec-Fetch-Dest: iframe` it answers 302 → 429 (measured: every other header combination,
+        // desktop or mobile UA, with or without Referer/Accept, gets rate-limited), and on-device
+        // that rejection manifests as a ~60s stall rather than a fast error. With the header it is
+        // a ~0.4s 200. Verified against live vkvideo.ru on 2026-07-25.
         val html = http?.getText(
             url,
             headers = mapOf(
                 "Referer" to (referer ?: "https://vk.com/"),
                 "User-Agent" to (ua ?: "Mozilla/5.0"),
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "en-US,en;q=0.5"
+                "Accept-Language" to "en-US,en;q=0.9",
+                "Sec-Fetch-Dest" to "iframe",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site"
             ),
             rewriteDomain = false
         )
 
         if (html != null && html.length > 500) {
             ProviderLogger.i(TAG, "getUrl", "HTTP got ${html.length} chars")
-            val videoUrls = mutableListOf<String>()
-            Regex("""file:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1].replace("\\/", "/"))
-            }
-            Regex("""src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1].replace("\\/", "/"))
-            }
-            Regex("""['"](https?://[^"']+\.(?:m3u8|mp4)[^"']*)['"]""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1])
-            }
-            if (videoUrls.isNotEmpty()) {
-                ProviderLogger.i(TAG, "getUrl", "HTTP found ${videoUrls.size} video URLs")
-                for (videoUrl in videoUrls.distinct()) {
-                    val link = newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = videoUrl,
-                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = url
-                    }
-                    callback(link)
-                }
+            val links = parsePlayerParams(html, url)
+            if (links.isNotEmpty()) {
+                ProviderLogger.i(TAG, "getUrl", "HTTP found ${links.size} stream(s) — no WebView needed")
+                links.forEach(callback)
                 return
             }
+            ProviderLogger.w(TAG, "getUrl", "No player params in response (rate-limited page?) — falling back to WebView")
         } else {
             ProviderLogger.w(TAG, "getUrl", "HTTP returned null or too short: ${html?.length}")
         }
@@ -116,5 +107,48 @@ class VKVideoEmbed : ExtractorApi() {
             is WebViewResult.Timeout -> ProviderLogger.e(TAG, "getUrl", "WebView timeout: ${result.lastUrl}")
             else -> {}
         }
+    }
+
+    /**
+     * Pulls the stream URLs out of the player params embedded in video_ext.php.
+     *
+     * The params are HTML-escaped JSON, so the URLs arrive as `\"hls\":\"https:\/\/…\"` — the old
+     * regexes required a literal `.m3u8`/`.mp4` and unescaped slashes, so they matched nothing even
+     * when the fetch succeeded. Two shapes exist and both are handled:
+     *   "hls"     → one master playlist (all qualities; this is what VK serves nowadays)
+     *   "url720"  → progressive MP4 per quality (older/short uploads)
+     * The signed CDN URLs are IP-bound (srcIp), not UA-bound, so they play as-is.
+     */
+    private suspend fun parsePlayerParams(html: String, embedUrl: String): List<ExtractorLink> {
+        fun unescape(s: String) = s
+            .replace("\\/", "/")
+            .replace("\\u0026", "&")
+            .replace("&amp;", "&")
+
+        val out = mutableListOf<ExtractorLink>()
+
+        // Verified against a live video_ext.php dump: the body is `\"hls\":\"https:\/\/host\/…\"`,
+        // so the URL run is (escaped-slash | any char that is neither quote nor backslash).
+        Regex("""\\?"hls\\?":\\?"(https?:(?:\\/|[^"\\])+)""").find(html)
+            ?.groupValues?.get(1)?.let { raw ->
+                val hls = unescape(raw)
+                ProviderLogger.i(TAG, "parsePlayerParams", "hls master: ${hls.take(90)}")
+                out += newExtractorLink(
+                    source = name, name = "$name HLS", url = hls, type = ExtractorLinkType.M3U8
+                ) { this.referer = embedUrl }
+            }
+
+        Regex("""\\?"url(\d{3,4})\\?":\\?"(https?:(?:\\/|[^"\\])+)""").findAll(html).forEach { m ->
+            val quality = m.groupValues[1].toIntOrNull() ?: 0
+            val mp4 = unescape(m.groupValues[2])
+            out += newExtractorLink(
+                source = name, name = "$name ${quality}p", url = mp4, type = ExtractorLinkType.VIDEO
+            ) {
+                this.referer = embedUrl
+                this.quality = quality
+            }
+        }
+
+        return out.distinctBy { it.url }
     }
 }

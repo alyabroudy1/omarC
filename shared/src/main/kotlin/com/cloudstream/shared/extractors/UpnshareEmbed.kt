@@ -37,45 +37,17 @@ class UpnshareEmbed : ExtractorApi() {
 
         val baseUrl = Regex("(https?://[^/#]+)").find(url)?.groupValues?.get(1) ?: return
 
-        val http = ProviderHttpServiceHolder.getInstance()
-        val html = http?.getText(
-            baseUrl,
-            headers = mapOf("Referer" to (referer ?: baseUrl)),
-            rewriteDomain = false
-        )
-
-        if (html != null && html.length > 1000) {
-            ProviderLogger.i(TAG, "getUrl", "HTTP fetch got ${html.length} chars, parsing for video URLs")
-
-            val videoUrls = mutableListOf<String>()
-
-            Regex("""file:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1].replace("\\/", "/"))
-            }
-            Regex("""src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1].replace("\\/", "/"))
-            }
-            Regex("""['"](https?://[^"']+\.(?:m3u8|mp4)[^"']*)['"]""").findAll(html).forEach {
-                videoUrls.add(it.groupValues[1])
-            }
-
-            if (videoUrls.isNotEmpty()) {
-                ProviderLogger.i(TAG, "getUrl", "HTTP found ${videoUrls.size} video URLs")
-                for (videoUrl in videoUrls.distinct()) {
-                    val link = newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = videoUrl,
-                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = baseUrl
-                    }
-                    callback(link)
-                }
-                return
-            }
-        }
-
+        // NOTE: there is deliberately no HTTP fast path here. Checked against the live host on
+        // 2026-07-25: the video id lives in the URL *fragment*, which is never sent to the server,
+        // so fetching the base URL only ever returns the ~1.3KB SPA shell (a <script type=module>
+        // and two analytics tags — no stream anywhere in it). The player's own JSON endpoints
+        // (/api/v1/video?id=, /api/v1/info?id=, /api/v1/player?t=) answer with AES ciphertext
+        // (measured entropy 7.93 bits/byte, no repeating-key structure) whose key the bundle
+        // derives at runtime from window.location, and the bundle filename is content-hashed so
+        // any reimplementation would break on their next deploy. Rendering the page is the only
+        // durable option — but see VideoUrlClassifier: the sniff was previously ended within 1.6s
+        // by a mc.yandex.com beacon being mistaken for the stream, which is what actually broke
+        // this extractor. That filter, not an HTTP shortcut, is the fix.
         val engine = videoSnifferEngine ?: VideoSnifferEngine { ActivityProvider.currentActivity }
         val snifferUa = try {
             val ctx = ActivityProvider.currentActivity

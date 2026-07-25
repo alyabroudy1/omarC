@@ -39,6 +39,13 @@ class CimaNowProvider : BaseProvider() {
 
     private val TAG = "CimaNowDebug"
 
+    /**
+     * Per-server ceiling for core.php + extractor. Servers resolve in parallel but the player only
+     * starts once ALL of them settle, so this is the worst case a user waits for playback. Keep it
+     * well under the 120s WebView-sniff budget some extractors use internally.
+     */
+    private val SERVER_RESOLVE_TIMEOUT_MS = 20_000L
+
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -1043,6 +1050,10 @@ class CimaNowProvider : BaseProvider() {
         Log.i(TAG_TEST, "========== [START] WebView sandbox resolve ==========")
         Log.i(TAG_TEST, "Target URL: $movieUrl")
 
+        // Declared OUTSIDE the try: links are handed to the player through `callback` as they are
+        // found, so a late failure (a slow server blowing a timeout) must not erase the fact that
+        // earlier servers already delivered. The catch below returns this, not a hard false.
+        var found = false
         try {
             val userAgent = httpService.userAgent
 
@@ -1146,7 +1157,6 @@ class CimaNowProvider : BaseProvider() {
 
             // ======================== EXTRACT FROM CAPTURED DATA ========================
             val watchUrl = navResult.finalUrl
-            var found = false
             val foundLinks = mutableListOf<String>()
             val loggingCallback: (ExtractorLink) -> Unit = { link ->
                 foundLinks.add(link.url)
@@ -1285,21 +1295,31 @@ class CimaNowProvider : BaseProvider() {
                         for (sv in servers) {
                             if (sv.index.isBlank() || sv.id.isBlank()) continue
                             launch {
-                                try {
-                                    val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=${sv.index}&id=${sv.id}"
-                                    Log.d(TAG_TEST, "core.php GET for server '${sv.name}': index=${sv.index} id=${sv.id}")
-                                    val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
-                                    val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
-                                    val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
-                                        if (it.startsWith("//")) "https:$it" else it
-                                    } ?: ""
-                                    if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
-                                        Log.i(TAG_TEST, "Server '${sv.name}' iframe: $iframeUrl")
-                                        fallbackExtractIframe(iframeUrl, sv.name, watchUrl, loggingCallback)
-                                        found = true
+                                // Hard per-server budget. This block is a barrier — the player only
+                                // starts once loadLinks returns — so without a cap a single slow
+                                // host (VK's embed sniff used to eat the full 120s) delays EVERY
+                                // link. Whatever this server would have produced is not worth
+                                // holding the other five hostage for.
+                                val done = withTimeoutOrNull(SERVER_RESOLVE_TIMEOUT_MS) {
+                                    try {
+                                        val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=${sv.index}&id=${sv.id}"
+                                        Log.d(TAG_TEST, "core.php GET for server '${sv.name}': index=${sv.index} id=${sv.id}")
+                                        val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                        val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
+                                        val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
+                                            if (it.startsWith("//")) "https:$it" else it
+                                        } ?: ""
+                                        if (iframeUrl.isNotBlank() && iframeUrl != "123456789") {
+                                            Log.i(TAG_TEST, "Server '${sv.name}' iframe: $iframeUrl")
+                                            fallbackExtractIframe(iframeUrl, sv.name, watchUrl, loggingCallback)
+                                            found = true
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG_TEST, "core.php failed for server '${sv.name}': ${e.message}")
                                     }
-                                } catch (e: Exception) {
-                                    Log.e(TAG_TEST, "core.php failed for server '${sv.name}': ${e.message}")
+                                }
+                                if (done == null) {
+                                    Log.w(TAG_TEST, "⏱ Server '${sv.name}' exceeded ${SERVER_RESOLVE_TIMEOUT_MS}ms — abandoned (other servers unaffected)")
                                 }
                             }
                         }
@@ -1355,9 +1375,11 @@ class CimaNowProvider : BaseProvider() {
             Log.i(TAG_TEST, "========== [END] Isolated WebView Test Flow, found=$found ==========")
             return found
         } catch (e: Exception) {
-            Log.e(TAG_TEST, "Exception in isolated test flow: ${e.message}")
+            // Includes TimeoutCancellationException from any inner withTimeout. Links already
+            // pushed through `callback` are live in the player, so report what we actually got.
+            Log.e(TAG_TEST, "Exception in isolated test flow: ${e.message} (found=$found so far)")
         }
-        return false
+        return found
     }
 
 }

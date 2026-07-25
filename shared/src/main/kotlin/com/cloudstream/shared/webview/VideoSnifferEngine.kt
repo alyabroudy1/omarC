@@ -775,6 +775,16 @@ class VideoSnifferEngine(
              android.util.Log.d("VideoSnifferEngine", "[captureLink] Filtered out | url=${url.take(80)}")
              return
          }
+         // Analytics/telemetry never counts as a stream. This guard belongs HERE, not only at the
+         // network interceptor: the injected JS reports fetch/XHR URLs straight to the bridge with
+         // no classification, so a tracker beacon used to be captured, satisfy the exit condition
+         // and end the session with garbage before the real manifest was ever requested.
+         if (VideoUrlClassifier.isBlacklisted(url)) {
+             android.util.Log.d("VideoSnifferEngine", "[captureLink] Tracker rejected | url=${url.take(80)}")
+             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.captureLink", "Tracker/analytics rejected",
+                 "url" to url.take(100), "label" to qualityLabel)
+             return
+         }
 
          val data = CapturedLinkData(url, qualityLabel, headers)
 

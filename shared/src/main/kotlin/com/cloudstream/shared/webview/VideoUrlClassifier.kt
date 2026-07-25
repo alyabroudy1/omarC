@@ -58,13 +58,27 @@ object VideoUrlClassifier {
                SEGMENT_KEYWORDS.any { lower.contains(it) }
     }
 
+    /**
+     * Analytics/telemetry hosts. These fire constantly on embed pages and must never be mistaken
+     * for a stream: a single false positive satisfies ExitCondition.VideoFound and ends the sniff
+     * before the real manifest is requested (Upnshare returned a mc.yandex.com beacon as the
+     * "video" for exactly this reason).
+     */
+    private val TRACKER_HOSTS = listOf(
+        "mc.yandex.", "yandex.ru/metrika", "yandex.com/metrika", "/metrika/",
+        "google-analytics.com", "googletagmanager.com", "doubleclick.net",
+        "scorecardresearch.com", "facebook.com/tr", "/collect?", "/gtag/",
+        "imasdk.googleapis.com", "2mdn.net"
+    )
+
     /** Check if a URL is a known analytics/tracking endpoint to ignore. */
     fun isBlacklisted(url: String): Boolean {
         val lowerUrl = url.lowercase()
         return lowerUrl.contains("/ping.gif") ||
                lowerUrl.contains("/analytics") ||
                lowerUrl.contains("/google-analytics") ||
-               lowerUrl.contains("favicon.ico")
+               lowerUrl.contains("favicon.ico") ||
+               TRACKER_HOSTS.any { lowerUrl.contains(it) }
     }
 
     /**
