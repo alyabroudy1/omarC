@@ -177,7 +177,10 @@ class FaselHDV2Parser : NewBaseParser() {
             if (text.startsWith("http")) addResult(text)
         }
 
-        Log.d("[FaselHDV2Parser]", "extractIframeSources: found ${results.size} URLs")
+        Log.i("[FaselHDV2Parser]", "extractIframeSources: extracted ${results.size} watch server URLs:")
+        results.forEachIndexed { idx, u ->
+            Log.d("[FaselHDV2Parser]", "  [$idx] -> ${u.take(120)}")
+        }
         return results.toList()
     }
 

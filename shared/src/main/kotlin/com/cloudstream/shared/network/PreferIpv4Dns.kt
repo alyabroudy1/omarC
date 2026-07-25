@@ -23,13 +23,16 @@ import java.net.InetAddress
  */
 class PreferIpv4Dns : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
-        val addresses = Dns.SYSTEM.lookup(hostname)
-        return addresses.sortedWith(Comparator { a, b ->
-            when {
-                a is Inet4Address && b is Inet6Address -> -1
-                a is Inet6Address && b is Inet4Address -> 1
-                else -> 0
-            }
-        })
+        val addresses = try {
+            Dns.SYSTEM.lookup(hostname)
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val ipv4 = addresses.filterIsInstance<Inet4Address>()
+        return if (ipv4.isNotEmpty()) {
+            ipv4 + addresses.filterIsInstance<Inet6Address>()
+        } else {
+            addresses
+        }
     }
 }

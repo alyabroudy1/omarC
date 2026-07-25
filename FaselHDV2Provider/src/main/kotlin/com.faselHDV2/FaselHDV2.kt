@@ -202,6 +202,7 @@ class FaselHDV2 : BaseProvider() {
         }
     }
 
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -209,74 +210,105 @@ class FaselHDV2 : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val methodTag = "[FaselHDV2] [loadLinks]"
-        Log.i(methodTag, "Intercepting loadLinks for WebView-based FaselHD extraction")
+        Log.i(methodTag, "=== START loadLinks ===")
+        Log.i(methodTag, "Target URL: $data")
+        Log.i(methodTag, "Provider settings: preferIpv4=$preferIpv4, preferIpv6=$preferIpv6")
 
         try {
-            // Fetch the detail/episode page
-            var doc = httpService.getDocument(data, rewriteDomain = true)
-            if (doc != null) {
-                val parser = getParser() as FaselHDV2Parser
+            httpService.ensureInitialized()
 
-                // Follow player page if it exists (play.php?vid=XXX)
-                val watchPageUrl = parser.getPlayerPageUrl(doc)
-                val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
-                    val fullWatchUrl = if (watchPageUrl.startsWith("http")) watchPageUrl else "$mainUrl/$watchPageUrl"
-                    Log.d(methodTag, "Following player page: $fullWatchUrl")
-                    httpService.getDocument(fullWatchUrl, rewriteDomain = true) ?: doc
-                } else {
-                    doc
-                }
+            // Step 1: Fetch detail/movie document
+            val detailDoc = httpService.getDocument(data, rewriteDomain = true)
+            if (detailDoc == null) {
+                Log.e(methodTag, "Failed to fetch detail document from $data")
+                return false
+            }
 
-                val iframeUrls = parser.extractIframeSources(targetDoc)
-                Log.d(methodTag, "Extracted ${iframeUrls.size} iframe URLs: $iframeUrls")
+            // Step 2: Check for player page (play.php?vid=...)
+            val parser = getParser() as FaselHDV2Parser
+            val watchPageUrl = parser.getPlayerPageUrl(detailDoc)
+            val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
+                val fullWatchUrl = if (watchPageUrl.startsWith("http")) watchPageUrl else "$mainUrl/$watchPageUrl"
+                Log.i(methodTag, "Following watch player page: $fullWatchUrl")
+                httpService.getDocument(fullWatchUrl, rewriteDomain = true) ?: detailDoc
+            } else {
+                Log.d(methodTag, "No separate player page found, using detail document")
+                detailDoc
+            }
 
-                if (iframeUrls.isNotEmpty()) {
-                    val extractor = FaselHDExtractor()
+            // Step 3: Extract watch server URLs from document (.tabs-ul li[onclick], iframe[src], etc.)
+            val watchUrls = parser.extractIframeSources(targetDoc)
+            Log.i(methodTag, "Extracted ${watchUrls.size} watch server URLs:")
+            watchUrls.forEachIndexed { idx, url ->
+                Log.i(methodTag, "  Server #$idx: $url")
+            }
 
-                    // Sequential extraction: try each iframe URL.
-                    // WebView resolution takes up to ~24s (2 attempts × 12s).
-                    // Use 30s timeout per URL.
-                    var success = false
-                    for ((index, iframeUrl) in iframeUrls.withIndex()) {
-                        Log.d(methodTag, "Trying iframe ${index + 1}/${iframeUrls.size}: ${iframeUrl.take(100)}")
-                        try {
-                            val found = kotlinx.coroutines.withTimeoutOrNull(30_000L) {
-                                var result = false
-                                val referer = try {
-                                    URL(iframeUrl).let { "${it.protocol}://${it.host}/" }
-                                } catch (e: Exception) {
-                                    "$mainUrl/"
-                                }
-                                extractor.getUrl(iframeUrl, referer, subtitleCallback) { link ->
-                                    Log.d(methodTag, "Callback received: ${link.name} | ${link.url.take(80)}")
-                                    callback(link)
-                                    result = true
-                                }
-                                result
-                            }
-                            if (found == true) {
-                                Log.i(methodTag, "Success from iframe ${index + 1}, breaking loop")
-                                success = true
-                                break
-                            }
-                            Log.w(methodTag, "iframe ${index + 1} ${if (found == null) "timed out (30s)" else "returned no links"}")
-                        } catch (e: Exception) {
-                            Log.e(methodTag, "iframe ${index + 1} error: ${e.message}")
-                        }
+            if (watchUrls.isEmpty()) {
+                Log.w(methodTag, "No watch server URLs found on page")
+                return false
+            }
+
+            val referer = "$mainUrl/"
+
+            // Step 4: Try standard extractors first on all watch URLs
+            Log.i(methodTag, "Trying standard extractors on ${watchUrls.size} watch URLs...")
+            var standardExtractorFound = false
+            for ((index, watchUrl) in watchUrls.withIndex()) {
+                Log.d(methodTag, "Checking standard extractors for [$index]: $watchUrl")
+                val links = collectExtractorLinks(watchUrl, referer, subtitleCallback, timeoutMs = 8000L)
+                if (links.isNotEmpty()) {
+                    Log.i(methodTag, "Standard extractor SUCCESS for [$index] (${links.size} links found): $watchUrl")
+                    links.forEach { link ->
+                        Log.i(methodTag, "Delivering link: ${link.name} | ${link.url.take(100)}")
+                        callback(link)
                     }
-
-                    if (success) {
-                        Log.i(methodTag, "WebView extraction succeeded!")
-                        return true
-                    } else {
-                        Log.w(methodTag, "All iframes yielded 0 links, falling back to super.loadLinks")
-                    }
+                    standardExtractorFound = true
                 }
             }
-        } catch (e: Exception) {
-            Log.e(methodTag, "loadLinks crashed: ${e.message}. Falling back to super.loadLinks")
-        }
 
-        return super.loadLinks(data, isCasting, subtitleCallback, callback)
+            if (standardExtractorFound) {
+                Log.i(methodTag, "=== loadLinks SUCCESS via standard extractors ===")
+                return true
+            }
+
+            Log.i(methodTag, "No standard extractors triggered. Passing ${watchUrls.size} watch URLs sequentially to VideoSnifferEngine (IPv4 enabled)...")
+
+            // Step 5: Sequential fallback to VideoSnifferEngine for each watch URL
+            val serverSelectors = parser.buildServerSelectors(targetDoc, watchUrls)
+
+            for ((index, watchUrl) in watchUrls.withIndex()) {
+                val selector = serverSelectors.getOrNull(index)
+                Log.i(methodTag, "=== Sniffing Server [$index/${watchUrls.size}] ===")
+                Log.i(methodTag, "URL: $watchUrl")
+                Log.i(methodTag, "Referer: $referer")
+                if (selector != null) {
+                    Log.d(methodTag, "Selector: ${selector.query}")
+                }
+
+                val snifferResult = awaitSnifferResult(
+                    targetUrl = watchUrl,
+                    referer = referer,
+                    subtitleCallback = subtitleCallback,
+                    callback = callback,
+                    timeoutMs = com.cloudstream.shared.webview.VideoSnifferEngine.SNIFFER_PLAYER_TIMEOUT_MS,
+                    selector = selector
+                )
+
+                if (snifferResult) {
+                    Log.i(methodTag, "=== SUCCESS via VideoSnifferEngine on Server [$index] ===")
+                    return true
+                }
+
+                Log.w(methodTag, "VideoSnifferEngine failed for Server [$index]")
+            }
+
+            Log.w(methodTag, "=== loadLinks END: All ${watchUrls.size} servers failed ===")
+            return false
+
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error in loadLinks: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
     }
 }

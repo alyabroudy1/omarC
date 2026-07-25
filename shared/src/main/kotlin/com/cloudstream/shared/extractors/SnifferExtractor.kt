@@ -642,8 +642,13 @@ class SnifferExtractor : ExtractorApi() {
         sourceName: String
     ): List<ExtractorLink>? {
         return try {
-            // Remove referer param as it's already in headers
-            val response = app.get(url, headers = headers).text
+            // Fetch M3U8 over IPv4 to match token IP
+            val client = app.baseClient.newBuilder()
+                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
+                .build()
+            val reqBuilder = okhttp3.Request.Builder().url(url)
+            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+            val response = client.newCall(reqBuilder.build()).execute().body?.string() ?: ""
             
             // LOGGING: Print first 2000 chars of M3U8 to capture all quality entries
             ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content (First 2000 chars)", 

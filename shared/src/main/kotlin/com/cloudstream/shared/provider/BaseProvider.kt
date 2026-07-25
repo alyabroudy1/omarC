@@ -554,7 +554,7 @@ abstract class BaseProvider : MainAPI() {
      * Used in Phase 2 to gather links from all servers before delivering them.
      * Returns all found links (may be empty if no extractor matches).
      */
-    private suspend fun collectExtractorLinks(
+    protected suspend fun collectExtractorLinks(
         targetUrl: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
