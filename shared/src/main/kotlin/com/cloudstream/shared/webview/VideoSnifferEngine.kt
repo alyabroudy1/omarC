@@ -490,22 +490,35 @@ class VideoSnifferEngine(
                                     window.chrome = { runtime: {}, app: { isInstalled: false }, csi: function(){}, loadTimes: function(){} };
                                 }
                             } catch(e) {}
+                            // NB: the fakes must be array-LIKE, never real Arrays. A genuine
+                            // navigator.plugins is a PluginArray, so `Array.isArray(navigator.plugins)`
+                            // is false in every real browser — sites probe exactly that to catch
+                            // spoofers (CimaNow ships `Array.isArray(navigator.plugins) &&
+                            // navigator.plugins[0] === 1` as a bot signal). Using an array literal
+                            // here would hand them the tell we are trying to hide.
                             try {
                                 if (!navigator.plugins || navigator.plugins.length === 0) {
-                                    var fakePlugins = [
+                                    var fakePlugins = Object.create(null);
+                                    var pluginList = [
                                         { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
                                         { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
                                         { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
                                     ];
-                                    fakePlugins.item = function(i) { return this[i]; };
+                                    for (var pi = 0; pi < pluginList.length; pi++) fakePlugins[pi] = pluginList[pi];
+                                    fakePlugins.length = pluginList.length;
+                                    fakePlugins.item = function(i) { return this[i] || null; };
                                     fakePlugins.namedItem = function(n) { for (var i=0;i<this.length;i++) if (this[i].name===n) return this[i]; return null; };
+                                    fakePlugins.refresh = function() {};
                                     Object.defineProperty(navigator, 'plugins', { get: function() { return fakePlugins; } });
                                 }
                             } catch(e) {}
                             try {
                                 if (!navigator.mimeTypes || navigator.mimeTypes.length === 0) {
-                                    var fakeMimes = [{ type: 'application/pdf', suffixes: 'pdf', description: '' }];
-                                    fakeMimes.item = function(i) { return this[i]; };
+                                    var fakeMimes = Object.create(null);
+                                    fakeMimes[0] = { type: 'application/pdf', suffixes: 'pdf', description: '' };
+                                    fakeMimes.length = 1;
+                                    fakeMimes.item = function(i) { return this[i] || null; };
+                                    fakeMimes.namedItem = function(t) { return this[0].type === t ? this[0] : null; };
                                     Object.defineProperty(navigator, 'mimeTypes', { get: function() { return fakeMimes; } });
                                 }
                             } catch(e) {}

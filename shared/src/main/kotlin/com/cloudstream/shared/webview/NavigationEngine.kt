@@ -1370,6 +1370,16 @@ class NavigationEngine(
                 for (var i = 0; i < n; i++) L('$markChunk' + i + '|' + frag.substr(i * CH, CH));
                 L('$markEnd');
               }
+              // An EMPTY #watch plus an EMPTY #download is not a slow page — it is the decryptor's
+              // decoy for a client it flagged, written instead of the real markup. Naming it beats
+              // polling 100 times against a document that will never change.
+              function isDecoy(){
+                try {
+                  var w = document.getElementById('watch'), d = document.getElementById('download');
+                  return !!(w && d && w.children.length === 0 && d.children.length === 0
+                            && (w.innerHTML || '').trim() === '' && (d.innerHTML || '').trim() === '');
+                } catch(e) { return false; }
+              }
               function diag(){
                 var b = document.body, nat = -1;
                 try { nat = Function.prototype.toString.call(document.write).indexOf('[native code]'); } catch(e){}
@@ -1380,6 +1390,7 @@ class NavigationEngine(
                   + ' scripts=' + document.scripts.length
                   + ' li=' + document.querySelectorAll('li[data-index]').length
                   + ' watchEl=' + (document.getElementById('watch') ? 1 : 0)
+                  + ' decoy=' + (isDecoy() ? 1 : 0)
                   + ' dwNative=' + nat
                   + ' title=' + (document.title||'').slice(0,30);
               }
@@ -1404,6 +1415,13 @@ class NavigationEngine(
                     if (!frag) { var b = document.body; frag = b ? b.innerHTML : ''; }
                     L('$tag captured li=' + n + ' fragLen=' + frag.length);
                     emit(frag);
+                    return;
+                  }
+                  // Bail out immediately on the decoy — waiting the full window changes nothing.
+                  if (tries >= 4 && isDecoy()) {
+                    clearInterval(timer);
+                    L('$tag DECOY served (flagged as bot) after ' + tries + ' tries, ' + diag());
+                    emit('');
                     return;
                   }
                   if (tries % 8 === 0) L('$tag waiting tries=' + tries + ' ' + diag());
@@ -1682,24 +1700,46 @@ class NavigationEngine(
     }
 
     /**
-     * Adds [webView] to the activity's content view as a 1x1, fully transparent, non-interactive
-     * view. Purely so the WebView counts as attached-and-visible: a WebView that is never added to
-     * a window is reported to the page as `document.visibilityState === 'hidden'`, does not run
-     * requestAnimationFrame callbacks, and has its JS dialogs discarded. Removal is handled by the
-     * caller's cleanup (`(webView.parent as? ViewGroup)?.removeView(webView)`).
+     * Adds [webView] to the activity's content view, FULL SIZE but moved far off-screen and fully
+     * transparent, so the page sees a normal browser viewport while nothing is visible and no touch
+     * can land on it.
+     *
+     * Two constraints have to hold at once:
+     *  - The WebView must be attached to a window. A detached one is reported to the page as
+     *    `document.visibilityState === 'hidden'`, never fires requestAnimationFrame, and has its
+     *    JS dialogs discarded.
+     *  - It must NOT be tiny. CimaNow's decryptor gained this check (decoded 2026-07-25):
+     *        if (window.innerWidth <= 15 && window.innerHeight <= 15) _isB = true;
+     *    and when flagged it no longer aborts — it writes a decoy
+     *    `<div id="watch"></div><div id="download"></div>` (exactly 47 chars, which is how it was
+     *    caught: bodyLen - htmlLen == 47) so the scrape "succeeds" with zero servers. The previous
+     *    1x1 attachment walked straight into it, and a detached WebView reports 0x0, which trips it
+     *    too — hence full size plus an off-screen translation rather than a small view.
+     *
+     * Removal is handled by the caller's cleanup (`(webView.parent as? ViewGroup)?.removeView(...)`).
      */
     private fun attachOffscreen(activity: android.app.Activity, webView: WebView) {
         try {
             val root = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
             if (root == null) {
-                ProviderLogger.w(TAG, "attachOffscreen", "No content view — WebView stays detached (page will be 'hidden')")
+                ProviderLogger.w(TAG, "attachOffscreen", "No content view — WebView stays detached (page will be 'hidden' AND 0x0)")
                 return
             }
             webView.alpha = 0f
             webView.isClickable = false
             webView.isFocusable = false
-            root.addView(webView, android.view.ViewGroup.LayoutParams(1, 1))
-            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached 1x1 (page-visibility = visible)")
+            webView.isFocusableInTouchMode = false
+            // Laid out at full size (so innerWidth/innerHeight look like a real phone viewport),
+            // then translated far outside the screen so it cannot be seen or touched.
+            webView.translationX = -20000f
+            root.addView(
+                webView,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached full-size off-screen (visible page, real viewport)")
         } catch (e: Exception) {
             ProviderLogger.w(TAG, "attachOffscreen", "Attach failed: ${e.message}")
         }
