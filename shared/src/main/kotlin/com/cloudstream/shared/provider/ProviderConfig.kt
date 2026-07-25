@@ -40,8 +40,23 @@ data class ProviderConfig(
     /** Video sniff timeout in ms */
     val videoSniffTimeoutMs: Long = 35_000,
 
-    /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
-    val preferIpv6: Boolean = false
+    /**
+     * Prefer IPv6 DNS resolution to bypass cgNAT/IPv4-reputation blocks.
+     *
+     * ⚠️ Only safe when the **stream CDN** also has AAAA records — check the CDN, not the website.
+     * If the site hands out IP-pinned tokens (the URL contains the client IP, or a signature over
+     * it) and the media host is IPv4-only, forcing IPv6 here mints tokens that no player can ever
+     * use: ExoPlayer must connect over IPv4 and the CDN rejects the mismatch with 403. See
+     * [com.cloudstream.shared.network.PreferIpv4Dns] for the FaselHD case.
+     */
+    val preferIpv6: Boolean = false,
+
+    /**
+     * Force IPv4 DNS resolution. Use when the site is dual-stack but its media CDN is IPv4-only,
+     * so that IP-pinned tokens are minted for the same address the player will connect from.
+     * Mutually exclusive with [preferIpv6]; if both are set, IPv4 wins (it is the restrictive one).
+     */
+    val preferIpv4: Boolean = false
 )
 
 /**

@@ -214,6 +214,20 @@ class ProviderHttpService private constructor(
         return parser.extractWatchServersUrls(doc)
     }
 
+    /**
+     * The address-family policy for every request this service makes, or null for system default.
+     *
+     * This must be the SAME policy used by anything that mints an IP-pinned token for this
+     * provider (e.g. a WebView interceptor's OkHttp client) — see [ProviderConfig.preferIpv4].
+     * IPv4 wins when both flags are set: it is the restrictive choice, and the one that keeps a
+     * token usable by ExoPlayer, whose HTTP stack we cannot configure.
+     */
+    fun dnsPolicy(): okhttp3.Dns? = when {
+        config.preferIpv4 -> com.cloudstream.shared.network.PreferIpv4Dns()
+        config.preferIpv6 -> com.cloudstream.shared.network.PreferIpv6Dns()
+        else -> null
+    }
+
     suspend fun getRaw(url: String, headers: Map<String, String> = emptyMap()): okhttp3.Response {
         val fullUrl = buildUrl(url)
         val request = okhttp3.Request.Builder()
@@ -222,7 +236,7 @@ class ProviderHttpService private constructor(
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-            .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
+            .apply { dnsPolicy()?.let { dns(it) } }
             .build()
         return directClient.newCall(request).execute()
     }
@@ -619,7 +633,7 @@ class ProviderHttpService private constructor(
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
+                .apply { dnsPolicy()?.let { dns(it) } }
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
@@ -698,7 +712,7 @@ class ProviderHttpService private constructor(
 
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                .apply { if (config.preferIpv6) dns(com.cloudstream.shared.network.PreferIpv6Dns()) }
+                .apply { dnsPolicy()?.let { dns(it) } }
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()

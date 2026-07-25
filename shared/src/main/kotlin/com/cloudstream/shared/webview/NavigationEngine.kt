@@ -716,6 +716,16 @@ class NavigationEngine(
                                 ProviderLogger.w(TAG, "shouldInterceptRequest", "CDN bypass: ${reqUrl.take(80)}")
                             }
 
+                            // ⚠️ IDENTITY LEAK, by design for now: these interception fetches use
+                            // HttpURLConnection, so they do NOT honour ProviderHttpService.dnsPolicy()
+                            // (preferIpv4 / preferIpv6) or the OkHttp cookie jar. Any provider that
+                            // combines a DNS policy with this engine has a split identity: page
+                            // fetches exit one way, WebView-served requests another. Harmless while
+                            // no such provider uses it (only FaselHD sets a policy, and it has its
+                            // own extractor), but if that changes, route these through the shared
+                            // OkHttp client — a site that pins tokens to the caller's IP will 403
+                            // otherwise. See PreferIpv4Dns for the failure mode.
+                            //
                             // Rewrite HTML for cimanow.cc main-frame: replace document.write('<script src="...")>
                             // and document.write('<link rel="stylesheet" href="...")> with direct tags
                             // to bypass Chrome's cross-origin document.write intervention

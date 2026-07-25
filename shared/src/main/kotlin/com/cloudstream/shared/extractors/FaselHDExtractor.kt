@@ -168,11 +168,25 @@ class FaselHDExtractor : ExtractorApi() {
                 cookieManager.flush()
             } catch (_: Exception) {}
 
+            // Host of the embed page, captured here because inside shouldInterceptRequest the
+            // name `url` refers to the request being intercepted, not to this page.
+            val embedHost = try { Uri.parse(iframeUrl).host } catch (_: Exception) { null }
+
+            // ── Address family decides whether the stream token is usable ────────────────────
+            // This client serves the WebView's intercepted requests, including
+            // `…/video_player?player_token=…` — the request that MINTS the stream URL. The CDN
+            // stamps the caller's IP into the returned path, and c.scdns.io is IPv4-only, so a
+            // token minted over IPv6 (what Happy Eyeballs picks on dual-stack WiFi) can never be
+            // played: ExoPlayer must use IPv4 and the CDN 403s the mismatch. Pin to IPv4 so the
+            // embedded address is the same NAT'd IPv4 the player will connect from.
+            // Hardcoded rather than read from ProviderHttpServiceHolder: that holder is a global
+            // singleton holding whichever provider initialised last, and this extractor's CDN is
+            // IPv4-only in every case, so IPv4 is unconditionally the right answer here.
             val client = app.baseClient.newBuilder()
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .cookieJar(okhttp3.CookieJar.NO_COOKIES)
-                // .dns(com.cloudstream.shared.network.PreferIpv6Dns())
+                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
                 .build()
 
             val foundM3u8 = linkedSetOf<String>()
@@ -219,6 +233,20 @@ class FaselHDExtractor : ExtractorApi() {
             fun handleFoundLink(url: String) {
                 val clean = url.substringBefore("?")
                 if (!clean.endsWith(".m3u8")) return
+
+                // The CDN writes the caller's IP into the path. If that is an IPv6 literal the link
+                // is already dead — the media host is IPv4-only, so the player can never present a
+                // matching source address and every request returns 403. Say so loudly instead of
+                // handing the player a link that is guaranteed to fail: it means the minting leg
+                // escaped the IPv4 pin (see the client's dns policy above).
+                if (com.cloudstream.shared.network.IpPinnedUrl.containsIpv6Literal(clean)) {
+                    ProviderLogger.e(
+                        TAG, "handleFoundLink",
+                        "⚠️ Stream URL is IP-pinned to an IPv6 address but the CDN is IPv4-only — " +
+                            "this link WILL 403. The token was minted over IPv6; check that the " +
+                            "interceptor client is using PreferIpv4Dns. url=${clean.take(140)}"
+                    )
+                }
                 synchronized(foundM3u8) {
                     if (!foundM3u8.contains(url)) {
                         foundM3u8.add(url)
@@ -437,7 +465,18 @@ class FaselHDExtractor : ExtractorApi() {
                         } catch (e: Exception) { return null }
                     }
 
-                    if (method.equals("GET", ignoreCase = true) && (lower.contains("fasel") || lower.contains("jwplayer") || lower.contains("config") || lower.contains("player"))) {
+                    // Everything on the embed's own host goes through our client too, not just
+                    // URLs matching the keyword list. Anything left to the WebView's own stack
+                    // resolves via the OS (IPv6-first on dual-stack) and, if it happens to be the
+                    // request that mints the token, produces a link the player cannot use.
+                    // NB: `url` here is the REQUEST url (it shadows getUrl's parameter) — the page
+                    // host has to come from [embedHost], captured before this client was built.
+                    val sameHost = try {
+                        val h = request.url.host
+                        h != null && (h.equals(embedHost, ignoreCase = true) || h.contains("fasel", ignoreCase = true))
+                    } catch (_: Exception) { false }
+
+                    if (method.equals("GET", ignoreCase = true) && (sameHost || lower.contains("jwplayer") || lower.contains("config") || lower.contains("player"))) {
                         try {
                             val reqBuilder = okhttp3.Request.Builder().url(url)
                                 .header("User-Agent", userAgent)

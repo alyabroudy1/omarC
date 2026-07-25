@@ -44,8 +44,17 @@ abstract class BaseProvider : MainAPI() {
     /** Custom User-Agent override (null = use system mobile UA) */
     open val userAgent: String? = null
 
-    /** Prefer IPv6 DNS resolution to bypass cgNAT blocks */
+    /**
+     * Prefer IPv6 DNS resolution to bypass cgNAT blocks.
+     * Only safe if the provider's STREAM CDN has AAAA records — see [ProviderConfig.preferIpv6].
+     */
     open val preferIpv6: Boolean = false
+
+    /**
+     * Force IPv4 DNS resolution — for sites that mint IP-pinned stream tokens while their media
+     * CDN is IPv4-only (see [ProviderConfig.preferIpv4]).
+     */
+    open val preferIpv4: Boolean = false
 
     /** Pagination URL format for main page (null = no pagination, e.g. "page/%d/") */
     open val paginationFormat: String? = null
@@ -67,6 +76,7 @@ abstract class BaseProvider : MainAPI() {
                 skipHeadless = true,
                 userAgent = userAgent,
                 preferIpv6 = preferIpv6,
+                preferIpv4 = preferIpv4,
             ),
             parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }

@@ -34,9 +34,32 @@ object VideoSnifferJs {
             function isVisible(el) {
                 if (!el) return false;
                 var rect = el.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0 && 
+                return rect.width > 0 && rect.height > 0 &&
                        rect.top >= 0 && rect.top < window.innerHeight &&
                        rect.left >= 0 && rect.left < window.innerWidth;
+            }
+
+            // ===== SHADOW-DOM-AWARE QUERY =====
+            // document.querySelectorAll stops at shadow boundaries, so web-component players
+            // (vidstack/media-chrome — upns.online uses vidstack) are completely invisible to it:
+            // their <video>, play button and controls all live inside shadow roots. Everything that
+            // hunts for elements must go through here or it will silently find nothing on them.
+            function deepQueryAll(selector, root, out, depth) {
+                out = out || [];
+                root = root || document;
+                depth = depth || 0;
+                if (depth > 8) return out;
+                try {
+                    var found = root.querySelectorAll(selector);
+                    for (var i = 0; i < found.length; i++) out.push(found[i]);
+                } catch(e) {}
+                try {
+                    var all = root.querySelectorAll('*');
+                    for (var j = 0; j < all.length; j++) {
+                        if (all[j].shadowRoot) deepQueryAll(selector, all[j].shadowRoot, out, depth + 1);
+                    }
+                } catch(e) {}
+                return out;
             }
             
             // ===== CLICK SIMULATION =====
@@ -100,6 +123,10 @@ object VideoSnifferJs {
             // ===== PLAY BUTTON DETECTION =====
             function findAndClickPlayButton() {
                 var selectors = [
+                    // Vidstack / media-chrome web components (controls live in a shadow root, so
+                    // these are only reachable via deepQueryAll)
+                    'media-play-button', '.vds-play-button', 'button[class*="vds-"][aria-label*="play" i]',
+                    'media-poster', '.vds-poster', 'media-player',
                     // Video.js
                     '.vjs-big-play-button', '.video-js button[title="Play"]',
                     // JW Player
@@ -116,9 +143,9 @@ object VideoSnifferJs {
                     // Wrapper areas
                     '.click-to-play', '.video-wrapper', '.player-wrapper'
                 ];
-                
+
                 for (var i = 0; i < selectors.length; i++) {
-                    var elements = document.querySelectorAll(selectors[i]);
+                    var elements = deepQueryAll(selectors[i]);
                     for (var j = 0; j < elements.length; j++) {
                         if (isVisible(elements[j])) {
                             log('Found play target: ' + selectors[i]);
@@ -150,7 +177,7 @@ object VideoSnifferJs {
 
             // Check if any video is actually playing (not just that we clicked something)
             function isActuallyPlaying() {
-                var videos = document.querySelectorAll('video');
+                var videos = deepQueryAll('video');
                 for (var i = 0; i < videos.length; i++) {
                     if (!videos[i].paused && videos[i].currentTime > 0) return true;
                 }
@@ -183,7 +210,7 @@ object VideoSnifferJs {
                 }
                 
                 // Try direct video.play()
-                var videos = document.querySelectorAll('video');
+                var videos = deepQueryAll('video');
                 if (videos.length > 0) {
                     nuclearAttempts = 0;
                     videos.forEach(function(v) {
@@ -200,7 +227,7 @@ object VideoSnifferJs {
                         }
                     });
                 } else {
-                    var iframes = document.querySelectorAll('iframe');
+                    var iframes = deepQueryAll('iframe');
                     if (iframes.length > 0 && clickCount < 5) {
                         log('No video found, clicking center (iframes present)');
                         clickCenterOfScreen();
@@ -219,7 +246,7 @@ object VideoSnifferJs {
             function skipAds() {
                 try {
                     // Speed up short videos (pre-roll ads)
-                    document.querySelectorAll('video').forEach(function(v) {
+                    deepQueryAll('video').forEach(function(v) {
                         if (v.duration > 0 && v.duration < 30) {
                             v.playbackRate = 16;
                             v.muted = true;
@@ -256,11 +283,11 @@ object VideoSnifferJs {
                 var sources = [];
                 
                 // 1. Video elements
-                document.querySelectorAll('video').forEach(function(v) {
+                deepQueryAll('video').forEach(function(v) {
                     if (v.src && v.src.length > 40 && !isSegmentUrl(v.src)) {
                         sources.push({url: v.src, label: 'Video'});
                     }
-                    v.querySelectorAll('source').forEach(function(s) {
+                    deepQueryAll('source', v).forEach(function(s) {
                         if (s.src && s.src.length > 40 && !isSegmentUrl(s.src)) {
                             sources.push({url: s.src, label: s.type || 'Source'});
                         }
@@ -300,7 +327,7 @@ object VideoSnifferJs {
                 
                 // 4. HLS.js
                 try {
-                    document.querySelectorAll('video').forEach(function(v) {
+                    deepQueryAll('video').forEach(function(v) {
                         if (v.hls && v.hls.url && (v.hls.url.indexOf('.m3u8') !== -1 || v.hls.url.indexOf('http') === 0)) {
                             sources.push({url: v.hls.url, label: 'HLS.js'});
                         }
@@ -323,7 +350,7 @@ object VideoSnifferJs {
                 
                 // 6. Data attributes
                 try {
-                    document.querySelectorAll('[data-src], [data-url], [data-manifest]').forEach(function(el) {
+                    deepQueryAll('[data-src], [data-url], [data-manifest]').forEach(function(el) {
                         var url = el.getAttribute('data-src') || el.getAttribute('data-url') || el.getAttribute('data-manifest');
                         if (url && url.length > 40 && !isSegmentUrl(url)) {
                             sources.push({url: url, label: 'Data Attr'});
@@ -342,7 +369,7 @@ object VideoSnifferJs {
             // ===== PLAY STATE DETECTION (for WebView-as-player fallback) =====
             // Exposed globally so Kotlin can call it via evaluateJavascript
             window.__snifferIsVideoPlaying = function() {
-                var videos = document.querySelectorAll('video');
+                var videos = deepQueryAll('video');
                 for (var i = 0; i < videos.length; i++) {
                     var v = videos[i];
                     if (!v.paused && v.currentTime > 0 && v.readyState > 2) {

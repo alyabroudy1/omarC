@@ -55,7 +55,14 @@ class UpnshareEmbed : ExtractorApi() {
                 .replace("; wv)", ")") else "Mozilla/5.0"
         } catch (e: Exception) { "Mozilla/5.0" }
 
-        ProviderLogger.i(TAG, "getUrl", "Starting WebView sniff for upnshare URL: $url")
+        // Referer must be the page that legitimately embeds the player (the CimaNow watch URL we
+        // were called with), NOT the player's own origin. In the real flow this thing runs in an
+        // iframe on cimanow.cc, so document.referrer is that page; the bundle ships `restrictEmbed`
+        // and reads `location.ancestorOrigins`, so handing it its own origin is a context it never
+        // sees in the wild. [referer] was previously accepted and then thrown away here.
+        val embedReferer = referer?.takeIf { it.isNotBlank() } ?: baseUrl
+
+        ProviderLogger.i(TAG, "getUrl", "Starting WebView sniff for upnshare URL: $url (referer=$embedReferer)")
         val result = engine.runSession(
             url = url,
             mode = Mode.HEADLESS,   // sniff in the background — no visible WebView popping up
@@ -63,7 +70,7 @@ class UpnshareEmbed : ExtractorApi() {
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 30000L,
             delayMs = 3000,
-            referer = baseUrl
+            referer = embedReferer
         )
 
         when (result) {

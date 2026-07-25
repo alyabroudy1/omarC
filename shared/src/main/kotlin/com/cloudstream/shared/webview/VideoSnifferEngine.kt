@@ -1243,7 +1243,36 @@ class VideoSnifferEngine(
                         var sources = [];
                         var videoCount = 0;
                         var sourceCount = 0;
-                        
+
+                        // Shadow-DOM-aware query. Web-component players (vidstack — upns.online)
+                        // keep their <video> and controls inside shadow roots, where plain
+                        // document.querySelectorAll cannot reach them.
+                        function deepQueryAll(selector, root, out, depth) {
+                            out = out || []; root = root || document; depth = depth || 0;
+                            if (depth > 8) return out;
+                            try {
+                                var f = root.querySelectorAll(selector);
+                                for (var i = 0; i < f.length; i++) out.push(f[i]);
+                            } catch(e) {}
+                            try {
+                                var all = root.querySelectorAll('*');
+                                for (var j = 0; j < all.length; j++) {
+                                    if (all[j].shadowRoot) deepQueryAll(selector, all[j].shadowRoot, out, depth + 1);
+                                }
+                            } catch(e) {}
+                            return out;
+                        }
+                        function deepText() {
+                            var t = document.body ? (document.body.innerText || '') : '';
+                            try {
+                                var all = document.querySelectorAll('*');
+                                for (var i = 0; i < all.length; i++) {
+                                    if (all[i].shadowRoot) t += ' ' + (all[i].shadowRoot.textContent || '');
+                                }
+                            } catch(e) {}
+                            return t;
+                        }
+
                         // Helper function to filter out blob URLs and segment URLs
                         function isSegmentUrl(url) {
                             if (!url) return true;
@@ -1262,7 +1291,7 @@ class VideoSnifferEngine(
                         }
                         
                         // 1. Check video elements
-                        var videos = document.querySelectorAll('video');
+                        var videos = deepQueryAll('video');
                         videoCount = videos.length;
                         videos.forEach(function(v) {
                             if (v.src && v.src.length > 20 && !isSegmentUrl(v.src)) {
@@ -1276,7 +1305,7 @@ class VideoSnifferEngine(
                         });
                         
                         // 2. Check source elements
-                        var sourceElems = document.querySelectorAll('source');
+                        var sourceElems = deepQueryAll('source');
                         sourceCount = sourceElems.length;
                         sourceElems.forEach(function(s) {
                             if (s.src && s.src.length > 20 && !isSegmentUrl(s.src)) {
@@ -1311,7 +1340,7 @@ class VideoSnifferEngine(
                         // 5. Check for Server Error / Deleted File texts
                             var invalidPageDetected = false;
                             var titleText = document.title ? document.title.toLowerCase() : "";
-                            var bodyText = document.body ? document.body.innerText.toLowerCase() : "";
+                            var bodyText = deepText().toLowerCase();
                             var urlText = window.location.href.toLowerCase();
                             var textContent = (titleText + " " + bodyText + " " + urlText).substring(0, 5000);
                             if (textContent.length > 20) {
@@ -1351,10 +1380,34 @@ class VideoSnifferEngine(
                         for (var gi = 0; gi < gates.length; gi++) {
                             if (textContent.indexOf(gates[gi]) !== -1) { blockReason = gates[gi]; break; }
                         }
-                        var pageText = document.body ? (document.body.innerText || "").replace(/\s+/g, " ").trim().substring(0, 200) : "";
+                        var pageText = deepText().replace(/\s+/g, " ").trim().substring(0, 200);
+
+                        // 7. Why is the player idle? Distinguishes "waiting for a gesture" from
+                        //    "refused to load" from "wrong embed context" — all of which look
+                        //    identical (3 empty <video> elements) from the outside.
+                        var vstate = [];
+                        try {
+                            videos.forEach(function(v) {
+                                vstate.push({
+                                    rs: v.readyState, ns: v.networkState, paused: v.paused,
+                                    muted: v.muted, cs: (v.currentSrc || "").substring(0, 60),
+                                    inShadow: !!(v.getRootNode && v.getRootNode() !== document)
+                                });
+                            });
+                        } catch(e) {}
+                        var ctx = {};
+                        try {
+                            ctx.ref = (document.referrer || "").substring(0, 80);
+                            ctx.isTop = (window.top === window.self);
+                            ctx.ancestors = (location.ancestorOrigins ? location.ancestorOrigins.length : -1);
+                            ctx.bodyLen = document.body ? document.body.innerHTML.length : 0;
+                            ctx.shadowHosts = 0;
+                            var all = document.querySelectorAll('*');
+                            for (var k = 0; k < all.length; k++) if (all[k].shadowRoot) ctx.shadowHosts++;
+                        } catch(e) {}
 
                         console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected, 'Block:', blockReason);
-                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected, blockReason: blockReason, pageText: pageText});
+                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected, blockReason: blockReason, pageText: pageText, vstate: vstate, ctx: ctx});
                     })()
                 """) { result ->
                     try {
@@ -1385,8 +1438,13 @@ class VideoSnifferEngine(
                                     "reason" to blockReason, "pageText" to pageText.take(160))
                             } else if ((sourcesArray?.length() ?: 0) == 0 && videoCount > 0 && attempts == 3) {
                                 // One-shot breadcrumb: player present but idle, and no gate message.
-                                ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
-                                    "Player idle, no gate text", "pageText" to pageText.take(160))
+                                // vstate/ctx say whether it is waiting on a gesture (rs=0 ns=0),
+                                // stuck loading (ns=2), or in an embed context it rejects.
+                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
+                                    "Player idle, no gate text",
+                                    "vstate" to jsonObj.optJSONArray("vstate")?.toString()?.take(300),
+                                    "ctx" to jsonObj.optJSONObject("ctx")?.toString()?.take(200),
+                                    "pageText" to pageText.take(120))
                             }
                             
                             if (invalidPageDetected && (sourcesArray == null || sourcesArray.length() == 0)) {

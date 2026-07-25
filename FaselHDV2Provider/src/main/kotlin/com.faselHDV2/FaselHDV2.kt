@@ -20,6 +20,22 @@ class FaselHDV2 : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/faselhd.json"
     override val preferIpv6 get() = false
 
+    /**
+     * Force IPv4 for everything this provider does.
+     *
+     * fasel-hd.cam is dual-stack, so on a dual-stack network (home WiFi) the request that mints the
+     * stream token goes out over IPv6 by default, and the CDN bakes that IPv6 into the URL path:
+     *   …/stream/v1/hls/<id>/<exp>/www.fasel-hd.cam/all/2001:16b8:…:7efa/yes/…
+     * The media host (c.scdns.io) has NO AAAA record, so playback can only ever happen over IPv4 —
+     * the source IP can never match the one in the token and the CDN answers 403. Measured
+     * 2026-07-25: that exact URL, still 6h from expiry, returns 403 over IPv4 and is unresolvable
+     * over IPv6. On LTE/VPN (IPv4-only path) the token is minted for the IPv4 the player uses,
+     * which is why it "works on mobile data".
+     *
+     * NEVER set preferIpv6 here — it would force the broken case to happen every time.
+     */
+    override val preferIpv4 get() = true
+
     override val mainPage = mainPageOf(
         "/all-movies" to "جميع الافلام",
         "/movies_top_views" to "الافلام الاعلي مشاهدة",
