@@ -48,11 +48,31 @@ class VideoSnifferEngine(
          */
         const val SNIFFER_PLAYER_TIMEOUT_MS = 10_800_000L // 3 hours
 
-        /** JS snippet to make iframes fullscreen for sniffer-as-player mode. */
+        /**
+         * Hosts whose player refuses to load the stream when it detects an ad blocker — for these
+         * we deliberately let the ads through, because a blocked ad means no video at all.
+         * upns.online ships "Adblock Detected" / "Please disable AdBlock to watch this video" /
+         * `allowAdblock` in its bundle, and stalls without ever calling its own /api/v1/video.
+         */
+        private val ADBLOCK_SENSITIVE_HOSTS = listOf("upns.online", "upnshare")
+
+        fun isAdblockSensitive(url: String): Boolean {
+            val lower = url.lowercase()
+            return ADBLOCK_SENSITIVE_HOSTS.any { lower.contains(it) }
+        }
+
+        /**
+         * JS snippet to make iframes fullscreen for sniffer-as-player mode.
+         *
+         * The CSS MUST live in a backtick template literal: a single-quoted JS string cannot span
+         * lines, so writing it with `'` made the whole snippet fail to parse
+         * ("Uncaught SyntaxError: Invalid or unexpected token") and silently do nothing on every
+         * page — evaluateJavascript reports parse errors only to the console, never to the caller.
+         */
         val FULLSCREEN_IFRAME_JS = """
             (function() {
                 var style = document.createElement('style');
-                style.textContent = '
+                style.textContent = `
                     iframe {
                         position: fixed !important;
                         top: 0 !important;
@@ -65,7 +85,7 @@ class VideoSnifferEngine(
                     body > *:not(iframe) {
                         display: none !important;
                     }
-                ';
+                `;
                 document.head.appendChild(style);
             })()
         """.trimIndent()
@@ -127,6 +147,14 @@ class VideoSnifferEngine(
         val deferred = this@VideoSnifferEngine.deferred!!
         this@VideoSnifferEngine.exitConditionReference = exitCondition
         resultDelivered = false
+
+        // Decided once per session from the target URL: ad blocking is counter-productive on hosts
+        // that withhold the stream when they detect it.
+        val adblockSensitive = isAdblockSensitive(url)
+        if (adblockSensitive) {
+            ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession",
+                "Adblock-sensitive host — ad blocking disabled for this session", "url" to url.take(60))
+        }
         var dialog: Dialog? = null
         var webView: WebView? = null
 
@@ -297,8 +325,9 @@ class VideoSnifferEngine(
                     requestCounter++
 
                     if (requestUrl != null) {
-                        // LAYER 1: Ad blocking — block known ad domains at network level
-                        if (AdBlocker.shouldBlockRequest(requestUrl)) {
+                        // LAYER 1: Ad blocking — block known ad domains at network level.
+                        // Skipped for hosts that refuse to play when ads don't load.
+                        if (!adblockSensitive && AdBlocker.shouldBlockRequest(requestUrl)) {
                             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "Ad blocked", "url" to requestUrl.take(80))
                             return android.webkit.WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream("".toByteArray()))
                         }
@@ -450,6 +479,41 @@ class VideoSnifferEngine(
                                     Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
                                 } catch(e) {}
                             }
+
+                            // 2b. Headless tells that a plain Android WebView fails even though it
+                            //     is a real browser engine: no window.chrome, and empty
+                            //     plugins/mimeTypes/languages. Players that gate on "Headless
+                            //     Detected" (upns.online does — the string is in its bundle) check
+                            //     exactly these, then silently never request the stream.
+                            try {
+                                if (typeof window.chrome === 'undefined') {
+                                    window.chrome = { runtime: {}, app: { isInstalled: false }, csi: function(){}, loadTimes: function(){} };
+                                }
+                            } catch(e) {}
+                            try {
+                                if (!navigator.plugins || navigator.plugins.length === 0) {
+                                    var fakePlugins = [
+                                        { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                                        { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                                        { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+                                    ];
+                                    fakePlugins.item = function(i) { return this[i]; };
+                                    fakePlugins.namedItem = function(n) { for (var i=0;i<this.length;i++) if (this[i].name===n) return this[i]; return null; };
+                                    Object.defineProperty(navigator, 'plugins', { get: function() { return fakePlugins; } });
+                                }
+                            } catch(e) {}
+                            try {
+                                if (!navigator.mimeTypes || navigator.mimeTypes.length === 0) {
+                                    var fakeMimes = [{ type: 'application/pdf', suffixes: 'pdf', description: '' }];
+                                    fakeMimes.item = function(i) { return this[i]; };
+                                    Object.defineProperty(navigator, 'mimeTypes', { get: function() { return fakeMimes; } });
+                                }
+                            } catch(e) {}
+                            try {
+                                if (!navigator.languages || navigator.languages.length === 0) {
+                                    Object.defineProperty(navigator, 'languages', { get: function() { return ['en-US', 'en']; } });
+                                }
+                            } catch(e) {}
                             
                             // 3. DisableDevtool Anti-Bot Bypass
                             try {
@@ -488,14 +552,32 @@ class VideoSnifferEngine(
                     android.util.Log.i("VideoSnifferEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Page finished", "url" to currentUrl.take(80))
 
-                    // Inject fullscreen iframe CSS for sniffer-as-player mode
-                    view?.evaluateJavascript(FULLSCREEN_IFRAME_JS, null)
-                    ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected fullscreen iframe CSS")
+                    // Inject fullscreen iframe CSS — ONLY in sniffer-as-player mode, which is what
+                    // it was written for (visible session held open with SNIFFER_PLAYER_TIMEOUT_MS
+                    // because nothing extractable was found).
+                    //
+                    // It used to be injected on every page, but the snippet had a syntax error and
+                    // never actually executed, so nothing was ever hidden. Now that it parses, the
+                    // rule it installs — `body > *:not(iframe) { display: none }` — would blank the
+                    // content of every ordinary sniff target, including SPA players that are not
+                    // iframes (Upnshare), breaking auto-click and DOM extraction. Keep it scoped.
+                    val isPlayerMode = mode != Mode.HEADLESS && timeout >= SNIFFER_PLAYER_TIMEOUT_MS
+                    if (isPlayerMode) {
+                        view?.evaluateJavascript(FULLSCREEN_IFRAME_JS, null)
+                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected fullscreen iframe CSS (player mode)")
+                    }
 
-                    // LAYER 2+3: Inject ad blocking CSS and JS
-                    view?.evaluateJavascript(AdBlocker.AD_BLOCK_CSS, null)
-                    view?.evaluateJavascript(AdBlocker.AD_BLOCK_JS, null)
-                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected ad blocker CSS+JS")
+                    // LAYER 2+3: Inject ad blocking CSS and JS — unless this host refuses to play
+                    // when it spots an ad blocker (see ADBLOCK_SENSITIVE_HOSTS). Blocking ads there
+                    // costs us the whole stream.
+                    if (adblockSensitive) {
+                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                            "Ad blocker SKIPPED — host gates playback on adblock detection", "url" to currentUrl.take(60))
+                    } else {
+                        view?.evaluateJavascript(AdBlocker.AD_BLOCK_CSS, null)
+                        view?.evaluateJavascript(AdBlocker.AD_BLOCK_JS, null)
+                        ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected ad blocker CSS+JS")
+                    }
 
                     // Inject VideoSniffer JS & Start DOM extraction
                     if (exitCondition is ExitCondition.VideoFound) {
@@ -1255,8 +1337,24 @@ class VideoSnifferEngine(
                                 }
                             }
                         
-                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected);
-                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected});
+                        // 6. Anti-automation gates. Players that refuse to load a stream because
+                        //    they detected us say so IN THE PAGE and otherwise look identical to a
+                        //    slow load (video elements present, no sources, no network activity).
+                        //    Surfacing the reason turns a 20s silent timeout into a named failure.
+                        var blockReason = "";
+                        var gates = [
+                            "headless browser is not allowed", "headless detected",
+                            "sandboxed our player is not allowed",
+                            "please disable adblock", "adblock detected",
+                            "not allowed"
+                        ];
+                        for (var gi = 0; gi < gates.length; gi++) {
+                            if (textContent.indexOf(gates[gi]) !== -1) { blockReason = gates[gi]; break; }
+                        }
+                        var pageText = document.body ? (document.body.innerText || "").replace(/\s+/g, " ").trim().substring(0, 200) : "";
+
+                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected, 'Block:', blockReason);
+                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected, blockReason: blockReason, pageText: pageText});
                     })()
                 """) { result ->
                     try {
@@ -1271,12 +1369,25 @@ class VideoSnifferEngine(
                             val sourcesArray = jsonObj.optJSONArray("sources")
                             val invalidPageDetected = jsonObj.optBoolean("invalidPageDetected", false)
 
+                            val blockReason = jsonObj.optString("blockReason", "")
+                            val pageText = jsonObj.optString("pageText", "")
+
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Page analysis",
                                 "videos" to videoCount,
                                 "sources" to sourceCount,
                                 "foundUrls" to (sourcesArray?.length() ?: 0),
                                 "invalidPage" to invalidPageDetected
                             )
+
+                            if (blockReason.isNotBlank()) {
+                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
+                                    "🚫 PLAYER REFUSED TO LOAD — anti-automation gate hit",
+                                    "reason" to blockReason, "pageText" to pageText.take(160))
+                            } else if ((sourcesArray?.length() ?: 0) == 0 && videoCount > 0 && attempts == 3) {
+                                // One-shot breadcrumb: player present but idle, and no gate message.
+                                ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
+                                    "Player idle, no gate text", "pageText" to pageText.take(160))
+                            }
                             
                             if (invalidPageDetected && (sourcesArray == null || sourcesArray.length() == 0)) {
                                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Invalid page detected! Initiating skip server.")
