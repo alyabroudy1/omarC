@@ -1264,24 +1264,28 @@ class NavigationEngine(
      * reader that exfiltrates through chunked console.log → onConsoleMessage. The WebView does all
      * decryption (which the site rotates hourly); nothing is decrypted in Kotlin.
      *
-     * This is shaped directly by the site's decoded anti-bot (see CimaNow watch page):
-     *   - The decryptor aborts unless document.write is native
-     *     (Function.prototype.toString.call(document.write) must contain "[native code]"), so we
-     *     must NOT hook document.write — hence no capture hooks of any kind.
-     *   - The decryptor aborts unless location.hostname is non-empty, so [baseUrl] MUST be the real
-     *     https://…/watching/ URL. We serve it as a genuine navigation (shouldInterceptRequest),
-     *     NOT loadDataWithBaseURL (which is a "data" document — document.open/write won't commit).
-     *   - The decryptor aborts if it sees our footprint as a window global — it checks
-     *     window.CS_BRIDGE / window.__decryptedHtml / window.__captured. So we add NO
-     *     JavascriptInterface and set NOTHING on window: the reader is a bare IIFE and exfiltrates
-     *     over console.log, which leaves no global. (prompt() also leaves no global but is NOT
-     *     delivered — see the onConsoleMessage comment.)
-     *   - After decrypting, the page installs an isBot() guard that sabotages querySelectorAll /
-     *     innerHTML / getAttribute / JSON.stringify whenever the CALL STACK contains
-     *     "evaluatejavascript", or is "<anonymous>" with no "http". That is exactly the stack of
-     *     webView.evaluateJavascript() and out-of-band injected code — so reading the DOM from
-     *     Kotlin is defeated by design. An inline <script> shipped INSIDE the served document has a
-     *     stack attributed to the http(s) URL → isBot()===false → its reads return the real data.
+     * This is shaped directly by the site's decoded anti-bot. Its pre-decrypt gate (the
+     * `eval(atob(…))` at the end of the payload script) sets `_isB` and `return`s — emitting
+     * NOTHING — if any of these hold, so every one of them dictates something we must not do:
+     *   - `document.getElementById('<rotating id>')` missing, or `location.hostname` empty. Hence a
+     *     genuine navigation to the real https://…/watching/ URL (served from our own bytes via
+     *     shouldInterceptRequest), never loadDataWithBaseURL.
+     *   - `window.CS_BRIDGE` / `window.__decryptedHtml` / `window.__captured` defined. Hence NO
+     *     addJavascriptInterface and nothing set on window — the reader is a bare IIFE.
+     *   - `Element.prototype.remove` not working (it appends an <li data-index>, removes it and
+     *     checks parentNode). Hence never freeze/patch remove in the sandbox.
+     *   - ANY inline <script> in the document whose source contains a known marker of ours. As of
+     *     2026-07-25 the gate literally greps every script's innerHTML for "__CSX__" and "[RD]" —
+     *     our own previous protocol strings. It also wraps window.prompt to swallow messages
+     *     starting with "__CSX__" (which is why the prompt channel silently died).
+     *     Hence: the reader carries NO fixed strings (all markers are random per run) and, first
+     *     thing it does, it REMOVES ITS OWN <script> node — the gate runs later, enumerates
+     *     scripts and finds no trace of us at all.
+     * Earlier rotations also required document.write to stay native (they now call
+     * `Document.prototype.write.call` instead) and installed a post-decrypt isBot() that sabotaged
+     * DOM reads whose call stack contained "evaluatejavascript" or "<anonymous>" with no "http".
+     * That is why reads must come from an inline page script (stack = the document's http URL) and
+     * never from webView.evaluateJavascript. Assume it can come back.
      *
      * Safe to call from any coroutine context (switches to Dispatchers.Main internally).
      *
@@ -1324,39 +1328,43 @@ class NavigationEngine(
             .trim()
 
         // ── In-page reader ──────────────────────────────────────────────────────────────────
-        // The page's anti-bot (decoded from the watch page) sabotages DOM access whose call stack
-        // contains "evaluatejavascript", or is "<anonymous>" with no "http" — i.e. exactly the
-        // stacks produced by webView.evaluateJavascript() and by out-of-band injected code. It does
-        // NOT sabotage the page's own inline scripts (their stack is the document's http(s) URL).
+        // Runs as the first inline <script> of the served document, so its call stack is the real
+        // http(s) URL (what the post-decrypt guard, when present, demands) and it can leave nothing
+        // on window (what the pre-decrypt gate scans for).
         //
-        // CRITICALLY, the decryptor also aborts if it sees ANY of our footprints as window globals
-        // (it checks `window.CS_BRIDGE`, `window.__decryptedHtml`, `window.__captured`). So the
-        // reader must leave NOTHING on window: it is a bare IIFE, and it exfiltrates via
-        // window.prompt() (a native call, no global) which we capture in onJsPrompt. We never hook
-        // document.write (breaking its "[native code]" self-check would abort the decryptor) — the
-        // page decrypts with its own (hourly-changing) logic completely untouched, and we only read
-        // the resulting DOM from a legitimate in-page stack.
+        // Two anti-fingerprint measures, both mandatory — the site greps script source for our
+        // markers and aborts the decryptor on a hit:
+        //   1. Every protocol/log token is derived from [tag], regenerated per call. There is not a
+        //      single fixed string in here for them to match on.
+        //   2. The script deletes its own <script> node before yielding, so by the time the page's
+        //      gate enumerates document scripts, ours is not in the DOM.
+        // console.log is captured up-front (bound) so a later hook on console cannot intercept or
+        // observe the exfil, and the page's own prompt/dialog patches are irrelevant to us.
+        val tag = "q" + java.util.UUID.randomUUID().toString().replace("-", "").take(11)
+        val markBegin = "$tag>B"      // <n>|<totalChars>
+        val markChunk = "$tag>C"      // <i>|<chunk>
+        val markEnd = "$tag>E"
         val maxTries = (timeoutMs / 250).coerceAtLeast(4)
         val readerScript = """
             <script>
             (function(){
+              var S = document.currentScript;
+              try { if (S && S.parentNode) S.parentNode.removeChild(S); } catch(e){}
+              S = null;
+              var L; try { L = console.log.bind(console); } catch(e) { L = function(){}; }
               var CH = $CSX_CHUNK_SIZE, MAX = $maxTries, tries = 0, sent = false;
-              // Exfil: chunked console.log (see the Kotlin side). prompt() is NOT usable — JS
-              // dialogs are dropped for a WebView the page-visibility layer considers hidden, and
-              // the dialog message is length-capped anyway. console.log always reaches the client.
               function emit(frag){
                 if (sent) return; sent = true;
                 var n = Math.ceil(frag.length / CH);
-                console.log('$CSX_BEGIN' + n + '|' + frag.length);
-                for (var i = 0; i < n; i++) console.log('$CSX_CHUNK' + i + '__' + frag.substr(i * CH, CH));
-                console.log('$CSX_END');
+                L('$markBegin' + n + '|' + frag.length);
+                for (var i = 0; i < n; i++) L('$markChunk' + i + '|' + frag.substr(i * CH, CH));
+                L('$markEnd');
               }
               function diag(){
                 var b = document.body, nat = -1;
                 try { nat = Function.prototype.toString.call(document.write).indexOf('[native code]'); } catch(e){}
                 return 'ready=' + document.readyState
                   + ' vis=' + document.visibilityState
-                  + ' focus=' + (document.hasFocus ? document.hasFocus() : '?')
                   + ' size=' + window.innerWidth + 'x' + window.innerHeight
                   + ' bodyLen=' + (b ? b.innerHTML.length : 0)
                   + ' scripts=' + document.scripts.length
@@ -1367,11 +1375,10 @@ class NavigationEngine(
               }
               // Surface page errors — a decryptor that throws is otherwise completely silent.
               try { window.addEventListener('error', function(ev){
-                console.log('[RD] pageerr ' + (ev.message||'') + ' @' + ((ev.filename||'').slice(-60)) + ':' + ev.lineno);
+                L('$tag pageerr ' + (ev.message||'') + ' @' + ((ev.filename||'').slice(-60)) + ':' + ev.lineno);
               }, true); } catch(e){}
-              try { document.addEventListener('DOMContentLoaded', function(){ console.log('[RD] DOMContentLoaded ' + diag()); }); } catch(e){}
-              try { window.addEventListener('load', function(){ console.log('[RD] load ' + diag()); }); } catch(e){}
-              try { console.log('[RD] init referrer=' + document.referrer + ' stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,200)); } catch(e){}
+              try { window.addEventListener('load', function(){ L('$tag load ' + diag()); }); } catch(e){}
+              try { L('$tag init referrer=' + document.referrer + ' stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,160)); } catch(e){}
               var timer = setInterval(function(){
                 tries++;
                 try {
@@ -1379,24 +1386,23 @@ class NavigationEngine(
                   var n = lis ? lis.length : 0;
                   if (n > 0) {
                     clearInterval(timer);
-                    try { console.log('[RD] read stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
                     // Compact payload: only the server list (#watch) + downloads (#download) —
                     // everything Kotlin needs to resolve the servers.
                     var w = document.getElementById('watch');
                     var d = document.getElementById('download');
                     var frag = (w ? w.outerHTML : '') + (d ? d.outerHTML : '');
                     if (!frag) { var b = document.body; frag = b ? b.innerHTML : ''; }
-                    console.log('[RD] captured li=' + n + ' fragLen=' + frag.length);
+                    L('$tag captured li=' + n + ' fragLen=' + frag.length);
                     emit(frag);
                     return;
                   }
-                  if (tries % 8 === 0) console.log('[RD] waiting tries=' + tries + ' ' + diag());
+                  if (tries % 8 === 0) L('$tag waiting tries=' + tries + ' ' + diag());
                   if (tries >= MAX) {
                     clearInterval(timer);
-                    console.log('[RD] give up after ' + tries + ' tries, ' + diag());
+                    L('$tag give up after ' + tries + ' tries, ' + diag());
                     emit('');
                   }
-                } catch(e) { console.log('[RD] err ' + e.message); }
+                } catch(e) { L('$tag err ' + e.message); }
               }, 250);
             })();
             </script>
@@ -1415,7 +1421,7 @@ class NavigationEngine(
 
         ProviderLogger.i(TAG, m, "Bridge render starting",
             "htmlLen" to html.length, "injectedLen" to injectedHtml.length, "baseUrl" to baseUrl,
-            "timeoutMs" to timeoutMs, "maxTries" to maxTries, "ua" to browserUa.take(50))
+            "timeoutMs" to timeoutMs, "maxTries" to maxTries, "tag" to tag, "ua" to browserUa.take(50))
 
         val captured = CompletableDeferred<String?>()
 
@@ -1476,24 +1482,24 @@ class NavigationEngine(
                 override fun onConsoleMessage(cm: ConsoleMessage): Boolean {
                     val raw = cm.message()
                     when {
-                        raw.startsWith(CSX_BEGIN) -> {
-                            val meta = raw.removePrefix(CSX_BEGIN)
+                        raw.startsWith(markBegin) -> {
+                            val meta = raw.removePrefix(markBegin)
                             csxExpectedChunks = meta.substringBefore('|').trim().toIntOrNull() ?: -1
                             csxExpectedLen = meta.substringAfter('|', "").trim().toIntOrNull() ?: -1
                             csxChunks.clear()
                             ProviderLogger.d(TAG, m, "Reader stream begin",
                                 "chunks" to csxExpectedChunks, "totalLen" to csxExpectedLen)
                         }
-                        raw.startsWith(CSX_CHUNK) -> {
-                            val sep = raw.indexOf("__", CSX_CHUNK.length)
-                            val idx = if (sep > CSX_CHUNK.length) raw.substring(CSX_CHUNK.length, sep).toIntOrNull() else null
+                        raw.startsWith(markChunk) -> {
+                            val sep = raw.indexOf('|', markChunk.length)
+                            val idx = if (sep > markChunk.length) raw.substring(markChunk.length, sep).toIntOrNull() else null
                             if (idx == null) {
                                 ProviderLogger.w(TAG, m, "Malformed reader chunk header: ${raw.take(40)}")
                             } else {
-                                csxChunks[idx] = raw.substring(sep + 2)
+                                csxChunks[idx] = raw.substring(sep + 1)
                             }
                         }
-                        raw.startsWith(CSX_END) -> {
+                        raw.startsWith(markEnd) -> {
                             val assembled = buildString { csxChunks.values.forEach { append(it) } }
                             ProviderLogger.i(TAG, m, "Reader stream end",
                                 "chunks" to "${csxChunks.size}/$csxExpectedChunks",
@@ -1507,9 +1513,11 @@ class NavigationEngine(
                             }
                             if (!captured.isCompleted) captured.complete(assembled)
                         }
-                        // [RD] reader logs surface here — crucially the reader's own call-stack,
-                        // which confirms whether isBot() would treat our reads as legitimate.
-                        else -> ProviderLogger.d(TAG, "$m/console", raw.take(300), "src" to (cm.lineNumber()))
+                        // Reader diagnostics (prefixed with the run tag) and genuine page console
+                        // output both surface here.
+                        else -> ProviderLogger.d(TAG, "$m/console",
+                            (if (raw.startsWith("$tag ")) "[rd] " + raw.removePrefix("$tag ") else raw).take(300),
+                            "src" to (cm.lineNumber()))
                     }
                     return true
                 }
@@ -1709,14 +1717,14 @@ class NavigationEngine(
         private const val TAG = "NavigationEngine"
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
-        // The in-page reader streams its payload back as console.log lines, because that is the
-        // only channel the page cannot see (no window global) AND the client reliably receives:
-        //   __CSX_BEGIN__<chunkCount>|<totalChars>   __CSX_C<i>__<chunk>   __CSX_END__
+        // The in-page reader streams its payload back as console.log lines:
+        //   <tag>B<chunkCount>|<totalChars>   <tag>C<i>|<chunk>   <tag>E
+        // <tag> is random per run ON PURPOSE: the page's pre-decrypt gate greps every inline
+        // script's source for known markers of ours (it currently matches the literals "__CSX__"
+        // and "[RD]" from earlier versions of this reader) and refuses to decrypt on a hit. Never
+        // reintroduce a fixed marker here.
         // Chunked because a single console message is not guaranteed to survive intact at
         // arbitrary length; if a run logs "Length mismatch", lower CSX_CHUNK_SIZE.
-        private const val CSX_BEGIN = "__CSX_BEGIN__"
-        private const val CSX_CHUNK = "__CSX_C"
-        private const val CSX_END = "__CSX_END__"
         private const val CSX_CHUNK_SIZE = 8000
 
         /**

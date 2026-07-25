@@ -12,9 +12,14 @@
 >    navigation** to the `/watching/` URL (NOT `loadDataWithBaseURL`) with the blog-post page as
 >    `Referer`, lets the inline decryptor run untouched, and reads the decrypted `<li data-index>`
 >    server list back via an **in-page reader that streams it out as chunked `console.log`**
->    (`__CSX_BEGIN__` / `__CSX_C<i>__` / `__CSX_END__` → `onConsoleMessage`). Not
->    `addJavascriptInterface` (the decryptor sniffs `window.CS_BRIDGE`) and not `prompt()`
->    (`onJsPrompt` is never delivered for this WebView — see log3.txt, 2026-07-25).
+>    (`<tag>B` / `<tag>C<i>` / `<tag>E` → `onConsoleMessage`, `<tag>` random per run). Not
+>    `addJavascriptInterface` (the gate sniffs `window.CS_BRIDGE`) and not `prompt()` (the gate
+>    replaces `window.prompt` to swallow our messages).
+>
+> **The gate greps inline script source for our markers** (2026-07-25: it matches the literals
+> `__CSX__` and `[RD]`, taken from earlier versions of this reader) and decrypts nothing on a hit.
+> So the reader must contain **no fixed strings** — all tokens derive from a per-run random tag —
+> and it **deletes its own `<script>` node** first thing, before the gate enumerates scripts.
 > 4. Parse with **Jsoup**; resolve each server via `core.php` + extractors; parse `#download`.
 >
 > **Why it must be shaped exactly this way** — the watch page's anti-bot (decoded 2026-07):
