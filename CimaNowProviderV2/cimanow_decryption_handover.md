@@ -11,7 +11,10 @@
 > 3. `decryptViaSandbox` → `NavigationEngine.renderHtmlInSandbox` renders that HTML as a **real
 >    navigation** to the `/watching/` URL (NOT `loadDataWithBaseURL`) with the blog-post page as
 >    `Referer`, lets the inline decryptor run untouched, and reads the decrypted `<li data-index>`
->    server list back via an **in-page reader over `addJavascriptInterface`**.
+>    server list back via an **in-page reader that streams it out as chunked `console.log`**
+>    (`__CSX_BEGIN__` / `__CSX_C<i>__` / `__CSX_END__` → `onConsoleMessage`). Not
+>    `addJavascriptInterface` (the decryptor sniffs `window.CS_BRIDGE`) and not `prompt()`
+>    (`onJsPrompt` is never delivered for this WebView — see log3.txt, 2026-07-25).
 > 4. Parse with **Jsoup**; resolve each server via `core.php` + extractors; parse `#download`.
 >
 > **Why it must be shaped exactly this way** — the watch page's anti-bot (decoded 2026-07):

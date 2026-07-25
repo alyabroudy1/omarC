@@ -1261,8 +1261,8 @@ class NavigationEngine(
     /**
      * Renders captured (still-encrypted) watch-page HTML in a WebView, lets the page's OWN
      * decryptor run completely untouched, and reads the decrypted server list back via an in-page
-     * reader that exfiltrates through window.prompt() → onJsPrompt. The WebView does all decryption
-     * (which the site rotates hourly); nothing is decrypted in Kotlin.
+     * reader that exfiltrates through chunked console.log → onConsoleMessage. The WebView does all
+     * decryption (which the site rotates hourly); nothing is decrypted in Kotlin.
      *
      * This is shaped directly by the site's decoded anti-bot (see CimaNow watch page):
      *   - The decryptor aborts unless document.write is native
@@ -1274,7 +1274,8 @@ class NavigationEngine(
      *   - The decryptor aborts if it sees our footprint as a window global — it checks
      *     window.CS_BRIDGE / window.__decryptedHtml / window.__captured. So we add NO
      *     JavascriptInterface and set NOTHING on window: the reader is a bare IIFE and exfiltrates
-     *     via prompt() (native, leaves no global).
+     *     over console.log, which leaves no global. (prompt() also leaves no global but is NOT
+     *     delivered — see the onConsoleMessage comment.)
      *   - After decrypting, the page installs an isBot() guard that sabotages querySelectorAll /
      *     innerHTML / getAttribute / JSON.stringify whenever the CALL STACK contains
      *     "evaluatejavascript", or is "<anonymous>" with no "http". That is exactly the stack of
@@ -1339,8 +1340,38 @@ class NavigationEngine(
         val readerScript = """
             <script>
             (function(){
+              var CH = $CSX_CHUNK_SIZE, MAX = $maxTries, tries = 0, sent = false;
+              // Exfil: chunked console.log (see the Kotlin side). prompt() is NOT usable — JS
+              // dialogs are dropped for a WebView the page-visibility layer considers hidden, and
+              // the dialog message is length-capped anyway. console.log always reaches the client.
+              function emit(frag){
+                if (sent) return; sent = true;
+                var n = Math.ceil(frag.length / CH);
+                console.log('$CSX_BEGIN' + n + '|' + frag.length);
+                for (var i = 0; i < n; i++) console.log('$CSX_CHUNK' + i + '__' + frag.substr(i * CH, CH));
+                console.log('$CSX_END');
+              }
+              function diag(){
+                var b = document.body, nat = -1;
+                try { nat = Function.prototype.toString.call(document.write).indexOf('[native code]'); } catch(e){}
+                return 'ready=' + document.readyState
+                  + ' vis=' + document.visibilityState
+                  + ' focus=' + (document.hasFocus ? document.hasFocus() : '?')
+                  + ' size=' + window.innerWidth + 'x' + window.innerHeight
+                  + ' bodyLen=' + (b ? b.innerHTML.length : 0)
+                  + ' scripts=' + document.scripts.length
+                  + ' li=' + document.querySelectorAll('li[data-index]').length
+                  + ' watchEl=' + (document.getElementById('watch') ? 1 : 0)
+                  + ' dwNative=' + nat
+                  + ' title=' + (document.title||'').slice(0,30);
+              }
+              // Surface page errors — a decryptor that throws is otherwise completely silent.
+              try { window.addEventListener('error', function(ev){
+                console.log('[RD] pageerr ' + (ev.message||'') + ' @' + ((ev.filename||'').slice(-60)) + ':' + ev.lineno);
+              }, true); } catch(e){}
+              try { document.addEventListener('DOMContentLoaded', function(){ console.log('[RD] DOMContentLoaded ' + diag()); }); } catch(e){}
+              try { window.addEventListener('load', function(){ console.log('[RD] load ' + diag()); }); } catch(e){}
               try { console.log('[RD] init referrer=' + document.referrer + ' stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,200)); } catch(e){}
-              var tries = 0;
               var timer = setInterval(function(){
                 tries++;
                 try {
@@ -1349,21 +1380,21 @@ class NavigationEngine(
                   if (n > 0) {
                     clearInterval(timer);
                     try { console.log('[RD] read stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,240)); } catch(e){}
-                    // Compact payload: only the server list (#watch) + downloads (#download). Small
-                    // enough for prompt(), and enough for Kotlin to resolve everything.
+                    // Compact payload: only the server list (#watch) + downloads (#download) —
+                    // everything Kotlin needs to resolve the servers.
                     var w = document.getElementById('watch');
                     var d = document.getElementById('download');
                     var frag = (w ? w.outerHTML : '') + (d ? d.outerHTML : '');
                     if (!frag) { var b = document.body; frag = b ? b.innerHTML : ''; }
                     console.log('[RD] captured li=' + n + ' fragLen=' + frag.length);
-                    window.prompt('__CSX__' + frag);
+                    emit(frag);
                     return;
                   }
-                  if (tries % 8 === 0) console.log('[RD] waiting tries=' + tries + ' bodyLen=' + (document.body?document.body.innerHTML.length:0) + ' title=' + (document.title||'').slice(0,40));
-                  if (tries >= $maxTries) {
+                  if (tries % 8 === 0) console.log('[RD] waiting tries=' + tries + ' ' + diag());
+                  if (tries >= MAX) {
                     clearInterval(timer);
-                    console.log('[RD] give up after ' + tries + ' tries, bodyLen=' + (document.body?document.body.innerHTML.length:0));
-                    window.prompt('__CSX__');
+                    console.log('[RD] give up after ' + tries + ' tries, ' + diag());
+                    emit('');
                   }
                 } catch(e) { console.log('[RD] err ' + e.message); }
               }, 250);
@@ -1387,6 +1418,12 @@ class NavigationEngine(
             "timeoutMs" to timeoutMs, "maxTries" to maxTries, "ua" to browserUa.take(50))
 
         val captured = CompletableDeferred<String?>()
+
+        // Reassembly state for the chunked console.log channel (written only from onConsoleMessage,
+        // i.e. always the main thread).
+        val csxChunks = java.util.TreeMap<Int, String>()
+        var csxExpectedChunks = -1
+        var csxExpectedLen = -1
 
         val webView = createWebView(activity, browserUa)
         val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
@@ -1427,31 +1464,84 @@ class NavigationEngine(
                 }
             }
             webView.webChromeClient = object : WebChromeClient() {
+                // This is BOTH the log sink and the exfiltration channel. The reader streams the
+                // captured fragment as console.log chunks:
+                //     __CSX_BEGIN__<chunkCount>|<totalChars>
+                //     __CSX_C<i>__<chunk>            (i = 0 … chunkCount-1)
+                //     __CSX_END__
+                // console.log is used instead of prompt() because prompt() → onJsPrompt is not
+                // delivered for this WebView (JS dialogs are dropped when the page is considered
+                // hidden, and dialog text is length-capped), whereas console messages always
+                // arrive — and it still leaves no window global for the decryptor to sniff.
                 override fun onConsoleMessage(cm: ConsoleMessage): Boolean {
-                    // [RD] reader logs surface here — crucially the reader's own call-stack, which
-                    // confirms whether the page's isBot() would treat our reads as legitimate.
-                    ProviderLogger.d(TAG, "$m/console", cm.message().take(300), "src" to (cm.lineNumber()))
+                    val raw = cm.message()
+                    when {
+                        raw.startsWith(CSX_BEGIN) -> {
+                            val meta = raw.removePrefix(CSX_BEGIN)
+                            csxExpectedChunks = meta.substringBefore('|').trim().toIntOrNull() ?: -1
+                            csxExpectedLen = meta.substringAfter('|', "").trim().toIntOrNull() ?: -1
+                            csxChunks.clear()
+                            ProviderLogger.d(TAG, m, "Reader stream begin",
+                                "chunks" to csxExpectedChunks, "totalLen" to csxExpectedLen)
+                        }
+                        raw.startsWith(CSX_CHUNK) -> {
+                            val sep = raw.indexOf("__", CSX_CHUNK.length)
+                            val idx = if (sep > CSX_CHUNK.length) raw.substring(CSX_CHUNK.length, sep).toIntOrNull() else null
+                            if (idx == null) {
+                                ProviderLogger.w(TAG, m, "Malformed reader chunk header: ${raw.take(40)}")
+                            } else {
+                                csxChunks[idx] = raw.substring(sep + 2)
+                            }
+                        }
+                        raw.startsWith(CSX_END) -> {
+                            val assembled = buildString { csxChunks.values.forEach { append(it) } }
+                            ProviderLogger.i(TAG, m, "Reader stream end",
+                                "chunks" to "${csxChunks.size}/$csxExpectedChunks",
+                                "len" to "${assembled.length}/$csxExpectedLen")
+                            if (csxExpectedChunks >= 0 && csxChunks.size != csxExpectedChunks) {
+                                ProviderLogger.w(TAG, m, "Chunk loss — ${csxExpectedChunks - csxChunks.size} chunk(s) missing")
+                            } else if (csxExpectedLen >= 0 && assembled.length != csxExpectedLen) {
+                                // A short assembly with all chunks present means the console
+                                // channel truncated a message — lower CSX_CHUNK_SIZE.
+                                ProviderLogger.w(TAG, m, "Length mismatch — console message truncation? got ${assembled.length}, expected $csxExpectedLen")
+                            }
+                            if (!captured.isCompleted) captured.complete(assembled)
+                        }
+                        // [RD] reader logs surface here — crucially the reader's own call-stack,
+                        // which confirms whether isBot() would treat our reads as legitimate.
+                        else -> ProviderLogger.d(TAG, "$m/console", raw.take(300), "src" to (cm.lineNumber()))
+                    }
                     return true
                 }
-                // Exfiltration channel: the in-page reader calls prompt('__CSX__'+fragment). This
-                // leaves no window global for the decryptor to detect (unlike addJavascriptInterface).
+                // Not an exfil path (see above) — just make sure a page prompt/alert never blocks
+                // JS execution waiting for a dialog that has no UI to show it.
                 override fun onJsPrompt(
                     view: WebView?, url: String?, message: String?, defaultValue: String?,
                     result: android.webkit.JsPromptResult?
                 ): Boolean {
-                    val msg = message ?: ""
-                    if (msg.startsWith("__CSX__")) {
-                        val payload = msg.removePrefix("__CSX__")
-                        ProviderLogger.d(TAG, m, "Reader prompt received", "len" to payload.length)
-                        if (!captured.isCompleted) captured.complete(payload)
-                        result?.confirm("")
-                        return true
-                    }
-                    // Suppress any other page prompts (no dialog in headless).
                     result?.confirm("")
                     return true
                 }
+                override fun onJsAlert(
+                    view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?
+                ): Boolean {
+                    result?.confirm()
+                    return true
+                }
+                override fun onJsConfirm(
+                    view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?
+                ): Boolean {
+                    result?.confirm()
+                    return true
+                }
             }
+
+            // Attach the WebView (1x1, fully transparent) to the activity. A WebView that is never
+            // attached to a window is "hidden" to the page-visibility layer: document.visibilityState
+            // is 'hidden', requestAnimationFrame never fires and JS dialogs are dropped — any of
+            // which can stall a page whose decryptor waits on them. The reader's diag() line reports
+            // vis=/size= so the log shows whether this took effect.
+            attachOffscreen(activity, webView)
 
             ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched", "referrer" to referrer.ifBlank { "<none>" })
             if (referrer.isNotBlank()) {
@@ -1573,6 +1663,30 @@ class NavigationEngine(
         }
     }
 
+    /**
+     * Adds [webView] to the activity's content view as a 1x1, fully transparent, non-interactive
+     * view. Purely so the WebView counts as attached-and-visible: a WebView that is never added to
+     * a window is reported to the page as `document.visibilityState === 'hidden'`, does not run
+     * requestAnimationFrame callbacks, and has its JS dialogs discarded. Removal is handled by the
+     * caller's cleanup (`(webView.parent as? ViewGroup)?.removeView(webView)`).
+     */
+    private fun attachOffscreen(activity: android.app.Activity, webView: WebView) {
+        try {
+            val root = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
+            if (root == null) {
+                ProviderLogger.w(TAG, "attachOffscreen", "No content view — WebView stays detached (page will be 'hidden')")
+                return
+            }
+            webView.alpha = 0f
+            webView.isClickable = false
+            webView.isFocusable = false
+            root.addView(webView, android.view.ViewGroup.LayoutParams(1, 1))
+            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached 1x1 (page-visibility = visible)")
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "attachOffscreen", "Attach failed: ${e.message}")
+        }
+    }
+
     private fun cleanupWebView(webView: WebView?, dialog: android.app.Dialog?) {
         try {
             dialog?.dismiss()
@@ -1593,6 +1707,17 @@ class NavigationEngine(
 
     companion object {
         private const val TAG = "NavigationEngine"
+
+        // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
+        // The in-page reader streams its payload back as console.log lines, because that is the
+        // only channel the page cannot see (no window global) AND the client reliably receives:
+        //   __CSX_BEGIN__<chunkCount>|<totalChars>   __CSX_C<i>__<chunk>   __CSX_END__
+        // Chunked because a single console message is not guaranteed to survive intact at
+        // arbitrary length; if a run logs "Length mismatch", lower CSX_CHUNK_SIZE.
+        private const val CSX_BEGIN = "__CSX_BEGIN__"
+        private const val CSX_CHUNK = "__CSX_C"
+        private const val CSX_END = "__CSX_END__"
+        private const val CSX_CHUNK_SIZE = 8000
 
         /**
          * Anti-anti-bot script injected at the top of <head> for cimanow.cc.
