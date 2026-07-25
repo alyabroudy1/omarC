@@ -62,6 +62,24 @@ class VideoSnifferEngine(
         }
 
         /**
+         * Hosts that mint stream URLs pinned to the caller's IP while serving the media from an
+         * IPv4-only CDN. The page load for these MUST go out over IPv4, or the token embeds an
+         * IPv6 address the player can never present and every stream 403s.
+         *
+         * The WebView has no DNS knob, so for these hosts the page request is re-issued through
+         * OkHttp with [com.cloudstream.shared.network.PreferIpv4Dns] and handed back to the
+         * WebView. FaselHD is the reference case: `www.fasel-hd.cam` is dual-stack, `c.scdns.io`
+         * has no AAAA, and the minted path looks like
+         *   …/stream/v1/hls/<id>/<exp>/www.fasel-hd.cam/all/2001:16b8:…/yes/…
+         */
+        private val IPV4_TOKEN_HOSTS = listOf("fasel-hd.cam", "faselhd")
+
+        fun isIpv4TokenHost(url: String): Boolean {
+            val lower = url.lowercase()
+            return IPV4_TOKEN_HOSTS.any { lower.contains(it) }
+        }
+
+        /**
          * JS snippet to make iframes fullscreen for sniffer-as-player mode.
          *
          * The CSS MUST live in a backtick template literal: a single-quoted JS string cannot span
@@ -154,6 +172,24 @@ class VideoSnifferEngine(
         if (adblockSensitive) {
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession",
                 "Adblock-sensitive host — ad blocking disabled for this session", "url" to url.take(60))
+        }
+
+        // Same-host page requests get re-issued over IPv4 for hosts that pin stream tokens to the
+        // caller's IP (see IPV4_TOKEN_HOSTS) — otherwise the WebView resolves IPv6-first and the
+        // resulting links are unplayable.
+        val forceIpv4 = isIpv4TokenHost(url)
+        val sessionHost = try { android.net.Uri.parse(url).host } catch (_: Exception) { null }
+        val ipv4Client: okhttp3.OkHttpClient by lazy {
+            com.lagradost.cloudstream3.app.baseClient.newBuilder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
+                .build()
+        }
+        if (forceIpv4) {
+            ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession",
+                "IP-pinned host — serving $sessionHost requests over IPv4 so the stream token matches the player",
+                "url" to url.take(60))
         }
         var dialog: Dialog? = null
         var webView: WebView? = null
@@ -325,6 +361,50 @@ class VideoSnifferEngine(
                     requestCounter++
 
                     if (requestUrl != null) {
+                        // LAYER 0: IPv4 pinning for hosts that bake the caller's IP into stream
+                        // tokens. The page request must leave over IPv4 or the token is minted for
+                        // an IPv6 address the IPv4-only media edge can never match (verified: the
+                        // master playlist returns 200 and happily hands out variant URLs carrying
+                        // the IPv6, and every one of those variants 403s). The WebView has no DNS
+                        // setting, so the request is re-issued through OkHttp instead.
+                        if (forceIpv4 && sessionHost != null &&
+                            request.method.equals("GET", ignoreCase = true) &&
+                            request.url?.host?.equals(sessionHost, ignoreCase = true) == true
+                        ) {
+                            try {
+                                val rb = okhttp3.Request.Builder().url(requestUrl)
+                                request.requestHeaders?.forEach { (k, v) ->
+                                    // Host is computed by OkHttp; Accept-Encoding must stay
+                                    // unset so it can transparently handle gzip for us.
+                                    if (!k.equals("Host", true) && !k.equals("Accept-Encoding", true)) {
+                                        try { rb.header(k, v) } catch (_: Exception) {}
+                                    }
+                                }
+                                try {
+                                    CookieManager.getInstance().getCookie(requestUrl)
+                                        ?.let { rb.header("Cookie", it) }
+                                } catch (_: Exception) {}
+
+                                val resp = ipv4Client.newCall(rb.build()).execute()
+                                resp.headers("Set-Cookie").forEach {
+                                    try { CookieManager.getInstance().setCookie(requestUrl, it) } catch (_: Exception) {}
+                                }
+                                val ctype = resp.header("content-type")?.substringBefore(";")?.trim()
+                                    ?: "text/html"
+                                val enc = resp.header("content-type")
+                                    ?.substringAfter("charset=", "")?.takeIf { it.isNotBlank() } ?: "utf-8"
+                                ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
+                                    "Served over IPv4", "url" to requestUrl.take(90), "code" to resp.code)
+                                return android.webkit.WebResourceResponse(
+                                    ctype, enc, resp.body?.byteStream()
+                                )
+                            } catch (e: Exception) {
+                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
+                                    "IPv4 fetch failed, falling back to WebView stack (token may be IPv6-pinned)",
+                                    "url" to requestUrl.take(90), "err" to (e.message ?: ""))
+                            }
+                        }
+
                         // LAYER 1: Ad blocking — block known ad domains at network level.
                         // Skipped for hosts that refuse to play when ads don't load.
                         if (!adblockSensitive && AdBlocker.shouldBlockRequest(requestUrl)) {
