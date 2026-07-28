@@ -97,6 +97,12 @@ object VideoUrlClassifier {
         return true
     }
 
+    /** Markers that identify a quality-specific (variant) playlist rather than a master. */
+    private val QUALITY_MARKERS = listOf(
+        "2160", "1440", "1080", "720", "480", "360", "240", "144",
+        "low", "mobile", "chunklist"
+    )
+
     /**
      * Determines if a URL is an HLS Master M3U8 playlist.
      * Master playlists contain multiple sub-streams (qualities) rather than chunks.
@@ -104,29 +110,29 @@ object VideoUrlClassifier {
      */
     fun isMasterM3u8(url: String): Boolean {
         val lower = url.lowercase()
-        
+
         // Standard .m3u8 master detection
         if (lower.contains(".m3u8")) {
-            if (lower.contains("master.m3u8") || 
-                lower.contains("playlist.m3u8") || 
-                lower.contains("manifest.m3u8")) {
-                return true
-            }
-            // Exclude quality-specific sub-playlists
-            val hasQualityPattern = lower.contains("360") || 
-                                   lower.contains("480") || 
-                                   lower.contains("720") || 
-                                   lower.contains("1080") || 
-                                   lower.contains("240") || 
-                                   lower.contains("low") || 
-                                   lower.contains("mobile") ||
-                                   lower.contains("chunklist")
-            return !hasQualityPattern
+            val path = lower.substringBefore('?').substringBefore('#')
+            val filename = path.substringAfterLast('/')
+
+            // "master"/"manifest" is only ever a master playlist's name — trust it outright.
+            if (filename.contains("master") || filename.contains("manifest")) return true
+
+            // A quality marker means this is a variant, and that must outrank the name: scdns.io
+            // names its variants "<id>_<quality>_playlist.m3u8" (e.g. 160_hd1080b_playlist.m3u8),
+            // so matching "playlist.m3u8" first classified every FaselHD variant as a master.
+            // Scoped to the last two path segments because tokenised CDN paths are full of ids and
+            // unix timestamps whose digits trip these markers when the whole URL is searched.
+            val scope = path.split('/').takeLast(2).joinToString("/")
+            if (QUALITY_MARKERS.any { scope.contains(it) }) return false
+
+            return true
         }
-        
+
         // Non-standard extension: check if it's a likely HLS manifest with "master" in the name
         if (isLikelyHlsManifest(lower) && lower.contains("master")) return true
-        
+
         return false
     }
 }

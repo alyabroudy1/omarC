@@ -36,6 +36,20 @@ class FaselHDV2 : BaseProvider() {
      */
     override val preferIpv4 get() = true
 
+    /**
+     * Keep the IPv4 pin alive during playback, not just during extraction.
+     *
+     * [preferIpv4] only covers this provider's own requests. Without an interceptor here, core hands
+     * the link to a bare `DefaultHttpDataSource.Factory()` (`CS3IPlayer.createOnlineSource`) — plain
+     * `HttpURLConnection` with its own system DNS — so the token can be minted over IPv4 and then
+     * played over IPv6, which scdns.io rejects with 403 even though the token itself is fine.
+     * A non-null return switches core to `OkHttpDataSource`; see [Ipv4PinnedInterceptor].
+     */
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): okhttp3.Interceptor? =
+        if (extractorLink.url.contains("scdns.io", ignoreCase = true)) {
+            com.cloudstream.shared.network.Ipv4PinnedInterceptor
+        } else null
+
     override val mainPage = mainPageOf(
         "/all-movies" to "جميع الافلام",
         "/movies_top_views" to "الافلام الاعلي مشاهدة",
