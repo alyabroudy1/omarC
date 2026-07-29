@@ -72,6 +72,17 @@ data class CapturedLinkData(
 )
 
 /**
+ * A video request seen by [NavigationEngine]'s interceptor, kept with the headers the page sent and
+ * the document that sent them.
+ */
+data class CapturedVideoRequest(
+    val url: String,
+    val headers: Map<String, String>,
+    /** The page the request came from — the natural Referer if the request itself carried none. */
+    val pageUrl: String
+)
+
+/**
  * A single step in a multi-step WebView navigation flow.
  */
 sealed class NavigationStep {
@@ -134,17 +145,20 @@ sealed class NavigationStep {
     ) : NavigationStep()
 
     /**
-     * Wait until the request interceptor has captured the watching URL from get-link.php, then stop
-     * — deliberately WITHOUT navigating to it.
+     * Hold the session open until the request interceptor sees a playable video URL on the network.
      *
-     * Use this when the tokenised watch link is to be opened somewhere else (e.g. handed to
-     * [SurfSnifferEngine] so the user surfs it in a real fullscreen WebView). Navigating here first
-     * would spend the token on a page nobody looks at, and the link is minted per request behind an
-     * ~11s server-side countdown, so a second one is expensive.
+     * Built for Mode.FULLSCREEN: the user is looking at the page and clicking a server and a play
+     * button, so this step is what keeps the WebView alive while that happens instead of tearing it
+     * down as soon as the scripted steps run out.
+     *
+     * @param graceMs extra time to keep collecting after the first hit. A player asks for an HLS
+     *   master and then its variant playlists a few hundred ms later, and those carry the per-quality
+     *   tokens; exiting on the first request throws the quality ladder away.
      */
-    data class WaitForWatchingUrl(
-        val timeoutMs: Long = 25_000L,
+    data class WaitForCapturedVideo(
+        val timeoutMs: Long = 300_000L,
         val pollIntervalMs: Long = 250L,
+        val graceMs: Long = 2_500L,
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
@@ -180,6 +194,12 @@ data class NavigationResult(
     val failedAtStep: Int? = null,
     val error: String? = null,
     val capturedVideoUrls: List<String> = emptyList(),
+    /**
+     * The same captures as [capturedVideoUrls] but with the headers the page actually sent.
+     * Tokenised CDNs validate Referer/Origin (and often a cookie), so playback needs these rather
+     * than values reconstructed afterwards.
+     */
+    val capturedVideoRequests: List<CapturedVideoRequest> = emptyList(),
     /** Raw HTML of the last intercepted main-frame response (e.g. cimanow.cc /watching/).
      *  Populated by the request interceptor. Contains the server-rendered DOM before the
      *  page's anti-bot JS can clear/patch it. */

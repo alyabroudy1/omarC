@@ -18,6 +18,18 @@ class NavigationEngine(
 ) {
     private val sessionMutex = Mutex()
 
+    /**
+     * URL of the document currently loaded, tracked from `onPageStarted`/`onPageFinished`.
+     *
+     * `shouldInterceptRequest` runs on a Chromium worker thread, where touching `WebView.url` is
+     * illegal (all WebView methods are UI-thread only), so the interceptor reads this instead.
+     */
+    @Volatile
+    private var lastPageUrl: String = ""
+
+    /** Cursor overlay for Mode.FULLSCREEN, so a D-pad remote can click the page. */
+    private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
+
     /** Set by the request interceptor when get-link.php returns the watching URL */
     @Volatile
     var interceptedWatchingUrl: String? = null
@@ -45,6 +57,9 @@ class NavigationEngine(
      *  alongside the extracted HTML so the provider can use them directly. */
     val capturedVideoUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
 
+    /** The same captures with the headers the page sent — see [CapturedVideoRequest]. */
+    val capturedVideoRequests = java.util.concurrent.CopyOnWriteArrayList<CapturedVideoRequest>()
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -64,8 +79,10 @@ class NavigationEngine(
             pendingRedirectUrl = null
             autoApproveAllRedirects = false
             lastHtmlBaseUrl = null
+            lastPageUrl = ""
             capturedMainFrameHtml = null
             capturedVideoUrls.clear()
+            capturedVideoRequests.clear()
 
             val activity = activityProvider()
             if (activity == null) {
@@ -100,7 +117,10 @@ class NavigationEngine(
                         completedSteps = completedSteps,
                         failedAtStep = completedSteps,
                         error = "Overall timeout",
-                        capturedVideoUrls = capturedVideoUrls.toList()
+                        // Carried through even on timeout: in FULLSCREEN the user may have started
+                        // playback moments before the clock ran out, and those captures still play.
+                        capturedVideoUrls = capturedVideoUrls.toList(),
+                        capturedVideoRequests = capturedVideoRequests.toList()
                     ))
                 }
             }
@@ -234,28 +254,38 @@ class NavigationEngine(
                                     }
                                 }
                             }
-                            is NavigationStep.WaitForWatchingUrl -> {
-                                // Let the timer page's own JS finish the countdown and call
-                                // get-link.php; the interceptor stashes the response. We stop there:
-                                // the caller opens the link itself, so the token's first (and only)
-                                // use is that navigation.
-                                val deadline = System.currentTimeMillis() + step.timeoutMs
-                                var captured = this@NavigationEngine.interceptedWatchingUrl
-                                while (captured.isNullOrBlank() && System.currentTimeMillis() < deadline) {
-                                    delay(step.pollIntervalMs)
-                                    captured = this@NavigationEngine.interceptedWatchingUrl
+                            is NavigationStep.WaitForCapturedVideo -> {
+                                // Keeps the (visible) session alive while the user picks a server and
+                                // presses play. Segments are ignored as an exit trigger — the .ts a
+                                // player fetches proves it is playing but is useless as a link, and
+                                // the manifest is always requested before them.
+                                fun playable() = capturedVideoRequests.filter { req ->
+                                    !VideoUrlClassifier.isSegmentOrAsset(req.url) &&
+                                        !VideoUrlClassifier.isBlacklisted(req.url) &&
+                                        VideoUrlClassifier.isVideoUrl(req.url)
                                 }
-                                if (captured.isNullOrBlank()) {
+
+                                val deadline = System.currentTimeMillis() + step.timeoutMs
+                                while (playable().isEmpty() && System.currentTimeMillis() < deadline) {
+                                    delay(step.pollIntervalMs)
+                                }
+
+                                if (playable().isEmpty()) {
                                     ProviderLogger.w(TAG, "execute",
-                                        "Step $index: No watching URL captured within ${step.timeoutMs}ms")
+                                        "Step $index: No playable video seen within ${step.timeoutMs}ms")
                                     if (step.abortOnFailure) {
                                         failedStep = index
-                                        errorMsg = "No watching URL captured"
+                                        errorMsg = "No video captured"
                                         break
                                     }
                                 } else {
                                     ProviderLogger.i(TAG, "execute",
-                                        "Step $index: Watching URL captured (not navigated): ${captured.take(140)}")
+                                        "Step $index: Video captured — collecting variants for ${step.graceMs}ms",
+                                        "url" to playable().first().url.take(120))
+                                    delay(step.graceMs)
+                                    ProviderLogger.i(TAG, "execute",
+                                        "Step $index: Done", "playable" to playable().size,
+                                        "total" to capturedVideoRequests.size)
                                 }
                             }
                             is NavigationStep.NavigateToWatchingUrl -> {
@@ -357,6 +387,7 @@ class NavigationEngine(
                         failedAtStep = failedStep,
                         error = errorMsg,
                         capturedVideoUrls = capturedVideoUrls.toList(),
+                        capturedVideoRequests = capturedVideoRequests.toList(),
                         mainFrameHtml = capturedMainFrameHtml
                     ))
                 }
@@ -526,6 +557,7 @@ class NavigationEngine(
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url != null) {
+                    lastPageUrl = url
                     ProviderLogger.i(TAG, "onPageStarted", "URL=${url}")
                     if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
                         if (!isOnDestination) {
@@ -541,6 +573,7 @@ class NavigationEngine(
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (url != null) lastPageUrl = url
                 ProviderLogger.i(TAG, "onPageFinished", "URL=${url}")
                 view?.evaluateJavascript("(function(){ return document.title; })();") { result ->
                     val title = try { org.json.JSONTokener(result).nextValue().toString() } catch (_: Exception) { result }
@@ -583,11 +616,23 @@ class NavigationEngine(
                         || path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".ts")
                         || (host.contains("okcdn.ru") && reqUrl.contains("type="))
                         || (host.contains("vkcdn") && path.contains("video"))
+                        // Catches what the path tests miss: manifests behind a query string, and the
+                        // /hls/ paths some CDNs serve with a .txt or .php name.
+                        || VideoUrlClassifier.isVideoUrl(reqUrl)
                 if (isVideoStream) {
                     // Strip byte-range param so we keep the canonical URL (range requests are the same file)
                     val clean = reqUrl.substringBefore("&bytes=")
                     if (!capturedVideoUrls.contains(clean)) {
                         capturedVideoUrls.add(clean)
+                        // Kept with its headers: a tokenised CDN checks the Referer/Origin the embed
+                        // used, and any value reconstructed later is a guess.
+                        capturedVideoRequests.add(
+                            CapturedVideoRequest(
+                                url = clean,
+                                headers = reqHeaders,
+                                pageUrl = lastPageUrl
+                            )
+                        )
                         ProviderLogger.i(TAG, "shouldInterceptRequest", "🎬 CAPTURED VIDEO URL: ${clean.take(160)}")
                     }
                 }
@@ -1887,7 +1932,20 @@ class NavigationEngine(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
+            // This dialog exists to be used: in FULLSCREEN the user drives the page by hand.
+            isClickable = true
+            isFocusable = true
+            isFocusableInTouchMode = true
         })
+
+        // The TV mouse is the input path, not a nicety. Server buttons and play controls have to be
+        // clicked, and an injected `element.click()` produces an event with `isTrusted === false` —
+        // which is precisely what a site checking for automation looks at. TvMouseController
+        // dispatches real MotionEvents, so the page sees genuine touch input, and a D-pad remote can
+        // drive the screen at all.
+        tvMouseController = com.cloudstream.shared.ui.TvMouseController(activity, webView)
+        tvMouseController?.attach(container)
+
         return android.app.Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen).apply {
             setContentView(container)
             setCancelable(true)
@@ -1904,7 +1962,22 @@ class NavigationEngine(
                 w.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+            setOnKeyListener { _, _, event ->
+                // Back walks the surf history first, so a wrong tap on an ad is recoverable; only
+                // once there is nothing to go back to does Back close the dialog.
+                if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                    event.action == android.view.KeyEvent.ACTION_UP &&
+                    webView.canGoBack()
+                ) {
+                    webView.goBack()
+                    true
+                } else {
+                    tvMouseController?.onKeyEvent(event) ?: false
+                }
+            }
             setOnDismissListener {
+                tvMouseController?.detach()
+                tvMouseController = null
                 ProviderLogger.d(TAG, "createDialog", "Dialog dismissed")
             }
         }

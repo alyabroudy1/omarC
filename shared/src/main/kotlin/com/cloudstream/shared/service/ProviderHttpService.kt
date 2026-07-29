@@ -26,7 +26,6 @@ import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationEngine
 import com.cloudstream.shared.webview.NavigationResult
 import com.cloudstream.shared.webview.NavigationStep
-import com.cloudstream.shared.webview.SurfSnifferEngine
 import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
@@ -48,8 +47,6 @@ class ProviderHttpService private constructor(
     private val cfBypassEngine: CfBypassEngine,
     private val videoSnifferEngine: VideoSnifferEngine,
     val navigationEngine: NavigationEngine,
-    /** Fullscreen WebView the user surfs by hand; injects nothing, only watches the network. */
-    val surfSnifferEngine: SurfSnifferEngine,
     private val domainManager: DomainManager,
     private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface,
@@ -337,80 +334,6 @@ class ProviderHttpService private constructor(
             }
             else -> emptyList()
         }
-    }
-
-    /**
-     * Open [url] in a fullscreen WebView the user surfs by hand, and return the video URLs seen on
-     * the network. See [SurfSnifferEngine] for why nothing is injected into the page.
-     *
-     * Runs inside the provider session rather than beside it, which is the point of going through
-     * the gateway: the surf inherits the session User-Agent (cookies minted for another UA are
-     * refused), starts with the session's cookies already in the system CookieManager so a
-     * cf_clearance we already hold is not re-solved by hand, and hands back whatever the surf
-     * established so later HTTP calls are not stuck with the older set.
-     *
-     * @param url start point. For token-gated watch links this must be the freshly minted link.
-     * @param referer `Referer` for the first navigation — load-bearing on pages that check it.
-     */
-    suspend fun surfForVideo(
-        url: String,
-        referer: String? = null,
-        timeoutMs: Long = SurfSnifferEngine.DEFAULT_TIMEOUT_MS,
-        graceMs: Long = SurfSnifferEngine.DEFAULT_GRACE_MS
-    ): List<SurfSnifferEngine.SurfCapture> {
-        ensureInitialized()
-
-        // Hand the WebView the cookies we already have (host + provider domain + aliases), so the
-        // user is not asked to re-solve a challenge this session already passed.
-        val targetHost = extractDomain(url)
-        if (sessionState.cookies.isNotEmpty()) {
-            if (targetHost.isNotBlank()) syncCookiesToSystemCookieManager(targetHost, sessionState.cookies)
-            syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
-            for (alias in SessionProvider.getDomainAliases()) {
-                syncCookiesToSystemCookieManager(alias, sessionState.cookies)
-            }
-        }
-
-        val result = surfSnifferEngine.surf(
-            url = url,
-            userAgent = sessionState.userAgent,
-            referer = referer,
-            timeoutMs = timeoutMs,
-            graceMs = graceMs
-        )
-
-        val captures = when (result) {
-            is SurfSnifferEngine.SurfResult.Found -> result.captures
-            // A dismiss or timeout right after playback began still leaves usable hits.
-            is SurfSnifferEngine.SurfResult.Cancelled -> result.partial
-            is SurfSnifferEngine.SurfResult.Timeout -> result.partial
-            is SurfSnifferEngine.SurfResult.Error -> emptyList()
-        }
-
-        // Fold whatever the surf collected back into the session. Merge, never replace: the surf
-        // browses third-party embed domains, and its cookie jar for those must not evict the
-        // provider-domain set we arrived with.
-        try {
-            val surfed = android.webkit.CookieManager.getInstance().getCookie(url)
-            if (!surfed.isNullOrBlank()) {
-                val parsed = surfed.split(";").mapNotNull { pair ->
-                    val trimmed = pair.trim()
-                    val name = trimmed.substringBefore("=", "")
-                    val value = trimmed.substringAfter("=", "")
-                    if (name.isBlank()) null else name to value
-                }.toMap()
-                if (parsed.isNotEmpty()) updateCookies(parsed, fromWebView = false)
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_PROVIDER_HTTP, "surfForVideo",
-                "Could not fold surf cookies back into the session", "error" to e.message)
-        }
-
-        ProviderLogger.i(TAG_PROVIDER_HTTP, "surfForVideo", "Surf finished",
-            "result" to result::class.simpleName, "captures" to captures.size,
-            "first" to captures.firstOrNull()?.url?.take(100))
-
-        return captures
     }
 
     /**
@@ -1173,10 +1096,9 @@ class ProviderHttpService private constructor(
                 val cfBypassEngine = CfBypassEngine(activityProvider)
                 val videoSnifferEngine = VideoSnifferEngine(activityProvider)
                 val navigationEngine = NavigationEngine(activityProvider)
-                val surfSnifferEngine = SurfSnifferEngine(activityProvider)
                 val chromiumFetcher = ChromiumFetcher(activityProvider)
 
-                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, navigationEngine, surfSnifferEngine, domainManager, cookieManager, parser, chromiumFetcher)
+                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, cookieManager, parser, chromiumFetcher)
             }
         }
     }
