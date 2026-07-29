@@ -1486,26 +1486,39 @@ class NavigationEngine(
             </script>
         """.trimIndent()
 
-        // Inject the reader at the very top of <head> so its poll is armed before the page's
-        // decryptor runs (the setInterval fires after the decryptor has written the list).
-        // If the reader turns out to be silent on both channels, the question becomes "was it even
-        // in the document we served, and in a position where it parses?" — so record that here
-        // rather than guessing later.
+        // Inject the reader at offset 0 — BEFORE the first byte of the page, not after <head>.
+        //
+        // Anchoring to <head> looked equivalent and was not: on this page the payload script sits at
+        // offset 0, *ahead* of <head> (which starts at ~966), so it ran first. It replaces the whole
+        // document (document.open()/write()), which resets the parser and discards every byte not yet
+        // parsed — the reader among them. It never executed at all: verified by both status channels
+        // reporting nothing while onReceivedTitle still delivered the page's own <title>, so the
+        // channels were live and the script simply wasn't there. Its first statement is
+        // `!function(){try{for(var o=["lo…` — iterating what is almost certainly console method names,
+        // i.e. it also neuters the console channel on its way past.
+        //
+        // Running ahead of it is strictly better on every constraint in the gate's list: the reader
+        // arms its poll before the document is replaced (timers and closures survive document.open(),
+        // so the poll still sees the new DOM), and it deletes its own <script> node before the gate
+        // ever enumerates scripts looking for our markers.
         run {
             val headIdx = html.indexOf("<head", ignoreCase = true)
             ProviderLogger.d(TAG, m, "Reader injection site",
                 "tag" to tag,
-                "headIdx" to headIdx,
-                "position" to if (headIdx >= 0) "after <head>" else "document start (no <head> found)",
+                "position" to "offset 0 (ahead of the page's first script)",
+                "headIdxForReference" to headIdx,
                 "htmlStartsWith" to html.take(60).replace("\n", " "),
                 "readerLen" to readerScript.length)
         }
         val injectedHtml = run {
-            val headIdx = html.indexOf("<head", ignoreCase = true)
-            if (headIdx >= 0) {
-                val headEnd = html.indexOf('>', headIdx)
-                if (headEnd >= 0) html.substring(0, headEnd + 1) + readerScript + html.substring(headEnd + 1)
-                else readerScript + html
+            // One exception to "offset 0": a doctype must stay the first thing in the document or the
+            // page renders in quirks mode. Slot in immediately after it — still ahead of every script.
+            val trimmedStart = html.takeWhile { it.isWhitespace() }.length
+            if (html.regionMatches(trimmedStart, "<!doctype", 0, 9, ignoreCase = true)) {
+                val docTypeEnd = html.indexOf('>', trimmedStart)
+                if (docTypeEnd >= 0) {
+                    html.substring(0, docTypeEnd + 1) + readerScript + html.substring(docTypeEnd + 1)
+                } else readerScript + html
             } else readerScript + html
         }
 
