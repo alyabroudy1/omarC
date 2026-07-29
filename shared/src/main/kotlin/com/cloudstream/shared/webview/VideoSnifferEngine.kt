@@ -51,6 +51,16 @@ class VideoSnifferEngine(
         const val SNIFFER_PLAYER_TIMEOUT_MS = 10_800_000L // 3 hours
 
         /**
+         * How long a player-mode session waits for its FIRST candidate before giving up.
+         *
+         * Only applies when the session timeout is [SNIFFER_PLAYER_TIMEOUT_MS]; short-timeout callers
+         * already fail fast on their own deadline. Sized well above a healthy page — a working server
+         * is captured from the network interceptor within a few hundred ms of page start — while still
+         * leaving room for a Cloudflare interstitial plus the reload that follows it.
+         */
+        const val FIRST_CAPTURE_DEADLINE_MS = 15_000L
+
+        /**
          * Hosts whose player refuses to load the stream when it detects an ad blocker — for these
          * we deliberately let the ads through, because a blocked ad means no video at all.
          * upns.online ships "Adblock Detected" / "Please disable AdBlock to watch this video" /
@@ -116,6 +126,8 @@ class VideoSnifferEngine(
     private var resultDelivered = false
     private var timeoutJob: Job? = null
     private var videoMonitorJob: Job? = null
+    /** Fast-fail deadline for the first captured candidate; see [FIRST_CAPTURE_DEADLINE_MS]. */
+    private var firstCaptureJob: Job? = null
     /**
      * The DOM-scrape poller for the page currently loaded.
      *
@@ -211,6 +223,42 @@ class VideoSnifferEngine(
         firstLinkTime = 0L
         android.util.Log.d("VideoSnifferEngine", "runSession: Session started, capturedLinks cleared. URL: $url")
         ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Session started, capturedLinks cleared")
+
+        // ── Fast-fail on a dud page ──────────────────────────────────────────────────────────────
+        // Player-mode sessions run with a 3-hour timeout so a stream that can only play inside the
+        // WebView is not torn down under the user. But that deadline is also the ONLY thing ending a
+        // session, so a server that yields no candidate at all left the user staring at a blank
+        // fullscreen WebView until they pressed back — measured 104s on a dud server whose successor
+        // then produced a link in 1.4s. Nothing is lost by giving up early here: if the page really
+        // is playing video, the same check the timeout path uses keeps the session alive.
+        if (timeout >= SNIFFER_PLAYER_TIMEOUT_MS) {
+            this@VideoSnifferEngine.firstCaptureJob = CoroutineScope(Dispatchers.Main).launch {
+                delay(FIRST_CAPTURE_DEADLINE_MS)
+                if (resultDelivered || capturedLinks.isNotEmpty()) return@launch
+                val wv = webView
+                if (wv == null) return@launch
+                wv.evaluateJavascript(
+                    "(function(){ return window.__snifferIsVideoPlaying ? window.__snifferIsVideoPlaying() : false; })()"
+                ) { isPlaying ->
+                    if (resultDelivered || capturedLinks.isNotEmpty()) return@evaluateJavascript
+                    if (isPlaying == "true") {
+                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.firstCaptureDeadline",
+                            "No link yet but video is playing in-page — leaving the session to the player-mode path")
+                    } else {
+                        resultDelivered = true
+                        ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.firstCaptureDeadline",
+                            "No candidate after ${FIRST_CAPTURE_DEADLINE_MS}ms and nothing playing — abandoning so the next server is tried",
+                            "url" to url.take(90))
+                        timeoutJob?.cancel()
+                        videoMonitorJob?.cancel()
+                        domPollJob?.cancel()
+                        // Not firstCaptureJob — this IS it.
+                        cleanup(webView, dialog)
+                        deferred.complete(WebViewResult.Timeout(url, null))
+                    }
+                }
+            }
+        }
 
         // Timeout handler — with player mode detection
         this@VideoSnifferEngine.timeoutJob = CoroutineScope(Dispatchers.Main).launch {
@@ -733,20 +781,42 @@ class VideoSnifferEngine(
                         if (!preSniffJavaScript.isNullOrBlank()) {
                             android.util.Log.i("VideoSnifferEngine", "onPageFinished: Executing pre-sniff JavaScript")
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Executing pre-sniff JavaScript", "jsLength" to preSniffJavaScript.length)
-                            view?.evaluateJavascript(preSniffJavaScript) { result ->
-                                android.util.Log.i("VideoSnifferEngine", "onPageFinished: Pre-sniff JS result: $result")
-                                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Pre-sniff JavaScript result", "result" to (result ?: "null"))
-                            }
-
-                            // Wait for player to load after clicking, then inject video sniffer
-                            CoroutineScope(Dispatchers.Main).launch {
-                                delay(3000) // Give 3s for player to initialize after click
-                                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injecting Video Sniffer (after pre-sniff)")
+                            // The 3s post-click wait is for a player to initialise. If the click did
+                            // not happen — a stale selector reports "ERROR: Element not found" — there
+                            // is nothing to wait for, and waiting anyway cost 3s per page load (6s on
+                            // a host that serves a Cloudflare interstitial and then reloads).
+                            // Whichever path arrives first injects; the flag keeps it to once.
+                            val snifferInjected = java.util.concurrent.atomic.AtomicBoolean(false)
+                            fun injectSniffer(reason: String) {
+                                if (!snifferInjected.compareAndSet(false, true)) return
+                                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                                    "Injecting Video Sniffer (after pre-sniff)", "trigger" to reason)
                                 view?.evaluateJavascript(VideoSnifferJs.JS_SCRIPT) { result ->
                                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Video sniffer injection result", "result" to (result ?: "null"))
                                 }
                                 ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Starting DOM extraction")
                                 startDomVideoExtraction(view)
+                            }
+
+                            view?.evaluateJavascript(preSniffJavaScript) { result ->
+                                android.util.Log.i("VideoSnifferEngine", "onPageFinished: Pre-sniff JS result: $result")
+                                val clickFailed = result == null ||
+                                    result.contains("ERROR", ignoreCase = true) ||
+                                    result.equals("null", ignoreCase = true)
+                                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                                    "Pre-sniff JavaScript result", "result" to (result ?: "null"),
+                                    "clickFailed" to clickFailed)
+                                if (clickFailed) {
+                                    ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
+                                        "Pre-sniff click did not land — skipping the 3s player wait")
+                                    injectSniffer("click-failed")
+                                }
+                            }
+
+                            // Click succeeded (or the callback never came): give the player its 3s.
+                            CoroutineScope(Dispatchers.Main).launch {
+                                delay(3000)
+                                injectSniffer("post-click-wait")
                             }
                         } else {
                             // No pre-sniff JS, inject video sniffer immediately
@@ -841,6 +911,7 @@ class VideoSnifferEngine(
                                 timeoutJob?.cancel()
                                 videoMonitorJob?.cancel()
                                 domPollJob?.cancel()
+                                firstCaptureJob?.cancel()
 
                                 val cookies = extractCookies(view, currentUrl)
                                 val found = capturedLinks.toList()
@@ -972,6 +1043,7 @@ class VideoSnifferEngine(
             timeoutJob?.cancel()
             videoMonitorJob?.cancel()
             domPollJob?.cancel()
+            firstCaptureJob?.cancel()
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
@@ -988,6 +1060,7 @@ class VideoSnifferEngine(
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
                 domPollJob?.cancel()
+                firstCaptureJob?.cancel()
                 android.util.Log.i("VideoSnifferEngine", "runSession: Parent coroutine cancelled, cleaning up WebView and dialog")
                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Parent coroutine cancelled, forcing cleanup")
                 cleanup(webView, dialog)
@@ -1082,6 +1155,7 @@ class VideoSnifferEngine(
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
                 domPollJob?.cancel()
+                firstCaptureJob?.cancel()
 
                 // Launch coroutine to get cookies safely
                 CoroutineScope(Dispatchers.Main).launch {
@@ -1311,6 +1385,7 @@ class VideoSnifferEngine(
                     timeoutJob?.cancel()
                     videoMonitorJob?.cancel()
                     domPollJob?.cancel()
+                    firstCaptureJob?.cancel()
 
                     // User aborted, so we immediately complete with an error to stop execution
                     cleanup(webView, null)
@@ -1354,6 +1429,7 @@ class VideoSnifferEngine(
         timeoutJob?.cancel()
         videoMonitorJob?.cancel()
         domPollJob?.cancel()
+        firstCaptureJob?.cancel()
         skipCountdownJob?.cancel()
 
         cleanup(view, dialog)
@@ -1374,6 +1450,7 @@ class VideoSnifferEngine(
 
         // One poller per page: a reload supersedes the poller it replaces.
         domPollJob?.cancel()
+        firstCaptureJob?.cancel()
 
         // Poll every 2 seconds to extract video sources from DOM
         domPollJob = CoroutineScope(Dispatchers.Main).launch {
@@ -1818,6 +1895,7 @@ class VideoSnifferEngine(
     private fun cleanup(webView: WebView?, dialog: Dialog?) {
         // Last line of defence: the poller outlives the WebView it scrapes otherwise.
         domPollJob?.cancel()
+        firstCaptureJob?.cancel()
         try {
             dialog?.dismiss()
             webView?.let { view ->

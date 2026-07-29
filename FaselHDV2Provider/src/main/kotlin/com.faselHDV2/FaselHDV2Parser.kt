@@ -199,11 +199,22 @@ class FaselHDV2Parser : NewBaseParser() {
         doc: Document,
         urls: List<String>
     ): List<com.cloudstream.shared.extractors.SnifferSelector?> {
+        // A selector here is a CSS path into THIS document (the detail page), but the sniffer runs
+        // it inside whatever page it opens. For a `video_player?player_token=…` URL that page is the
+        // bare player — none of the detail page's tab markup exists there, so the click always fails
+        // with "Element not found", and the sniffer still paid a 3s post-click wait for it. The
+        // player page needs no click anyway: its stream is captured by the network interceptor within
+        // ~120ms of page start. Only offer a selector for URLs that stay on a page shaped like this
+        // one (e.g. `/?p=<id>`).
+        val selectorUsable = urls.map { !it.contains("video_player", ignoreCase = true) }
+        if (selectorUsable.none { it }) return urls.map { null }
+
         // Map URLs to their corresponding server tab elements for sniffer fallback
         val watchListItems = doc.select("ul.WatchList li[data-embed-url]")
         if (watchListItems.isNotEmpty()) {
-            return urls.map { url ->
-                val matchingLi = watchListItems.firstOrNull { it.attr("data-embed-url") == url }
+            return urls.mapIndexed { i, url ->
+                val matchingLi = if (!selectorUsable[i]) null
+                    else watchListItems.firstOrNull { it.attr("data-embed-url") == url }
                 if (matchingLi != null) {
                     com.cloudstream.shared.extractors.SnifferSelector(
                         query = "ul.WatchList li[data-embed-url=\"$url\"]",
@@ -215,8 +226,8 @@ class FaselHDV2Parser : NewBaseParser() {
         val signleItems = doc.select(".signleWatch ul.tabs-ul li[onclick]")
         if (signleItems.isNotEmpty()) {
             val urlPattern = Regex("""['"](https?://[^'"]+)['"]""")
-            return urls.map { url ->
-                val matchingLi = signleItems.firstOrNull {
+            return urls.mapIndexed { i, url ->
+                val matchingLi = if (!selectorUsable[i]) null else signleItems.firstOrNull {
                     val m = urlPattern.find(it.attr("onclick"))
                     m?.groupValues?.get(1) == url
                 }
