@@ -116,6 +116,15 @@ class VideoSnifferEngine(
     private var resultDelivered = false
     private var timeoutJob: Job? = null
     private var videoMonitorJob: Job? = null
+    /**
+     * The DOM-scrape poller for the page currently loaded.
+     *
+     * Held so a reload can cancel the previous one. Every `onPageFinished` starts a poller, and a
+     * host that bounces the page — a Cloudflare managed challenge does it twice — otherwise leaves
+     * one running per load, all polling the same WebView and racing to deliver the same result.
+     * The `activeWebView != view` guard cannot catch this: it is the same WebView reloading.
+     */
+    private var domPollJob: Job? = null
     private var exitConditionReference: ExitCondition? = null
     private var activeWebView: WebView? = null
     private var activeDialog: Dialog? = null
@@ -364,13 +373,37 @@ class VideoSnifferEngine(
                     requestCounter++
 
                     if (requestUrl != null) {
+                        // A sniffing WebView renders nothing, so its favicon is pure cost. Worse,
+                        // it is a same-host GET, so it used to be re-issued through the IPv4 branch
+                        // below and counted against the site's rate limit — four of them came back
+                        // 429 while a Cloudflare challenge was in flight.
+                        if (request.url?.path?.endsWith("/favicon.ico", ignoreCase = true) == true) {
+                            return android.webkit.WebResourceResponse(
+                                "image/x-icon", "utf-8",
+                                java.io.ByteArrayInputStream(ByteArray(0))
+                            )
+                        }
+
                         // LAYER 0: IPv4 pinning for hosts that bake the caller's IP into stream
                         // tokens. The page request must leave over IPv4 or the token is minted for
                         // an IPv6 address the IPv4-only media edge can never match (verified: the
                         // master playlist returns 200 and happily hands out variant URLs carrying
                         // the IPv6, and every one of those variants 403s). The WebView has no DNS
                         // setting, so the request is re-issued through OkHttp instead.
-                        if (forceIpv4 && sessionHost != null &&
+                        // Cloudflare's own challenge machinery is deliberately NOT re-issued through
+                        // OkHttp. Its TLS fingerprint is what these sites block in the first place
+                        // (that is why ProviderHttpService needs a Chrome-TLS tier at all), so
+                        // serving the challenge from it invites a re-challenge. Let Chrome's stack
+                        // answer its own challenge.
+                        //
+                        // Safe for the IPv4 pin: /cdn-cgi/* mints no stream token. The token is
+                        // embedded in the video_player document, which is a same-host GET and still
+                        // takes the IPv4 path below, and the media hosts (*.scdns.io) are different
+                        // hosts that never enter this branch at all.
+                        val isCfChallengeAsset =
+                            request.url?.path?.startsWith("/cdn-cgi/", ignoreCase = true) == true
+
+                        if (forceIpv4 && sessionHost != null && !isCfChallengeAsset &&
                             request.method.equals("GET", ignoreCase = true) &&
                             request.url?.host?.equals(sessionHost, ignoreCase = true) == true
                         ) {
@@ -445,8 +478,12 @@ class VideoSnifferEngine(
                                  "requestNum" to requestCounter
                              )
                              captureLink(requestUrl, "Network", request?.requestHeaders ?: emptyMap())
-                        } else if (requestUrl.contains("m3u8") || requestUrl.contains("mp4") || requestUrl.contains("video") || requestUrl.contains("stream")) {
-                            ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "URL rejected",
+                        } else if (requestUrl.contains(".m3u8") || requestUrl.contains(".mp4")) {
+                            // Debug, not warning, and only for things that really look like media:
+                            // the bare substrings "video"/"stream" match the embed document itself
+                            // and most ad scripts, so every page load used to emit warnings that
+                            // buried the real diagnostics.
+                            ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept", "URL rejected",
                                 "url" to requestUrl.take(100),
                                 "reason" to "Failed video pattern check",
                                 "isBlacklisted" to VideoUrlClassifier.isBlacklisted(requestUrl)
@@ -803,6 +840,7 @@ class VideoSnifferEngine(
                                 resultDelivered = true
                                 timeoutJob?.cancel()
                                 videoMonitorJob?.cancel()
+                                domPollJob?.cancel()
 
                                 val cookies = extractCookies(view, currentUrl)
                                 val found = capturedLinks.toList()
@@ -933,6 +971,7 @@ class VideoSnifferEngine(
             resultDelivered = true
             timeoutJob?.cancel()
             videoMonitorJob?.cancel()
+            domPollJob?.cancel()
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
@@ -948,6 +987,7 @@ class VideoSnifferEngine(
                 resultDelivered = true
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
+                domPollJob?.cancel()
                 android.util.Log.i("VideoSnifferEngine", "runSession: Parent coroutine cancelled, cleaning up WebView and dialog")
                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Parent coroutine cancelled, forcing cleanup")
                 cleanup(webView, dialog)
@@ -1003,7 +1043,7 @@ class VideoSnifferEngine(
                  checkExitCondition()
              }
          } else {
-             android.util.Log.w("VideoSnifferEngine", "[captureLink] Duplicate URL captured (This is expected if page reloads or loops) | url=${url.take(80)}")
+             android.util.Log.d("VideoSnifferEngine", "[captureLink] Duplicate URL captured (This is expected if page reloads or loops) | url=${url.take(80)}")
          }
     }
 
@@ -1041,6 +1081,7 @@ class VideoSnifferEngine(
                 resultDelivered = true
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
+                domPollJob?.cancel()
 
                 // Launch coroutine to get cookies safely
                 CoroutineScope(Dispatchers.Main).launch {
@@ -1269,6 +1310,7 @@ class VideoSnifferEngine(
                     resultDelivered = true
                     timeoutJob?.cancel()
                     videoMonitorJob?.cancel()
+                    domPollJob?.cancel()
 
                     // User aborted, so we immediately complete with an error to stop execution
                     cleanup(webView, null)
@@ -1311,6 +1353,7 @@ class VideoSnifferEngine(
         resultDelivered = true
         timeoutJob?.cancel()
         videoMonitorJob?.cancel()
+        domPollJob?.cancel()
         skipCountdownJob?.cancel()
 
         cleanup(view, dialog)
@@ -1329,8 +1372,11 @@ class VideoSnifferEngine(
 
         ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "Starting DOM video extraction polling")
 
+        // One poller per page: a reload supersedes the poller it replaces.
+        domPollJob?.cancel()
+
         // Poll every 2 seconds to extract video sources from DOM
-        CoroutineScope(Dispatchers.Main).launch {
+        domPollJob = CoroutineScope(Dispatchers.Main).launch {
             var attempts = 0
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "Polling started", "maxAttempts" to 30)
 
@@ -1770,6 +1816,8 @@ class VideoSnifferEngine(
     }
 
     private fun cleanup(webView: WebView?, dialog: Dialog?) {
+        // Last line of defence: the poller outlives the WebView it scrapes otherwise.
+        domPollJob?.cancel()
         try {
             dialog?.dismiss()
             webView?.let { view ->

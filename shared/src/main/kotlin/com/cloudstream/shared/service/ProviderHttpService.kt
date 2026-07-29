@@ -438,7 +438,61 @@ class ProviderHttpService private constructor(
     
     // ==================== LOW LEVEL ====================
 
-    suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false, rewriteDomain: Boolean = false): Document? {
+    /**
+     * A just-fetched page, kept briefly so a second consumer does not refetch it.
+     *
+     * `load()` and `loadLinks()` request the same detail URL seconds apart, sequentially — the
+     * RequestQueue's leader/follower dedup only coalesces *concurrent* requests, so it cannot help.
+     * On a domain whose TLS fingerprint Cloudflare rejects, each of those fetches pays a failed
+     * OkHttp attempt plus a full Chrome-TLS WebView fetch (~830 ms measured), so the second one is
+     * pure waste.
+     *
+     * Deliberately opt-in per call site ([getDocument]'s `allowCached`), never on by default:
+     * `shared` is used by ~40 providers and a page cache is exactly the kind of thing that turns
+     * into a stale-content bug somewhere unrelated. Writes happen for everyone; only readers who
+     * ask get a hit.
+     */
+    private class CachedPage(val html: String, val finalUrl: String, val atMs: Long)
+
+    private val recentPages = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, CachedPage>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedPage>) = size > 8
+        }
+    )
+
+    /** Long enough to bridge a load()→play tap, short enough that a stale token is refetched. */
+    private val pageCacheTtlMs = 45_000L
+
+    private fun cachedPage(url: String): CachedPage? {
+        val hit = recentPages[url] ?: return null
+        if (System.currentTimeMillis() - hit.atMs > pageCacheTtlMs) {
+            recentPages.remove(url)
+            return null
+        }
+        return hit
+    }
+
+    suspend fun getDocument(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        checkDomainChange: Boolean = false,
+        rewriteDomain: Boolean = false,
+        /**
+         * Accept a page fetched moments ago instead of refetching. Only pass true where a stale-by-
+         * seconds page is definitely acceptable — a detail page being re-read to extract watch
+         * links, not a listing being refreshed.
+         */
+        allowCached: Boolean = false
+    ): Document? {
+        if (allowCached) {
+            cachedPage(url)?.let { hit ->
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "getDocument",
+                    "Reusing page fetched ${System.currentTimeMillis() - hit.atMs}ms ago",
+                    "url" to url.take(80))
+                return Jsoup.parse(hit.html, hit.finalUrl)
+            }
+        }
+
         val result = if (rewriteDomain) {
             requestQueue.enqueue(url, headers)
         } else {
@@ -493,7 +547,16 @@ class ProviderHttpService private constructor(
                 }
             }
         }
-        
+
+        // Store only a clean, fully-resolved success: anything that went through a meta-refresh or
+        // CF fallback has already returned above, so a cache hit can be handed straight back
+        // without replaying that logic.
+        if (result.success && doc != null) {
+            result.html?.let {
+                recentPages[url] = CachedPage(it, result.finalUrl ?: url, System.currentTimeMillis())
+            }
+        }
+
         return doc
     }
 

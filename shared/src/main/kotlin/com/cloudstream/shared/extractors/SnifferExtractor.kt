@@ -403,9 +403,23 @@ class SnifferExtractor : ExtractorApi() {
                     // If it's an M3U8, try to extract qualities
                     var qualityLinks: List<ExtractorLink>? = null
                     if (linkType == ExtractorLinkType.M3U8) {
-                        android.util.Log.i("SnifferExtractor", "[getUrl] Attempting M3U8 quality extraction")
-                        ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
-                        qualityLinks = extractM3u8Qualities(source.url, finalHeaders, originReferer, name)
+                        // Fast path: the WebView already captured every variant, so fetching the
+                        // master would only re-derive quality labels we can read off the filenames —
+                        // and on an IP-pinned CDN that fetch mints a whole second token set which
+                        // the merge below then discards. Skip the round trip entirely.
+                        val fastPath = capturedVariantLinks(
+                            capturedMap, finalHeaders, originReferer, displaySourceName
+                        )
+                        if (fastPath != null) {
+                            ProviderLogger.i(TAG, "getUrl",
+                                "Using ${fastPath.size} WebView-captured variants directly; skipping master fetch",
+                                "url" to source.url.take(80))
+                            qualityLinks = fastPath
+                        } else {
+                            android.util.Log.i("SnifferExtractor", "[getUrl] Attempting M3U8 quality extraction")
+                            ProviderLogger.i(TAG, "getUrl", "Attempting M3U8 quality extraction", "url" to source.url)
+                            qualityLinks = extractM3u8Qualities(source.url, finalHeaders, originReferer, name)
+                        }
                     }
                     
                     if (!qualityLinks.isNullOrEmpty()) {
@@ -647,6 +661,53 @@ class SnifferExtractor : ExtractorApi() {
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
+    }
+
+    /** Quality markers recognised in a variant playlist's filename. */
+    private val QUALITY_MARKERS = listOf(
+        "2160" to Qualities.P2160, "1440" to Qualities.P1440, "1080" to Qualities.P1080,
+        "720" to Qualities.P720, "480" to Qualities.P480, "360" to Qualities.P360,
+        "240" to Qualities.P240, "144" to Qualities.P144
+    )
+
+    /**
+     * Builds links straight from the WebView-captured variants, or null if they don't suffice.
+     *
+     * Returns non-null only when the capture is self-evidently a complete quality ladder: at least
+     * two variants, every one of them carrying a quality marker in its **filename**. Anything less
+     * and the caller falls back to fetching and parsing the master, which is what almost every other
+     * sniffer-based provider needs — most capture a master and nothing else, so for them this
+     * returns null and behaviour is unchanged.
+     *
+     * Matching on the filename rather than the whole URL is deliberate: tokenised CDN paths are full
+     * of ids and unix timestamps whose digit runs would match "720" or "1080" by accident.
+     */
+    private suspend fun capturedVariantLinks(
+        capturedMap: Map<String, com.cloudstream.shared.webview.CapturedLinkData>,
+        headers: Map<String, String>,
+        referer: String,
+        sourceName: String
+    ): List<ExtractorLink>? {
+        if (capturedMap.size < 2) return null
+
+        val graded = capturedMap.map { (filename, captured) ->
+            val marker = QUALITY_MARKERS.firstOrNull { filename.contains(it.first) }
+                ?: return null // one unlabelled variant and the ladder is not self-describing
+            Triple(captured, marker.second, marker.first)
+        }
+
+        return graded.map { (captured, quality, label) ->
+            newExtractorLink(
+                source = sourceName,
+                name = "$sourceName ${label}p",
+                url = captured.url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = referer
+                this.quality = quality.value
+                this.headers = headers
+            }
+        }.sortedByDescending { it.quality }
     }
 
     private suspend fun extractM3u8Qualities(

@@ -231,8 +231,9 @@ class FaselHDV2 : BaseProvider() {
         try {
             httpService.ensureInitialized()
 
-            // Step 1: Fetch detail/movie document
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true)
+            // Step 1: Fetch detail/movie document.
+            // Reuse load()'s fetch of this same URL — see BaseProvider.loadLinks for why.
+            val detailDoc = httpService.getDocument(data, rewriteDomain = true, allowCached = true)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch detail document from $data")
                 return false

@@ -30,9 +30,12 @@ class FaselHDV2Parser : NewBaseParser() {
     // Load page selectors matching 3rab FaselHD site
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector(query = ".singleInfo .title.h1", attr = "text"),
+        // og:image added because none of the original candidates matched the current layout —
+        // posterUrl came back blank and Coil logged NullRequestDataException on every detail page.
+        // UNVERIFIED against live HTML; data-src covers lazy-loaded poster imgs.
         poster = CssSelector(
-            query = "meta[itemprop=image], .posterImg img.poster",
-            attr = "content, src"
+            query = "meta[itemprop=image], meta[property=og:image], .posterImg img.poster, .singlePage img.poster",
+            attr = "content, src, data-src"
         ),
         plot = CssSelector(
             query = ".singleDesc p, .story p",

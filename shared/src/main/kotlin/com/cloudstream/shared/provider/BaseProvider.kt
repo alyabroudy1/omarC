@@ -391,8 +391,11 @@ abstract class BaseProvider : MainAPI() {
         try {
             httpService.ensureInitialized()
             
-            // Step 1: Fetch detail page
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true)
+            // Step 1: Fetch detail page.
+            // load() just fetched this same URL to build the page the user tapped play on, so reuse
+            // it rather than paying a second round trip (and, on TLS-blocked domains, a second
+            // Chrome-TLS WebView fetch). Bounded to seconds — see ProviderHttpService.CachedPage.
+            val detailDoc = httpService.getDocument(data, rewriteDomain = true, allowCached = true)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch loadLinks document")
                 return false

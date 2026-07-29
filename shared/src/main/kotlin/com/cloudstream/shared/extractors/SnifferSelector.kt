@@ -19,7 +19,10 @@ data class SnifferSelector(
      */
     fun toJson(): String {
         return buildString {
-            append("""{"query":"${escapeJson(query)}""" )
+            // The closing quote on the query value is load-bearing: without it every selector
+            // serialised to invalid JSON, fromJson threw, and the caller silently saw a null
+            // selector — so the pre-sniff click never ran for any provider.
+            append("{\"query\":\"${escapeJson(query)}\"")
             if (attr != null) append(",\"attr\":\"${escapeJson(attr)}\"")
             if (regex != null) append(",\"regex\":\"${escapeJson(regex)}\"")
             if (waitAfterClick != 3000L) append(",\"wait\":$waitAfterClick")
