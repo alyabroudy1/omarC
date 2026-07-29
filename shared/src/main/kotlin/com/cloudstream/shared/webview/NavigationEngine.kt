@@ -1467,6 +1467,15 @@ class NavigationEngine(
                   + ' decoy=' + (isDecoy() ? 1 : 0)
                   + ' dwNative=' + nat
                   + ' ' + chan()
+                  // Where the page thinks it is on the display. The sandbox used to be translated
+                  // 20000px off-screen, which shows up here as a screenX no real window ever has —
+                  // exactly the kind of thing a client check reads. Keep it in the diag so a
+                  // regression is visible rather than inferred.
+                  + ' screen=' + (function(){ try {
+                      return window.screenX + ',' + window.screenY
+                        + '/' + screen.width + 'x' + screen.height
+                        + ' dpr=' + window.devicePixelRatio;
+                    } catch(e) { return '?'; } })()
                   // Did the page's own assets load? All four being refused (the sandbox serves no
                   // subresources) is a bot signal in its own right, so count what actually ran.
                   + ' extScripts=' + extScriptState();
@@ -1903,13 +1912,22 @@ class NavigationEngine(
                 ProviderLogger.w(TAG, "attachOffscreen", "No content view — WebView stays detached (page will be 'hidden' AND 0x0)")
                 return
             }
+            // Invisible via alpha, NOT via position.
+            //
+            // `alpha` is a native View property that JavaScript cannot observe at all. A translation
+            // is different: the page can read it. This used to set translationX = -20000f, which puts
+            // the document 20,000px outside the display, and `window.screenX`/`screenY` report exactly
+            // that — a coordinate no real browser window ever has, and a free signal for any client
+            // check. Evidence it mattered: the same page renders its real server list in an ordinary
+            // fullscreen WebView, while this off-screen one was consistently served the decoy even
+            // after every other observable gate condition had been satisfied (2026-07-29).
+            //
+            // Laid out full-size at the origin, so viewport AND screen geometry both read as a real
+            // device; alpha 0 plus non-clickable/non-focusable keeps it unseen and untouchable.
             webView.alpha = 0f
             webView.isClickable = false
             webView.isFocusable = false
             webView.isFocusableInTouchMode = false
-            // Laid out at full size (so innerWidth/innerHeight look like a real phone viewport),
-            // then translated far outside the screen so it cannot be seen or touched.
-            webView.translationX = -20000f
             root.addView(
                 webView,
                 android.view.ViewGroup.LayoutParams(
@@ -1917,7 +1935,7 @@ class NavigationEngine(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT
                 )
             )
-            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached full-size off-screen (visible page, real viewport)")
+            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached full-size at the origin (alpha 0 — invisible to the user, honest geometry to the page)")
         } catch (e: Exception) {
             ProviderLogger.w(TAG, "attachOffscreen", "Attach failed: ${e.message}")
         }
