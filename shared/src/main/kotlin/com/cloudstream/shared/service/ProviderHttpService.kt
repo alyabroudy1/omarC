@@ -1019,12 +1019,11 @@ class ProviderHttpService private constructor(
     /**
      * Mirrors the session cookies into the system CookieManager, which is what any WebView reads.
      *
-     * Each cookie is written twice: once host-only for [domain], and once with
-     * `Domain=.<registrable domain>` so it also reaches subdomains the caller never named. The
-     * host-only write alone left every other host uncovered — it worked for `www` only because the
-     * caller happens to loop over known aliases, so a player subdomain or a new CDN host silently
-     * got nothing. Real Cloudflare sets `cf_clearance` with a leading-dot Domain for exactly this
-     * reason.
+     * Each cookie is written ONCE, host-only for [domain]. A second write scoped to
+     * `Domain=.<registrable domain>` was tried and reverted: it produced two cookies with the same
+     * name, the browser sent both in one header, and Cloudflare rejected the duplicated
+     * `cf_clearance` — the challenge then repeated on every server in a run. The caller loops over
+     * known aliases, which covers the hosts that matter.
      *
      * A long `Max-Age` is attached because these were session cookies: they vanished whenever the
      * cookie store was cleared and never survived a restart, so a cleared cache always meant meeting
@@ -1035,10 +1034,6 @@ class ProviderHttpService private constructor(
             val systemCookieManager = android.webkit.CookieManager.getInstance()
             systemCookieManager.setAcceptCookie(true)
             val cookieUrl = "https://$domain"
-            // Registrable domain: last two labels. Good enough for the `example.tld` hosts in use;
-            // a multi-part suffix (`co.uk`) would over-scope, which the host-only write covers.
-            val parts = domain.split('.').filter { it.isNotBlank() }
-            val registrable = if (parts.size >= 2) parts.takeLast(2).joinToString(".") else domain
             val maxAge = 60L * 60L * 24L * 30L // 30 days; the server's own expiry still wins
 
             for ((key, value) in cookies) {
@@ -1049,18 +1044,19 @@ class ProviderHttpService private constructor(
                         "Skipping cookie with unsafe value", "name" to key, "domain" to domain)
                     continue
                 }
+                // ONE cookie per name. Writing it host-only AND with Domain=.registrable created two
+                // cookies with the same name at different scopes, and the browser then sends both in
+                // a single header ("cf_clearance=X; cf_clearance=X"). Cloudflare rejects a duplicated
+                // clearance, which showed up as the challenge repeating on every server in a run
+                // (2026-07-29). The caller already loops over known aliases, so per-host writes cover
+                // the hosts that matter; a leading-dot scope is not worth breaking the clearance for.
                 systemCookieManager.setCookie(cookieUrl, "$key=$safe; path=/; secure; Max-Age=$maxAge")
-                if (registrable != domain || parts.size >= 2) {
-                    systemCookieManager.setCookie(
-                        cookieUrl, "$key=$safe; path=/; secure; Max-Age=$maxAge; Domain=.$registrable")
-                }
             }
             systemCookieManager.flush()
             // Names, not just a count: the open question on this provider is whether a Cloudflare
             // clearance token exists at all, and a bare count can never answer it.
             ProviderLogger.d(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
                 "Injected ${cookies.size} cookies", "domain" to domain,
-                "scope" to ".$registrable",
                 "names" to cookies.keys.joinToString(","),
                 "hasClearance" to cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
         } catch (e: Exception) {
