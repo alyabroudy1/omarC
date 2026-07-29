@@ -9,6 +9,8 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
+import com.cloudstream.shared.session.SessionProvider
+import com.cloudstream.shared.webview.SurfSnifferEngine
 import com.cloudstream.shared.webview.VideoUrlClassifier
 import com.cloudstream.shared.extractors.CimaNowTVEmbed
 import com.cloudstream.shared.extractors.VKVideoEmbed
@@ -53,6 +55,27 @@ class CimaNowProvider : BaseProvider() {
      * enough that the user is not left waiting on one that never will.
      */
     private val STRAGGLER_GRACE_MS = 2_500L
+
+    /**
+     * Play by surfing the watch page in a real fullscreen WebView instead of decrypting it.
+     *
+     * Flip to false to fall back to the sandbox-decryption path (resolveViaWebViewSandbox), which is
+     * kept intact for exactly that reason — see the arms-race history in
+     * `cimanow_decryption_handover.md`.
+     */
+    private val USE_FULLSCREEN_SURF = true
+
+    /** The freex blog-post page: countdown host, and the Referer the watch page's gate demands. */
+    private val TIMER_PAGE_URL = "https://rm.freex2line.online/2020/02/blog-post.html/"
+
+    /** Referer for the timer page itself, mirroring the real redirect chain. */
+    private val REDIRECTING_PAGE_URL = "https://rm.freex2line.online/redirectingfree/"
+
+    /**
+     * How long the surf window stays open. Generous on purpose: the user is picking a server and
+     * pressing play by hand, and an ad interstitial or a mis-click has to be recoverable.
+     */
+    private val SURF_TIMEOUT_MS = 300_000L
 
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
@@ -352,10 +375,199 @@ class CimaNowProvider : BaseProvider() {
     ): Boolean {
         Log.i("CimaNowLoadLinks", "================ [START LOADLINKS] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
-        // The WebView does all decryption; see resolveViaWebViewSandbox.
-        val found = resolveViaWebViewSandbox(data, subtitleCallback, callback)
+        val found = if (USE_FULLSCREEN_SURF) {
+            resolveViaFullscreenSurf(data, callback)
+        } else {
+            // Legacy path: fight the watch page's anti-bot for the decrypted server list.
+            resolveViaWebViewSandbox(data, subtitleCallback, callback)
+        }
         Log.i("CimaNowLoadLinks", "================ [END LOADLINKS found=$found] ================")
         return found
+    }
+
+    // ==================== Fullscreen surf ====================
+
+    /**
+     * Play by letting the user surf the tokenised watch link in a real fullscreen WebView.
+     *
+     * The watch page's gate cannot be beaten from an instrumented WebView — see
+     * `cimanow_decryption_handover.md` §0.1 for the fifteen things that were tried and shipped and
+     * broke. Every one of them fails for the same reason: the gate inspects *its own environment*,
+     * not its input, so any hook, bridge, injected marker or `evaluateJavascript` read is visible to
+     * it. Nothing we add to the page survives contact.
+     *
+     * So we stop adding anything. The page is opened in an ordinary fullscreen WebView, the user
+     * clicks a server and presses play exactly as they would in Chrome, the page's own decryptor runs
+     * untouched, and we read the stream URL off the network in `shouldInterceptRequest` — a hook on
+     * our side of the boundary that the document cannot observe at all.
+     *
+     * The one thing that must be right is the **start point**: the `/watching/?token=…` link minted
+     * by `get-link.php`, opened with the freex blog-post page as `Referer`. Both are load-bearing.
+     * The token is per-request and sits behind the site's ~11s countdown, and without the Referer the
+     * gate runs `location.replace('/home')`. So the token chain still runs headlessly first — but it
+     * now stops at [NavigationStep.WaitForWatchingUrl] instead of navigating, leaving the token
+     * unspent for the surf WebView to use.
+     */
+    private suspend fun resolveViaFullscreenSurf(
+        movieUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val TAG_SURF = "CimaNowSurf"
+        Log.i(TAG_SURF, "========== [START] fullscreen surf resolve ==========")
+        Log.i(TAG_SURF, "Movie URL: $movieUrl")
+
+        try {
+            val userAgent = httpService.userAgent
+
+            // ---------- PHASE 1: token chain over HTTP, up to the timer page ----------
+            val timerHtml = navigateToTimerPageViaHttp(movieUrl)
+            if (timerHtml == null) {
+                Log.e(TAG_SURF, "❌ Could not reach the timer page — no token chain, nothing to surf")
+                return false
+            }
+            Log.i(TAG_SURF, "✅ Timer page HTML: ${timerHtml.length} chars")
+
+            // ---------- PHASE 2: let the countdown mint the watch link, then STOP ----------
+            // Rendered from our own bytes rather than fetched by the WebView, which keeps
+            // Cloudflare from seeing sec-ch-ua: "Android WebView" on the page request.
+            val steps = listOf(
+                NavigationStep.LoadHtml(
+                    html = timerHtml,
+                    baseUrl = TIMER_PAGE_URL,
+                    referer = REDIRECTING_PAGE_URL
+                ),
+                // Waits for get-link.php's response to be intercepted. Does NOT navigate — the
+                // surf WebView below must be the first and only consumer of the token.
+                NavigationStep.WaitForWatchingUrl(timeoutMs = 30_000L, abortOnFailure = true)
+            )
+
+            val movieHost = try { java.net.URI(movieUrl).host } catch (_: Exception) { null }
+            val allowedDomains = mutableSetOf(
+                "cimanow.cc", "freex2line.online", "rm.freex2line.online",
+                "href.li", "www.freex2line.online"
+            )
+            if (movieHost != null) allowedDomains.add(movieHost)
+
+            val navResult = httpService.navigationEngine.execute(
+                steps = steps,
+                userAgent = userAgent,
+                mode = Mode.HEADLESS,
+                overallTimeoutMs = 90_000L,
+                allowedDomains = allowedDomains
+            )
+            Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
+
+            val watchUrl = httpService.navigationEngine.interceptedWatchingUrl
+            if (watchUrl.isNullOrBlank()) {
+                Log.e(TAG_SURF, "❌ get-link.php never yielded a watch URL — cannot surf")
+                return false
+            }
+            Log.i(TAG_SURF, "🎟 Tokenised watch URL: ${watchUrl.take(160)}")
+
+            // ---------- PHASE 3: surf it, watch the network ----------
+            // Through the gateway, so the surf inherits the session UA and cookies (and gives back
+            // whatever it establishes) instead of opening a WebView with a cold jar.
+            val captures = httpService.surfForVideo(
+                url = watchUrl,
+                // The gate reads document.referrer and bounces anything that did not come from the
+                // freex blog-post page. This is the same Referer the real browser sends.
+                referer = TIMER_PAGE_URL,
+                timeoutMs = SURF_TIMEOUT_MS
+            )
+            Log.i(TAG_SURF, "Surf returned ${captures.size} video URL(s)")
+
+            if (captures.isEmpty()) {
+                Log.w(TAG_SURF, "No video URLs seen on the wire")
+                return false
+            }
+
+            var found = false
+            for (capture in captures.distinctBy { it.url }) {
+                val link = buildSurfLink(capture, userAgent)
+                Log.i(TAG_SURF, ">>> LINK q=${link.quality} ${link.url.take(150)} referer=${link.referer.take(80)}")
+                callback(link)
+                found = true
+            }
+            return found
+        } catch (e: Exception) {
+            Log.e(TAG_SURF, "Surf resolve failed: ${e.message}")
+            Log.e(TAG_SURF, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
+            return false
+        }
+    }
+
+    /**
+     * Turns one sniffed request into an ExtractorLink ExoPlayer can actually open.
+     *
+     * The headers are the request's own, because that is the whole value of sniffing rather than
+     * reconstructing: tokenised CDNs check `Referer`/`Origin` (and often a cookie) against what the
+     * embed sent, and any value we invent is a guess. Only the hop-by-hop headers WebView fills in
+     * are dropped — ExoPlayer sets its own, and passing `Host` or `Connection` through breaks the
+     * request outright.
+     */
+    private suspend fun buildSurfLink(
+        capture: SurfSnifferEngine.SurfCapture,
+        userAgent: String
+    ): ExtractorLink {
+        val url = capture.url
+
+        val headers = capture.headers.filterKeys { key ->
+            !key.equals("Host", ignoreCase = true) &&
+            !key.equals("Connection", ignoreCase = true) &&
+            !key.equals("Content-Length", ignoreCase = true) &&
+            !key.equals("Content-Type", ignoreCase = true) &&
+            !key.equals("Upgrade", ignoreCase = true) &&
+            !key.equals("Transfer-Encoding", ignoreCase = true) &&
+            !key.equals("Accept-Encoding", ignoreCase = true)
+        }.toMutableMap()
+
+        // Fall back to the embed document only where the request itself said nothing.
+        val pageOrigin = try {
+            val uri = java.net.URI(capture.pageUrl)
+            "${uri.scheme}://${uri.host}"
+        } catch (_: Exception) { "" }
+
+        if (!headers.keys.any { it.equals("Referer", ignoreCase = true) } && capture.pageUrl.isNotBlank()) {
+            headers["Referer"] = capture.pageUrl
+        }
+        if (!headers.keys.any { it.equals("Origin", ignoreCase = true) } && pageOrigin.isNotBlank()) {
+            headers["Origin"] = pageOrigin
+        }
+        headers["User-Agent"] = userAgent
+
+        // The request's own cookies win — they are the ones the CDN issued for this stream. Session
+        // cookies (cf_clearance and friends, held by ProviderHttpService) only fill the gaps, which
+        // matters when the stream is served from the provider's own domain.
+        val mergedCookies = linkedMapOf<String, String>()
+        for ((name, value) in SessionProvider.getCookies()) mergedCookies[name] = value
+        capture.cookies?.split(";")?.forEach { pair ->
+            val trimmed = pair.trim()
+            val name = trimmed.substringBefore("=", "")
+            if (name.isNotBlank()) mergedCookies[name] = trimmed.substringAfter("=", "")
+        }
+        if (mergedCookies.isNotEmpty()) {
+            headers["Cookie"] = mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        }
+
+        val refererValue = headers.entries
+            .firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
+            ?: capture.pageUrl
+
+        val quality = when {
+            url.contains("2160") || url.contains("4k", ignoreCase = true) -> Qualities.P2160.value
+            url.contains("1440") -> Qualities.P1440.value
+            url.contains("1080") -> Qualities.P1080.value
+            url.contains("720") -> Qualities.P720.value
+            url.contains("480") -> Qualities.P480.value
+            url.contains("360") -> Qualities.P360.value
+            else -> Qualities.Unknown.value
+        }
+
+        return newExtractorLink("CimaNow", "CimaNow (Surf)", url, type = getLinkType(url)) {
+            this.referer = refererValue
+            this.quality = quality
+            this.headers = headers
+        }
     }
 
     // ==================== handlecima ====================

@@ -234,6 +234,30 @@ class NavigationEngine(
                                     }
                                 }
                             }
+                            is NavigationStep.WaitForWatchingUrl -> {
+                                // Let the timer page's own JS finish the countdown and call
+                                // get-link.php; the interceptor stashes the response. We stop there:
+                                // the caller opens the link itself, so the token's first (and only)
+                                // use is that navigation.
+                                val deadline = System.currentTimeMillis() + step.timeoutMs
+                                var captured = this@NavigationEngine.interceptedWatchingUrl
+                                while (captured.isNullOrBlank() && System.currentTimeMillis() < deadline) {
+                                    delay(step.pollIntervalMs)
+                                    captured = this@NavigationEngine.interceptedWatchingUrl
+                                }
+                                if (captured.isNullOrBlank()) {
+                                    ProviderLogger.w(TAG, "execute",
+                                        "Step $index: No watching URL captured within ${step.timeoutMs}ms")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = "No watching URL captured"
+                                        break
+                                    }
+                                } else {
+                                    ProviderLogger.i(TAG, "execute",
+                                        "Step $index: Watching URL captured (not navigated): ${captured.take(140)}")
+                                }
+                            }
                             is NavigationStep.NavigateToWatchingUrl -> {
                                 // Enable auto-approve for the redirect chain through ad domains
                                 this@NavigationEngine.autoApproveAllRedirects = true

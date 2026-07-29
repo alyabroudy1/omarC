@@ -1,6 +1,44 @@
 # CimaNow Watch Page Decryption Handover & Cheatsheet
 
-> **⚠️ CURRENT IMPLEMENTATION (2026-07) — read this and §0 first.**
+> **⚠️⚠️ CURRENT IMPLEMENTATION (2026-07-29, later the same day) — WE NO LONGER DECRYPT.**
+>
+> `loadLinks` → `resolveViaFullscreenSurf`. The watch page is **surfed by the user in an ordinary
+> fullscreen WebView**, and we read the stream URL off the network. Nothing is injected: no
+> `addJavascriptInterface`, no `evaluateJavascript`, no reader script, no fingerprint spoof, no
+> ad-block CSS/JS, no auto-clicking. The page's own decryptor runs in an environment it has no reason
+> to reject, because there is nothing in it to find.
+>
+> Why this replaces the sandbox: every entry in §0.1 fails for the same structural reason — the gate
+> inspects **its own environment**, not its input. Any hook, bridge, marker or `evaluateJavascript`
+> read is on the page's side of the boundary and therefore visible. `shouldInterceptRequest` is on
+> **our** side and is not observable from the document at all. So we stopped fighting for the
+> decrypted server list and just took the stream.
+>
+> **The three load-bearing pieces:**
+> 1. **Start point = the tokenised `/watching/?token=…` link from `get-link.php`.** The token is
+>    minted per request behind the site's ~11s countdown. The chain still runs headlessly
+>    (`navigateToTimerPageViaHttp` → `NavigationEngine` with `LoadHtml` +
+>    **`NavigationStep.WaitForWatchingUrl`**), but that new step *waits for the interception and
+>    stops* — it deliberately does **not** navigate, so the surf WebView is the token's first and only
+>    consumer. Do not swap it back to `NavigateToWatchingUrl`.
+> 2. **`Referer` = the freex blog-post page** (`TIMER_PAGE_URL`). Unchanged from §0.1 rule 5: without
+>    it the gate runs `location.replace('/home')`.
+> 3. **Real input, via `TvMouseController`.** The user (or a D-pad remote) clicks the server and play
+>    button; the controller dispatches real `MotionEvent`s, so the page sees `isTrusted === true`
+>    touches. Injected `element.click()` is both forbidden here and self-defeating.
+>
+> **Files:** `shared/.../webview/SurfSnifferEngine.kt` (the engine — read its class doc),
+> `ProviderHttpService.surfForVideo()` (gateway entry: session UA + cookies in, surf cookies back
+> out), `CimaNowProvider.resolveViaFullscreenSurf()` / `buildSurfLink()` (captured request headers →
+> `ExtractorLink` for ExoPlayer; the request's own `Referer`/`Origin`/cookies are kept because
+> tokenised CDNs check them).
+>
+> **Reverting:** `USE_FULLSCREEN_SURF = false` in `CimaNowProvider` restores the sandbox path below,
+> which is left fully intact.
+>
+> ---
+>
+> **⚠️ PREVIOUS IMPLEMENTATION (2026-07, superseded by the above) — history from here down.**
 > **Sections 2–11 are HISTORICAL** and describe a three-layer strategy architecture that was
 > **deleted** in `898efc74`. They are kept only for the format timeline (§9) and as a record of what
 > was tried. Do not implement from them; §0 lists what they get wrong.

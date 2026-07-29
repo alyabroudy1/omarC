@@ -133,6 +133,21 @@ sealed class NavigationStep {
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
+    /**
+     * Wait until the request interceptor has captured the watching URL from get-link.php, then stop
+     * — deliberately WITHOUT navigating to it.
+     *
+     * Use this when the tokenised watch link is to be opened somewhere else (e.g. handed to
+     * [SurfSnifferEngine] so the user surfs it in a real fullscreen WebView). Navigating here first
+     * would spend the token on a page nobody looks at, and the link is minted per request behind an
+     * ~11s server-side countdown, so a second one is expensive.
+     */
+    data class WaitForWatchingUrl(
+        val timeoutMs: Long = 25_000L,
+        val pollIntervalMs: Long = 250L,
+        val abortOnFailure: Boolean = true
+    ) : NavigationStep()
+
     data class ExtractHtml(
         val selector: String? = null,
         val key: String = ""
