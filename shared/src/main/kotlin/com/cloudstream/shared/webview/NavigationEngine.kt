@@ -760,17 +760,33 @@ class NavigationEngine(
                                     Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)"""),
                                     """<link rel="stylesheet" href="$1">"""
                                 )
-                                // Inject document.write interceptor at the very beginning of the HTML
-                                // so it is the VERY FIRST script the browser parses — before any
-                                // anti-bot script (e.g. DisableDevtool) that might save a reference
-                                // to the native document.write and later bypass our wrapper.
-                                val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
-                                val injected = "$antiBotTag$rewritten"
-                                ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                    "Injected document.write interceptor for cimanow.cc main-frame (${antiBotTag.length} chars)")
+                                // The document.write interceptor is injected ONLY when there is
+                                // actually a document.write to intercept.
+                                //
+                                // It wraps document.write, and the watch page's gate aborts —
+                                // emitting nothing — when
+                                // `Function.prototype.toString.call(document.write)` no longer
+                                // contains "[native code]" (handover §0.1 rule 3). On this page the
+                                // rewrite finds nothing to rewrite ("no document.write found",
+                                // 2026-07-29), so injecting it was pure tripwire for zero benefit —
+                                // and it ran against the REAL cimanow.cc in the navigation WebView,
+                                // in the same session and from the same IP as the sandbox that runs
+                                // moments later. Being flagged there would explain a decoy that no
+                                // change inside the sandbox can shift.
                                 val total = scriptCount + linkCount
-                                val countLog = if (total > 0) " (rewrote $total document.write calls)" else " (no document.write found)"
-                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame$countLog")
+                                val injected = if (total > 0) {
+                                    val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "Injected document.write interceptor for cimanow.cc main-frame " +
+                                            "(${antiBotTag.length} chars) — rewrote $total document.write call(s)")
+                                    "$antiBotTag$rewritten"
+                                } else {
+                                    ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                        "No document.write on this page — skipping the interceptor injection " +
+                                            "so document.write stays native (gate rule 3)")
+                                    rewritten
+                                }
+                                ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame")
                                 java.io.ByteArrayInputStream(injected.toByteArray(charset))
                             } else {
                                 conn.inputStream
@@ -1329,67 +1345,6 @@ class NavigationEngine(
      * @param timeoutMs max time to wait for the in-page reader to report back (default 25s)
      * @return the decrypted document.body HTML (containing the <li data-index> server list), or null
      */
-    /**
-     * Fetches a sandbox subresource ourselves so the WebView's own identity never reaches the server.
-     *
-     * Two differences from letting the WebView fetch it:
-     *  - `X-Requested-With` is dropped. The reflection-based hider fails on current WebView builds,
-     *    so anything the WebView requests announces our package name.
-     *  - Session cookies from the CookieManager are attached, which the sandbox WebView lacks.
-     *
-     * The reported MIME is corrected from the file extension when a server answers a script or
-     * stylesheet with `text/html` (a scraper-blocking trick), because Chrome refuses those under
-     * strict MIME checking. Query strings are stripped before the extension test — `foo.js?v=3`
-     * does not end in `.js`.
-     *
-     * Returns null when the fetch is not usable, which makes the caller fall back to the WebView.
-     */
-    private fun fetchSubresourceCleanly(url: String, request: WebResourceRequest): WebResourceResponse? {
-        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = if (request.method.equals("HEAD", true)) "HEAD" else "GET"
-            instanceFollowRedirects = true
-            connectTimeout = 15000
-            readTimeout = 15000
-            request.requestHeaders?.forEach { (k, v) ->
-                // Host is computed; Accept-Encoding must stay unset so the JDK handles gzip for us;
-                // X-Requested-With is the whole point of routing through here.
-                if (!k.equals("Host", true) && !k.equals("Accept-Encoding", true) &&
-                    !k.equals("X-Requested-With", true)
-                ) {
-                    try { setRequestProperty(k, v) } catch (_: Exception) {}
-                }
-            }
-            try {
-                CookieManager.getInstance().getCookie(url)?.let { setRequestProperty("Cookie", it) }
-            } catch (_: Exception) {}
-        }
-
-        val code = conn.responseCode
-        if (code !in 200..299) {
-            ProviderLogger.d(TAG, "fetchSubresourceCleanly", "Non-2xx, leaving it to the WebView",
-                "url" to url.take(90), "code" to code)
-            return null
-        }
-
-        val ct = conn.contentType ?: "application/octet-stream"
-        val reported = ct.substringBefore(";").trim()
-        val charset = ct.substringAfter("charset=", "utf-8").trim().ifBlank { "utf-8" }
-        val path = url.substringBefore('?').substringBefore('#').lowercase()
-        val mime = when {
-            reported == "text/html" && path.endsWith(".js") -> "application/javascript"
-            reported == "text/html" && path.endsWith(".css") -> "text/css"
-            reported == "text/html" && path.endsWith(".json") -> "application/json"
-            reported == "text/html" && path.endsWith(".svg") -> "image/svg+xml"
-            reported == "text/html" && path.endsWith(".woff2") -> "font/woff2"
-            else -> reported
-        }
-        if (mime != reported) {
-            ProviderLogger.d(TAG, "fetchSubresourceCleanly", "Corrected blocked MIME",
-                "url" to url.take(90), "from" to reported, "to" to mime)
-        }
-        return WebResourceResponse(mime, charset, conn.inputStream)
-    }
-
     suspend fun renderHtmlInSandbox(
         html: String,
         baseUrl: String,
@@ -1657,29 +1612,15 @@ class NavigationEngine(
                             responseHeaders = mapOf("Content-Type" to "text/html; charset=utf-8")
                         }
                     }
-                    // Subresources are re-issued through our own HTTP client rather than left to the
-                    // WebView.
+                    // Subresources load from the network as usual.
                     //
-                    // This block used to `return null`, on the reasoning that the server <li> list is
-                    // static in the decrypted HTML and does not depend on jQuery et al. That reasoning
-                    // still holds for DECRYPTION — refused assets have never stopped the list landing
-                    // (handover §0.1 rule 14). It says nothing about IDENTIFICATION, which is the
-                    // problem now: `hideXRequestedWithHeader` fails on this device, so every request
-                    // the WebView makes itself carries `X-Requested-With: com.lagradost.cloudstream3`
-                    // — our package name, on the wire, which no browser ever sends. Re-issuing here
-                    // drops that header and attaches the session cookies the WebView does not have.
-                    //
-                    // Failure is non-fatal by design: on any error we fall back to `null` and the
-                    // WebView fetches it the old way, so this can only improve on the previous state.
-                    val sub = request.url?.toString()
-                    if (sub == null || !(sub.startsWith("http://") || sub.startsWith("https://"))) return null
-                    return try {
-                        fetchSubresourceCleanly(sub, request)
-                    } catch (e: Exception) {
-                        ProviderLogger.d(TAG, m, "Subresource re-issue failed, leaving it to the WebView",
-                            "url" to sub.take(90), "err" to (e.message ?: ""))
-                        null
-                    }
+                    // Re-issuing them through our own client (to strip the leaking X-Requested-With)
+                    // was tried on 2026-07-29 and reverted: the reader measured `extScripts=0ext/1`
+                    // on this page — one inline script and NO external ones — so the sandbox makes no
+                    // subresource requests at all and there was nothing for it to act on. It could
+                    // not have affected the decoy, and keeping it would only add an untested network
+                    // path. Revisit only if a future page actually loads external assets here.
+                    return null
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     // Block secondary navigations (e.g. the page trying to go to /home) — they would
