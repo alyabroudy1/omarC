@@ -110,6 +110,19 @@ class FaselHDV2Parser : NewBaseParser() {
      * 5. Script URL regex for player/embed URLs
      * 6. Short link divs (div.shortLink, span#liskSh, a[data-src])
      */
+    /** URL shapes that mark an iframe as a player embed rather than an ad. */
+    private val PLAYER_URL_HINTS = listOf(
+        "video_player", "player_token", "/embed", "/e/", "player.", "/player",
+        "/watch", "?p=", "stream", "play="
+    )
+
+    /** Host of [url], lowercased and without a leading `www.`; blank if it has no host. */
+    private fun hostOf(url: String): String = try {
+        java.net.URI(url).host?.lowercase()?.removePrefix("www.") ?: ""
+    } catch (_: Exception) {
+        ""
+    }
+
     fun extractIframeSources(doc: Document): List<String> {
         val results = mutableSetOf<String>()
 
@@ -121,16 +134,42 @@ class FaselHDV2Parser : NewBaseParser() {
         )
 
         fun addResult(url: String) {
-            val fixedUrl = if (url.startsWith("http")) url else url
+            // `//host/path` is protocol-relative and must be given a scheme. This line used to read
+            // `if (url.startsWith("http")) url else url` — both branches identical, so it did
+            // nothing, and the bare `//host/...` reached the WebView, which resolved it against
+            // file:// and failed with net::ERR_ACCESS_DENIED against a blank page (2026-07-29).
+            val fixedUrl = when {
+                url.startsWith("//") -> "https:$url"
+                url.startsWith("/") -> java.net.URI(doc.baseUri()).resolve(url).toString()
+                else -> url
+            }
             if (blockedKeywords.none { fixedUrl.contains(it) }) {
                 results.add(fixedUrl)
             }
         }
 
-        // 1. iframe[src] elements
+        // 1. iframe[src] elements.
+        //
+        // Only iframes that could plausibly BE a watch server. A detail page also carries ad
+        // iframes, and this rule used to take every one of them: `blockedKeywords` is a four-entry
+        // deny-list of Google hosts, so a rotating ad domain walked straight through and was
+        // returned as "Server #0". Observed 2026-07-29 — `//crumpetprankerstench.com/check.html`
+        // headed the server list and cost 15s of sniffing before the fast-fail gave up on it.
+        // A deny-list can never win against domains that change every page load, so this is an
+        // allow-list: same-site (where FaselHD's own `video_player` / `?p=` servers live), or a URL
+        // that looks like a player embed (which keeps genuine third-party hosts working).
+        val siteHost = hostOf(doc.baseUri())
         doc.select("iframe[src]").forEach { el ->
             val src = el.attr("src")
-            if (src.isNotBlank()) addResult(src)
+            if (src.isBlank()) return@forEach
+            val host = hostOf(if (src.startsWith("//")) "https:$src" else src)
+            val sameSite = host.isBlank() || // relative URL — same document, so same site
+                (siteHost.isNotBlank() && (host == siteHost || host.endsWith(".$siteHost")))
+            if (sameSite || PLAYER_URL_HINTS.any { src.contains(it, ignoreCase = true) }) {
+                addResult(src)
+            } else {
+                Log.d("[FaselHDV2Parser]", "extractIframeSources: ignoring non-player iframe: ${src.take(80)}")
+            }
         }
 
         // 2. player_iframe.location.href in onclick attributes
