@@ -71,7 +71,17 @@ class NavigationEngine(
             request: WebResourceRequest
         ) -> WebResourceResponse?)? = null,
         allowedDomains: Set<String> = emptySet(),
-        destinationLockPatterns: List<Regex> = emptyList()
+        destinationLockPatterns: List<Regex> = emptyList(),
+        /**
+         * Inject [SPOOFING_JS] into every page. Default true (what every existing caller expects).
+         *
+         * Pass **false** for pages whose anti-bot inspects its own environment. The spoof is not
+         * free: it defines `window.DisableDevtool` and reports `navigator.plugins` as `[1,2,3,4,5]`,
+         * which on Android Chrome is an empty PluginArray — a fake so crude that looking for it is
+         * the first thing an automation check does. It runs at `onPageStarted`, i.e. before the
+         * page's own scripts, so the gate sees all of it.
+         */
+        injectSpoofingJs: Boolean = true
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -127,7 +137,8 @@ class NavigationEngine(
 
             try {
                 webView = createWebView(activity, userAgent)
-                setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains, destinationLockPatterns)
+                setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
+                    destinationLockPatterns, injectSpoofingJs)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -545,7 +556,8 @@ class NavigationEngine(
         userAgent: String,
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
-        destinationLockPatterns: List<Regex> = emptyList()
+        destinationLockPatterns: List<Regex> = emptyList(),
+        injectSpoofingJs: Boolean = true
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -567,8 +579,13 @@ class NavigationEngine(
                         autoApproveAllRedirects = false
                     }
                 }
-                view?.evaluateJavascript("(function(){ return document.title; })();", null)
-                view?.evaluateJavascript(SPOOFING_JS, null)
+                if (injectSpoofingJs) {
+                    view?.evaluateJavascript("(function(){ return document.title; })();", null)
+                    view?.evaluateJavascript(SPOOFING_JS, null)
+                } else {
+                    // Page context left pristine on purpose — see the injectSpoofingJs param doc.
+                    ProviderLogger.i(TAG, "onPageStarted", "Spoofing JS NOT injected (pristine page context)")
+                }
                 super.onPageStarted(view, url, favicon)
             }
 
@@ -581,6 +598,27 @@ class NavigationEngine(
                 }
                 view?.evaluateJavascript("(function(){ return document.body.innerHTML.length; })();") { result ->
                     ProviderLogger.i(TAG, "onPageFinished", "bodyLength=$result")
+                    // Say out loud which of the three outcomes this is, instead of leaving it to be
+                    // inferred from a white screen. CimaNow's decryptor, when it decides it is being
+                    // automated, does not abort — it writes a 47-char decoy
+                    // (`<div id="watch"></div><div id="download"></div>`), so the scrape "succeeds"
+                    // with zero servers and the page renders blank white.
+                    val bodyLen = result?.toLongOrNull()
+                    val htmlLen = capturedMainFrameHtml?.length?.toLong()
+                    if (bodyLen != null && htmlLen != null) {
+                        val delta = bodyLen - htmlLen
+                        when {
+                            delta == 47L -> ProviderLogger.e(TAG, "onPageFinished",
+                                "🚩 DECOY SERVED — flagged as a bot (bodyLen-htmlLen==47). The page " +
+                                    "rendered blank on purpose; look for a remaining automation signal, " +
+                                    "not a decryption bug.")
+                            delta < 200L -> ProviderLogger.w(TAG, "onPageFinished",
+                                "Body barely larger than the raw HTML (delta=$delta) — decryptor " +
+                                    "probably wrote nothing")
+                            else -> ProviderLogger.i(TAG, "onPageFinished",
+                                "Decryptor produced content (delta=$delta)")
+                        }
+                    }
                 }
             }
 
@@ -712,8 +750,15 @@ class NavigationEngine(
                             }
                         }
 
-                        // Explicitly send an empty string to overwrite the package name
-                        conn.setRequestProperty("X-Requested-With", "")
+                        // NOT set at all — deliberately.
+                        //
+                        // It used to be set to "" to overwrite the package name WebView leaks. That
+                        // reasoning does not apply here: this is our own HttpURLConnection, which
+                        // never adds the header, so setting it empty only produces `X-Requested-With:`
+                        // with no value — a header no real Chrome ever sends, i.e. we replaced a
+                        // package-name leak with an automation signature. Omitting it is what a
+                        // browser does. (Seen in the 2026-07-30 log as `x-requested-with=` on the
+                        // watching request.)
 
                         // CRITICAL: Set a proper browser User-Agent — HttpURLConnection defaults to "Java/1.x"
                         conn.setRequestProperty("User-Agent", userAgent)

@@ -472,7 +472,15 @@ class CimaNowProvider : BaseProvider() {
                 // /watching/ every main-frame navigation is refused silently, so the ad redirects this
                 // page fires on a stray tap cannot steal the screen from under the user. Servers are
                 // switched by AJAX into an iframe, so nothing legitimate needs a main-frame nav.
-                destinationLockPatterns = listOf(Regex("/(watch|watching)/"))
+                destinationLockPatterns = listOf(Regex("/(watch|watching)/")),
+                // The one thing that is NOT the same as before, because the same-as-before attempt
+                // produced the decoy: 2026-07-30 the watch page loaded fully (4,249,217-byte body)
+                // and rendered blank white, and bodyLen-htmlLen was exactly 47 — the decryptor's
+                // "I am being automated" decoy. The only thing left in the page context was our own
+                // SPOOFING_JS, which defines window.DisableDevtool and claims
+                // navigator.plugins == [1,2,3,4,5] (Android Chrome reports an empty PluginArray).
+                // Handover §0.1 rules 6 and 7 say exactly this: do not set anything on window.
+                injectSpoofingJs = false
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
