@@ -228,6 +228,19 @@ class ProviderHttpService private constructor(
         else -> null
     }
 
+    /**
+     * Applies [dnsPolicy] to a client builder.
+     *
+     * Setting the resolver is not enough on its own: OkHttp 5 races address families against each
+     * other (fast fallback / Happy Eyeballs) no matter what order the resolver returned, so a
+     * policy expressed only as DNS ordering is advisory at best. Turn the race off whenever a
+     * family has been pinned. See PreferIpv4Dns.
+     */
+    private fun okhttp3.OkHttpClient.Builder.applyDnsPolicy(): okhttp3.OkHttpClient.Builder = apply {
+        dnsPolicy()?.let { dns(it) }
+        if (config.preferIpv4 || config.preferIpv6) fastFallback(false)
+    }
+
     suspend fun getRaw(url: String, headers: Map<String, String> = emptyMap()): okhttp3.Response {
         val fullUrl = buildUrl(url)
         val request = okhttp3.Request.Builder()
@@ -236,7 +249,7 @@ class ProviderHttpService private constructor(
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-            .apply { dnsPolicy()?.let { dns(it) } }
+            .applyDnsPolicy()
             .build()
         return directClient.newCall(request).execute()
     }
@@ -633,7 +646,7 @@ class ProviderHttpService private constructor(
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                .apply { dnsPolicy()?.let { dns(it) } }
+                .applyDnsPolicy()
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
@@ -712,7 +725,7 @@ class ProviderHttpService private constructor(
 
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                .apply { dnsPolicy()?.let { dns(it) } }
+                .applyDnsPolicy()
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()

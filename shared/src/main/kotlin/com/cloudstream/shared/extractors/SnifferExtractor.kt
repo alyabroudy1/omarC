@@ -2,6 +2,7 @@ package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.network.pinToIpv4
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
@@ -229,6 +230,19 @@ class SnifferExtractor : ExtractorApi() {
                 
                 android.util.Log.i("SnifferExtractor", "[getUrl] Processing ${sortedLinks.size} valid links (sorted)")
                 sortedLinks.forEach { android.util.Log.d("SnifferExtractor", " > Candidate: ${it.url}") }
+
+                // An IP-pinned token carrying an IPv6 literal is dead on arrival: the media edge is
+                // IPv4-only, so no client can ever present the address the token was minted for and
+                // every request 403s. Say so instead of handing the player links that cannot work —
+                // the symptom is otherwise indistinguishable from a broken extractor.
+                if (sortedLinks.any {
+                        com.cloudstream.shared.network.IpPinnedUrl.containsIpv6Literal(it.url)
+                    }
+                ) {
+                    ProviderLogger.e(TAG, "getUrl",
+                        "Captured links are IP-pinned to an IPv6 address and cannot be played. " +
+                            "The token-minting request escaped the IPv4 pin — see pinToIpv4.")
+                }
 
                 // Build a map of direct WebView-captured links by filename/suffix
                 val capturedMap = mutableMapOf<String, com.cloudstream.shared.webview.CapturedLinkData>()
@@ -644,7 +658,7 @@ class SnifferExtractor : ExtractorApi() {
         return try {
             // Fetch M3U8 over IPv4 to match token IP
             val client = app.baseClient.newBuilder()
-                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
+                .pinToIpv4()
                 .build()
             val reqBuilder = okhttp3.Request.Builder().url(url)
             headers.forEach { (k, v) -> reqBuilder.header(k, v) }

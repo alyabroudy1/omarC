@@ -13,6 +13,8 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.network.pinToIpv4
+import com.cloudstream.shared.network.reportPeerAddress
 import com.cloudstream.shared.logging.ProviderLogger.TAG_WEBVIEW
 import kotlinx.coroutines.*
 
@@ -183,7 +185,8 @@ class VideoSnifferEngine(
             com.lagradost.cloudstream3.app.baseClient.newBuilder()
                 .followRedirects(true)
                 .followSslRedirects(true)
-                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
+                .pinToIpv4()
+                .reportPeerAddress()
                 .build()
         }
         if (forceIpv4) {
@@ -393,8 +396,21 @@ class VideoSnifferEngine(
                                     ?: "text/html"
                                 val enc = resp.header("content-type")
                                     ?.substringAfter("charset=", "")?.takeIf { it.isNotBlank() } ?: "utf-8"
-                                ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
-                                    "Served over IPv4", "url" to requestUrl.take(90), "code" to resp.code)
+                                // Report the address actually connected, never the intent — this
+                                // request mints the IP-pinned token, so the family it went out on
+                                // is the single most important fact in the log.
+                                val peer = resp.header(
+                                    com.cloudstream.shared.network.PEER_ADDRESS_HEADER
+                                ) ?: "unknown"
+                                if (peer.contains(':')) {
+                                    ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
+                                        "IPv4 pin FAILED — served over IPv6, any minted token will be unplayable",
+                                        "url" to requestUrl.take(90), "peer" to peer, "code" to resp.code)
+                                } else {
+                                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
+                                        "Served over IPv4", "url" to requestUrl.take(90),
+                                        "peer" to peer, "code" to resp.code)
+                                }
                                 return android.webkit.WebResourceResponse(
                                     ctype, enc, resp.body?.byteStream()
                                 )

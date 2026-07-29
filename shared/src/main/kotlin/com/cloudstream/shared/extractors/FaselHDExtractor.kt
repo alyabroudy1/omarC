@@ -24,6 +24,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.network.pinToIpv4
 import com.cloudstream.shared.util.WebConfig
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -186,7 +187,7 @@ class FaselHDExtractor : ExtractorApi() {
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .cookieJar(okhttp3.CookieJar.NO_COOKIES)
-                .dns(com.cloudstream.shared.network.PreferIpv4Dns())
+                .pinToIpv4()
                 .build()
 
             val foundM3u8 = linkedSetOf<String>()
