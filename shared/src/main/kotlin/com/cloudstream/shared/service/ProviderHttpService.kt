@@ -1016,19 +1016,55 @@ class ProviderHttpService private constructor(
      * Called for both the current domain and all alias domains (old domains that
      * may still appear in HTML links, e.g. w312x.faselhdx.xyz after migrating to w318x).
      */
+    /**
+     * Mirrors the session cookies into the system CookieManager, which is what any WebView reads.
+     *
+     * Each cookie is written twice: once host-only for [domain], and once with
+     * `Domain=.<registrable domain>` so it also reaches subdomains the caller never named. The
+     * host-only write alone left every other host uncovered — it worked for `www` only because the
+     * caller happens to loop over known aliases, so a player subdomain or a new CDN host silently
+     * got nothing. Real Cloudflare sets `cf_clearance` with a leading-dot Domain for exactly this
+     * reason.
+     *
+     * A long `Max-Age` is attached because these were session cookies: they vanished whenever the
+     * cookie store was cleared and never survived a restart, so a cleared cache always meant meeting
+     * Cloudflare again from scratch.
+     */
     private fun syncCookiesToSystemCookieManager(domain: String, cookies: Map<String, String>) {
         try {
             val systemCookieManager = android.webkit.CookieManager.getInstance()
             systemCookieManager.setAcceptCookie(true)
             val cookieUrl = "https://$domain"
+            // Registrable domain: last two labels. Good enough for the `example.tld` hosts in use;
+            // a multi-part suffix (`co.uk`) would over-scope, which the host-only write covers.
+            val parts = domain.split('.').filter { it.isNotBlank() }
+            val registrable = if (parts.size >= 2) parts.takeLast(2).joinToString(".") else domain
+            val maxAge = 60L * 60L * 24L * 30L // 30 days; the server's own expiry still wins
+
             for ((key, value) in cookies) {
-                systemCookieManager.setCookie(cookieUrl, "$key=$value; path=/; secure")
+                // A value carrying ';' or whitespace would truncate or corrupt the attribute list.
+                val safe = value.trim()
+                if (safe.contains(';') || safe.any { it.isWhitespace() }) {
+                    ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
+                        "Skipping cookie with unsafe value", "name" to key, "domain" to domain)
+                    continue
+                }
+                systemCookieManager.setCookie(cookieUrl, "$key=$safe; path=/; secure; Max-Age=$maxAge")
+                if (registrable != domain || parts.size >= 2) {
+                    systemCookieManager.setCookie(
+                        cookieUrl, "$key=$safe; path=/; secure; Max-Age=$maxAge; Domain=.$registrable")
+                }
             }
             systemCookieManager.flush()
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager", 
-                "Injected ${cookies.size} cookies", "domain" to domain)
+            // Names, not just a count: the open question on this provider is whether a Cloudflare
+            // clearance token exists at all, and a bare count can never answer it.
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
+                "Injected ${cookies.size} cookies", "domain" to domain,
+                "scope" to ".$registrable",
+                "names" to cookies.keys.joinToString(","),
+                "hasClearance" to cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
         } catch (e: Exception) {
-            ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager", 
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
                 "Failed to inject cookies", "domain" to domain, "error" to e.message)
         }
     }
