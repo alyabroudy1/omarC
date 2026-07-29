@@ -773,6 +773,51 @@ class CimaNowProvider : BaseProvider() {
      *                  matches that host, which aborts the parse — so this must mirror the real
      *                  navigation, NOT be hardcoded. See the HAR: watching → Referer blog-post.html/.
      */
+    /**
+     * Re-fetches the resolved `/watching/?token=…` page so the sandbox renders a payload generated
+     * for the current session rather than a replay of one captured earlier.
+     *
+     * Sent with the blog-post page as Referer (the gate redirects to `/home` without it), the session
+     * User-Agent, and whatever cookies the CookieManager now holds — which after a CF solve includes
+     * `cf_clearance`, something the originally-captured copy predates.
+     *
+     * Returns null on any failure; the caller then falls back to the captured copy, so this can only
+     * add information.
+     */
+    private suspend fun refetchWatchPage(watchUrl: String, referrer: String): String? =
+        withContext(Dispatchers.IO) {
+            if (watchUrl.isBlank()) return@withContext null
+            try {
+                val cookies = try {
+                    android.webkit.CookieManager.getInstance().getCookie(watchUrl)
+                } catch (_: Exception) { null }
+                Log.i("CimaNowSandbox", "🔄 Refetching watch page | referer=${referrer.take(60)} " +
+                    "cookies=${cookies?.split(";")?.size ?: 0} " +
+                    "hasClearance=${cookies?.contains("cf_clearance") == true}")
+
+                val headers = buildMap {
+                    put("Referer", referrer)
+                    put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    put("Accept-Language", "ar,en-US;q=0.9,en;q=0.8")
+                    put("Sec-Fetch-Dest", "document")
+                    put("Sec-Fetch-Mode", "navigate")
+                    put("Sec-Fetch-Site", "cross-site")
+                    put("Upgrade-Insecure-Requests", "1")
+                }
+                val body = httpService.getText(watchUrl, headers = headers)
+                if (body.isNullOrBlank()) {
+                    Log.w("CimaNowSandbox", "Refetch returned no body")
+                    null
+                } else {
+                    Log.i("CimaNowSandbox", "Refetch ok | ${body.length} chars, hasServerEntries=${hasServerEntries(body)}")
+                    body
+                }
+            } catch (e: Exception) {
+                Log.w("CimaNowSandbox", "Refetch failed: ${e.message}")
+                null
+            }
+        }
+
     private suspend fun decryptViaSandbox(watchHtml: String, pageUrl: String, referrer: String): String? {
         val TAG_SB = "CimaNowSandbox"
         Log.i(TAG_SB, "Phase 2: WebView stealth render starting — input ${watchHtml.length} chars, base=$pageUrl, referrer=$referrer")
@@ -1236,9 +1281,31 @@ class CimaNowProvider : BaseProvider() {
                 // see hasServerEntries.) If not, the HTML is still encrypted → try the sandbox.
                 val htmlForParsing = if (!hasServerEntries(watchHtml)) {
                     Log.i(TAG_TEST, "⚙️ SANDBOX FALLBACK: watchHtml (${watchHtml.length} chars) has no <li data-index> — running through decryptViaSandbox...")
+
+                    // Prefer a FRESH fetch of the resolved watch link over the copy captured during
+                    // the navigation phase.
+                    //
+                    // Until now the sandbox always replayed `capturedMainFrameHtml` — bytes taken
+                    // minutes earlier, before the CF solve had produced a clearance, and byte-identical
+                    // across every run (4249170 chars at 19:28, 20:27, 20:49, 22:19) while the page
+                    // consistently answered with the decoy. Fetching the link again means the payload
+                    // is generated for the session we are actually in, with the cf_clearance and
+                    // PHPSESSID we now hold, and with the blog-post page as Referer — the same
+                    // conditions under which an ordinary fullscreen WebView renders the real list.
+                    // Falls back to the captured copy if the refetch fails or looks wrong.
+                    val freshHtml = refetchWatchPage(watchUrl, baseUrl)
+                    val htmlForSandbox = if (freshHtml != null && freshHtml.length > 10_000) {
+                        Log.i(TAG_TEST, "🔄 Using FRESH fetch of the watch link: ${freshHtml.length} chars " +
+                            "(captured copy was ${watchHtml.length}) — delta ${freshHtml.length - watchHtml.length}")
+                        freshHtml
+                    } else {
+                        Log.w(TAG_TEST, "Refetch unusable (len=${freshHtml?.length ?: -1}) — replaying the captured copy")
+                        watchHtml
+                    }
+
                     // baseUrl (the freex blog-post page) is exactly the Referer the watch page was
                     // navigated with — pass it so document.referrer passes the /home redirect gate.
-                    val sandboxResult = decryptViaSandbox(watchHtml, watchUrl.ifBlank { movieUrl }, baseUrl)
+                    val sandboxResult = decryptViaSandbox(htmlForSandbox, watchUrl.ifBlank { movieUrl }, baseUrl)
                     if (sandboxResult != null && hasServerEntries(sandboxResult)) {
                         Log.i(TAG_TEST, "✅ SANDBOX SUCCESS: decrypted HTML has real <li data-index> (${sandboxResult.length} chars)")
                         sandboxResult
