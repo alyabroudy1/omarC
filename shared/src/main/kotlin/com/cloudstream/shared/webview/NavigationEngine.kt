@@ -1362,6 +1362,44 @@ class NavigationEngine(
               try { if (S && S.parentNode) S.parentNode.removeChild(S); } catch(e){}
               S = null;
               var L; try { L = console.log.bind(console); } catch(e) { L = function(){}; }
+
+              // ── Second, independent status channel: document.title → onReceivedTitle ──────────
+              // console.log is the only way the reader can speak, which makes a diagnosis
+              // impossible when it goes quiet: a wrapped console.log and a reader that never ran
+              // look identical from Kotlin. The title channel touches nothing the pre-decrypt gate
+              // scans — no window global, no console, no navigation, no dialog — so comparing which
+              // channels arrive tells us which of the two happened. Status only; bulk exfil stays on
+              // console (titles are length-capped).
+              var tseq = 0;
+              function T(s){ try { document.title = '$tag>' + (++tseq) + '>' + s; } catch(e){} }
+
+              // Is console.log still the real thing? The gate already wraps window.prompt to swallow
+              // our messages; console is the obvious next target, and a wrapper is usually a plain JS
+              // function, so [native code] disappears from its toString.
+              function chan(){
+                var lg = '?', ti = '?';
+                try { lg = (Function.prototype.toString.call(console.log).indexOf('[native code]') >= 0) ? 'native' : 'WRAPPED'; } catch(e) { lg = 'throw'; }
+                try {
+                  var d = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+                  ti = (d && d.set && Function.prototype.toString.call(d.set).indexOf('[native code]') >= 0) ? 'native' : 'WRAPPED';
+                } catch(e) { ti = 'throw'; }
+                return 'log=' + lg + ' title=' + ti;
+              }
+              // How much of the page's own JS actually ran. The sandbox serves no subresources, so
+              // the site can answer them with an HTML block page and Chrome refuses them all on
+              // strict MIME — jq=0 with extScripts>0 is that fingerprint.
+              function extScriptState(){
+                try {
+                  var s = document.scripts, tot = 0, ext = 0;
+                  for (var i = 0; i < s.length; i++) { tot++; if (s[i].src) ext++; }
+                  return ext + 'ext/' + tot + ' jq=' + ((typeof window.jQuery !== 'undefined') ? 1 : 0);
+                } catch(e) { return '?'; }
+              }
+              // First words out of the reader, on BOTH channels, before anything can be tampered
+              // with further. Absence of both in the log means this script never executed at all.
+              T('alive ' + chan());
+              try { L('$tag alive ' + chan()); } catch(e){}
+
               var CH = $CSX_CHUNK_SIZE, MAX = $maxTries, tries = 0, sent = false;
               function emit(frag){
                 if (sent) return; sent = true;
@@ -1392,14 +1430,23 @@ class NavigationEngine(
                   + ' watchEl=' + (document.getElementById('watch') ? 1 : 0)
                   + ' decoy=' + (isDecoy() ? 1 : 0)
                   + ' dwNative=' + nat
-                  + ' title=' + (document.title||'').slice(0,30);
+                  + ' ' + chan()
+                  // Did the page's own assets load? All four being refused (the sandbox serves no
+                  // subresources) is a bot signal in its own right, so count what actually ran.
+                  + ' extScripts=' + extScriptState();
               }
               // Surface page errors — a decryptor that throws is otherwise completely silent.
               try { window.addEventListener('error', function(ev){
                 L('$tag pageerr ' + (ev.message||'') + ' @' + ((ev.filename||'').slice(-60)) + ':' + ev.lineno);
               }, true); } catch(e){}
-              try { window.addEventListener('load', function(){ L('$tag load ' + diag()); }); } catch(e){}
-              try { L('$tag init referrer=' + document.referrer + ' stack: ' + (new Error().stack||'').replace(/\n/g,' | ').slice(0,160)); } catch(e){}
+              try { window.addEventListener('load', function(){ var s = diag(); L('$tag load ' + s); T('load ' + s); }); } catch(e){}
+              try {
+                var st = (new Error().stack||'').replace(/\n/g,' | ').slice(0,160);
+                L('$tag init referrer=' + document.referrer + ' stack: ' + st);
+                // Referrer is the gate's hard requirement and the stack is what the post-decrypt
+                // guard reads; both belong on the channel that cannot be swallowed.
+                T('init ref=' + (document.referrer||'').slice(0,60) + ' httpStack=' + (st.indexOf('http') >= 0 ? 1 : 0));
+              } catch(e){}
               var timer = setInterval(function(){
                 tries++;
                 try {
@@ -1414,6 +1461,7 @@ class NavigationEngine(
                     var frag = (w ? w.outerHTML : '') + (d ? d.outerHTML : '');
                     if (!frag) { var b = document.body; frag = b ? b.innerHTML : ''; }
                     L('$tag captured li=' + n + ' fragLen=' + frag.length);
+                    T('captured li=' + n + ' fragLen=' + frag.length);
                     emit(frag);
                     return;
                   }
@@ -1421,16 +1469,18 @@ class NavigationEngine(
                   if (tries >= 4 && isDecoy()) {
                     clearInterval(timer);
                     L('$tag DECOY served (flagged as bot) after ' + tries + ' tries, ' + diag());
+                    T('DECOY t=' + tries + ' ' + diag());
                     emit('');
                     return;
                   }
-                  if (tries % 8 === 0) L('$tag waiting tries=' + tries + ' ' + diag());
+                  if (tries % 8 === 0) { L('$tag waiting tries=' + tries + ' ' + diag()); T('wait t=' + tries + ' ' + diag()); }
                   if (tries >= MAX) {
                     clearInterval(timer);
                     L('$tag give up after ' + tries + ' tries, ' + diag());
+                    T('giveup t=' + tries + ' ' + diag());
                     emit('');
                   }
-                } catch(e) { L('$tag err ' + e.message); }
+                } catch(e) { L('$tag err ' + e.message); T('err ' + (e && e.message ? e.message : '?')); }
               }, 250);
             })();
             </script>
@@ -1438,6 +1488,18 @@ class NavigationEngine(
 
         // Inject the reader at the very top of <head> so its poll is armed before the page's
         // decryptor runs (the setInterval fires after the decryptor has written the list).
+        // If the reader turns out to be silent on both channels, the question becomes "was it even
+        // in the document we served, and in a position where it parses?" — so record that here
+        // rather than guessing later.
+        run {
+            val headIdx = html.indexOf("<head", ignoreCase = true)
+            ProviderLogger.d(TAG, m, "Reader injection site",
+                "tag" to tag,
+                "headIdx" to headIdx,
+                "position" to if (headIdx >= 0) "after <head>" else "document start (no <head> found)",
+                "htmlStartsWith" to html.take(60).replace("\n", " "),
+                "readerLen" to readerScript.length)
+        }
         val injectedHtml = run {
             val headIdx = html.indexOf("<head", ignoreCase = true)
             if (headIdx >= 0) {
@@ -1458,6 +1520,15 @@ class NavigationEngine(
         val csxChunks = java.util.TreeMap<Int, String>()
         var csxExpectedChunks = -1
         var csxExpectedLen = -1
+
+        // Which of the reader's two channels actually spoke. The whole point of running two: when
+        // the reader goes silent, these say whether it never executed (neither channel) or whether
+        // its console was neutered (title only) — indistinguishable otherwise, and the site has
+        // already killed two exfil channels this way (addJavascriptInterface, then prompt).
+        var sawConsoleChannel = false
+        var sawTitleChannel = false
+        var lastTitleStatus: String? = null
+        var titleMsgCount = 0
 
         val webView = createWebView(activity, browserUa)
         val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
@@ -1543,11 +1614,37 @@ class NavigationEngine(
                         }
                         // Reader diagnostics (prefixed with the run tag) and genuine page console
                         // output both surface here.
-                        else -> ProviderLogger.d(TAG, "$m/console",
-                            (if (raw.startsWith("$tag ")) "[rd] " + raw.removePrefix("$tag ") else raw).take(300),
-                            "src" to (cm.lineNumber()))
+                        else -> {
+                            val fromReader = raw.startsWith("$tag ")
+                            if (fromReader) sawConsoleChannel = true
+                            ProviderLogger.d(TAG, "$m/console",
+                                (if (fromReader) "[rd] " + raw.removePrefix("$tag ") else raw).take(300),
+                                "src" to (cm.lineNumber()))
+                        }
+                    }
+                    if (raw.startsWith(markBegin) || raw.startsWith(markChunk) || raw.startsWith(markEnd)) {
+                        sawConsoleChannel = true
                     }
                     return true
+                }
+
+                /**
+                 * The reader's second status channel. Fires on every `document.title` write and is
+                 * reachable without a window global, the console, a navigation or a dialog — so it
+                 * survives the tampering that has repeatedly killed the primary channel.
+                 */
+                override fun onReceivedTitle(view: WebView?, title: String?) {
+                    val t = title ?: return
+                    if (t.startsWith("$tag>")) {
+                        sawTitleChannel = true
+                        titleMsgCount++
+                        // Strip the "<tag>><seq>>" envelope for readability.
+                        val status = t.removePrefix("$tag>").substringAfter('>', t)
+                        lastTitleStatus = status
+                        ProviderLogger.i(TAG, "$m/title", "[rd] $status".take(300))
+                    } else {
+                        ProviderLogger.d(TAG, "$m/title", "page title: ${t.take(120)}")
+                    }
                 }
                 // Not an exfil path (see above) — just make sure a page prompt/alert never blocks
                 // JS execution waiting for a dialog that has no UI to show it.
@@ -1587,9 +1684,28 @@ class NavigationEngine(
             }
 
             val body = withTimeoutOrNull(timeoutMs + 4000) { captured.await() }
+
+            // Always state which channels spoke, and what that means. Working this out by reading
+            // console noise cost a full debugging cycle: absence of reader output was mistaken for
+            // a decryption failure, when the gate's designed behaviour is to emit nothing at all.
+            val verdict = when {
+                sawConsoleChannel && sawTitleChannel ->
+                    "both channels alive — reader ran; if no list arrived the gate aborted upstream (check li=/decoy=/dwNative= above)"
+                sawTitleChannel && !sawConsoleChannel ->
+                    "TITLE ONLY — console.log is being swallowed; move the exfil protocol to the title channel"
+                !sawTitleChannel && !sawConsoleChannel ->
+                    "SILENT ON BOTH — the reader script never executed; suspect document serving/parsing, not the cipher"
+                else ->
+                    "console only — title writes blocked (unexpected; the gate may now guard Document.title)"
+            }
+            ProviderLogger.i(TAG, m, "Reader channel report",
+                "console" to sawConsoleChannel, "title" to sawTitleChannel,
+                "titleMsgs" to titleMsgCount, "lastTitleStatus" to (lastTitleStatus ?: "<none>"),
+                "verdict" to verdict)
+
             when {
                 body == null -> {
-                    ProviderLogger.w(TAG, m, "Reader never reported back (timed out)")
+                    ProviderLogger.w(TAG, m, "Reader never reported back (timed out) — $verdict")
                     null
                 }
                 body.isBlank() -> {
