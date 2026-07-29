@@ -61,6 +61,37 @@ class VideoSnifferEngine(
         const val FIRST_CAPTURE_DEADLINE_MS = 15_000L
 
         /**
+         * Hosts for which the main document MUST be re-issued over our IPv4-pinned OkHttp client.
+         *
+         * Empty to begin with, and deliberately so. Re-issuing the main frame swaps the TLS
+         * fingerprint: `cf_clearance` is bound by Cloudflare to the client that solved it, so a
+         * clearance obtained in the CF-bypass WebView (Chrome's stack) is rejected when replayed from
+         * OkHttp — whose fingerprint this site blocks outright, which is why Tier 3 exists at all.
+         * Measured 2026-07-29: clearance issued at 21:53:30.4, main frame re-issued over OkHttp at
+         * 21:53:31.6, fresh Turnstile challenge at 21:53:31.9.
+         *
+         * So the main frame goes over Chrome's stack by default (clearance valid, no challenge), and
+         * a host is added here only after a captured stream URL is seen to be IPv6-pinned — the one
+         * failure the IPv4 re-issue exists to prevent. From then on that host pays the challenge in
+         * exchange for a playable token. Best case costs nothing; worst case is the old behaviour.
+         */
+        private val ipv4MainFrameHosts = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+        private fun requiresIpv4MainFrame(host: String?): Boolean =
+            host != null && ipv4MainFrameHosts.contains(host.lowercase())
+
+        /** Marks [host] as needing the IPv4 re-issue for its main document from now on. */
+        private fun markIpv4MainFrameRequired(host: String?) {
+            if (host.isNullOrBlank()) return
+            if (ipv4MainFrameHosts.add(host.lowercase())) {
+                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.markIpv4MainFrameRequired",
+                    "Captured stream URL was IPv6-pinned — main document will be re-issued over IPv4 " +
+                        "for this host from now on (accepting a Cloudflare challenge as the price)",
+                    "host" to host)
+            }
+        }
+
+        /**
          * Hosts whose player refuses to load the stream when it detects an ad blocker — for these
          * we deliberately let the ads through, because a blocked ad means no video at all.
          * upns.online ships "Adblock Detected" / "Please disable AdBlock to watch this video" /
@@ -187,6 +218,12 @@ class VideoSnifferEngine(
 
     private val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<CapturedLinkData>()
     private var firstLinkTime: Long = 0L
+
+    /**
+     * Host of the current session's target URL, so [captureLink] can attribute an IPv6-pinned stream
+     * URL back to the host whose main document needs the IPv4 re-issue. Set in `runSession`.
+     */
+    private var sessionHostForIpv4Retry: String? = null
     private val SMART_WAIT_TIME_MS = 2500L
 
     /**
@@ -238,6 +275,7 @@ class VideoSnifferEngine(
         // resulting links are unplayable.
         val forceIpv4 = isIpv4TokenHost(url)
         val sessionHost = try { android.net.Uri.parse(url).host } catch (_: Exception) { null }
+        this@VideoSnifferEngine.sessionHostForIpv4Retry = sessionHost
         val ipv4Client: okhttp3.OkHttpClient by lazy {
             com.lagradost.cloudstream3.app.baseClient.newBuilder()
                 .followRedirects(true)
@@ -494,7 +532,21 @@ class VideoSnifferEngine(
                         val isCfChallengeAsset =
                             request.url?.path?.startsWith("/cdn-cgi/", ignoreCase = true) == true
 
+                        // The MAIN document is left to Chrome's own stack unless this host has proven
+                        // it needs otherwise. Re-issuing it over OkHttp changes the TLS fingerprint
+                        // and invalidates cf_clearance — see ipv4MainFrameHosts. Sub-resources are
+                        // still re-issued: they mint no token, and their fingerprint is not what the
+                        // clearance was bound to.
+                        val skipIpv4ForMainFrame = request.isForMainFrame &&
+                            !requiresIpv4MainFrame(sessionHost)
+                        if (skipIpv4ForMainFrame && forceIpv4) {
+                            ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.intercept",
+                                "Main document left to Chrome's stack so cf_clearance stays valid",
+                                "url" to requestUrl.take(90))
+                        }
+
                         if (forceIpv4 && sessionHost != null && !isCfChallengeAsset &&
+                            !skipIpv4ForMainFrame &&
                             request.method.equals("GET", ignoreCase = true) &&
                             request.url?.host?.equals(sessionHost, ignoreCase = true) == true
                         ) {
@@ -1132,6 +1184,15 @@ class VideoSnifferEngine(
          }
 
          val data = CapturedLinkData(url, qualityLabel, headers)
+
+         // An IPv6 literal in the stream path means the token was minted for an address the
+         // IPv4-only media edge can never present, so this link is dead and every later one will be
+         // too until the minting leg goes out over IPv4. Record the host so its main document is
+         // re-issued over IPv4 next time — the only case where paying a Cloudflare challenge is
+         // worth it. See ipv4MainFrameHosts.
+         if (com.cloudstream.shared.network.IpPinnedUrl.containsIpv6Literal(url)) {
+             markIpv4MainFrameRequired(sessionHostForIpv4Retry)
+         }
 
          if (capturedLinks.none { it.url == url }) {
              capturedLinks.add(data)

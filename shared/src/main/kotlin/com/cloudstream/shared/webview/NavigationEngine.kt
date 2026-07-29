@@ -1745,7 +1745,7 @@ class NavigationEngine(
             // is 'hidden', requestAnimationFrame never fires and JS dialogs are dropped — any of
             // which can stall a page whose decryptor waits on them. The reader's diag() line reports
             // vis=/size= so the log shows whether this took effect.
-            attachOffscreen(activity, webView)
+            attachVisibleFullSize(activity, webView)
 
             ProviderLogger.d(TAG, m, "Navigating to real watching URL (main doc served from capture) — page decrypts untouched", "referrer" to referrer.ifBlank { "<none>" })
             if (referrer.isNotBlank()) {
@@ -1905,29 +1905,33 @@ class NavigationEngine(
      *
      * Removal is handled by the caller's cleanup (`(webView.parent as? ViewGroup)?.removeView(...)`).
      */
-    private fun attachOffscreen(activity: android.app.Activity, webView: WebView) {
+    private fun attachVisibleFullSize(activity: android.app.Activity, webView: WebView) {
         try {
             val root = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
             if (root == null) {
-                ProviderLogger.w(TAG, "attachOffscreen", "No content view — WebView stays detached (page will be 'hidden' AND 0x0)")
+                ProviderLogger.w(TAG, "attachVisibleFullSize", "No content view — WebView stays detached (page will be 'hidden' AND 0x0)")
                 return
             }
-            // Invisible via alpha, NOT via position.
+            // A REAL, visible, full-size WebView — not hidden by any means.
             //
-            // `alpha` is a native View property that JavaScript cannot observe at all. A translation
-            // is different: the page can read it. This used to set translationX = -20000f, which puts
-            // the document 20,000px outside the display, and `window.screenX`/`screenY` report exactly
-            // that — a coordinate no real browser window ever has, and a free signal for any client
-            // check. Evidence it mattered: the same page renders its real server list in an ordinary
-            // fullscreen WebView, while this off-screen one was consistently served the decoy even
-            // after every other observable gate condition had been satisfied (2026-07-29).
+            // The progression of what did not work, all with every documented gate condition
+            // satisfied (2026-07-29):
+            //   * translated 20000px off-screen → decoy. `window.screenX` reported the off-display
+            //     coordinate, which no real browser window has.
+            //   * on-screen at the origin but `alpha = 0f` → decoy, even with screen=0,0 confirmed
+            //     in the reader diagnostics.
+            // The one configuration known to render the real server list is an ordinary visible
+            // fullscreen WebView. Since alpha is invisible to JavaScript, the remaining difference
+            // between "alpha 0" and "visible" is whether the compositor actually paints and presents
+            // frames — which the page CAN observe, through requestAnimationFrame cadence,
+            // IntersectionObserver, element visibility and paint timing. A surface that never
+            // presents is indistinguishable from a headless one by those measures.
             //
-            // Laid out full-size at the origin, so viewport AND screen geometry both read as a real
-            // device; alpha 0 plus non-clickable/non-focusable keeps it unseen and untouchable.
-            webView.alpha = 0f
-            webView.isClickable = false
-            webView.isFocusable = false
-            webView.isFocusableInTouchMode = false
+            // So this is deliberately fully visible and interactive: the closest thing to the
+            // configuration that works. It is short-lived — the sandbox completes in well under a
+            // second on success and is destroyed immediately after.
+            webView.alpha = 1f
+            webView.visibility = android.view.View.VISIBLE
             root.addView(
                 webView,
                 android.view.ViewGroup.LayoutParams(
@@ -1935,9 +1939,11 @@ class NavigationEngine(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT
                 )
             )
-            ProviderLogger.d(TAG, "attachOffscreen", "Sandbox WebView attached full-size at the origin (alpha 0 — invisible to the user, honest geometry to the page)")
+            webView.bringToFront()
+            root.requestLayout()
+            ProviderLogger.i(TAG, "attachVisibleFullSize", "Sandbox WebView attached VISIBLE and full-size — the page is painted and presented, matching the configuration that renders the real server list")
         } catch (e: Exception) {
-            ProviderLogger.w(TAG, "attachOffscreen", "Attach failed: ${e.message}")
+            ProviderLogger.w(TAG, "attachVisibleFullSize", "Attach failed: ${e.message}")
         }
     }
 
