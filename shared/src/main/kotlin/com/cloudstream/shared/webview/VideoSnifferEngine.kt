@@ -1449,8 +1449,10 @@ class VideoSnifferEngine(
         ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "Starting DOM video extraction polling")
 
         // One poller per page: a reload supersedes the poller it replaces.
+        // Deliberately NOT firstCaptureJob — that deadline spans the whole session, and cancelling it
+        // here (which an over-eager edit once did) disarms the fast-fail on the very first
+        // onPageFinished, restoring the indefinite black screen it exists to prevent.
         domPollJob?.cancel()
-        firstCaptureJob?.cancel()
 
         // Poll every 2 seconds to extract video sources from DOM
         domPollJob = CoroutineScope(Dispatchers.Main).launch {
@@ -1495,11 +1497,35 @@ class VideoSnifferEngine(
                             return out;
                         }
                         function deepText() {
-                            var t = document.body ? (document.body.innerText || '') : '';
+                            var t = '';
+                            try { t = document.body ? (document.body.innerText || '') : ''; } catch(e) {}
+                            // innerText returns only RENDERED text, so it obeys CSS — and this engine
+                            // injects ad-blocker + fullscreen-iframe CSS moments before this runs. On
+                            // players whose body gets hidden by that CSS innerText comes back EMPTY
+                            // while the document still holds the error message: observed 2026-07-29 as
+                            // pageText='' with bodyLen=78415, which left the phrase scan below nothing
+                            // to match, so a "file deleted" page was never detected and the session sat
+                            // black until the user pressed back. textContent ignores CSS entirely.
+                            try {
+                                var tc = document.body ? (document.body.textContent || '') : '';
+                                if (tc.length > t.length) t = tc;
+                            } catch(e) {}
                             try {
                                 var all = document.querySelectorAll('*');
                                 for (var i = 0; i < all.length; i++) {
                                     if (all[i].shadowRoot) t += ' ' + (all[i].shadowRoot.textContent || '');
+                                }
+                            } catch(e) {}
+                            // Same-origin iframes: hosts commonly render "file deleted" inside a nested
+                            // frame rather than the top document. Cross-origin frames throw on access
+                            // and are skipped; capped so a page full of ad frames cannot stall the poll.
+                            try {
+                                var fr = document.querySelectorAll('iframe');
+                                for (var j = 0; j < fr.length && j < 8; j++) {
+                                    try {
+                                        var d = fr[j].contentDocument;
+                                        if (d && d.body) t += ' ' + (d.body.textContent || '');
+                                    } catch(e) {}
                                 }
                             } catch(e) {}
                             return t;
@@ -1571,11 +1597,13 @@ class VideoSnifferEngine(
                         
                         // 5. Check for Server Error / Deleted File texts
                             var invalidPageDetected = false;
+                            var invalidReason = "";
                             var titleText = document.title ? document.title.toLowerCase() : "";
                             var bodyText = deepText().toLowerCase();
                             var urlText = window.location.href.toLowerCase();
-                            var textContent = (titleText + " " + bodyText + " " + urlText).substring(0, 5000);
-                            if (textContent.length > 20) {
+                            var scanText = (titleText + " " + bodyText + " " + urlText).substring(0, 5000);
+                            var scanLen = scanText.length;
+                            if (scanLen > 20) {
                                 var errorTexts = [
                                     "file was deleted", "video not found", "404 not found",
                                     "no longer available", "file not found",
@@ -1588,11 +1616,25 @@ class VideoSnifferEngine(
                                     "الملف المطلوب غير موجود",
                                     "error 404", "404 error", "410 error",
                                     "this video does not exist",
-                                    "access denied", "blocked"
+                                    "access denied", "blocked",
+                                    // Added 2026-07-29. Deliberately phrase-anchored rather than
+                                    // single words: the match triggers a 5s auto-skip, so a loose
+                                    // term like "unavailable" or "expired" on its own would throw
+                                    // away a working server on the strength of some ad's copy.
+                                    "video is unavailable", "video unavailable",
+                                    "video is missing", "video missing",
+                                    "has been removed", "has been deleted",
+                                    "was removed", "media not found", "stream not found",
+                                    "deleted by the owner", "deleted by user",
+                                    "link has expired", "link expired", "expired link",
+                                    "invalid link", "broken link", "no such file",
+                                    "does not exist", "doesn't exist", "not exist",
+                                    "الفيديو غير متوفر", "الرابط منتهي", "المحتوى غير متوفر"
                                 ];
                                 for (var i = 0; i < errorTexts.length; i++) {
-                                    if (textContent.indexOf(errorTexts[i]) !== -1) {
+                                    if (scanText.indexOf(errorTexts[i]) !== -1) {
                                         invalidPageDetected = true;
+                                        invalidReason = errorTexts[i];
                                         break;
                                     }
                                 }
@@ -1638,8 +1680,8 @@ class VideoSnifferEngine(
                             for (var k = 0; k < all.length; k++) if (all[k].shadowRoot) ctx.shadowHosts++;
                         } catch(e) {}
 
-                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected, 'Block:', blockReason);
-                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected, blockReason: blockReason, pageText: pageText, vstate: vstate, ctx: ctx});
+                        console.log('[VideoSnifferEngine] Extraction complete. Videos:', videoCount, 'Sources:', sourceCount, 'Found:', sources.length, 'Invalid:', invalidPageDetected, 'Reason:', invalidReason, 'ScanLen:', scanLen, 'Block:', blockReason);
+                        return JSON.stringify({videoCount: videoCount, sourceCount: sourceCount, sources: sources, invalidPageDetected: invalidPageDetected, invalidReason: invalidReason, scanLen: scanLen, blockReason: blockReason, pageText: pageText, vstate: vstate, ctx: ctx});
                     })()
                 """) { result ->
                     try {
@@ -1657,11 +1699,21 @@ class VideoSnifferEngine(
                             val blockReason = jsonObj.optString("blockReason", "")
                             val pageText = jsonObj.optString("pageText", "")
 
+                            // scanLen is the length of the text the phrase scan actually saw. It is
+                            // the field to check when a visibly-broken page is not detected: a
+                            // scanLen of ~0 against a non-trivial bodyLen means the detector was
+                            // reading nothing, which is a deepText() problem, not a missing phrase.
+                            val invalidReason = jsonObj.optString("invalidReason", "")
+                            val scanLen = jsonObj.optInt("scanLen", -1)
+
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Page analysis",
                                 "videos" to videoCount,
                                 "sources" to sourceCount,
                                 "foundUrls" to (sourcesArray?.length() ?: 0),
-                                "invalidPage" to invalidPageDetected
+                                "invalidPage" to invalidPageDetected,
+                                "invalidReason" to invalidReason.ifBlank { "-" },
+                                "scanLen" to scanLen,
+                                "bodyLen" to (jsonObj.optJSONObject("ctx")?.optInt("bodyLen") ?: -1)
                             )
 
                             if (blockReason.isNotBlank()) {
@@ -1680,7 +1732,9 @@ class VideoSnifferEngine(
                             }
                             
                             if (invalidPageDetected && (sourcesArray == null || sourcesArray.length() == 0)) {
-                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction", "Invalid page detected! Initiating skip server.")
+                                ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
+                                    "Invalid page detected! Initiating skip server.",
+                                    "matched" to invalidReason, "scanLen" to scanLen)
                                 CoroutineScope(Dispatchers.Main).launch {
                                     showSkipOverlay(view)
                                 }

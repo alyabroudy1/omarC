@@ -18,6 +18,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 
 abstract class BaseProvider : MainAPI() {
@@ -528,7 +530,18 @@ abstract class BaseProvider : MainAPI() {
             // ========================================
             Log.i(methodTag, "PHASE 4: Sniffer fallback — trying ${resolvedServers.size} servers sequentially...")
             
-            for ((_, resolvedUrl, serverIndex) in resolvedServers) {
+            for ((attempt, server) in resolvedServers.withIndex()) {
+                val (_, resolvedUrl, serverIndex) = server
+                // Stop rather than racing through the rest once the outer budget is gone. Every
+                // sniff after cancellation returns instantly, so the loop used to "try" the
+                // remaining servers in the same millisecond and log a timeout for each — noise that
+                // hides the real problem, which is always an earlier server having eaten the budget.
+                if (!currentCoroutineContext().isActive) {
+                    Log.w(methodTag, "PHASE 4: outer budget expired after $attempt server(s) — " +
+                        "abandoning the remaining ${resolvedServers.size - attempt} instead of " +
+                        "pretending to try them")
+                    break
+                }
                 val selector = serverSelectors.getOrNull(serverIndex)
                 if (selector != null) {
                     Log.d(methodTag, "PHASE 4: Using selector for sniffer: ${selector.query}")
@@ -643,7 +656,17 @@ abstract class BaseProvider : MainAPI() {
                 result
             } ?: false
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            Log.e("[$name] [awaitSnifferResult]", "TIMEOUT! No video found within ${timeoutMs}ms")
+            // Distinguish our own deadline from the caller's. When an outer budget (CloudStream wraps
+            // loadLinks in 120s) expires, every remaining server used to report "No video found
+            // within 10800000ms" — a 3-hour timeout it never came close to spending — which reads as
+            // "we tried and the server was dead" when nothing was tried at all.
+            if (!currentCoroutineContext().isActive) {
+                Log.e("[$name] [awaitSnifferResult]",
+                    "ABORTED by the outer loadLinks budget — this server was never really tried " +
+                        "(own timeout ${timeoutMs}ms was not reached)")
+            } else {
+                Log.e("[$name] [awaitSnifferResult]", "TIMEOUT! No video found within ${timeoutMs}ms")
+            }
             false
         } catch (e: Exception) {
             Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
