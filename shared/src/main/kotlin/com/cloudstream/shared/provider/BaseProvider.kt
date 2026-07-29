@@ -191,7 +191,17 @@ abstract class BaseProvider : MainAPI() {
                 return listOf(
                     newMovieSearchResponse(
                         "\uD83D\uDD0D $name",  // 🔍 ProviderName
-                        "${LAZY_SEARCH_PREFIX}$name",
+                        // The query rides along in the URL so resolving this placeholder needs no
+                        // shared in-memory state. It used to be looked up in a map held by
+                        // SearchViewModel, which silently failed whenever the search and the tap ran
+                        // against different instances of that ViewModel — quick search creates a
+                        // fragment-scoped one, the tap handler reads the activity-scoped one — or
+                        // whenever the activity was recreated in between. Symptom in the log:
+                        // "No query found in lazyProviders for '<name>'. Map contents: []".
+                        // Both segments are encoded: provider names are display names and may be
+                        // non-ASCII (e.g. Arabic), which would not survive URL normalisation intact.
+                        "${LAZY_SEARCH_PREFIX}${java.net.URLEncoder.encode(name, "UTF-8")}" +
+                            "?q=${java.net.URLEncoder.encode(realQuery, "UTF-8")}",
                         TvType.Movie
                     ) {
                         this.posterUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/assets/lazy_search_poster.png"

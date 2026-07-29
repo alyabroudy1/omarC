@@ -15,6 +15,7 @@ import java.net.URL
 
 class FaselHDV2 : BaseProvider() {
 
+    override var name = "فاصل نت"
     override val baseDomain get() = "faselhds.biz"
     override val providerName get() = "FaselHD"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/faselhd.json"
