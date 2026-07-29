@@ -24,6 +24,7 @@ import java.util.regex.Pattern
 class CimaNowProvider : BaseProvider() {
     lateinit var context: Context
 
+    override var name = "سيماناو"
     override val providerName get() = "Cimanow"
     override val baseDomain get() = "cimanow.cc"
     override val githubConfigUrl get() = ""
