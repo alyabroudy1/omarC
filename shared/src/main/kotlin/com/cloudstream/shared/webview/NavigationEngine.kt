@@ -1329,6 +1329,67 @@ class NavigationEngine(
      * @param timeoutMs max time to wait for the in-page reader to report back (default 25s)
      * @return the decrypted document.body HTML (containing the <li data-index> server list), or null
      */
+    /**
+     * Fetches a sandbox subresource ourselves so the WebView's own identity never reaches the server.
+     *
+     * Two differences from letting the WebView fetch it:
+     *  - `X-Requested-With` is dropped. The reflection-based hider fails on current WebView builds,
+     *    so anything the WebView requests announces our package name.
+     *  - Session cookies from the CookieManager are attached, which the sandbox WebView lacks.
+     *
+     * The reported MIME is corrected from the file extension when a server answers a script or
+     * stylesheet with `text/html` (a scraper-blocking trick), because Chrome refuses those under
+     * strict MIME checking. Query strings are stripped before the extension test — `foo.js?v=3`
+     * does not end in `.js`.
+     *
+     * Returns null when the fetch is not usable, which makes the caller fall back to the WebView.
+     */
+    private fun fetchSubresourceCleanly(url: String, request: WebResourceRequest): WebResourceResponse? {
+        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = if (request.method.equals("HEAD", true)) "HEAD" else "GET"
+            instanceFollowRedirects = true
+            connectTimeout = 15000
+            readTimeout = 15000
+            request.requestHeaders?.forEach { (k, v) ->
+                // Host is computed; Accept-Encoding must stay unset so the JDK handles gzip for us;
+                // X-Requested-With is the whole point of routing through here.
+                if (!k.equals("Host", true) && !k.equals("Accept-Encoding", true) &&
+                    !k.equals("X-Requested-With", true)
+                ) {
+                    try { setRequestProperty(k, v) } catch (_: Exception) {}
+                }
+            }
+            try {
+                CookieManager.getInstance().getCookie(url)?.let { setRequestProperty("Cookie", it) }
+            } catch (_: Exception) {}
+        }
+
+        val code = conn.responseCode
+        if (code !in 200..299) {
+            ProviderLogger.d(TAG, "fetchSubresourceCleanly", "Non-2xx, leaving it to the WebView",
+                "url" to url.take(90), "code" to code)
+            return null
+        }
+
+        val ct = conn.contentType ?: "application/octet-stream"
+        val reported = ct.substringBefore(";").trim()
+        val charset = ct.substringAfter("charset=", "utf-8").trim().ifBlank { "utf-8" }
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        val mime = when {
+            reported == "text/html" && path.endsWith(".js") -> "application/javascript"
+            reported == "text/html" && path.endsWith(".css") -> "text/css"
+            reported == "text/html" && path.endsWith(".json") -> "application/json"
+            reported == "text/html" && path.endsWith(".svg") -> "image/svg+xml"
+            reported == "text/html" && path.endsWith(".woff2") -> "font/woff2"
+            else -> reported
+        }
+        if (mime != reported) {
+            ProviderLogger.d(TAG, "fetchSubresourceCleanly", "Corrected blocked MIME",
+                "url" to url.take(90), "from" to reported, "to" to mime)
+        }
+        return WebResourceResponse(mime, charset, conn.inputStream)
+    }
+
     suspend fun renderHtmlInSandbox(
         html: String,
         baseUrl: String,
@@ -1570,6 +1631,14 @@ class NavigationEngine(
             webView.settings.blockNetworkLoads = false   // behave like a real in-app browser
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
+
+            // Report a phone-shaped viewport. With useWideViewPort the layout viewport defaults to
+            // 980 CSS px regardless of the device, and the reader measured exactly that: 980x457 on
+            // a 1080p phone whose UA claims Android. A desktop-width viewport on a mobile UA is a
+            // free, obvious inconsistency for any client check, and nothing here needs wide layout —
+            // the sandbox is never looked at. Disabling it makes innerWidth track the real dp size.
+            webView.settings.useWideViewPort = false
+            webView.settings.loadWithOverviewMode = false
             // NB: deliberately NO addJavascriptInterface — it would create a window global the
             // decryptor now sniffs for (window.CS_BRIDGE) and abort. Exfil is via onJsPrompt below.
 
@@ -1588,10 +1657,29 @@ class NavigationEngine(
                             responseHeaders = mapOf("Content-Type" to "text/html; charset=utf-8")
                         }
                     }
-                    // Subresources (jQuery, anti-bot .js, etc.) load from the network as usual. Even
-                    // if Cloudflare blocks some for the WebView, the server <li> list is static in
-                    // the decrypted HTML and does not depend on them.
-                    return null
+                    // Subresources are re-issued through our own HTTP client rather than left to the
+                    // WebView.
+                    //
+                    // This block used to `return null`, on the reasoning that the server <li> list is
+                    // static in the decrypted HTML and does not depend on jQuery et al. That reasoning
+                    // still holds for DECRYPTION — refused assets have never stopped the list landing
+                    // (handover §0.1 rule 14). It says nothing about IDENTIFICATION, which is the
+                    // problem now: `hideXRequestedWithHeader` fails on this device, so every request
+                    // the WebView makes itself carries `X-Requested-With: com.lagradost.cloudstream3`
+                    // — our package name, on the wire, which no browser ever sends. Re-issuing here
+                    // drops that header and attaches the session cookies the WebView does not have.
+                    //
+                    // Failure is non-fatal by design: on any error we fall back to `null` and the
+                    // WebView fetches it the old way, so this can only improve on the previous state.
+                    val sub = request.url?.toString()
+                    if (sub == null || !(sub.startsWith("http://") || sub.startsWith("https://"))) return null
+                    return try {
+                        fetchSubresourceCleanly(sub, request)
+                    } catch (e: Exception) {
+                        ProviderLogger.d(TAG, m, "Subresource re-issue failed, leaving it to the WebView",
+                            "url" to sub.take(90), "err" to (e.message ?: ""))
+                        null
+                    }
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     // Block secondary navigations (e.g. the page trying to go to /home) — they would
