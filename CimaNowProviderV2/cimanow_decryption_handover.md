@@ -1,6 +1,9 @@
 # CimaNow Watch Page Decryption Handover & Cheatsheet
 
-> **⚠️ CURRENT IMPLEMENTATION (2026-07) — read this first. Sections 2–4 below are HISTORICAL.**
+> **⚠️ CURRENT IMPLEMENTATION (2026-07) — read this and §0 first.**
+> **Sections 2–11 are HISTORICAL** and describe a three-layer strategy architecture that was
+> **deleted** in `898efc74`. They are kept only for the format timeline (§9) and as a record of what
+> was tried. Do not implement from them; §0 lists what they get wrong.
 >
 > We do **not** decrypt in Kotlin and we do **not** eval extracted scripts. The **WebView runs the
 > page's own decryptor**; we only feed it the bytes and read the result. `loadLinks` →
@@ -33,6 +36,88 @@
 >   with no `http` → sabotages `querySelectorAll`/`innerHTML`/etc. So DOM reads via
 >   `evaluateJavascript` are defeated; only an **inline page-context script (http stack)** reads real
 >   data. (Full mechanism also recorded in the agent memory `cimanow-antibot-mechanism`.)
+>
+> **2026-07-29 — two changes, both load-bearing:**
+> - The reader is injected at **offset 0**, not after `<head>`. The payload script precedes `<head>`
+>   and replaces the document, which used to discard the reader before it ever ran. See §0.1 rule 12.
+> - The reader now reports on **two channels** — chunked `console.log` (status + bulk exfil) and
+>   `document.title` → `onReceivedTitle` (status only). The offset-0 script tampers with console
+>   methods, so a single channel cannot be trusted and a silent reader cannot be diagnosed.
+>   `renderHtmlInSandbox` logs a `Reader channel report` verdict line; read it first. See §0.2.
+
+---
+
+## 0. IMPLEMENTATION RULES — read before changing anything
+
+Every rule below is a **thing that was already built, shipped, and broke**. The site's gate is an
+arms race with roughly 40 commits of history behind it; the cost of re-learning any of these is a
+day. If you are about to do something on this list, the answer is already known.
+
+### 0.1 Never do these
+
+| # | Do not | Why — and when we learned it |
+|---|---|---|
+| 1 | Decrypt in Kotlin / replicate the cipher | Built, then deleted in `898efc74` (−806 lines, 2026-07-24). The cipher rotates **every few hours** (see the format timeline in §9 — five formats in six months), and worse, the plaintext is gated behind browser-context checks that have nothing to do with the maths. Replicating the cipher does not get you the plaintext. |
+| 2 | `eval` extracted page scripts | Same reason. The gate checks its environment, not just its input. |
+| 3 | Hook / wrap / polyfill `document.write` | Gate aborts if `Function.prototype.toString.call(document.write)` lacks `[native code]`. (Note §11's last answer contradicts this — §11 is historical and wrong.) |
+| 4 | `loadDataWithBaseURL` | Gate aborts if `location.hostname` is empty. The document must be a **real navigation** to the `/watching/` URL, served from our own bytes via `shouldInterceptRequest`. |
+| 5 | Navigate without a Referer | Gate runs `if (document.referrer.indexOf('rm.freex2line.online') === -1) location.replace('/home')`, aborting the parse before the server list. Pass the blog-post page as `Referer`. |
+| 6 | `addJavascriptInterface` | Gate sniffs `window.CS_BRIDGE` / `window.__decryptedHtml` / `window.__captured`. Killed this channel. |
+| 7 | Set anything on `window` | Same sniff. The reader must be a bare IIFE. |
+| 8 | `prompt()` as an exfil channel | Gate replaces `window.prompt` to swallow our messages. Killed this channel. |
+| 9 | `webView.evaluateJavascript` to read the decrypted DOM | Post-decrypt `isBot()` checks the call stack for `evaluatejavascript`, or `<anonymous>` with no `http`, and sabotages `querySelectorAll` / `innerHTML`. Reads must come from an **inline page script** (stack = the document's http URL). |
+| 10 | Put any fixed string in the reader | Gate greps every inline script's `innerHTML` for known markers — as of 2026-07-25 the literals `__CSX__` and `[RD]`, both ours from earlier versions. All tokens must derive from a per-run random tag, and the reader must delete its own `<script>` node first thing. |
+| 11 | Patch or freeze `Element.prototype.remove` | Gate tests it by appending an `<li data-index>`, removing it and checking `parentNode`. |
+| 12 | **Inject the reader after `<head>`** | 2026-07-29. The payload script sits at **offset 0**, *ahead* of `<head>` (~966), and replaces the document via `document.open()`/`write()` — which resets the parser and discards every byte not yet parsed, the reader included. It never executed at all. Inject at offset 0 (after a `<!DOCTYPE` if present, or the page drops into quirks mode). |
+| 13 | **Trust the console channel alone** | 2026-07-29. That same offset-0 script begins `!function(){try{for(var o=["lo…` — iterating what is almost certainly console method names. `console.log.bind(console)` only captures the genuine function if the reader runs **first**. Keep the second (title) channel. |
+| 14 | **Chase subresource / MIME failures** | 2026-07-29. The sandbox deliberately serves no subresources, so jQuery, `owl.carousel`, the rotating-name anti-bot script and `animate.css` all come back as `text/html` and Chrome refuses them, giving `$ is not defined`. **Decryption works anyway** (`li=6` captured). This is noise, not a cause — do not spend time on it. |
+| 15 | Add an Upnshare extractor | 2026-07-29. It was the one server that reliably burned its full 20s budget and returned nothing. Removed. When no extractor claims an iframe the sniffer takes over, so there is nothing to gain. |
+
+### 0.2 Always do these
+
+- **Keep both status channels.** The reader reports on chunked `console.log` *and* on `document.title`
+  → `onReceivedTitle`. Two channels exist because a silent reader is otherwise undiagnosable: a
+  wrapped `console.log` and a reader that never ran look identical from Kotlin.
+- **Read `Reader channel report` first.** It prints the diagnosis rather than leaving it to inference:
+  | verdict | meaning | action |
+  |---|---|---|
+  | both channels alive | reader ran; gate aborted upstream | read `li=` / `decoy=` / `dwNative=` in the `[rd]` diagnostics |
+  | TITLE ONLY | `console.log` is being swallowed again | port the chunked exfil protocol to the title channel |
+  | SILENT ON BOTH | the reader never executed | injection point / document serving — **not** the cipher |
+  | console only | title writes blocked (gate now guards `Document.title`) | new channel needed |
+- **Treat "no output" as the gate's designed behaviour, not as evidence of a decryption failure.**
+  The pre-decrypt gate sets `_isB` and `return`s, emitting *nothing*. Absence of output tells you
+  nothing about the cipher. Do not infer "the decryptor ran" from unrelated console warnings —
+  Chrome's `document.write` intervention warnings about CDN scripts come from the page template and
+  fire regardless.
+- **Check the reader is still valid JS after editing it.** It is a Kotlin raw string, so a typo is a
+  silent runtime failure that presents as SILENT ON BOTH — a false positive on our own diagnostic:
+  ```bash
+  # extract readerScript, substitute the $-interpolations, then:
+  node --check /tmp/reader.js
+  ```
+
+### 0.3 Server-resolution phase (after decryption)
+
+Decryption yields ~6 servers; each is resolved through `core.php` to an iframe, then handed to an
+extractor or the sniffer. Two constraints here, both learned the hard way:
+
+- **`SERVER_RESOLVE_TIMEOUT_MS` (20 s) is a per-server cap and is not sufficient on its own.** The
+  resolution loop is a `coroutineScope`, i.e. a barrier — it waits for the slowest child even when
+  every other server has already produced links. Measured 2026-07-29: five servers resolved in
+  240 ms, then one straggler burned its full 20 s, which was **59 % of a 33.7 s `loadLinks`**.
+- Hence **`STRAGGLER_GRACE_MS` (2.5 s)**: once the first playable link exists, the remaining servers
+  get a short grace window and are then cancelled (`⏭ N link(s) ready — cancelling M …`). Do not
+  remove this thinking the per-server cap covers it; it does not. Do not drop the grace window to
+  zero either — a nearly-finished server should still be allowed to contribute an alternative source.
+- `foundLinks` must stay a synchronized list: it is appended from all server coroutines concurrently
+  and read by the watchdog.
+
+### 0.4 Current known-good shape (verified 2026-07-29)
+
+Sandbox decrypt **657 ms**, `captured li=6 fragLen=4805`, `hasLiDataIndex=true`, playback reached
+first frame. `loadLinks` end-to-end ≈16 s, of which ~8.4 s is the site's own countdown guard — that
+countdown is server-enforced and is the floor for this provider.
 
 ---
 

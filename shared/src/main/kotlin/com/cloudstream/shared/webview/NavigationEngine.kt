@@ -587,6 +587,20 @@ class NavigationEngine(
                 // cimanow.cc detects sec-ch-ua="Android WebView" and redirects to home.
                 if (request.isForMainFrame && (!isProtectedDomain || reqUrl.contains("/cdn-cgi/"))) return null
 
+                // An automation WebView never displays a favicon, so fetching one is pure cost — and
+                // it is the one request whose response Chromium hands to its icon database, decoding
+                // the bytes and re-compressing them through a pipe on another thread. That pipe
+                // outlives the response stream we hand back here, which is where the stray
+                // "java.io.IOException: Pipe closed / Bitmap.compress" traces come from: harmless in
+                // itself, but noise in every log and a stream whose lifetime we do not control.
+                // Answering with an empty icon ends the whole path.
+                if (path.endsWith("/favicon.ico", ignoreCase = true)) {
+                    return WebResourceResponse(
+                        "image/x-icon", "utf-8",
+                        java.io.ByteArrayInputStream(ByteArray(0))
+                    )
+                }
+
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
                 val isGetLink = path.contains("get-link.php") && !isCfChallenge
@@ -1273,6 +1287,12 @@ class NavigationEngine(
      * decryptor run completely untouched, and reads the decrypted server list back via an in-page
      * reader that exfiltrates through chunked console.log → onConsoleMessage. The WebView does all
      * decryption (which the site rotates hourly); nothing is decrypted in Kotlin.
+     *
+     * **Before changing anything here, read `CimaNowProviderV2/cimanow_decryption_handover.md` §0.**
+     * It lists every approach that has already been built and broken (Kotlin decryption, hooking
+     * `document.write`, `loadDataWithBaseURL`, `addJavascriptInterface`, `prompt()`,
+     * `evaluateJavascript` reads, fixed marker strings, injecting after `<head>`) with the reason and
+     * the date each one died. Re-learning any of them costs about a day.
      *
      * This is shaped directly by the site's decoded anti-bot. Its pre-decrypt gate (the
      * `eval(atob(…))` at the end of the payload script) sets `_isB` and `return`s — emitting

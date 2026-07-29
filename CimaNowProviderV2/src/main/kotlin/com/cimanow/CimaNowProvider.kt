@@ -11,7 +11,6 @@ import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoUrlClassifier
 import com.cloudstream.shared.extractors.CimaNowTVEmbed
-import com.cloudstream.shared.extractors.UpnshareEmbed
 import com.cloudstream.shared.extractors.VKVideoEmbed
 import kotlinx.coroutines.*
 import org.jsoup.Jsoup
@@ -45,6 +44,14 @@ class CimaNowProvider : BaseProvider() {
      * well under the 120s WebView-sniff budget some extractors use internally.
      */
     private val SERVER_RESOLVE_TIMEOUT_MS = 20_000L
+
+    /**
+     * How long the remaining servers may keep running after the first playable link arrives.
+     *
+     * Long enough for a server that is nearly done to still contribute an alternative source, short
+     * enough that the user is not left waiting on one that never will.
+     */
+    private val STRAGGLER_GRACE_MS = 2_500L
 
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
@@ -623,19 +630,9 @@ class CimaNowProvider : BaseProvider() {
                 }
             }
 
-            // ── Upnshare embed (cimanow.upns.online/#hash) ──
-            if (!extracted && (host.contains("upns.online") || host.contains("upns."))) {
-                Log.i(TAG_FE, "Trying UpnshareEmbed for '$serverName'")
-                try {
-                    UpnshareEmbed().getUrl(iframeUrl, referer, {}, countingCb)
-                } catch (e: Exception) {
-                    Log.w(TAG_FE, "UpnshareEmbed threw for '$serverName': ${e.message}")
-                }
-                if (extracted) {
-                    Log.i(TAG_FE, "UpnshareEmbed succeeded for '$serverName'")
-                    return
-                }
-            }
+            // Upnshare has no dedicated extractor: it was the server that consistently burned the
+            // full 20s budget and returned nothing, and losing an extractor costs nothing here —
+            // when no extractor claims an iframe, the sniffer below takes it.
 
             // ── VK Video embed (vkvideo.ru or vk.com) ──
             if (!extracted && (host.contains("vkvideo") || host.contains("vk.com"))) {
@@ -1157,7 +1154,9 @@ class CimaNowProvider : BaseProvider() {
 
             // ======================== EXTRACT FROM CAPTURED DATA ========================
             val watchUrl = navResult.finalUrl
-            val foundLinks = mutableListOf<String>()
+            // Synchronized: the server-resolution loop below appends from several coroutines at once,
+            // and the straggler watchdog reads it concurrently.
+            val foundLinks = java.util.Collections.synchronizedList(mutableListOf<String>())
             val loggingCallback: (ExtractorLink) -> Unit = { link ->
                 foundLinks.add(link.url)
                 Log.i(TAG_TEST, ">>> LINK: source=${link.source} name=${link.name} quality=${link.quality} url=${link.url.take(150)} referer=${link.referer.take(80)}")
@@ -1292,9 +1291,10 @@ class CimaNowProvider : BaseProvider() {
                         coreHeaders["Cookie"] = cookieString
                     }
                     coroutineScope {
+                        val serverJobs = mutableListOf<Job>()
                         for (sv in servers) {
                             if (sv.index.isBlank() || sv.id.isBlank()) continue
-                            launch {
+                            serverJobs += launch {
                                 // Hard per-server budget. This block is a barrier — the player only
                                 // starts once loadLinks returns — so without a cap a single slow
                                 // host (VK's embed sniff used to eat the full 120s) delays EVERY
@@ -1323,6 +1323,26 @@ class CimaNowProvider : BaseProvider() {
                                 }
                             }
                         }
+
+                        // Straggler watchdog. The per-server cap alone was not enough: this scope is a
+                        // barrier, so the player waited for the SLOWEST server even when the others had
+                        // already produced links. Measured 2026-07-29: five servers resolved in 240ms,
+                        // then Upnshare burned its full 20s budget — 59% of a 33.7s loadLinks spent on
+                        // a server that yielded nothing. Once a playable link exists, the remaining
+                        // servers get a short grace period and are then cancelled; an extra source is
+                        // not worth 20s of black screen, and a cancelled server costs nothing because
+                        // the sniffer takes over when an extractor yields no links.
+                        val watchdog = launch {
+                            while (foundLinks.isEmpty()) delay(100)
+                            delay(STRAGGLER_GRACE_MS)
+                            val alive = serverJobs.count { it.isActive }
+                            if (alive > 0) {
+                                Log.w(TAG_TEST, "⏭ ${foundLinks.size} link(s) ready — cancelling $alive still-resolving server(s) after ${STRAGGLER_GRACE_MS}ms grace")
+                                serverJobs.forEach { it.cancel() }
+                            }
+                        }
+                        serverJobs.joinAll()
+                        watchdog.cancel()
                     }
                 }
 
