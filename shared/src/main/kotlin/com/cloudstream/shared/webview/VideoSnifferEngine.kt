@@ -99,6 +99,13 @@ class VideoSnifferEngine(
          * ("Uncaught SyntaxError: Invalid or unexpected token") and silently do nothing on every
          * page — evaluateJavascript reports parse errors only to the console, never to the caller.
          */
+        /**
+         * Makes an embedded player fill the screen. Safe to inject on any page: it only *resizes*
+         * iframes and hides nothing.
+         *
+         * The rule that blanks everything else lives separately in [BLANK_NON_PLAYER_JS] and must
+         * not be merged back in here — see the note there.
+         */
         val FULLSCREEN_IFRAME_JS = """
             (function() {
                 var style = document.createElement('style');
@@ -112,6 +119,35 @@ class VideoSnifferEngine(
                         z-index: 99999 !important;
                         border: none !important;
                     }
+                `;
+                document.head.appendChild(style);
+            })()
+        """.trimIndent()
+
+        /**
+         * Hides every direct child of `<body>` that is not an iframe, so a handed-over WebView shows
+         * only the video.
+         *
+         * **Inject this ONLY at the moment the session is genuinely handed to the user as a player.**
+         * It was previously part of [FULLSCREEN_IFRAME_JS] and injected from `onPageFinished` on every
+         * visible sniff — the `isPlayerMode` guard there reads `timeout >= SNIFFER_PLAYER_TIMEOUT_MS`,
+         * which SnifferExtractor always satisfies, so it gated nothing. The damage (observed
+         * 2026-07-29):
+         *   * page content vanished about a second after load, which is what users reported as
+         *     "shows for 1 sec then black screen";
+         *   * a **Cloudflare challenge is a div, not an iframe**, so it was hidden too — leaving an
+         *     interstitial the user cannot see, cannot solve, and which therefore never completes;
+         *   * `document.body.innerText` returned empty, which blinded the deleted-video phrase scan
+         *     in the DOM poll (logged as `pageText:""` against `bodyLen:78415`) so no "file deleted"
+         *     page could ever trigger the skip-server overlay.
+         *
+         * Nothing about a *sniff* needs the page blanked — the sniffer reads the DOM and the network,
+         * neither of which cares how the page looks.
+         */
+        val BLANK_NON_PLAYER_JS = """
+            (function() {
+                var style = document.createElement('style');
+                style.textContent = `
                     body > *:not(iframe) {
                         display: none !important;
                     }
@@ -283,6 +319,13 @@ class VideoSnifferEngine(
                                     resultDelivered = true
                                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Timeout: video playing in WebView, transitioning to player mode")
                                     updateDialogText("") // Hide status text
+
+                                    // Only NOW is blanking the page correct: the session is being
+                                    // handed to the user to watch, so everything except the player is
+                                    // chrome. Doing this during a sniff hid Cloudflare challenges and
+                                    // blinded the deleted-video scan — see BLANK_NON_PLAYER_JS.
+                                    wv.evaluateJavascript(BLANK_NON_PLAYER_JS, null)
+                                    ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Blanked non-player content for hand-over")
 
                                     // Attach cleanup listener for when user exits the player
                                     dialog!!.setOnDismissListener {
@@ -746,19 +789,17 @@ class VideoSnifferEngine(
                     android.util.Log.i("VideoSnifferEngine", "onPageFinished: url=${currentUrl.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Page finished", "url" to currentUrl.take(80))
 
-                    // Inject fullscreen iframe CSS — ONLY in sniffer-as-player mode, which is what
-                    // it was written for (visible session held open with SNIFFER_PLAYER_TIMEOUT_MS
-                    // because nothing extractable was found).
-                    //
-                    // It used to be injected on every page, but the snippet had a syntax error and
-                    // never actually executed, so nothing was ever hidden. Now that it parses, the
-                    // rule it installs — `body > *:not(iframe) { display: none }` — would blank the
-                    // content of every ordinary sniff target, including SPA players that are not
-                    // iframes (Upnshare), breaking auto-click and DOM extraction. Keep it scoped.
-                    val isPlayerMode = mode != Mode.HEADLESS && timeout >= SNIFFER_PLAYER_TIMEOUT_MS
-                    if (isPlayerMode) {
+                    // Size embedded players to fill the screen. This resizes iframes and hides
+                    // NOTHING — the rule that blanks the rest of the page (BLANK_NON_PLAYER_JS) is
+                    // deliberately not injected here. It used to be, behind an `isPlayerMode` guard
+                    // that reads `timeout >= SNIFFER_PLAYER_TIMEOUT_MS` — a condition SnifferExtractor
+                    // always satisfies, so it gated nothing and every sniffed page was blanked a
+                    // second after load. That hid Cloudflare challenges (a div, not an iframe) so they
+                    // could never be solved, and emptied innerText so the deleted-video scan went
+                    // blind. It is now applied only at the actual hand-over to player mode.
+                    if (mode != Mode.HEADLESS) {
                         view?.evaluateJavascript(FULLSCREEN_IFRAME_JS, null)
-                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected fullscreen iframe CSS (player mode)")
+                        ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Injected fullscreen iframe sizing CSS (nothing hidden)")
                     }
 
                     // LAYER 2+3: Inject ad blocking CSS and JS — unless this host refuses to play
@@ -1652,7 +1693,7 @@ class VideoSnifferEngine(
                             "not allowed"
                         ];
                         for (var gi = 0; gi < gates.length; gi++) {
-                            if (textContent.indexOf(gates[gi]) !== -1) { blockReason = gates[gi]; break; }
+                            if (scanText.indexOf(gates[gi]) !== -1) { blockReason = gates[gi]; break; }
                         }
                         var pageText = deepText().replace(/\s+/g, " ").trim().substring(0, 200);
 
