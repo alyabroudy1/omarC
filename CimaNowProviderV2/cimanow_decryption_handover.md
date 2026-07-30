@@ -114,6 +114,16 @@
 > quality comes from `type=N` (`vkQuality()`), since one server delivers the whole ladder at once and
 > the URLs contain no resolution.
 >
+> ### 4. Default a sniffed link to progressive, never to HLS
+>
+> With links finally reaching the player, playback still failed instantly:
+> `ParserException: Input does not start with the #EXTM3U header`, and on the way there
+> `M3u8Helper2.hslLazy` tried to read the 5 MB video as text and threw. Cause: `getLinkType()` ended in
+> `else -> ExtractorLinkType.M3U8`, so the extension-less VK URL was handed to ExoPlayer's HLS reader.
+> Now `.m3u8` or a `/hls/` path (`isLikelyHlsManifest`) → M3U8, `.mpd` → DASH, **everything else →
+> VIDEO**. The asymmetry is the argument: a mislabelled manifest costs one source, a mislabelled
+> progressive stream costs every VK server in the provider.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -210,6 +220,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 17 | **Inject `SPOOFING_JS` (or anything else) into the watch page** | 2026-07-30, and this is *the* one. It defines `window.DisableDevtool` and claims `navigator.plugins == [1,2,3,4,5]` where Android Chrome reports an empty `PluginArray`, injected at `onPageStarted` ahead of every page script. With it: decoy (delta 47), blank white screen. Without it: `delta=+383,720`, the real server list. Pass `execute(injectSpoofingJs = false)`. Generalise: the page is not fooled by better disguises, it is defeated by an empty room. |
 | 18 | **`return true` from `onCreateWindow` and call it popup support** | 2026-07-30. Without filling `resultMsg`'s `WebView.WebViewTransport` and calling `sendToTarget()`, no window is created and `window.open()` returns `null`. The page runs an Adcash "iclick" popunder (`luugy.com/5/…?oo=1`), gates play/server-switch on it, and shows a SweetAlert2 "allow the ads" modal when it comes back null. Ads themselves were loading fine the whole time. Hand over a blank sink WebView instead. |
 | 19 | **Filter sniffer captures with `VideoUrlClassifier.isVideoUrl()`** | 2026-07-30. VK streams from `vk6-3.vkuser.net/?…&type=1&…` — no extension, no `/hls/` — so a *recognition* filter drops the very streams a sniffer exists to find (four captured, zero links, no `Video captured` line in the log). Use `isPlayableCapture()`, which rejects segments/thumbnails/trackers/DASH and passes everything else. |
+| 20 | **Default an unrecognised URL to `ExtractorLinkType.M3U8`** | 2026-07-30. `getLinkType()`'s `else -> M3U8` sent the extension-less VK stream to ExoPlayer's HLS reader: `ParserException: Input does not start with the #EXTM3U header`, plus `M3u8Helper2.hslLazy` reading a 5 MB video as text. Sniffed extension-less URLs are progressive files behind a token — default to `VIDEO` and detect manifests positively (`.m3u8`, `/hls/`). |
 
 ### 0.2 Always do these
 

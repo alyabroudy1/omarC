@@ -1008,11 +1008,27 @@ class CimaNowProvider : BaseProvider() {
         return null
     }
 
+    /**
+     * Media type for a URL, defaulting to **progressive**, not HLS.
+     *
+     * The old default was `M3U8` for anything without a recognised extension, which is how the first
+     * working surf run still failed to play (2026-07-30): VK streams from
+     * `vk6-3.vkuser.net/?…&type=3&…` have no extension, were typed M3U8, and ExoPlayer's HLS reader
+     * died on the first bytes — `ParserException: Input does not start with the #EXTM3U header`. On the
+     * way there `M3u8Helper2.hslLazy` also tried to read the 5 MB video as text and threw.
+     *
+     * Extension-less URLs from a network sniffer are overwhelmingly progressive files behind a token,
+     * so that is the default; genuine manifests are caught either by `.m3u8` or by the `/hls/` path
+     * test in [VideoUrlClassifier.isLikelyHlsManifest]. Guessing wrong in the other direction is not
+     * symmetric: a mislabelled manifest is one failed source, a mislabelled progressive stream is
+     * every VK server in the provider.
+     */
     private fun getLinkType(url: String): ExtractorLinkType {
         return when {
-            url.contains(".m3u8") -> ExtractorLinkType.M3U8
-            url.contains(".mp4") -> ExtractorLinkType.VIDEO
-            else -> ExtractorLinkType.M3U8
+            url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
+            VideoUrlClassifier.isLikelyHlsManifest(url) -> ExtractorLinkType.M3U8
+            url.contains(".mpd", ignoreCase = true) -> ExtractorLinkType.DASH
+            else -> ExtractorLinkType.VIDEO
         }
     }
 
