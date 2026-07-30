@@ -1,6 +1,51 @@
 # CimaNow Watch Page Decryption Handover & Cheatsheet
 
-> **⚠️⚠️ CURRENT IMPLEMENTATION (2026-07-30, WORKING) — WE NO LONGER DECRYPT.**
+> ## ✅ VERIFIED WORKING — 2026-07-30 17:00, end to end, 1080p
+>
+> A real run, from the log, after the whole day's work:
+>
+> ```
+> 17:00:14.102  🎯 CAPTURED EMBED  listeamed.net/e/…            ← user browsing servers
+> 17:00:16.759  🎯 CAPTURED EMBED  searchresultsworld.com/sr/…
+> 17:00:22.425  🎯 CAPTURED EMBED  bysetayico.com/e/utib6riq2s3t
+> 17:00:23.556  🎯 CAPTURED EMBED  q8y5z.com/4f8/utib6riq2s3t
+> 17:00:12–27   ⏳ Waiting for a stream | embeds=1…6, streamCaptures=0, sinks=3
+> 17:00:29.673  🎬 CAPTURED VIDEO URL  edge1-vienna-sprintcdn.ow…   ← playback proves the server works
+> 17:00:30.634  Step 2: Done | embeds=6, playableStreams=2
+> 17:00:31.273  >>> EMBED LINK q=1080 Bysetayico 1080p            ← ByseExtractor, 0.24 s
+> 17:00:34.757  ⏭ Links already delivered — cancelling the remaining embed(s) after 3483ms
+> 17:00:34.765  loadOnlinePlayer ExtractorLink(name=Bysetayico…)
+> 17:00:35.479  Rendered first frame
+> ```
+>
+> **1080p, four seconds from stream to first frame, no modal, no white page, no decryption.** The user
+> browsed servers in a real fullscreen WebView; we read the network; the registered extractor turned the
+> chosen embed into a quality-labelled link.
+>
+> Every mechanism here earned its place against a specific observed failure. In order of how much they
+> mattered:
+>
+> | # | Change | Without it |
+> |---|---|---|
+> | 1 | `injectSpoofingJs = false` (§1) | Decoy: blank page, `delta=47` |
+> | 2 | `injectDocumentWriteHook = false`, rewrite **on** (§12, §13) | Decoy on some titles; blank page on others |
+> | 3 | `registerSharedExtractors()` in the plugin (rule 25) | Every server falls through to a sniffed single rendition — this run's 1080p came from `ByseExtractor` |
+> | 4 | Exit on a **stream**, not an embed (§6) | Window closes on a dead server, 49 s spinner, no way to pick another |
+> | 5 | `isPlayableCapture()` rejection filter (§3) | VK's extension-less streams discarded — captures but zero links |
+> | 6 | `getLinkType` default `VIDEO` (§4) | `Input does not start with the #EXTM3U header` |
+> | 7 | Popup transport + 900 ms visibility dip (§2, §9) | "Allow the ads" / "allow redirection and popups" modal on every tap |
+> | 8 | Navigation-only embed detection (§10) | 728 "embeds", 728 re-fetches, 30 s+ black screen |
+> | 9 | Straggler grace + shrinking cap (§10, and the 15:40 log) | 15 s of spinning with every link already delivered |
+>
+> **Known-imperfect, deliberately left alone:** the captured-embed-HTML fast path (§7) still resolves
+> nothing in practice — this run captured 1,605 / 1,605 / 72,258 chars and `html=-1` for the fourth, and
+> all four parsed to nothing; the registered extractors did the work. It costs a few hundred ms, so it is
+> not urgent, but "no request made" is aspiration rather than description. `dipPageVisibility` and the
+> popup sink are also still in place; if the gate ever stops mattering they are dead weight.
+>
+> ---
+>
+> **⚠️⚠️ IMPLEMENTATION NOTES — WE NO LONGER DECRYPT.**
 >
 > Read “WHAT MADE IT WORK” below before changing anything in this flow.
 >
@@ -10,6 +55,10 @@
 > scraping, and — as of 2026-07-30 — **not even `SPOOFING_JS`**, which turned out to be the last thing
 > giving us away. The only JS we still run is the `title`/`bodyLength` diagnostic pair in
 > `onPageFinished`, after the page has already decided about us.
+>
+> One thing we *do* still change: the served HTML is **rewritten** so `document.write('<script src=…')`
+> becomes a plain tag (§13). That edits bytes before the page runs; it never wraps `document.write`, so
+> rule 3 holds. The hook that does wrap it stays off (`injectDocumentWriteHook = false`).
 >
 > Why this replaces the sandbox: every entry in §0.1 fails for the same structural reason — the gate
 > inspects **its own environment**, not its input. Any hook, bridge, marker or `evaluateJavascript`
@@ -42,7 +91,13 @@
 > 3b. **Resolution order: captured embed HTML → URL-based extractors → sniffed streams.**
 >    `resolveEmbedFromHtml()` parses the bytes the iframe already received (§7 — a second request to the
 >    embed host is what kept failing); `fallbackExtractIframe()` covers embeds whose HTML says nothing;
->    the sniffed stream is last, being one ABR-chosen rendition. See §5.
+>    the sniffed stream is last, being one ABR-chosen rendition. See §5. **In practice the extractors do
+>    all the work today** — the HTML path has yet to resolve a single embed in a real run — which is why
+>    `registerSharedExtractors()` in `CimaNowPlugin` is load-bearing and not boilerplate (rule 25).
+> 3c. **Newest-first, then stop.** Embeds resolve newest-first (the last iframe is the server the user
+>    chose), capped at `MAX_EMBEDS_TO_RESOLVE`, bounded by `EMBED_PHASE_BUDGET_MS`, and — once any link
+>    is delivered — cut off after `STRAGGLER_GRACE_MS` with the per-embed cap shrunk to the grace that
+>    remains. A per-item timeout is not a phase bound; both are needed.
 > 4. **`destinationLockPatterns = /(watch|watching)/`**, same as before, and it earns its keep here:
 >    once on `/watching/` every main-frame navigation is refused silently, so the ad redirects a stray
 >    tap fires cannot steal the screen. Servers switch by AJAX into an iframe, so nothing legitimate
@@ -468,6 +523,26 @@
 > `No watching URL captured` starts appearing, suspect this first. The site may also serve TVs a
 > different layout. If the gate is genuinely gone, `dipPageVisibility` and the popup sink become dead
 > weight for this provider and can go.
+>
+> ### Diagnostics — the markers to grep, in order
+>
+> Every one of these exists because its absence cost a debugging round:
+>
+> | marker | means |
+> |---|---|
+> | `🔧 REWRITE: N document.write call(s) → direct tags; hook NOT injected` | the §13 split is active. `0 matches` means the rewrite is a no-op for this title |
+> | `[CW]` **anywhere** | the forbidden hook is back; the decoy will follow (§12) |
+> | `Spoofing JS NOT injected` | page context clean (§1) |
+> | `Decryptor produced content (delta=…)` / `🚩 DECOY SERVED` (47) / `delta=-1` | rendered / flagged / wrote nothing |
+> | `📄 WATCH PAGE DUMP: …` | the exact bytes served — read `#xqeqjp` hrefs here; an empty one makes the site run `$("main article ul.btns li").remove()` and empty its own UI (§14) |
+> | `💥 RENDER PROCESS GONE` | the blank page is a renderer crash, not a navigation |
+> | `🚫 SITE SENT US AWAY` | same-site redirect off the player page — title blocked or session rejected (§11) |
+> | `⏳ Waiting for a stream \| embeds=… streamCaptures=… url=…` | 5 s heartbeat; the `url` comes from the WebView, so a silent navigation shows up here |
+> | `🎯 CAPTURED EMBED … html=N` | embed found; `html=-1` means the in-flight capture failed |
+> | `🎬 CAPTURED VIDEO URL` | a stream on the wire — the only proof a server actually plays (§6) |
+> | `>>> EMBED LINK` / `>>> LINK` | resolved via extractor / via sniffed stream (the fallback) |
+> | `⏭ Links already delivered — cancelling` | straggler cut-off working |
+> | `📄 EMBED HTML DUMP` / `📄 SCRIPT DUMP` / `📄 NO-SERVERS DUMP` | bytes on disk for the fast path, the gate script, and an empty parse |
 >
 > ### Diagnostics to read first, in this order
 >
