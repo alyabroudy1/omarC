@@ -486,14 +486,12 @@ class CimaNowProvider : BaseProvider() {
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
             Log.i(TAG_SURF, "Captured: ${navResult.capturedVideoRequests.size} video request(s)")
 
-            // Segments and trackers are not links: a .ts proves playback started but plays nothing.
+            // A rejection filter, NOT VideoUrlClassifier.isVideoUrl — see isPlayableCapture. The VK
+            // servers stream from `vk6-3.vkuser.net/?expires=…&type=1&…`, which has no extension and
+            // no /hls/ path, so a recognition filter discards the one thing the sniffer was for.
             val playable = navResult.capturedVideoRequests
                 .distinctBy { it.url }
-                .filter { req ->
-                    !VideoUrlClassifier.isSegmentOrAsset(req.url) &&
-                    !VideoUrlClassifier.isBlacklisted(req.url) &&
-                    VideoUrlClassifier.isVideoUrl(req.url)
-                }
+                .filter { VideoUrlClassifier.isPlayableCapture(it.url) }
 
             if (playable.isEmpty()) {
                 Log.w(TAG_SURF, "No playable video seen on the wire " +
@@ -525,6 +523,33 @@ class CimaNowProvider : BaseProvider() {
      * are dropped — ExoPlayer sets its own, and passing `Host` or `Connection` through breaks the
      * request outright.
      */
+    /**
+     * Resolution for a VK CDN stream, whose URL states its quality only as `type=N`.
+     *
+     * Without this every VK capture is `Qualities.Unknown`, and since one server produces the whole
+     * ladder at once (`type=1`, `3`, `5` in the same session) the user gets several identically
+     * labelled sources with no way to tell 360p from 1080p. Returns null for anything that is not a
+     * VK URL so the caller falls back to reading digits out of the URL.
+     */
+    private fun vkQuality(url: String): Int? {
+        if (!url.contains("vkuser.net") && !url.contains("vkcdn") && !url.contains("userapi.net")) {
+            return null
+        }
+        val type = Regex("""[?&]type=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull()
+            ?: return null
+        return when (type) {
+            0 -> Qualities.P144.value
+            1 -> Qualities.P240.value
+            2 -> Qualities.P360.value
+            3 -> Qualities.P480.value
+            4 -> Qualities.P720.value
+            5 -> Qualities.P1080.value
+            6 -> Qualities.P1440.value
+            7 -> Qualities.P2160.value
+            else -> null
+        }
+    }
+
     private suspend fun buildSurfLink(
         capture: CapturedVideoRequest,
         userAgent: String
@@ -576,7 +601,7 @@ class CimaNowProvider : BaseProvider() {
             .firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
             ?: capture.pageUrl
 
-        val quality = when {
+        val quality = vkQuality(url) ?: when {
             url.contains("2160") || url.contains("4k", ignoreCase = true) -> Qualities.P2160.value
             url.contains("1440") -> Qualities.P1440.value
             url.contains("1080") -> Qualities.P1080.value
@@ -586,7 +611,15 @@ class CimaNowProvider : BaseProvider() {
             else -> Qualities.Unknown.value
         }
 
-        return newExtractorLink("CimaNow", "CimaNow (Surf)", url, type = getLinkType(url)) {
+        // One server hands over its whole ladder at once, so the label has to carry the resolution —
+        // otherwise the picker shows several identical "CimaNow (Surf)" entries.
+        val label = if (quality == Qualities.Unknown.value) {
+            "CimaNow (Surf)"
+        } else {
+            "CimaNow (Surf) ${quality}p"
+        }
+
+        return newExtractorLink("CimaNow", label, url, type = getLinkType(url)) {
             this.referer = refererValue
             this.quality = quality
             this.headers = headers

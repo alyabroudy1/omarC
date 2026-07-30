@@ -97,6 +97,48 @@ object VideoUrlClassifier {
         return true
     }
 
+    /**
+     * Preview/thumbnail endpoints that live on video CDNs and carry no image extension, so
+     * [isSegmentOrAsset] cannot see them.
+     *
+     * `iv.okcdn.ru/getVideoPreview?id=…&type=39&fn=vid_w` is a JPEG served from the same host family
+     * as the stream, and it is requested *before* the stream — hand it to ExoPlayer and playback dies
+     * on an image. (Seen 2026-07-30 in a CimaNow VK server capture.)
+     */
+    private val PREVIEW_KEYWORDS = listOf(
+        "getvideopreview", "/preview", "thumb", "poster", "storyboard", "sprite", "/vid_"
+    )
+
+    /** True for thumbnail/preview endpoints that are not playable media. */
+    fun isPreviewAsset(url: String): Boolean {
+        val lower = url.lowercase()
+        return PREVIEW_KEYWORDS.any { lower.contains(it) }
+    }
+
+    /**
+     * Whether a URL **already identified as media by a network sniffer** is worth handing to a player.
+     *
+     * Deliberately a *rejection* filter, not a recognition filter, and that distinction is the whole
+     * point of it. [isVideoUrl] answers "does this look like a video?" from the URL text alone, so it
+     * needs an extension or an `/hls/` path — and plenty of real streams have neither. VK serves its
+     * ladder as `https://vk6-3.vkuser.net/?expires=…&type=1&…`: no extension, no path, nothing to
+     * recognise. Filtering sniffer captures through [isVideoUrl] therefore throws away exactly the
+     * streams that only a sniffer could have found (2026-07-30: four VK captures discarded, the whole
+     * run produced no link).
+     *
+     * The caller has already decided this request is media — by host, by `Content-Type`, or by
+     * watching a player fetch it. All this does is drop the things that are media-adjacent but
+     * unplayable: segments, thumbnails, trackers, and DASH manifests ExoPlayer cannot decrypt.
+     */
+    fun isPlayableCapture(url: String): Boolean {
+        if (url.isBlank()) return false
+        if (isBlacklisted(url)) return false
+        if (isSegmentOrAsset(url)) return false
+        if (isPreviewAsset(url)) return false
+        if (isDrmProtected(url)) return false
+        return true
+    }
+
     /** Markers that identify a quality-specific (variant) playlist rather than a master. */
     private val QUALITY_MARKERS = listOf(
         "2160", "1440", "1080", "720", "480", "360", "240", "144",

@@ -27,6 +27,12 @@ class NavigationEngine(
     @Volatile
     private var lastPageUrl: String = ""
 
+    /**
+     * Blank windows handed to the page when it calls `window.open` — see `onCreateWindow`. Kept alive
+     * for the session so the page's reference stays valid (`win.closed === false`), then destroyed.
+     */
+    private val popupSinks = java.util.Collections.synchronizedList(mutableListOf<WebView>())
+
     /** Cursor overlay for Mode.FULLSCREEN, so a D-pad remote can click the page. */
     private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
 
@@ -270,10 +276,8 @@ class NavigationEngine(
                                 // presses play. Segments are ignored as an exit trigger — the .ts a
                                 // player fetches proves it is playing but is useless as a link, and
                                 // the manifest is always requested before them.
-                                fun playable() = capturedVideoRequests.filter { req ->
-                                    !VideoUrlClassifier.isSegmentOrAsset(req.url) &&
-                                        !VideoUrlClassifier.isBlacklisted(req.url) &&
-                                        VideoUrlClassifier.isVideoUrl(req.url)
+                                fun playable() = capturedVideoRequests.filter {
+                                    VideoUrlClassifier.isPlayableCapture(it.url)
                                 }
 
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
@@ -657,7 +661,12 @@ class NavigationEngine(
                         // Catches what the path tests miss: manifests behind a query string, and the
                         // /hls/ paths some CDNs serve with a .txt or .php name.
                         || VideoUrlClassifier.isVideoUrl(reqUrl)
-                if (isVideoStream) {
+                // Thumbnails ride the same hosts as the stream and are fetched first, so capturing one
+                // as "the video" hands a JPEG to the player. See VideoUrlClassifier.isPreviewAsset.
+                if (isVideoStream && VideoUrlClassifier.isPreviewAsset(reqUrl)) {
+                    ProviderLogger.d(TAG, "shouldInterceptRequest",
+                        "Skipping preview/thumbnail on a video host: ${reqUrl.take(120)}")
+                } else if (isVideoStream) {
                     // Strip byte-range param so we keep the canonical URL (range requests are the same file)
                     val clean = reqUrl.substringBefore("&bytes=")
                     if (!capturedVideoUrls.contains(clean)) {
@@ -1058,11 +1067,65 @@ class NavigationEngine(
                 isUserGesture: Boolean,
                 resultMsg: Message?
             ): Boolean {
-                // Allow the page to open popups (e.g. the player window launched when a
-                // server tab is clicked) so its JS runs fully and the decrypted player
-                // iframe gets injected into the main-frame DOM. We do NOT follow/capture
-                // the popup — the content we need is already in the main-frame HTML.
-                return true
+                // Give the page a REAL window — one it can hold a reference to — and let it load
+                // nothing.
+                //
+                // Returning true without filling the transport (what this did until 2026-07-30) does
+                // not "allow the popup": no window is created, so `window.open()` evaluates to null.
+                // CimaNow's player reads that as a blocked popunder — it loads an Adcash "iclick"
+                // popunder (`luugy.com/5/…?oo=1&js_build=iclick-…`) and gates playback on it — and
+                // answers with a SweetAlert2 modal demanding the user allow ads, refusing to play or
+                // switch server. Ads were never being blocked here; only the window was missing.
+                //
+                // So hand over a detached WebView that answers every request with an empty body. The
+                // page gets a live window object whose `closed` stays false, no ad content is ever
+                // fetched, nothing is shown to the user, and the main frame is untouched. Destroyed
+                // with the session in cleanupWebView.
+                val activity = activityProvider()
+                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                if (activity == null || transport == null) {
+                    ProviderLogger.w(TAG, "onCreateWindow",
+                        "No activity/transport — popup cannot be honoured", "isUserGesture" to isUserGesture)
+                    return false
+                }
+
+                return try {
+                    @SuppressLint("SetJavaScriptEnabled")
+                    val sink = WebView(activity).apply {
+                        settings.javaScriptEnabled = true
+                        settings.userAgentString = userAgent
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(
+                                v: WebView?, req: WebResourceRequest?
+                            ): Boolean {
+                                ProviderLogger.d(TAG, "popupSink", "Swallowed popup navigation",
+                                    "url" to req?.url?.toString()?.take(120))
+                                return true
+                            }
+
+                            override fun shouldInterceptRequest(
+                                v: WebView?, req: WebResourceRequest?
+                            ): WebResourceResponse? =
+                                // Belt and braces: the window.open target itself is loaded into this
+                                // view without passing through shouldOverrideUrlLoading, so answer
+                                // everything with an empty document.
+                                WebResourceResponse(
+                                    "text/html", "utf-8",
+                                    java.io.ByteArrayInputStream(ByteArray(0))
+                                )
+                        }
+                    }
+                    popupSinks.add(sink)
+                    transport.webView = sink
+                    resultMsg.sendToTarget()
+                    ProviderLogger.i(TAG, "onCreateWindow",
+                        "Popup honoured into a blank sink window", "sinks" to popupSinks.size,
+                        "isUserGesture" to isUserGesture)
+                    true
+                } catch (e: Exception) {
+                    ProviderLogger.w(TAG, "onCreateWindow", "Sink creation failed: ${e.message}")
+                    false
+                }
             }
         }
     }
@@ -2092,6 +2155,20 @@ class NavigationEngine(
     private fun cleanupWebView(webView: WebView?, dialog: android.app.Dialog?) {
         try {
             dialog?.dismiss()
+            // Popup sinks outlive the page on purpose (the page holds references to them), so they
+            // are only safe to destroy once the session itself is over.
+            val sinks = synchronized(popupSinks) { popupSinks.toList().also { popupSinks.clear() } }
+            if (sinks.isNotEmpty()) {
+                Handler(Looper.getMainLooper()).post {
+                    sinks.forEach { sink ->
+                        try {
+                            sink.stopLoading()
+                            sink.destroy()
+                        } catch (_: Exception) {}
+                    }
+                    ProviderLogger.d(TAG, "cleanupWebView", "Destroyed ${sinks.size} popup sink(s)")
+                }
+            }
             webView?.let { wv ->
                 Handler(Looper.getMainLooper()).post {
                     try {

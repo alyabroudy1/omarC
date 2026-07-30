@@ -1,37 +1,133 @@
 # CimaNow Watch Page Decryption Handover & Cheatsheet
 
-> **⚠️⚠️ CURRENT IMPLEMENTATION (2026-07-29, later the same day) — WE NO LONGER DECRYPT.**
+> **⚠️⚠️ CURRENT IMPLEMENTATION (2026-07-30, WORKING) — WE NO LONGER DECRYPT.**
 >
-> `loadLinks` → `resolveViaFullscreenSurf`. The watch page is **surfed by the user in an ordinary
-> fullscreen WebView**, and we read the stream URL off the network. Nothing is injected: no
-> `addJavascriptInterface`, no `evaluateJavascript`, no reader script, no fingerprint spoof, no
-> ad-block CSS/JS, no auto-clicking. The page's own decryptor runs in an environment it has no reason
-> to reject, because there is nothing in it to find.
+> Read “WHAT MADE IT WORK” below before changing anything in this flow.
+>
+> `loadLinks` → `resolveViaFullscreenSurf`. The watch page is **shown to the user in a fullscreen
+> WebView**; they pick a server and press play, and we read the stream URL off the network. **We no
+> longer try to read the decrypted server list at all** — no reader script, no exfil channel, no DOM
+> scraping, and — as of 2026-07-30 — **not even `SPOOFING_JS`**, which turned out to be the last thing
+> giving us away. The only JS we still run is the `title`/`bodyLength` diagnostic pair in
+> `onPageFinished`, after the page has already decided about us.
 >
 > Why this replaces the sandbox: every entry in §0.1 fails for the same structural reason — the gate
 > inspects **its own environment**, not its input. Any hook, bridge, marker or `evaluateJavascript`
 > read is on the page's side of the boundary and therefore visible. `shouldInterceptRequest` is on
 > **our** side and is not observable from the document at all. So we stopped fighting for the
-> decrypted server list and just took the stream.
+> decrypted server list and took the stream instead. The gate can win its own argument; the video
+> still has to travel over the wire.
 >
-> **The three load-bearing pieces:**
-> 1. **Start point = the tokenised `/watching/?token=…` link from `get-link.php`.** The token is
->    minted per request behind the site's ~11s countdown. The chain still runs headlessly
->    (`navigateToTimerPageViaHttp` → `NavigationEngine` with `LoadHtml` +
->    **`NavigationStep.WaitForWatchingUrl`**), but that new step *waits for the interception and
->    stops* — it deliberately does **not** navigate, so the surf WebView is the token's first and only
->    consumer. Do not swap it back to `NavigateToWatchingUrl`.
-> 2. **`Referer` = the freex blog-post page** (`TIMER_PAGE_URL`). Unchanged from §0.1 rule 5: without
->    it the gate runs `location.replace('/home')`.
-> 3. **Real input, via `TvMouseController`.** The user (or a D-pad remote) clicks the server and play
->    button; the controller dispatches real `MotionEvent`s, so the page sees `isTrusted === true`
->    touches. Injected `element.click()` is both forbidden here and self-defeating.
+> **It is the sandbox flow's navigation, unchanged, with `Mode.FULLSCREEN` instead of `HEADLESS`.**
+> That is the whole design, and it is not an aesthetic choice — see §0.1 rule 16 for what happens when
+> you open the watch link in a WebView of your own instead.
 >
-> **Files:** `shared/.../webview/SurfSnifferEngine.kt` (the engine — read its class doc),
-> `ProviderHttpService.surfForVideo()` (gateway entry: session UA + cookies in, surf cookies back
-> out), `CimaNowProvider.resolveViaFullscreenSurf()` / `buildSurfLink()` (captured request headers →
-> `ExtractorLink` for ExoPlayer; the request's own `Referer`/`Origin`/cookies are kept because
-> tokenised CDNs check them).
+> **The load-bearing pieces:**
+> 1. **Same engine, same interceptor, same headers.** What makes `/watching/` render at all is
+>    `NavigationEngine.shouldInterceptRequest` re-issuing the main frame through `HttpURLConnection`
+>    with **real-Chrome `sec-ch-ua`** (not `"Android WebView"`), an emptied `X-Requested-With`, the
+>    CookieManager cookies and the original `Referer`. Reaching the page and watching the page must be
+>    the same WebView for that reason.
+> 2. **Steps 0–1 are the sandbox flow verbatim:** `LoadHtml(timerHtml, TIMER_PAGE_URL,
+>    REDIRECTING_PAGE_URL)` then `NavigateToWatchingUrl` — the countdown mints the token, the
+>    interceptor captures it, the engine navigates with the blog-post page as `Referer` (§0.1 rule 5:
+>    without it the gate runs `location.replace('/home')`).
+> 3. **Step 2 is the only addition:** `NavigationStep.WaitForCapturedVideo` holds the visible session
+>    open while the user picks a server and presses play, then ends `graceMs` after the first stream so
+>    the HLS variants (which carry the per-quality tokens) land too. Segments are ignored as an exit
+>    trigger — a `.ts` proves playback started but plays nothing on its own.
+> 4. **`destinationLockPatterns = /(watch|watching)/`**, same as before, and it earns its keep here:
+>    once on `/watching/` every main-frame navigation is refused silently, so the ad redirects a stray
+>    tap fires cannot steal the screen. Servers switch by AJAX into an iframe, so nothing legitimate
+>    needs a main-frame nav.
+> 5. **Real input, via `TvMouseController`** (now attached to `NavigationEngine`'s fullscreen dialog).
+>    The user or a D-pad remote clicks the server and play button and the controller dispatches real
+>    `MotionEvent`s, so the page sees `isTrusted === true` touches. An injected `element.click()` is
+>    both forbidden here and self-defeating. Back walks the history before it closes the dialog.
+>
+> **Files:** `NavigationEngine` (`WaitForCapturedVideo` handler, `capturedVideoRequests`, the mouse in
+> `createDialog`), `CimaNowProvider.resolveViaFullscreenSurf()` / `buildSurfLink()` (captured request
+> headers → `ExtractorLink` for ExoPlayer; the request's own `Referer`/`Origin`/cookies are kept
+> because tokenised CDNs check them).
+>
+> ## 2026-07-30 — WHAT MADE IT WORK
+>
+> Two changes ended a ~40-commit arms race. Both are subtractions.
+>
+> ### 1. Stop injecting `SPOOFING_JS` — this is what killed the decoy
+>
+> First fullscreen run: the chain worked, `/watching/` loaded in full (`bodyLength=4249217` against a
+> 4,249,170-char raw HTML) and the screen was **blank white**. `bodyLen - htmlLen == 47` — the
+> decryptor's decoy `<div id="watch"></div><div id="download"></div>`. We were flagged, not broken.
+> The viewport was real and fullscreen, so the size check was not it; what remained in the page was
+> **our own** `NavigationEngine.SPOOFING_JS`, injected at `onPageStarted` ahead of every page script,
+> defining `window.DisableDevtool` and reporting `navigator.plugins == [1,2,3,4,5]` where Android
+> Chrome reports an empty `PluginArray`. §0.1 rules 6–7, written by our own hand, in Kotlin instead of
+> in an injected reader.
+>
+> `execute(injectSpoofingJs = false)` and the very next run:
+>
+> | | before | after |
+> |---|---|---|
+> | `bodyLength` | 4,249,217 | 4,637,677 |
+> | `bodyLen - htmlLen` | **47** (decoy) | **+383,720** (real server list) |
+> | screen | blank white | the page, with servers |
+>
+> **The anti-bot was never beaten. It was stopped from having anything to find.** Every earlier
+> approach added something to the page and then tried to hide it; this one removes the last thing we
+> were adding. If the decoy ever returns, look first for something new in the page context — not for a
+> decryption bug.
+>
+> Supporting change from the same log: the re-issued request no longer sends `X-Requested-With` **at
+> all**. Setting it to `""` (to mask the package name WebView leaks) emitted `x-requested-with=` with
+> an empty value — a header no real Chrome sends, i.e. the mask *was* the signature. Our own
+> `HttpURLConnection` never adds it.
+>
+> ### 2. Honour `window.open` — this is what stopped the "allow the ads" modal
+>
+> With the page finally rendering, clicking play or switching server produced a SweetAlert2 modal
+> demanding the user allow ads, and refused to do either. Nothing was blocking ads:
+> `pagead2.googlesyndication.com`, `tpc.googlesyndication.com` and `fundingchoicesmessages.google.com`
+> all loaded fine. What was missing was the **window**. The page loads an Adcash "iclick" popunder
+> (`luugy.com/5/…?oo=1&js_build=iclick-…`) and gates playback on it, and `onCreateWindow` used to
+> `return true` **without** filling `resultMsg`'s `WebView.WebViewTransport` — which does not allow a
+> popup, it silently drops it, so `window.open()` evaluates to `null` and the page concludes the user
+> is blocking ads.
+>
+> Now `onCreateWindow` hands over a detached sink WebView that answers every request with an empty
+> body: the page gets a live window whose `closed` stays false, no ad content is ever fetched, nothing
+> is shown, the main frame is untouched, and the sinks are destroyed with the session. **Returning
+> `true` from `onCreateWindow` is not "allow popups" — filling the transport is.**
+>
+> ### 3. Filter sniffer captures by rejection, never by recognition
+>
+> The same run captured four VK streams and produced **zero** links. VK serves its ladder from
+> `https://vk6-3.vkuser.net/?expires=…&type=1&…` — no extension, no `/hls/` path, nothing to
+> recognise — so `VideoUrlClassifier.isVideoUrl()` is false for it and the filter discarded exactly
+> the streams only a sniffer could have found. Symptom in the log: five `🎬 CAPTURED VIDEO URL` lines
+> and no `Video captured — collecting variants` line.
+>
+> Captures now go through `VideoUrlClassifier.isPlayableCapture()`, which *rejects* (segments,
+> thumbnails, trackers, DASH) instead of *recognising*. The sniffer already decided it was media; the
+> filter's only job is to drop what cannot be played. Two corollaries: `iv.okcdn.ru/getVideoPreview…`
+> is a JPEG on the stream's own host and is now excluded at capture time (`isPreviewAsset`), and VK
+> quality comes from `type=N` (`vkQuality()`), since one server delivers the whole ladder at once and
+> the URLs contain no resolution.
+>
+> ### Diagnostics to read first, in this order
+>
+> 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
+> 2. `onPageFinished` verdict — **`🚩 DECOY SERVED`** (delta 47) / "wrote nothing" (<200) / `Decryptor
+>    produced content (delta=…)`. A blank screen and a decryption failure are indistinguishable
+>    without this line.
+> 3. `Popup honoured into a blank sink window` — the ad gate will not fire.
+> 4. `🎬 CAPTURED VIDEO URL` followed by `Video captured — collecting variants`. Captures without that
+>    second line mean the filter is eating them.
+>
+> **Still unproven, for the record:** whether `navigator.userAgentData.brands` (which reports
+> `"Android WebView"` regardless of `userAgentString` and the spoofed `sec-ch-ua` headers) matters. It
+> did not need to be touched. Do not pre-emptively spoof it — that would be adding something to the
+> page again.
 >
 > **Reverting:** `USE_FULLSCREEN_SURF = false` in `CimaNowProvider` restores the sandbox path below,
 > which is left fully intact.
@@ -110,6 +206,10 @@ day. If you are about to do something on this list, the answer is already known.
 | 13 | **Trust the console channel alone** | 2026-07-29. That same offset-0 script begins `!function(){try{for(var o=["lo…` — iterating what is almost certainly console method names. `console.log.bind(console)` only captures the genuine function if the reader runs **first**. Keep the second (title) channel. |
 | 14 | **Chase subresource / MIME failures** | 2026-07-29. The sandbox deliberately serves no subresources, so jQuery, `owl.carousel`, the rotating-name anti-bot script and `animate.css` all come back as `text/html` and Chrome refuses them, giving `$ is not defined`. **Decryption works anyway** (`li=6` captured). This is noise, not a cause — do not spend time on it. |
 | 15 | Add an Upnshare extractor | 2026-07-29. It was the one server that reliably burned its full 20s budget and returned nothing. Removed. When no extractor claims an iframe the sniffer takes over, so there is nothing to gain. |
+| 16 | **Open the watch link in a WebView you built yourself** | 2026-07-29, and this one cost a full round trip. The token chain worked and the tokenised link was captured, but a fresh `WebView` pointed at it finished loading in **377 ms** and produced nothing at all — no video request, no console output. A hand-built WebView sends `sec-ch-ua: "…Android WebView";v="150"` (visible in the log3 request dumps) and cimanow bounces it. The page only renders because `NavigationEngine`'s interceptor re-issues the main frame through `HttpURLConnection` with real-Chrome `sec-ch-ua`, an emptied `X-Requested-With`, CookieManager cookies and the original Referer. **Reaching the page and watching it must be the same WebView.** Corollary: `Mode.FULLSCREEN` on the existing flow, not a new engine. |
+| 17 | **Inject `SPOOFING_JS` (or anything else) into the watch page** | 2026-07-30, and this is *the* one. It defines `window.DisableDevtool` and claims `navigator.plugins == [1,2,3,4,5]` where Android Chrome reports an empty `PluginArray`, injected at `onPageStarted` ahead of every page script. With it: decoy (delta 47), blank white screen. Without it: `delta=+383,720`, the real server list. Pass `execute(injectSpoofingJs = false)`. Generalise: the page is not fooled by better disguises, it is defeated by an empty room. |
+| 18 | **`return true` from `onCreateWindow` and call it popup support** | 2026-07-30. Without filling `resultMsg`'s `WebView.WebViewTransport` and calling `sendToTarget()`, no window is created and `window.open()` returns `null`. The page runs an Adcash "iclick" popunder (`luugy.com/5/…?oo=1`), gates play/server-switch on it, and shows a SweetAlert2 "allow the ads" modal when it comes back null. Ads themselves were loading fine the whole time. Hand over a blank sink WebView instead. |
+| 19 | **Filter sniffer captures with `VideoUrlClassifier.isVideoUrl()`** | 2026-07-30. VK streams from `vk6-3.vkuser.net/?…&type=1&…` — no extension, no `/hls/` — so a *recognition* filter drops the very streams a sniffer exists to find (four captured, zero links, no `Video captured` line in the log). Use `isPlayableCapture()`, which rejects segments/thumbnails/trackers/DASH and passes everything else. |
 
 ### 0.2 Always do these
 
