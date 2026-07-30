@@ -317,6 +317,40 @@
 > page-side condition is unclear, read the page instead of inferring from packets. The script that
 > raises it can be dumped without touching the page — see the `📜 SCRIPT DUMP` line.
 >
+> ### 10. A prefetch looks exactly like an iframe — 728 "embeds" in one run
+>
+> Server switching worked, then the surf window closed and left a black screen spinning for 30 s+ before
+> failing. Cause: `Step 2: Done | embeds=728`. Parsing every subframe request in that log:
+>
+> | | count | what it was |
+> |---|---|---|
+> | `Sec-Purpose: prefetch` | **208** | Chromium speculation-rules prefetches of static assets (`s5.teraboxcdn.com/fe-opera-static/…`) |
+> | `Upgrade-Insecure-Requests: 1`, no `Sec-Purpose` | **1** | `uqload.is/embed-….html` — the real embed |
+>
+> `Accept: text/html` does not identify a document: a prefetch sends the full navigation-style Accept.
+> The test is now `Sec-Fetch-Dest: iframe|document`, or `Accept: text/html` **plus
+> `Upgrade-Insecure-Requests`** (navigations only), and never with `Sec-Purpose` (prefetch/prerender) or
+> `X-Requested-With: XMLHttpRequest`. On that log it yields exactly 1 embed instead of 728.
+>
+> Three consequences fixed with it:
+> - **728 captures meant 728 extra HTTP requests**, since `fetchEmbedDocument` runs per capture. Beyond
+>   waste, re-issuing a request we have not established to be a document can repeat a side-effecting
+>   call. Now gated behind the navigation test and capped at `MAX_CAPTURED_EMBEDS = 12`.
+> - **The resolution phase needs its own bound.** A per-embed timeout is not one: 307 embeds × up to 12 s
+>   ran from 13:39:35 past the end of the log. Now newest-first, `MAX_EMBEDS_TO_RESOLVE = 6`, whole phase
+>   capped by `EMBED_PHASE_BUDGET_MS = 25 s`.
+> - **uqload was captured and still produced nothing** (`html=10214`, no link). Two independent causes:
+>   its sources live inside a Dean Edwards `eval(function(p,a,c,k,e,d){…})` block, so scanning for
+>   `.mp4`/`.m3u8` finds nothing — `VideoUrlClassifier.unpackJs()` now expands those before the scan,
+>   which is a generic win since many hosts pack the same way. And `loadExtractor` has no match for
+>   `uqload.is` — **wrong, and worth recording as a wrong diagnosis.** `UqloadIs : Uqload()` with
+>   `mainUrl = "https://uqload.is"` has existed in `SharedExtractors.kt` all along. The real reason was
+>   that **`CimaNowPlugin` never called `registerSharedExtractors()`** — 19 other provider plugins do —
+>   so inside this plugin `loadExtractor` saw an empty registry and *every* server fell through to the
+>   sniffed stream: uqload, GoVid, Vidmoly, EarnVids, Byse, Savefiles, Videa, Mailru, the Sniffer itself.
+>   One line in the plugin, and the whole extractor layer came back. The unpacker is still worth having
+>   (it makes the captured-HTML path work without any extractor), but it was treating a symptom.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -421,6 +455,8 @@ day. If you are about to do something on this list, the answer is already known.
 | 21 | **Treat an embed capture as proof that the server works** | 2026-07-30. A captured iframe proves an iframe was inserted, nothing more. A VK embed that was VK's *error page* (`video_embed_error`, `cry_dog.png`) ended the surf with `totalStreamCaptures=0`, closed the window before the user could pick another server, then burned 49 s in `VKVideoEmbed`'s headless-sniffer fallback and failed. Exit on a **stream**; use the embed for quality. |
 | 22 | **Re-request an embed page the WebView already loaded** | 2026-07-30. `video_ext.php` rate-limits the second caller (10 s stall to timeout), and its WebView fallback loads the embed as a *top-level document* — not an iframe — so VK answers `video_embed_error` regardless. Capture the HTML in flight (`fetchEmbedDocument`) and parse that (`getUrlFromHtml`). A second request is not the same request. |
 | 23 | **Guess at a page-side gate from network traffic** | 2026-07-30, twice, before the decrypted page settled it in minutes. `luugy.com/ct?rb=…` re-firing looked like the ad network waiting for the popunder to load; it fires identically when the ad *has* loaded — a heartbeat. The real check was a **dwell test** (`window.open` must survive 800 ms; on mobile the first `touchstart`/`mousemove`/`visibilitychange` decides) plus a SweetAlert saying so in Arabic. Read the page (`test/gate.js`, or the `📜 SCRIPT DUMP`); do not infer from packets. |
+| 24 | **Identify an iframe by `Accept: text/html`** | 2026-07-30. A Chromium speculation-rules **prefetch** sends the same navigation-style Accept: 208 of 209 candidates in one run were prefetched static assets, giving `embeds=728`, 728 needless re-fetches, and a 30 s+ black screen in the resolution loop. Require `Sec-Fetch-Dest: iframe\|document`, or `Accept: text/html` **with `Upgrade-Insecure-Requests`**; reject `Sec-Purpose` and `X-Requested-With: XMLHttpRequest`. Bound the phase too — a per-item timeout is not a phase budget. |
+| 25 | **Assume a missing extractor means the extractor does not exist** | 2026-07-30. uqload produced no links and the conclusion was "CloudStream has no extractor for uqload.is". `UqloadIs` (mainUrl `https://uqload.is`) was already in `SharedExtractors.kt`; **`CimaNowPlugin` simply never called `registerSharedExtractors()`**, so `loadExtractor` had an empty registry and every server fell through to the sniffed stream. Check the plugin's registration before blaming the extractor. |
 
 ### 0.2 Always do these
 

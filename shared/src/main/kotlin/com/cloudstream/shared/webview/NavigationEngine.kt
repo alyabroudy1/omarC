@@ -882,12 +882,28 @@ class NavigationEngine(
                 // does not send Sec-Fetch-Dest here (2026-07-30 log). In a whole session that test
                 // matched exactly two requests: the watch page itself and the VK embed.
                 if (!isMain) {
-                    val accept = reqHeaders.entries
-                        .firstOrNull { it.key.equals("Accept", ignoreCase = true) }?.value ?: ""
-                    val dest = reqHeaders.entries
-                        .firstOrNull { it.key.equals("Sec-Fetch-Dest", ignoreCase = true) }?.value ?: ""
-                    val isDocument = accept.contains("text/html", ignoreCase = true) ||
-                        dest.equals("iframe", ignoreCase = true)
+                    fun header(name: String) = reqHeaders.entries
+                        .firstOrNull { it.key.equals(name, ignoreCase = true) }?.value ?: ""
+
+                    val accept = header("Accept")
+                    val dest = header("Sec-Fetch-Dest")
+                    // `Accept: text/html` alone is nowhere near enough. A Chromium
+                    // speculation-rules **prefetch** sends the full navigation-style Accept, and one
+                    // 2026-07-30 run captured 728 "embeds" that way — 208 of the 209 candidates were
+                    // prefetched static assets (`s5.teraboxcdn.com/fe-opera-static/…`), burying the one
+                    // genuine embed and grinding the resolution phase for 30s+ on a black screen.
+                    //
+                    // Two headers separate them cleanly, verified against that log:
+                    //  - `Upgrade-Insecure-Requests: 1` is sent for real navigations only — it was on
+                    //    the genuine `uqload.is/embed-….html` request and on nothing else.
+                    //  - `Sec-Purpose` marks prefetch/prerender — it was on all 208 false positives.
+                    val isPrefetch = header("Sec-Purpose").isNotBlank()
+                    val isNavigation = dest.equals("iframe", ignoreCase = true) ||
+                        dest.equals("document", ignoreCase = true) ||
+                        (accept.contains("text/html", ignoreCase = true) &&
+                            header("Upgrade-Insecure-Requests").isNotBlank())
+                    val isXhr = header("X-Requested-With").contains("XMLHttpRequest", ignoreCase = true)
+                    val isDocument = isNavigation && !isPrefetch && !isXhr
                     // Any document subframe that is not the page itself is a candidate. Deliberately
                     // NOT restricted to third-party hosts: some servers embed their player from the
                     // site's own domain, and losing those would push us back onto the sniffed stream.
@@ -895,7 +911,10 @@ class NavigationEngine(
                     val notThePageItself = reqUrl.substringBefore("#") != lastPageUrl.substringBefore("#")
 
                     if (isDocument && notThePageItself && !VideoUrlClassifier.isLikelyAdFrame(reqUrl)) {
-                        if (capturedEmbedRequests.none { it.url == reqUrl }) {
+                        if (capturedEmbedRequests.size >= MAX_CAPTURED_EMBEDS) {
+                            ProviderLogger.d(TAG, "shouldInterceptRequest",
+                                "Embed list full (${MAX_CAPTURED_EMBEDS}) — not capturing ${reqUrl.take(80)}")
+                        } else if (capturedEmbedRequests.none { it.url == reqUrl }) {
                             // Serve the iframe ourselves so we can keep a copy of its HTML. The player
                             // params live in these bytes, and this is the only context in which the
                             // embed host will hand them over — see CapturedEmbedRequest.html.
@@ -2543,6 +2562,12 @@ class NavigationEngine(
 
         /** Ceiling on concurrent `window.open` sinks, so a chatty ad page cannot spawn WebViews. */
         private const val MAX_POPUP_SINKS = 4
+
+        /**
+         * Ceiling on captured embeds. One per server the user tries is the real rate; anything beyond
+         * this is a detection bug, and each capture costs a document fetch — 728 of them once.
+         */
+        private const val MAX_CAPTURED_EMBEDS = 12
 
         /** How long a loading popup sink lives before being destroyed (loadPopupsInSink mode only). */
         private const val POPUP_SINK_TTL_MS = 15_000L

@@ -88,6 +88,18 @@ class CimaNowProvider : BaseProvider() {
      */
     private val EMBED_RESOLVE_TIMEOUT_MS = 12_000L
 
+    /**
+     * How many embeds to resolve, newest first.
+     *
+     * A per-embed timeout is not a bound on the phase: 307 embeds at up to 12 s each is what left a
+     * black screen up for 30 s+ (2026-07-30). One embed per server the user actually tried is the real
+     * rate, and the newest is the one they are waiting on.
+     */
+    private val MAX_EMBEDS_TO_RESOLVE = 6
+
+    /** Ceiling for the whole embed-resolution phase, which runs with the surf window already closed. */
+    private val EMBED_PHASE_BUDGET_MS = 25_000L
+
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -520,9 +532,24 @@ class CimaNowProvider : BaseProvider() {
             }
 
             // Most recent first: the last iframe the page inserted is the server the user just picked,
-            // and the earlier ones may be from a server they had already given up on.
-            val embeds = navResult.capturedEmbedRequests.distinctBy { it.url }.reversed()
+            // and the earlier ones may be from a server they had already given up on. Capped and
+            // time-boxed because this phase runs with the surf window already closed — a 307-embed loop
+            // at up to 12 s each is what put a black screen in front of the user for 30 s+ (2026-07-30).
+            val embeds = navResult.capturedEmbedRequests
+                .distinctBy { it.url }
+                .reversed()
+                .take(MAX_EMBEDS_TO_RESOLVE)
+            val phaseDeadline = System.currentTimeMillis() + EMBED_PHASE_BUDGET_MS
+            if (navResult.capturedEmbedRequests.size > embeds.size) {
+                Log.i(TAG_SURF, "Resolving the ${embeds.size} newest of " +
+                    "${navResult.capturedEmbedRequests.size} embed(s)")
+            }
             for (embed in embeds) {
+                if (System.currentTimeMillis() > phaseDeadline) {
+                    Log.w(TAG_SURF, "⏱ Embed phase budget (${EMBED_PHASE_BUDGET_MS}ms) spent — " +
+                        "stopping with found=$found")
+                    break
+                }
                 val serverName = try {
                     java.net.URI(embed.url).host ?: "Surf"
                 } catch (_: Exception) { "Surf" }
@@ -634,9 +661,23 @@ class CimaNowProvider : BaseProvider() {
             }
         }
 
-        // Generic: direct media URLs written into the embed page. Escaped slashes are unescaped first
-        // because these pages carry their sources inside JSON (`"file":"https:\/\/…m3u8"`).
-        val unescaped = html.replace("\\/", "/").replace("\\u0026", "&").replace("&amp;", "&")
+        // Generic: direct media URLs written into the embed page.
+        //
+        // Unpack first: uqload and a whole family of hosts keep their sources inside a Dean Edwards
+        // `eval(function(p,a,c,k,e,d){…})` block, where the URL exists only as dictionary indices. The
+        // uqload embed was captured intact (10,214 chars) and still produced nothing for exactly this
+        // reason (2026-07-30). Then unescape, because what survives is usually JSON
+        // (`"file":"https:\/\/…m3u8"`).
+        val unpacked = try {
+            VideoUrlClassifier.unpackJs(html)
+        } catch (e: Exception) {
+            Log.w(TAG_EH, "unpackJs failed, scanning raw: ${e.message}")
+            html
+        }
+        if (unpacked.length != html.length) {
+            Log.i(TAG_EH, "Unpacked packed script(s): ${html.length} → ${unpacked.length} chars")
+        }
+        val unescaped = unpacked.replace("\\/", "/").replace("\\u0026", "&").replace("&amp;", "&")
         val urls = Regex("""https?://[^"'\s\\<>]+\.(?:m3u8|mp4)[^"'\s\\<>]*""")
             .findAll(unescaped)
             .map { it.value }

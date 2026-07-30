@@ -168,6 +168,43 @@ object VideoUrlClassifier {
         return AD_FRAME_HOSTS.any { lower.contains(it) }
     }
 
+    /**
+     * Expands Dean Edwards' `eval(function(p,a,c,k,e,d){…})` packer, which is how a large family of
+     * embed hosts hides its source URLs.
+     *
+     * Needed because scanning an embed page for `.mp4`/`.m3u8` finds nothing when the URLs only exist
+     * as dictionary indices: uqload's `embed-….html` was captured intact (10,214 chars) and still
+     * yielded no link (2026-07-30). Unpacking is a fixed, well-known transform — decode `p` by
+     * replacing each base-`a` word index with `k[index]` — so this is not host-specific.
+     *
+     * Returns the original text with every packed block replaced by its expansion, so a caller can
+     * simply scan the result. Blocks that do not parse are left alone.
+     */
+    fun unpackJs(source: String): String {
+        val packed = Regex(
+            """eval\(function\(p,a,c,k,e,[dr]\)\{.*?\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
+        var out = source
+        for (m in packed.findAll(source)) {
+            try {
+                val payload = m.groupValues[1]
+                    .replace("\\'", "'").replace("\\\\", "\\")
+                val radix = m.groupValues[2].toInt()
+                val words = m.groupValues[4].split("|")
+                if (radix < 2 || radix > 36) continue
+                val expanded = Regex("""\b\w+\b""").replace(payload) { token ->
+                    val idx = token.value.toIntOrNull(radix) ?: return@replace token.value
+                    words.getOrNull(idx)?.takeIf { it.isNotEmpty() } ?: token.value
+                }
+                out = out.replace(m.value, expanded)
+            } catch (_: Exception) {
+                // Leave the block as-is; a failed unpack must never lose the original text.
+            }
+        }
+        return out
+    }
+
     /** Markers that identify a quality-specific (variant) playlist rather than a master. */
     private val QUALITY_MARKERS = listOf(
         "2160", "1440", "1080", "720", "480", "360", "240", "144",
