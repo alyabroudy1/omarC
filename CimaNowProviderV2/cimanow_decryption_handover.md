@@ -409,6 +409,29 @@
 > for injection sites before believing the claim — `Serving cimanow.cc main-frame verbatim` is the line
 > that proves it now.
 >
+> ### 13. The rewrite and the hook are two things — disable only the hook
+>
+> §12 turned off `rewriteDocumentWrite`, which controlled **both** the HTML rewrite and the
+> `ANTI_ANTI_BOT_JS` injection. The decoy went away and a new failure took its place: tapping a second
+> watch server produced a blank page with **no navigation and no network activity at all** — the 634-line
+> log has one `onPageStarted`, no `REDIRECT DETECTED`, and nothing between the click and the dismissal
+> but `luugy.com/ct` pings. Nothing loaded a blank page; the document wiped itself.
+>
+> Cause: with the payload served verbatim, its own `document.write('<script src=…')` calls run natively,
+> and a `document.write` after load implicitly `document.open()`s — clearing the document. That is
+> exactly what the rewrite existed to prevent ("bypass Chrome's cross-origin document.write
+> intervention"). Only the **injection** wraps `document.write`; the rewrite just edits bytes and leaves
+> the function native, so it never violated rule 3.
+>
+> Now split: `rewriteDocumentWrite = true`, `injectDocumentWriteHook = false`. Confirm with
+> `Rewrote N document.write call(s) into direct tags; hook NOT injected` — and if `[CW]` ever reappears
+> in a log, the hook is back and the decoy will follow.
+>
+> Same run, separate bug: the 2-second white flash after tapping a server was **`dipPageVisibility`
+> hiding the WebView over a white dialog background**. `createDialog` painted its container white; it is
+> black now (as `VideoSnifferEngine`'s already was) and the dwell is 900 ms rather than 1200, since the
+> gate's threshold is 800.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -516,6 +539,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 24 | **Identify an iframe by `Accept: text/html`** | 2026-07-30. A Chromium speculation-rules **prefetch** sends the same navigation-style Accept: 208 of 209 candidates in one run were prefetched static assets, giving `embeds=728`, 728 needless re-fetches, and a 30 s+ black screen in the resolution loop. Require `Sec-Fetch-Dest: iframe\|document`, or `Accept: text/html` **with `Upgrade-Insecure-Requests`**; reject `Sec-Purpose` and `X-Requested-With: XMLHttpRequest`. Bound the phase too — a per-item timeout is not a phase budget. |
 | 25 | **Assume a missing extractor means the extractor does not exist** | 2026-07-30. uqload produced no links and the conclusion was "CloudStream has no extractor for uqload.is". `UqloadIs` (mainUrl `https://uqload.is`) was already in `SharedExtractors.kt`; **`CimaNowPlugin` simply never called `registerSharedExtractors()`**, so `loadExtractor` had an empty registry and every server fell through to the sniffed stream. Check the plugin's registration before blaming the extractor. |
 | 26 | **Believe "we inject nothing" without grepping every injection site** | 2026-07-30. `SPOOFING_JS` was switched off (§1) and the flow declared clean, while the interceptor still injected `ANTI_ANTI_BOT_JS` — the `document.write` wrapper of rule 3 — on any title whose payload contained `document.write('<script src=…')`. Dormant on the titles tested, fatal on the rest: white page, `delta=-49`, `[CW] document.write hook active` in our own log. Serve the main frame verbatim (`rewriteDocumentWrite = false`). |
+| 27 | **Disable a flag that controls two behaviours** | 2026-07-30. `rewriteDocumentWrite` gated both the HTML rewrite (harmless — edits bytes, `document.write` stays native) and the `ANTI_ANTI_BOT_JS` injection (rule 3). Killing both cured the decoy and caused a blank page on the next server click, because the payload's own post-load `document.write` then wiped the document. Split them: rewrite on, hook off. |
 
 ### 0.2 Always do these
 

@@ -156,7 +156,20 @@ class NavigationEngine(
          * only fires when the payload actually contains `document.write('<script…')` calls, so it was
          * dormant on the titles we tested and fatal on the ones we did not.
          */
-        rewriteDocumentWrite: Boolean = true
+        rewriteDocumentWrite: Boolean = true,
+        /**
+         * Inject `ANTI_ANTI_BOT_JS` (the `document.write` wrapper) alongside the rewrite.
+         *
+         * **This is the half that violates §0.1 rule 3** and must be false for CimaNow. Kept separate
+         * from [rewriteDocumentWrite] because the two were bundled and then disabled together
+         * (2026-07-30), which fixed the decoy and immediately caused a new failure: with the rewrite
+         * off, the page's own `document.write('<script src=…')` calls run natively, and one firing
+         * *after* load implicitly `document.open()`s and wipes the document — a blank page with no
+         * navigation and no network activity, which is what a second server click produced.
+         *
+         * The rewrite alone leaves `document.write` native; only this flag hooks it.
+         */
+        injectDocumentWriteHook: Boolean = true
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -218,7 +231,7 @@ class NavigationEngine(
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
-                    rewriteDocumentWrite)
+                    rewriteDocumentWrite, injectDocumentWriteHook)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -813,7 +826,8 @@ class NavigationEngine(
         injectSpoofingJs: Boolean = true,
         loadPopupsInSink: Boolean = false,
         captureEmbeds: Boolean = false,
-        rewriteDocumentWrite: Boolean = true
+        rewriteDocumentWrite: Boolean = true,
+        injectDocumentWriteHook: Boolean = true
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -1231,7 +1245,12 @@ class NavigationEngine(
                                 // moments later. Being flagged there would explain a decoy that no
                                 // change inside the sandbox can shift.
                                 val total = scriptCount + linkCount
-                                val injected = if (total > 0) {
+                                val injected = if (total > 0 && !injectDocumentWriteHook) {
+                                    ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                        "Rewrote $total document.write call(s) into direct tags; " +
+                                            "hook NOT injected (document.write stays native)")
+                                    rewritten
+                                } else if (total > 0) {
                                     val antiBotTag = "<script>$ANTI_ANTI_BOT_JS</script>"
                                     ProviderLogger.w(TAG, "shouldInterceptRequest",
                                         "Injected document.write interceptor for cimanow.cc main-frame " +
@@ -2477,7 +2496,12 @@ class NavigationEngine(
 
     private fun createDialog(activity: android.app.Activity, webView: WebView): android.app.Dialog {
         val container = android.widget.FrameLayout(activity).apply {
-            setBackgroundColor(android.graphics.Color.WHITE)
+            // Black, not white. This is what shows through whenever the WebView is not painting —
+            // during load, and for the 900 ms `dipPageVisibility` hides it after a popup. On white that
+            // reads as "the page navigated away to a blank page" (reported 2026-07-30 as exactly that);
+            // on black it reads as a video app between frames. VideoSnifferEngine's dialog is already
+            // black for the same reason.
+            setBackgroundColor(android.graphics.Color.BLACK)
             layoutParams = android.view.ViewGroup.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -2658,10 +2682,11 @@ class NavigationEngine(
         /**
          * How long the page is hidden after it opens a popup — see [dipPageVisibility].
          *
-         * Must exceed the gate's own threshold, which is `0x320` = 800 ms in the decrypted page. 1.2 s
-         * leaves margin without a noticeable pause.
+         * Must exceed the gate's own threshold, which is `0x320` = 800 ms in the decrypted page. Kept as
+         * close to it as is safe: the user sees the dialog background for this whole window, and 1.2 s of
+         * it was reported as the page having navigated away.
          */
-        private const val POPUNDER_DWELL_MS = 1_200L
+        private const val POPUNDER_DWELL_MS = 900L
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:

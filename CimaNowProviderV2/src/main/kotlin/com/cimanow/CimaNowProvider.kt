@@ -522,7 +522,16 @@ class CimaNowProvider : BaseProvider() {
                 // why some titles played and others rendered white with `delta=-49` and our own
                 // `[CW] document.write hook active` in the log. The surf flow scrapes no DOM, so the
                 // rewrite buys nothing and the hook costs everything.
-                rewriteDocumentWrite = false
+                // Rewrite YES, hook NO — the two are separate and only the hook is forbidden.
+                //
+                // Turning both off (2026-07-30) cured the decoy and immediately broke something else:
+                // with the payload served verbatim, its own `document.write('<script src=…')` calls run
+                // natively, and one firing after load wipes the document — a blank page on the second
+                // server click with no navigation and no network activity anywhere in the log. The
+                // rewrite turns those into plain tags before the page ever runs them, and leaves
+                // `document.write` itself untouched, so rule 3 still holds.
+                rewriteDocumentWrite = true,
+                injectDocumentWriteHook = false
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
