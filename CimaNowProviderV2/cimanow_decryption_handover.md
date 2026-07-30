@@ -101,10 +101,11 @@
 > popup, it silently drops it, so `window.open()` evaluates to `null` and the page concludes the user
 > is blocking ads.
 >
-> Now `onCreateWindow` hands over a detached sink WebView that answers every request with an empty
-> body: the page gets a live window whose `closed` stays false, no ad content is ever fetched, nothing
-> is shown, the main frame is untouched, and the sinks are destroyed with the session. **Returning
-> `true` from `onCreateWindow` is not "allow popups" — filling the transport is.**
+> Now `onCreateWindow` hands over a detached sink WebView: the page gets a live window whose `closed`
+> stays false, nothing is shown, the main frame is untouched, and the sinks are destroyed with the
+> session. **Returning `true` from `onCreateWindow` is not "allow popups" — filling the transport is.**
+> (Whether that sink stays blank or actually loads the ad is a per-provider choice — see §8; CimaNow
+> needs it to load.)
 >
 > ### 3. Filter sniffer captures by rejection, never by recognition
 >
@@ -244,6 +245,37 @@
 > **The rule this establishes:** if the WebView has already fetched something we need, capture it in
 > flight. A second request is not the same request — different context, different rate-limit budget,
 > and on an embed-only endpoint a different answer.
+>
+> ### 8. The popunder has to actually load — `window.open() != null` is only half the gate
+>
+> The blank sink from §2 killed the "allow the ads" modal, but a second modal appeared on every server
+> click: *"please allow redirection and popups to watch"*. The log (2026-07-30, 11:40) shows why:
+>
+> ```
+> 11:40:19.574  Popup honoured into a blank sink window | sinks=1, isUserGesture=false   ← auto popunder
+> 11:40:19.584  [popupSink] Swallowed popup navigation | luugy.com/?rb=e9Lhdf…
+> 11:40:20.294  Popup honoured into a blank sink window | sinks=2, isUserGesture=true    ← the user's click
+> 11:40:20.301  [popupSink] Swallowed popup navigation | viiukuhe.com/dc/?blockID=420548&tb=cimanow.cc
+> 11:40:20.772  luugy.com/ct?rb=e9Lhdf…      ← ×12, same rb token, retrying
+> ```
+>
+> `/ct` is the network's conversion ping and it re-fires until the popunder really loads. A live-but-blank
+> window satisfies `window.open() != null` and nothing further. Note also that the second popup has
+> `isUserGesture=true` — the site wires **server switching itself** to an ad open, which is why the modal
+> only appeared on a click. And there were **zero** main-frame navigation attempts in the log (no
+> `REDIRECT DETECTED`, no `DESTINATION LOCK BLOCK`), so "redirection" is the ad network's stock wording,
+> not our destination lock.
+>
+> `execute(loadPopupsInSink = true)` now lets the popunder load for real in a hidden, detached WebView.
+> **Opt-in per provider, off everywhere else** — CimaNow's call site is the only `true` in the repo,
+> because the cost is real: the ad genuinely loads, with real requests and a real impression, in a
+> WebView the user never sees. Contained by `MAX_POPUP_SINKS = 4`, `POPUP_SINK_TTL_MS = 15 s`, refusal of
+> nested popups, and http(s) only — an `intent://` from an ad would otherwise throw the user out of the
+> app. Nothing it loads can reach the main frame.
+>
+> If the modal persists, check `Loading popup for real (hidden)` appears and whether `/ct` stops
+> retrying; if `/ct` still repeats, the network wants something more than a load (a dwell, or a click)
+> and the honest options narrow to living with the modal.
 >
 > ### Diagnostics to read first, in this order
 >

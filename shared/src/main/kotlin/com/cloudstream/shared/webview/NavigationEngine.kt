@@ -107,7 +107,22 @@ class NavigationEngine(
          * the first thing an automation check does. It runs at `onPageStarted`, i.e. before the
          * page's own scripts, so the gate sees all of it.
          */
-        injectSpoofingJs: Boolean = true
+        injectSpoofingJs: Boolean = true,
+        /**
+         * Let `window.open` popups actually load, in a hidden throwaway WebView.
+         *
+         * **Off by default, and deliberately opt-in per provider.** With it off a popup gets a live
+         * but blank window, which satisfies a page that only checks `window.open() != null`. CimaNow
+         * needs more: its ad network re-fires a `/ct?rb=…` conversion ping until the popunder really
+         * loads, and until then the page shows a "allow redirection and popups" modal on every server
+         * click (2026-07-30: 12 retries of the same `rb` token behind the swallowed popunder).
+         *
+         * The cost is real and is why this is not the default: the ad genuinely loads, with real
+         * requests and a real impression, in a WebView the user never sees. Contained by
+         * [MAX_POPUP_SINKS], [POPUP_SINK_TTL_MS], no nested popups, and http(s) only — and nothing it
+         * loads can reach the main frame.
+         */
+        loadPopupsInSink: Boolean = false
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -167,7 +182,7 @@ class NavigationEngine(
             try {
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
-                    destinationLockPatterns, injectSpoofingJs)
+                    destinationLockPatterns, injectSpoofingJs, loadPopupsInSink)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -713,7 +728,8 @@ class NavigationEngine(
         requestInterceptor: ((WebView, WebResourceRequest) -> WebResourceResponse?)?,
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList(),
-        injectSpoofingJs: Boolean = true
+        injectSpoofingJs: Boolean = true,
+        loadPopupsInSink: Boolean = false
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -1293,38 +1309,92 @@ class NavigationEngine(
                     return false
                 }
 
+                if (popupSinks.size >= MAX_POPUP_SINKS) {
+                    ProviderLogger.w(TAG, "onCreateWindow",
+                        "Refusing popup — sink limit reached", "limit" to MAX_POPUP_SINKS)
+                    return false
+                }
+
                 return try {
                     @SuppressLint("SetJavaScriptEnabled")
                     val sink = WebView(activity).apply {
                         settings.javaScriptEnabled = true
                         settings.userAgentString = userAgent
+                        settings.domStorageEnabled = true
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(
                                 v: WebView?, req: WebResourceRequest?
                             ): Boolean {
-                                ProviderLogger.d(TAG, "popupSink", "Swallowed popup navigation",
-                                    "url" to req?.url?.toString()?.take(120))
-                                return true
+                                val scheme = req?.url?.scheme?.lowercase()
+                                // An `intent://` or `market://` from an ad would throw the user out of
+                                // the app entirely. Never follow a non-web scheme, in either mode.
+                                if (scheme != null && scheme != "http" && scheme != "https") {
+                                    ProviderLogger.w(TAG, "popupSink",
+                                        "Blocked non-web popup scheme", "scheme" to scheme)
+                                    return true
+                                }
+                                return if (loadPopupsInSink) {
+                                    ProviderLogger.d(TAG, "popupSink", "Loading popup for real (hidden)",
+                                        "url" to req?.url?.toString()?.take(120))
+                                    false
+                                } else {
+                                    ProviderLogger.d(TAG, "popupSink", "Swallowed popup navigation",
+                                        "url" to req?.url?.toString()?.take(120))
+                                    true
+                                }
                             }
 
                             override fun shouldInterceptRequest(
                                 v: WebView?, req: WebResourceRequest?
                             ): WebResourceResponse? =
-                                // Belt and braces: the window.open target itself is loaded into this
-                                // view without passing through shouldOverrideUrlLoading, so answer
-                                // everything with an empty document.
-                                WebResourceResponse(
-                                    "text/html", "utf-8",
-                                    java.io.ByteArrayInputStream(ByteArray(0))
-                                )
+                                if (loadPopupsInSink) {
+                                    // Let it fetch. This is the whole point of the mode: the ad network
+                                    // re-fires its conversion ping until the popunder actually loads.
+                                    null
+                                } else {
+                                    // Belt and braces: the window.open target itself is loaded into
+                                    // this view without passing through shouldOverrideUrlLoading, so
+                                    // answer everything with an empty document.
+                                    WebResourceResponse(
+                                        "text/html", "utf-8",
+                                        java.io.ByteArrayInputStream(ByteArray(0))
+                                    )
+                                }
+                        }
+                        // No popups from a popup. An ad landing page that opens more windows would
+                        // otherwise spawn sinks until the limit, for no benefit.
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onCreateWindow(
+                                v: WebView?, d: Boolean, g: Boolean, m: Message?
+                            ): Boolean {
+                                ProviderLogger.d(TAG, "popupSink", "Refused nested popup")
+                                return false
+                            }
                         }
                     }
                     popupSinks.add(sink)
                     transport.webView = sink
                     resultMsg.sendToTarget()
                     ProviderLogger.i(TAG, "onCreateWindow",
-                        "Popup honoured into a blank sink window", "sinks" to popupSinks.size,
-                        "isUserGesture" to isUserGesture)
+                        if (loadPopupsInSink) "Popup honoured into a hidden loading sink"
+                        else "Popup honoured into a blank sink window",
+                        "sinks" to popupSinks.size, "isUserGesture" to isUserGesture)
+
+                    if (loadPopupsInSink) {
+                        // Long enough for the ad to load and its tracker to fire, short enough that a
+                        // heavy landing page is not left running behind the player. Destroying it marks
+                        // the window `closed`, which by then nothing is still checking.
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                if (popupSinks.remove(sink)) {
+                                    sink.stopLoading()
+                                    sink.destroy()
+                                    ProviderLogger.d(TAG, "popupSink",
+                                        "Sink retired after ${POPUP_SINK_TTL_MS}ms")
+                                }
+                            } catch (_: Exception) {}
+                        }, POPUP_SINK_TTL_MS)
+                    }
                     true
                 } catch (e: Exception) {
                     ProviderLogger.w(TAG, "onCreateWindow", "Sink creation failed: ${e.message}")
@@ -2398,6 +2468,12 @@ class NavigationEngine(
 
     companion object {
         private const val TAG = "NavigationEngine"
+
+        /** Ceiling on concurrent `window.open` sinks, so a chatty ad page cannot spawn WebViews. */
+        private const val MAX_POPUP_SINKS = 4
+
+        /** How long a loading popup sink lives before being destroyed (loadPopupsInSink mode only). */
+        private const val POPUP_SINK_TTL_MS = 15_000L
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:

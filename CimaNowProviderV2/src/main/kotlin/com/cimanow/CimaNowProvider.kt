@@ -491,7 +491,16 @@ class CimaNowProvider : BaseProvider() {
                 // SPOOFING_JS, which defines window.DisableDevtool and claims
                 // navigator.plugins == [1,2,3,4,5] (Android Chrome reports an empty PluginArray).
                 // Handover §0.1 rules 6 and 7 say exactly this: do not set anything on window.
-                injectSpoofingJs = false
+                injectSpoofingJs = false,
+                // CimaNow only, and off by default for every other provider.
+                //
+                // The page gates server switching on an Adcash popunder. A blank sink satisfies
+                // `window.open() != null` — which is what killed the older "allow the ads" modal — but
+                // not the network's `/ct?rb=…` conversion ping, which re-fired 12 times against the
+                // swallowed popunder and left a "allow redirection and popups" modal on every click
+                // (2026-07-30). So here, and only here, the popunder is allowed to load for real in a
+                // WebView the user never sees.
+                loadPopupsInSink = true
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
