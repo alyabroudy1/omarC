@@ -646,6 +646,47 @@ class NavigationEngine(
      * does not include it in `requestHeaders`, and without it `video_ext.php` returns an error page),
      * real-Chrome `sec-ch-ua` in place of `"Android WebView"`, and the CookieManager cookies.
      */
+    /**
+     * Hide the page for [POPUNDER_DWELL_MS] after it opens a popup, then show it again.
+     *
+     * This is what a popunder does on a real phone: the new window takes the screen, the page goes
+     * `hidden`, and it only becomes `visible` again seconds later when the user comes back. CimaNow's
+     * watch buttons check for exactly that, and the deobfuscated handler shows how strictly (decrypted
+     * page, 2026-07-30):
+     *
+     *     win = window.open(href, "_blank");           // must exist and stay open
+     *     …
+     *     document.addEventListener("visibilitychange", …)   // mobile: first of these decides
+     *     document.addEventListener("touchstart", onReturn, {once:true})
+     *     document.addEventListener("mousemove",  onReturn)
+     *     onReturn = () => elapsed < 800 ? SweetAlert("let the ad stay open a few seconds") : ok()
+     *
+     * Our sink satisfies the window checks — it is a real WebView that lives 15 s — but it is detached
+     * and invisible, so the page never loses visibility and the next input event (Chromium's compat
+     * `mousemove` after a tap, or a second tap because nothing seemed to happen) arrives inside the
+     * 800 ms window and raises the modal. Dipping visibility for longer than the threshold makes the
+     * gate take its success path instead, and it does so through an ordinary browser signal — nothing
+     * is injected into the page, which is the constraint everything here lives under.
+     */
+    private fun dipPageVisibility(view: WebView?) {
+        val target = view ?: return
+        Handler(Looper.getMainLooper()).post {
+            try {
+                target.visibility = android.view.View.INVISIBLE
+                ProviderLogger.i(TAG, "dipPageVisibility",
+                    "Page hidden for ${POPUNDER_DWELL_MS}ms so the popunder dwell check passes")
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        target.visibility = android.view.View.VISIBLE
+                        ProviderLogger.d(TAG, "dipPageVisibility", "Page visible again")
+                    } catch (_: Exception) {}
+                }, POPUNDER_DWELL_MS)
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG, "dipPageVisibility", "Failed: ${e.message}")
+            }
+        }
+    }
+
     private fun fetchEmbedDocument(
         url: String,
         reqHeaders: Map<String, String>,
@@ -1131,6 +1172,35 @@ class NavigationEngine(
                                 }
                                 ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame")
                                 java.io.ByteArrayInputStream(injected.toByteArray(charset))
+                            } else if (isCimaDomain && path.endsWith(".js")) {
+                                // Keep a copy of the site's own scripts on disk.
+                                //
+                                // The gate/ad logic lives in a rotating-name script under the theme's
+                                // Assets/js/ (currently 0CYA6X1KhKIS.js), and reading it is the only way
+                                // to find out what raises the "allow redirection and popups" modal
+                                // without injecting anything into the page — which is forbidden here and
+                                // is what produced the decoy (§0.1 rule 17).
+                                //
+                                // It cannot be fetched from a shell: cimanow sits behind Cloudflare,
+                                // which stalls a non-browser TLS fingerprint (plain curl hangs). This
+                                // WebView session already has the fingerprint, the cookies and the
+                                // clearance, so the copy is taken here instead.
+                                val js = conn.inputStream.bufferedReader(charset).readText()
+                                try {
+                                    activityProvider()?.let { ctx ->
+                                        val name = path.substringAfterLast('/').ifBlank { "script.js" }
+                                        val dir = ctx.externalCacheDir ?: ctx.cacheDir
+                                        dir.mkdirs()
+                                        val f = java.io.File(dir, "cimanow_js_$name")
+                                        f.writeText(js)
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "📜 SCRIPT DUMP: ${f.absolutePath} (${js.length} chars)")
+                                    }
+                                } catch (e: Exception) {
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "Script dump failed: ${e.message}")
+                                }
+                                java.io.ByteArrayInputStream(js.toByteArray(charset))
                             } else {
                                 conn.inputStream
                             }
@@ -1375,6 +1445,8 @@ class NavigationEngine(
                     popupSinks.add(sink)
                     transport.webView = sink
                     resultMsg.sendToTarget()
+
+                    if (isUserGesture) dipPageVisibility(view)
                     ProviderLogger.i(TAG, "onCreateWindow",
                         if (loadPopupsInSink) "Popup honoured into a hidden loading sink"
                         else "Popup honoured into a blank sink window",
@@ -2474,6 +2546,14 @@ class NavigationEngine(
 
         /** How long a loading popup sink lives before being destroyed (loadPopupsInSink mode only). */
         private const val POPUP_SINK_TTL_MS = 15_000L
+
+        /**
+         * How long the page is hidden after it opens a popup — see [dipPageVisibility].
+         *
+         * Must exceed the gate's own threshold, which is `0x320` = 800 ms in the decrypted page. 1.2 s
+         * leaves margin without a noticeable pause.
+         */
+        private const val POPUNDER_DWELL_MS = 1_200L
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:

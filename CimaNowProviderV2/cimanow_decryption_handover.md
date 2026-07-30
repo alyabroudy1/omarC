@@ -104,8 +104,8 @@
 > Now `onCreateWindow` hands over a detached sink WebView: the page gets a live window whose `closed`
 > stays false, nothing is shown, the main frame is untouched, and the sinks are destroyed with the
 > session. **Returning `true` from `onCreateWindow` is not "allow popups" — filling the transport is.**
-> (Whether that sink stays blank or actually loads the ad is a per-provider choice — see §8; CimaNow
-> needs it to load.)
+> (The sink stays **blank**: §9 decoded the gate and it only requires the window to stay open past
+> 800 ms, not to load. `loadPopupsInSink` exists for the alternative but is `false` everywhere.)
 >
 > ### 3. Filter sniffer captures by rejection, never by recognition
 >
@@ -277,6 +277,46 @@
 > retrying; if `/ct` still repeats, the network wants something more than a load (a dwell, or a click)
 > and the honest options narrow to living with the modal.
 >
+> ### 9. The ad gate is a DWELL test — decoded from the page, not guessed
+>
+> Two changes were spent guessing at this modal from network traffic. The answer came from the
+> **decrypted watch page** (saved from a desktop browser to `test/gate.js`), where the handler bound to
+> the watch buttons `#xqeqjp, #xqeqjp3` deobfuscates to:
+>
+> ```js
+> THRESHOLD = 0x320                      // 800 ms
+> start = Date.now(); e.preventDefault();
+> win = window.open(href, "_blank");
+> setTimeout(() => { if (!win || win.closed || typeof win.closed === "undefined") MESSAGE() }, 100);
+> setInterval(() => { if (win.closed && Date.now()-start < 800) MESSAGE() }, 100);
+> setTimeout(() => { if (!closed && elapsed >= 800) { btn.hide(); setTimeout(()=>btn.show(), 900000) } }, 800);
+> isMobile() ? (visibilitychange→visible | touchstart{once} | keydown | mousemove) → onReturn
+>            : beforeunload → onReturn
+> onReturn = () => { if (!closed) elapsed < 800 ? MESSAGE() : (btn.hide(), reshow in 15 min) }
+> ```
+>
+> And the message itself: *"يرجى إيقاف مانع الإعلانات أو السماح للإعلان بالبقاء مفتوحًا لثوانٍ قليلة"* —
+> "disable your ad blocker **or let the ad stay open for a few seconds**." It says what it checks.
+>
+> So the gate wants the popunder to survive **800 ms**, and on mobile (our UA matches its `Mobi|Android`
+> test) the *first* of `visibilitychange→visible` / `touchstart` / `keydown` / `mousemove` after the
+> click settles it: under 800 ms → modal, 800 ms or more → success, button hidden for 15 minutes.
+>
+> Our sink passed the window checks all along — a real WebView, `closed === false`, alive 15 s. What
+> failed was the timing arm: the sink is detached, so the page never loses visibility, and the next
+> input event (Chromium's compat `mousemove` after a tap, or a second tap because nothing visibly
+> happened) landed inside 800 ms. `dipPageVisibility()` now hides the page for
+> `POPUNDER_DWELL_MS = 1200` after a user-gesture popup and restores it — which is exactly what a real
+> popunder does to a phone browser, expressed through an ordinary browser signal with nothing injected
+> into the page.
+>
+> **`loadPopupsInSink` went back to `false` on this evidence.** The gate never required the ad to load,
+> only to stay open, which a blank sink already satisfies. It had been turned on because `/ct?rb=…` kept
+> re-firing — which the next log showed happens identically with the ad fully loaded, i.e. it is a
+> heartbeat, not a retry. Two lessons, both cheap to reread: **`/ct` retries prove nothing**, and when a
+> page-side condition is unclear, read the page instead of inferring from packets. The script that
+> raises it can be dumped without touching the page — see the `📜 SCRIPT DUMP` line.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -380,6 +420,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 20 | **Default an unrecognised URL to `ExtractorLinkType.M3U8`** | 2026-07-30. `getLinkType()`'s `else -> M3U8` sent the extension-less VK stream to ExoPlayer's HLS reader: `ParserException: Input does not start with the #EXTM3U header`, plus `M3u8Helper2.hslLazy` reading a 5 MB video as text. Sniffed extension-less URLs are progressive files behind a token — default to `VIDEO` and detect manifests positively (`.m3u8`, `/hls/`). |
 | 21 | **Treat an embed capture as proof that the server works** | 2026-07-30. A captured iframe proves an iframe was inserted, nothing more. A VK embed that was VK's *error page* (`video_embed_error`, `cry_dog.png`) ended the surf with `totalStreamCaptures=0`, closed the window before the user could pick another server, then burned 49 s in `VKVideoEmbed`'s headless-sniffer fallback and failed. Exit on a **stream**; use the embed for quality. |
 | 22 | **Re-request an embed page the WebView already loaded** | 2026-07-30. `video_ext.php` rate-limits the second caller (10 s stall to timeout), and its WebView fallback loads the embed as a *top-level document* — not an iframe — so VK answers `video_embed_error` regardless. Capture the HTML in flight (`fetchEmbedDocument`) and parse that (`getUrlFromHtml`). A second request is not the same request. |
+| 23 | **Guess at a page-side gate from network traffic** | 2026-07-30, twice, before the decrypted page settled it in minutes. `luugy.com/ct?rb=…` re-firing looked like the ad network waiting for the popunder to load; it fires identically when the ad *has* loaded — a heartbeat. The real check was a **dwell test** (`window.open` must survive 800 ms; on mobile the first `touchstart`/`mousemove`/`visibilitychange` decides) plus a SweetAlert saying so in Arabic. Read the page (`test/gate.js`, or the `📜 SCRIPT DUMP`); do not infer from packets. |
 
 ### 0.2 Always do these
 
