@@ -252,14 +252,20 @@ class ProviderHttpService private constructor(
      *
      * Deliberately opt-in: a longer ceiling also makes genuine failures take longer, and no provider
      * should inherit that because another one is slow.
+     *
+     * **Use the `(long, TimeUnit)` overloads, never the `java.time.Duration` ones.** The Duration
+     * variants compile against the OkHttp we build with and are absent from the one CloudStream ships,
+     * so the first version of this threw `NoSuchMethodError: No virtual method
+     * connectTimeout(Ljava/time/Duration;)` at runtime and took down every ArabSeed request, including
+     * `getMainPage` (2026-07-30). A green build proves nothing about the host app's classpath.
      */
     private fun okhttp3.OkHttpClient.Builder.applyProviderTimeout(): okhttp3.OkHttpClient.Builder = apply {
         config.requestTimeoutMs?.let { ms ->
-            val d = java.time.Duration.ofMillis(ms)
-            connectTimeout(d)
-            readTimeout(d)
-            writeTimeout(d)
-            callTimeout(java.time.Duration.ofMillis(ms * 2))
+            val unit = java.util.concurrent.TimeUnit.MILLISECONDS
+            connectTimeout(ms, unit)
+            readTimeout(ms, unit)
+            writeTimeout(ms, unit)
+            callTimeout(ms * 2, unit)
         }
     }
 
