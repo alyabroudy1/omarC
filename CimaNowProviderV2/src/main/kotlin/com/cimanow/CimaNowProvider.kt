@@ -555,11 +555,27 @@ class CimaNowProvider : BaseProvider() {
                 Log.i(TAG_SURF, "Resolving the ${embeds.size} newest of " +
                     "${navResult.capturedEmbedRequests.size} embed(s)")
             }
+            // Once links exist, the rest of the queue is a bonus and must not cost the user a spinner.
+            // 2026-07-30: cimanowtv resolved the full 480/720/1080 ladder 0.5 s in, then the loop spent
+            // 15 more seconds on ok.ru and a VK embed that burned its entire 12 s cap for nothing —
+            // playback sat waiting with every link it needed already delivered. This is the same
+            // straggler problem STRAGGLER_GRACE_MS was introduced for on the server-resolution path.
+            var firstLinkAt: Long? = null
             for (embed in embeds) {
-                if (System.currentTimeMillis() > phaseDeadline) {
+                val now = System.currentTimeMillis()
+                if (now > phaseDeadline) {
                     Log.w(TAG_SURF, "⏱ Embed phase budget (${EMBED_PHASE_BUDGET_MS}ms) spent — " +
                         "stopping with found=$found")
                     break
+                }
+                if (found) {
+                    if (firstLinkAt == null) firstLinkAt = now
+                    val sinceFirst = now - firstLinkAt
+                    if (sinceFirst > STRAGGLER_GRACE_MS) {
+                        Log.i(TAG_SURF, "⏭ Links already delivered — cancelling the remaining " +
+                            "embed(s) after ${sinceFirst}ms of grace")
+                        break
+                    }
                 }
                 val serverName = try {
                     java.net.URI(embed.url).host ?: "Surf"
@@ -575,12 +591,21 @@ class CimaNowProvider : BaseProvider() {
                     continue
                 }
 
+                // Capped, because the user is watching a spinner with no WebView on screen.
+                // VKVideoEmbed falls back to a 45s HEADLESS sniffer session when the embed page has no
+                // player params, and on 2026-07-30 a dead VK embed (its error page) spent 49s in there
+                // before failing. A bound turns that into a quick "next".
+                //
+                // Once links exist the cap shrinks to whatever grace is left: an embed that *starts*
+                // inside the grace window would otherwise still run the full 12 s, which is exactly how
+                // the VK straggler held playback for 12 s with the ladder already delivered.
+                val cap = if (found && firstLinkAt != null) {
+                    (STRAGGLER_GRACE_MS - (System.currentTimeMillis() - firstLinkAt)).coerceAtLeast(250L)
+                } else {
+                    EMBED_RESOLVE_TIMEOUT_MS
+                }
                 try {
-                    // Capped, because the user is watching a spinner with no WebView on screen.
-                    // VKVideoEmbed falls back to a 45s HEADLESS sniffer session when the embed page
-                    // has no player params, and on 2026-07-30 a dead VK embed (its error page) spent
-                    // 49s in there before failing. A bound turns that into a quick "next".
-                    kotlinx.coroutines.withTimeout(EMBED_RESOLVE_TIMEOUT_MS) {
+                    kotlinx.coroutines.withTimeout(cap) {
                         // Referer = the page that hosted the iframe, which is what the embed expects.
                         fallbackExtractIframe(
                             iframeUrl = embed.url,
@@ -590,7 +615,7 @@ class CimaNowProvider : BaseProvider() {
                         )
                     }
                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    Log.w(TAG_SURF, "⏱ Extractor for $serverName exceeded ${EMBED_RESOLVE_TIMEOUT_MS}ms — moving on")
+                    Log.w(TAG_SURF, "⏱ Extractor for $serverName exceeded ${cap}ms — moving on")
                 } catch (e: Exception) {
                     Log.w(TAG_SURF, "Extractor threw for $serverName: ${e.message}")
                 }
@@ -639,6 +664,31 @@ class CimaNowProvider : BaseProvider() {
      * are dropped — ExoPlayer sets its own, and passing `Host` or `Connection` through breaks the
      * request outright.
      */
+    /**
+     * Writes a captured embed page to disk when nothing could be parsed out of it.
+     *
+     * The fast path claims to resolve an embed with no request; on 2026-07-30 it resolved **none** of
+     * three captured pages (cimanowtv 4,412 chars, ok.ru 23,851, VK 56,152) and the network extractors
+     * did all the work — with the VK miss costing a 12 s rate-limited round trip. Whether the sources
+     * are behind a packer variant the unpacker misses, or fetched by JS after load, or simply not in the
+     * document, is not answerable from a length. So keep the bytes.
+     *
+     * Failure path only, and the log line carries the path.
+     */
+    private fun dumpEmbedHtml(embed: CapturedEmbedRequest, serverName: String, html: String) {
+        try {
+            val ctx = if (::context.isInitialized) context else null
+            val dir = ctx?.externalCacheDir ?: ctx?.cacheDir ?: return
+            dir.mkdirs()
+            val safeHost = serverName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(60)
+            val file = java.io.File(dir, "embedhtml_$safeHost.html")
+            file.writeText("<!-- source: ${embed.url}\n     referer: ${embed.pageUrl} -->\n$html")
+            Log.w("CimaNowEmbedHtml", "📄 EMBED HTML DUMP: ${file.absolutePath} (${html.length} chars)")
+        } catch (e: Exception) {
+            Log.w("CimaNowEmbedHtml", "Embed HTML dump failed: ${e.message}")
+        }
+    }
+
     /**
      * Resolves an embed from the HTML the WebView already received, without touching the network.
      *
@@ -697,7 +747,10 @@ class CimaNowProvider : BaseProvider() {
             .take(12)
             .toList()
 
-        if (urls.isEmpty()) return false
+        if (urls.isEmpty()) {
+            dumpEmbedHtml(embed, serverName, html)
+            return false
+        }
         Log.i(TAG_EH, "Generic scan found ${urls.size} media URL(s) in $serverName embed HTML")
 
         for (mediaUrl in urls) {
