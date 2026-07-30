@@ -77,6 +77,15 @@ class NavigationEngine(
     private var dialogDismissedByUser = false
 
     /**
+     * Set when the destination page navigates the main frame to its **own site** — the site refusing
+     * to play (`/blockedone`, `location.replace('/home')`). Terminal: waiting for a stream after that
+     * only buys a white screen.
+     */
+    @Volatile
+    var siteRejectedNavigationUrl: String? = null
+        private set
+
+    /**
      * True while *we* are dismissing the dialog during cleanup.
      *
      * Without it the dismiss listener cannot tell a user's back-press from our own teardown, and logged
@@ -141,6 +150,7 @@ class NavigationEngine(
             autoApproveAllRedirects = false
             lastHtmlBaseUrl = null
             lastPageUrl = ""
+            siteRejectedNavigationUrl = null
             capturedMainFrameHtml = null
             capturedVideoUrls.clear()
             capturedVideoRequests.clear()
@@ -344,14 +354,19 @@ class NavigationEngine(
                                 // ever arrives, so a slow-but-working server is not lost.
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 while (playable().isEmpty() && !dialogDismissedByUser &&
+                                    siteRejectedNavigationUrl == null &&
                                     System.currentTimeMillis() < deadline
                                 ) {
                                     delay(step.pollIntervalMs)
                                 }
 
                                 if (playable().isEmpty()) {
-                                    val why = if (dialogDismissedByUser) "user closed the window"
-                                        else "no stream within ${step.timeoutMs}ms"
+                                    val why = when {
+                                        siteRejectedNavigationUrl != null ->
+                                            "site sent us to ${siteRejectedNavigationUrl} — title blocked or session rejected"
+                                        dialogDismissedByUser -> "user closed the window"
+                                        else -> "no stream within ${step.timeoutMs}ms"
+                                    }
                                     if (capturedEmbedRequests.isNotEmpty()) {
                                         // Not a failure: the caller can still try the extractors.
                                         ProviderLogger.w(TAG, "execute",
@@ -1299,7 +1314,36 @@ class NavigationEngine(
                 android.util.Log.w("NavEngineRedirect", "URL: $nextUrl\nHOST: $nextHost\nMAIN: $isMainFrame\nMETHOD: $method\nHEADERS: $headerSummary")
 
                 if (isMainFrame && isOnDestination) {
-                    ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK", "url" to nextUrl, "host" to nextHost)
+                    // Blocking is right either way, but *who* is navigating matters.
+                    //
+                    // A cross-site main-frame navigation from the destination page is an ad hijacking
+                    // the screen — block it silently, which is what this lock is for. A **same-site**
+                    // one is the site itself moving us off its own player page: cimanow does
+                    // `location.replace('/home')` when it dislikes the referrer, and serves
+                    // `http://cimanow.cc/blockedone` for a title it will not play (2026-07-30, 73 ms
+                    // after the document started, with the decryptor writing nothing).
+                    //
+                    // Blocking that leaves the WebView on an empty document, so the user watched a
+                    // white screen until the 300 s timeout while the site had already answered in 73 ms.
+                    // Record it so a waiting step can stop now and the caller can report honestly.
+                    val currentHost = try {
+                        java.net.URI(lastPageUrl).host?.lowercase() ?: ""
+                    } catch (_: Exception) { "" }
+                    fun baseDomain(h: String) =
+                        h.split('.').let { if (it.size >= 2) it.takeLast(2).joinToString(".") else h }
+                    val sameSite = currentHost.isNotBlank() && nextHost.isNotBlank() &&
+                        baseDomain(currentHost) == baseDomain(nextHost)
+
+                    if (sameSite) {
+                        siteRejectedNavigationUrl = nextUrl
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading",
+                            "🚫 SITE SENT US AWAY from its own player page — treating as terminal " +
+                                "(this title is blocked, or the gate rejected the session)",
+                            "url" to nextUrl, "host" to nextHost)
+                    } else {
+                        ProviderLogger.w(TAG, "shouldOverrideUrlLoading", "DESTINATION LOCK BLOCK",
+                            "url" to nextUrl, "host" to nextHost)
+                    }
                     return true
                 }
 

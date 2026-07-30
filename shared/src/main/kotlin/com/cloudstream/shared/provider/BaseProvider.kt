@@ -437,6 +437,25 @@ abstract class BaseProvider : MainAPI() {
             
             if (urls.isEmpty()) {
                 Log.w(methodTag, "No player URLs found")
+                // Keep the page the parser rejected. "0 servers" has two very different causes —
+                // stale selectors, or the fetch landing on something that is not the watch page at all
+                // (an interstitial, a cookie wall, the detail page) — and they are indistinguishable
+                // from the log alone. ArabSeed hit this on 2026-07-30 with a successful 71 ms fetch and
+                // `servers=0, qualities=0`, and there was no way to tell which.
+                try {
+                    val html = targetDoc.html()
+                    val ctx = ActivityProvider.currentActivity
+                    if (ctx != null) {
+                        val dir = ctx.externalCacheDir ?: ctx.cacheDir
+                        dir.mkdirs()
+                        val file = java.io.File(dir, "noservers_${providerName}.html")
+                        file.writeText(html)
+                        Log.w(methodTag, "📄 NO-SERVERS DUMP: ${file.absolutePath} " +
+                            "(${html.length} chars, from ${targetDoc.location()})")
+                    }
+                } catch (e: Exception) {
+                    Log.w(methodTag, "No-servers dump failed: ${e.message}")
+                }
                 return false
             }
             

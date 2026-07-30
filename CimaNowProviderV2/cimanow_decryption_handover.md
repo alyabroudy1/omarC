@@ -351,6 +351,33 @@
 >   One line in the plugin, and the whole extractor layer came back. The unpacker is still worth having
 >   (it makes the captured-HTML path work without any extractor), but it was treating a symptom.
 >
+> ### 11. `/blockedone` is the site refusing a title — not a bot detection, and not a regression
+>
+> A white screen on *some* titles while others played fine (2026-07-30, The Walking Dead: Dead City):
+>
+> ```
+> 14:58:13.107  INTERCEPTED …/watching/ (text/html)      ← full 4,711,549-char payload, served normally
+> 14:58:13.787  onPageStarted + Spoofing JS NOT injected ← page context clean
+> 14:58:13.860  REDIRECT DETECTED http://cimanow.cc/blockedone   ← 73 ms later, the page itself
+> 14:58:13.860  DESTINATION LOCK BLOCK
+> 14:58:13.865  bodyLength=4711548 → delta=-1            ← decryptor wrote nothing
+> ```
+>
+> `delta=-1`, not 47, so this is **not** the bot decoy. The string `blockedone` does not appear anywhere
+> in a working title's decrypted page, so it is a per-title branch: this payload's own code decided the
+> title is not playable and navigated away 73 ms after the document started.
+>
+> **The bug on our side was the white screen, not the block.** The destination lock blocked that
+> navigation — correctly, since it cannot tell it from an ad hijack — leaving the WebView on an empty
+> document until the 300 s timeout, so the user stared at white while the site had answered in 73 ms.
+> Now the lock distinguishes by site: a **cross-site** main-frame navigation is an ad and is still
+> blocked silently; a **same-site** one is the site moving us off its own player page (`/blockedone`, or
+> the documented `location.replace('/home')`), which sets `siteRejectedNavigationUrl` and ends the wait
+> immediately with that URL in the failure reason.
+>
+> Look for **`🚫 SITE SENT US AWAY`**. It means try another title or check the referrer — not that the
+> flow is broken.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
