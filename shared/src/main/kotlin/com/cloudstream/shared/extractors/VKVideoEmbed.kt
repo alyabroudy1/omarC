@@ -110,6 +110,33 @@ class VKVideoEmbed : ExtractorApi() {
     }
 
     /**
+     * Same parsing as [getUrl], but from HTML the caller already holds — **no network request**.
+     *
+     * For an embed that a WebView has just loaded, this is the only reliable path. Re-fetching
+     * `video_ext.php` fails two ways (measured 2026-07-30): VK rate-limits the repeat caller and the
+     * request stalls to timeout, and loaded as a top-level document instead of an iframe it answers
+     * with `video_embed_error` no matter what. The bytes the iframe already received have neither
+     * problem. See `NavigationEngine.fetchEmbedDocument` for the capture side.
+     *
+     * @return true if any link was produced.
+     */
+    suspend fun getUrlFromHtml(
+        html: String,
+        embedUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        if (html.length < 500) {
+            ProviderLogger.w(TAG, "getUrlFromHtml", "HTML too short to parse: ${html.length}")
+            return false
+        }
+        val links = parsePlayerParams(html, embedUrl)
+        ProviderLogger.i(TAG, "getUrlFromHtml",
+            "Parsed ${links.size} stream(s) from ${html.length} chars of captured embed HTML")
+        links.forEach(callback)
+        return links.isNotEmpty()
+    }
+
+    /**
      * Pulls the stream URLs out of the player params embedded in video_ext.php.
      *
      * The params are HTML-escaped JSON, so the URLs arrive as `\"hls\":\"https:\/\/…\"` — the old

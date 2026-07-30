@@ -618,6 +618,95 @@ class NavigationEngine(
         ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak — using interceptor as fallback")
     }
 
+    /**
+     * Fetches an iframe's document so its HTML can be kept, and returns both the text and a response
+     * carrying the same bytes for the WebView to render. Null on any failure, which the caller treats
+     * as "let Chromium fetch it normally".
+     *
+     * Runs on a Chromium worker thread (that is where `shouldInterceptRequest` is called), so the
+     * blocking IO here is on the right thread already.
+     *
+     * The headers are the iframe's own, plus the three things a re-issued request loses:
+     * `Sec-Fetch-Dest: iframe` (which is what makes an embed-only endpoint answer at all — WebView
+     * does not include it in `requestHeaders`, and without it `video_ext.php` returns an error page),
+     * real-Chrome `sec-ch-ua` in place of `"Android WebView"`, and the CookieManager cookies.
+     */
+    private fun fetchEmbedDocument(
+        url: String,
+        reqHeaders: Map<String, String>,
+        userAgent: String
+    ): Pair<String, WebResourceResponse>? {
+        return try {
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 10_000
+
+            reqHeaders.forEach { (key, value) ->
+                if (!key.equals("X-Requested-With", true) &&
+                    !key.equals("sec-ch-ua", true) &&
+                    !key.equals("sec-ch-ua-mobile", true) &&
+                    !key.equals("sec-ch-ua-platform", true)
+                ) {
+                    conn.setRequestProperty(key, value)
+                }
+            }
+            conn.setRequestProperty("User-Agent", userAgent)
+            val chromeVersion = Regex("""Chrome/(\d+)""").find(userAgent)?.groupValues?.getOrNull(1) ?: "131"
+            conn.setRequestProperty(
+                "sec-ch-ua",
+                "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$chromeVersion\", \"Chromium\";v=\"$chromeVersion\""
+            )
+            conn.setRequestProperty("sec-ch-ua-mobile", "?1")
+            conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
+            // The whole reason this works: it really is an iframe request.
+            conn.setRequestProperty("Sec-Fetch-Dest", "iframe")
+            conn.setRequestProperty("Sec-Fetch-Mode", "navigate")
+            conn.setRequestProperty("Sec-Fetch-Site", "cross-site")
+            try {
+                CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let {
+                    conn.setRequestProperty("Cookie", it)
+                }
+            } catch (_: Exception) {}
+
+            val code = conn.responseCode
+            if (code != 200) {
+                ProviderLogger.w(TAG, "fetchEmbedDocument",
+                    "Embed fetch non-200 — leaving it to the WebView", "code" to code, "url" to url.take(100))
+                return null
+            }
+
+            // Because we answered the request instead of Chromium, its cookie jar never sees this
+            // response's Set-Cookie — and the iframe's own subresources (player JS, API calls) may need
+            // the session it just established. Put them back by hand so the served response behaves
+            // like a real one.
+            try {
+                val cm = CookieManager.getInstance()
+                conn.headerFields?.forEach { (name, values) ->
+                    if (name != null && name.equals("Set-Cookie", ignoreCase = true)) {
+                        values.forEach { cm.setCookie(url, it) }
+                    }
+                }
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG, "fetchEmbedDocument", "Set-Cookie propagation failed: ${e.message}")
+            }
+
+            val ct = conn.contentType ?: "text/html"
+            val mime = ct.substringBefore(";").trim().ifBlank { "text/html" }
+            val encodingStr = ct.substringAfter("charset=", "utf-8").trim()
+            val charset = try { Charset.forName(encodingStr) } catch (_: Exception) { Charsets.UTF_8 }
+            val body = conn.inputStream.bufferedReader(charset).readText()
+
+            body to WebResourceResponse(
+                mime, charset.name(), java.io.ByteArrayInputStream(body.toByteArray(charset))
+            )
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "fetchEmbedDocument",
+                "Embed fetch failed — leaving it to the WebView", "error" to e.message, "url" to url.take(100))
+            null
+        }
+    }
+
     private fun setupWebViewClient(
         webView: WebView,
         userAgent: String,
@@ -750,15 +839,25 @@ class NavigationEngine(
 
                     if (isDocument && notThePageItself && !VideoUrlClassifier.isLikelyAdFrame(reqUrl)) {
                         if (capturedEmbedRequests.none { it.url == reqUrl }) {
+                            // Serve the iframe ourselves so we can keep a copy of its HTML. The player
+                            // params live in these bytes, and this is the only context in which the
+                            // embed host will hand them over — see CapturedEmbedRequest.html.
+                            val fetched = fetchEmbedDocument(reqUrl, reqHeaders, userAgent)
                             capturedEmbedRequests.add(
                                 CapturedEmbedRequest(
                                     url = reqUrl,
                                     headers = reqHeaders,
-                                    pageUrl = lastPageUrl
+                                    pageUrl = lastPageUrl,
+                                    html = fetched?.first
                                 )
                             )
                             ProviderLogger.i(TAG, "shouldInterceptRequest",
-                                "🎯 CAPTURED EMBED: ${reqUrl.take(160)}")
+                                "🎯 CAPTURED EMBED: ${reqUrl.take(160)}",
+                                "html" to (fetched?.first?.length ?: -1))
+                            // Hand the same bytes to the WebView so the iframe still renders. On any
+                            // failure fall through to null and let Chromium fetch it normally — a lost
+                            // capture is recoverable, a broken iframe is not.
+                            if (fetched != null) return fetched.second
                         }
                     } else if (isDocument && notThePageItself) {
                         ProviderLogger.d(TAG, "shouldInterceptRequest",

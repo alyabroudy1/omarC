@@ -10,6 +10,7 @@ import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.session.SessionProvider
+import com.cloudstream.shared.webview.CapturedEmbedRequest
 import com.cloudstream.shared.webview.CapturedVideoRequest
 import com.cloudstream.shared.webview.VideoUrlClassifier
 import com.cloudstream.shared.extractors.CimaNowTVEmbed
@@ -517,7 +518,17 @@ class CimaNowProvider : BaseProvider() {
                 val serverName = try {
                     java.net.URI(embed.url).host ?: "Surf"
                 } catch (_: Exception) { "Surf" }
-                Log.i(TAG_SURF, "Resolving embed via extractor: host=$serverName url=${embed.url.take(140)}")
+                Log.i(TAG_SURF, "Resolving embed: host=$serverName html=${embed.html?.length ?: -1} " +
+                    "url=${embed.url.take(140)}")
+
+                // Captured HTML first: no second request, so no rate limit and no embed-only endpoint
+                // refusing a top-level fetch. This is what the network path kept failing at.
+                val htmlLinks = resolveEmbedFromHtml(embed, serverName, embedCallback)
+                if (htmlLinks) {
+                    Log.i(TAG_SURF, "✅ Resolved $serverName from the captured embed HTML — no request made")
+                    continue
+                }
+
                 try {
                     // Capped, because the user is watching a spinner with no WebView on screen.
                     // VKVideoEmbed falls back to a 45s HEADLESS sniffer session when the embed page
@@ -582,6 +593,66 @@ class CimaNowProvider : BaseProvider() {
      * are dropped — ExoPlayer sets its own, and passing `Host` or `Connection` through breaks the
      * request outright.
      */
+    /**
+     * Resolves an embed from the HTML the WebView already received, without touching the network.
+     *
+     * Tried before the URL-based extractors because a second request to an embed host is exactly what
+     * kept failing: `video_ext.php` rate-limited the retry into a 10 s timeout, and its WebView
+     * fallback — a top-level navigation rather than an iframe — got VK's error page. The captured
+     * bytes are the ones the player itself was served.
+     *
+     * Host-specific parsing first, then a generic scan for direct media URLs, which covers embeds that
+     * simply list their sources in the page.
+     *
+     * @return true if any link was produced.
+     */
+    private suspend fun resolveEmbedFromHtml(
+        embed: CapturedEmbedRequest,
+        serverName: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val html = embed.html
+        if (html.isNullOrBlank()) return false
+        val TAG_EH = "CimaNowEmbedHtml"
+
+        val host = try { java.net.URI(embed.url).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+
+        if (host.contains("vkvideo") || host.contains("vk.com") || host.contains("vk.ru")) {
+            try {
+                if (VKVideoEmbed().getUrlFromHtml(html, embed.url, callback)) return true
+                Log.w(TAG_EH, "VK params not found in captured HTML (${html.length} chars)")
+            } catch (e: Exception) {
+                Log.w(TAG_EH, "VK HTML parse threw: ${e.message}")
+            }
+        }
+
+        // Generic: direct media URLs written into the embed page. Escaped slashes are unescaped first
+        // because these pages carry their sources inside JSON (`"file":"https:\/\/…m3u8"`).
+        val unescaped = html.replace("\\/", "/").replace("\\u0026", "&").replace("&amp;", "&")
+        val urls = Regex("""https?://[^"'\s\\<>]+\.(?:m3u8|mp4)[^"'\s\\<>]*""")
+            .findAll(unescaped)
+            .map { it.value }
+            .filter { VideoUrlClassifier.isPlayableCapture(it) }
+            .distinctBy { renditionKey(it) }
+            .take(12)
+            .toList()
+
+        if (urls.isEmpty()) return false
+        Log.i(TAG_EH, "Generic scan found ${urls.size} media URL(s) in $serverName embed HTML")
+
+        for (mediaUrl in urls) {
+            val quality = vkQuality(mediaUrl) ?: getQualityFromName(mediaUrl)
+            val link = newExtractorLink(
+                "CimaNow", "CimaNow $serverName", mediaUrl, type = getLinkType(mediaUrl)
+            ) {
+                this.referer = embed.url
+                this.quality = quality
+            }
+            callback(link)
+        }
+        return true
+    }
+
     /**
      * Identity of a stream *rendition*, for de-duplicating sniffed captures.
      *

@@ -39,9 +39,10 @@
 >    works (§6), and segments do not count either, since a `.ts` proves playback started but plays
 >    nothing on its own. Ends immediately if the user closes the window, and hands over any embeds it
 >    has even when no stream arrives.
-> 3b. **Resolution order: embeds → extractors, streams only as fallback.** `fallbackExtractIframe()` on
->    each captured iframe gives the full quality ladder; the sniffed stream is one ABR-chosen rendition.
->    See §5.
+> 3b. **Resolution order: captured embed HTML → URL-based extractors → sniffed streams.**
+>    `resolveEmbedFromHtml()` parses the bytes the iframe already received (§7 — a second request to the
+>    embed host is what kept failing); `fallbackExtractIframe()` covers embeds whose HTML says nothing;
+>    the sniffed stream is last, being one ABR-chosen rendition. See §5.
 > 4. **`destinationLockPatterns = /(watch|watching)/`**, same as before, and it earns its keep here:
 >    once on `/watching/` every main-frame navigation is refused silently, so the ad redirects a stray
 >    tap fires cannot steal the screen. Servers switch by AJAX into an iframe, so nothing legitimate
@@ -209,6 +210,41 @@
 > it set `dialogDismissedByUser` 27 ms after the step ended, which was both untrue and left the flag set
 > for whatever came next.
 >
+> ### 7. Keep the embed's HTML as it loads — never ask the embed host twice
+>
+> With the embed path live, the extractor still produced nothing (2026-07-30, 11:42):
+>
+> ```
+> 11:42:33.674  Resolving embed via extractor: host=vkvideo.ru
+> 11:42:43.680  [executeDirectRequest] Failed | …video_ext.php… | error=timeout        ← 10.0 s
+> 11:42:44.407  st.vkvideo.ru/dist/webl/video_embed_error.isolated…js                  ← its WebView fallback
+> 11:42:48.600  ⏱ Extractor for vkvideo.ru exceeded 12000ms — moving on
+> ```
+>
+> Both attempts failed for the same underlying reason — **it was the second request**:
+> - The HTTP fast path is rate-limited by VK after a session's worth of calls, and the rejection stalls
+>   to timeout instead of erroring (the extractor's own comments describe the 302→429 behaviour).
+> - Its WebView fallback loads `video_ext.php` as a **top-level document**, which is not an iframe
+>   context, so VK serves `video_embed_error` no matter what headers are set.
+>
+> Ten seconds earlier the surf WebView had loaded that exact embed successfully, as a real iframe, and
+> the HTML — player params included — had passed straight through our own interceptor. We threw it away.
+>
+> Now `fetchEmbedDocument()` serves the iframe itself: re-issues the request with the iframe's own
+> headers plus `Sec-Fetch-Dest: iframe`, real-Chrome `sec-ch-ua` and the CookieManager cookies, keeps
+> the body in `CapturedEmbedRequest.html`, and hands the same bytes back so the iframe still renders.
+> On non-200 or any exception it returns null and Chromium fetches normally — a lost capture is
+> recoverable, a broken iframe is not.
+>
+> The provider then calls `resolveEmbedFromHtml()` **before** any network extractor:
+> `VKVideoEmbed.getUrlFromHtml()` for VK hosts, then a generic scan for direct `.m3u8`/`.mp4` URLs
+> (unescaping `\/` first, since these pages carry sources inside JSON). The URL-based
+> `fallbackExtractIframe()` remains as the fallback for embeds whose HTML says nothing.
+>
+> **The rule this establishes:** if the WebView has already fetched something we need, capture it in
+> flight. A second request is not the same request — different context, different rate-limit budget,
+> and on an embed-only endpoint a different answer.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -216,8 +252,9 @@
 >    produced content (delta=…)`. A blank screen and a decryption failure are indistinguishable
 >    without this line.
 > 3. `Popup honoured into a blank sink window` — the ad gate will not fire.
-> 4. **`🎯 CAPTURED EMBED`** — the good path. Followed by `Resolving embed via extractor` and
->    `>>> EMBED LINK`, which means the full quality ladder came from the player's own params.
+> 4. **`🎯 CAPTURED EMBED … html=N`** — the good path. `html=-1` means the in-flight capture failed and
+>    we are about to re-request the embed, which is what fails (§7). Then `Resolved … from the captured
+>    embed HTML — no request made` and `>>> EMBED LINK`, i.e. the full ladder from the player's params.
 > 5. `🎬 CAPTURED VIDEO URL` then `Source captured — collecting`. Reaching `No extractor produced links
 >    — falling back to the sniffed stream(s)` means you are back to single-rendition ABR quality: find
 >    out why the embed was not captured or not claimed, rather than accepting 480p.
@@ -310,6 +347,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 19 | **Filter sniffer captures with `VideoUrlClassifier.isVideoUrl()`** | 2026-07-30. VK streams from `vk6-3.vkuser.net/?…&type=1&…` — no extension, no `/hls/` — so a *recognition* filter drops the very streams a sniffer exists to find (four captured, zero links, no `Video captured` line in the log). Use `isPlayableCapture()`, which rejects segments/thumbnails/trackers/DASH and passes everything else. |
 | 20 | **Default an unrecognised URL to `ExtractorLinkType.M3U8`** | 2026-07-30. `getLinkType()`'s `else -> M3U8` sent the extension-less VK stream to ExoPlayer's HLS reader: `ParserException: Input does not start with the #EXTM3U header`, plus `M3u8Helper2.hslLazy` reading a 5 MB video as text. Sniffed extension-less URLs are progressive files behind a token — default to `VIDEO` and detect manifests positively (`.m3u8`, `/hls/`). |
 | 21 | **Treat an embed capture as proof that the server works** | 2026-07-30. A captured iframe proves an iframe was inserted, nothing more. A VK embed that was VK's *error page* (`video_embed_error`, `cry_dog.png`) ended the surf with `totalStreamCaptures=0`, closed the window before the user could pick another server, then burned 49 s in `VKVideoEmbed`'s headless-sniffer fallback and failed. Exit on a **stream**; use the embed for quality. |
+| 22 | **Re-request an embed page the WebView already loaded** | 2026-07-30. `video_ext.php` rate-limits the second caller (10 s stall to timeout), and its WebView fallback loads the embed as a *top-level document* — not an iframe — so VK answers `video_embed_error` regardless. Capture the HTML in flight (`fetchEmbedDocument`) and parse that (`getUrlFromHtml`). A second request is not the same request. |
 
 ### 0.2 Always do these
 

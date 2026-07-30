@@ -95,7 +95,21 @@ data class CapturedEmbedRequest(
     val url: String,
     val headers: Map<String, String>,
     /** The document that hosted the iframe — the Referer the embed expects. */
-    val pageUrl: String
+    val pageUrl: String,
+    /**
+     * The embed page's own HTML, captured **as the iframe loaded it** — null if it could not be read.
+     *
+     * This is the difference between working and not working, not an optimisation. Asking the embed
+     * host for the same page a second time fails two ways at once (measured 2026-07-30):
+     *  - `vkvideo.ru/video_ext.php` rate-limits a repeat caller, and the retry stalls until timeout
+     *    (10 s) instead of erroring.
+     *  - Loaded as a **top-level document** rather than an iframe, VK serves its error page
+     *    (`video_embed_error`) regardless — the endpoint is embed-only and a top-level navigation
+     *    cannot pretend otherwise.
+     * The bytes the page itself received have neither problem, and they contain the player params
+     * (`"hls"`, `"url1080"`) the extractor was going to re-fetch anyway.
+     */
+    val html: String? = null
 )
 
 /**
