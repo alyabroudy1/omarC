@@ -66,6 +66,16 @@ class NavigationEngine(
     /** The same captures with the headers the page sent — see [CapturedVideoRequest]. */
     val capturedVideoRequests = java.util.concurrent.CopyOnWriteArrayList<CapturedVideoRequest>()
 
+    /**
+     * Player embeds seen on the wire — third-party iframe documents. See [CapturedEmbedRequest] for
+     * why these are worth more than the streams.
+     */
+    val capturedEmbedRequests = java.util.concurrent.CopyOnWriteArrayList<CapturedEmbedRequest>()
+
+    /** Set when the user closes the FULLSCREEN dialog, so a waiting step can stop immediately. */
+    @Volatile
+    private var dialogDismissedByUser = false
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -99,6 +109,8 @@ class NavigationEngine(
             capturedMainFrameHtml = null
             capturedVideoUrls.clear()
             capturedVideoRequests.clear()
+            capturedEmbedRequests.clear()
+            dialogDismissedByUser = false
 
             val activity = activityProvider()
             if (activity == null) {
@@ -136,7 +148,8 @@ class NavigationEngine(
                         // Carried through even on timeout: in FULLSCREEN the user may have started
                         // playback moments before the clock ran out, and those captures still play.
                         capturedVideoUrls = capturedVideoUrls.toList(),
-                        capturedVideoRequests = capturedVideoRequests.toList()
+                        capturedVideoRequests = capturedVideoRequests.toList(),
+                        capturedEmbedRequests = capturedEmbedRequests.toList()
                     ))
                 }
             }
@@ -279,28 +292,43 @@ class NavigationEngine(
                                 fun playable() = capturedVideoRequests.filter {
                                     VideoUrlClassifier.isPlayableCapture(it.url)
                                 }
+                                fun haveSource() = capturedEmbedRequests.isNotEmpty() || playable().isNotEmpty()
 
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
-                                while (playable().isEmpty() && System.currentTimeMillis() < deadline) {
+                                while (!haveSource() && !dialogDismissedByUser &&
+                                    System.currentTimeMillis() < deadline
+                                ) {
                                     delay(step.pollIntervalMs)
                                 }
 
-                                if (playable().isEmpty()) {
-                                    ProviderLogger.w(TAG, "execute",
-                                        "Step $index: No playable video seen within ${step.timeoutMs}ms")
+                                if (!haveSource()) {
+                                    val why = if (dialogDismissedByUser) "user closed the window"
+                                        else "nothing seen within ${step.timeoutMs}ms"
+                                    ProviderLogger.w(TAG, "execute", "Step $index: No source — $why")
                                     if (step.abortOnFailure) {
                                         failedStep = index
-                                        errorMsg = "No video captured"
+                                        errorMsg = "No video captured ($why)"
                                         break
                                     }
                                 } else {
                                     ProviderLogger.i(TAG, "execute",
-                                        "Step $index: Video captured — collecting variants for ${step.graceMs}ms",
-                                        "url" to playable().first().url.take(120))
-                                    delay(step.graceMs)
+                                        "Step $index: Source captured — collecting for ${step.graceMs}ms",
+                                        "embeds" to capturedEmbedRequests.size,
+                                        "streams" to playable().size,
+                                        "first" to (capturedEmbedRequests.firstOrNull()?.url
+                                            ?: playable().first().url).take(120))
+                                    // Grace still applies with an embed in hand: a second server the
+                                    // user tried, or the stream itself, may still be worth having as a
+                                    // fallback. Cut it short if the user closes the window.
+                                    val graceEnd = System.currentTimeMillis() + step.graceMs
+                                    while (System.currentTimeMillis() < graceEnd && !dialogDismissedByUser) {
+                                        delay(step.pollIntervalMs)
+                                    }
                                     ProviderLogger.i(TAG, "execute",
-                                        "Step $index: Done", "playable" to playable().size,
-                                        "total" to capturedVideoRequests.size)
+                                        "Step $index: Done", "embeds" to capturedEmbedRequests.size,
+                                        "playableStreams" to playable().size,
+                                        "totalStreamCaptures" to capturedVideoRequests.size,
+                                        "closedByUser" to dialogDismissedByUser)
                                 }
                             }
                             is NavigationStep.NavigateToWatchingUrl -> {
@@ -403,6 +431,7 @@ class NavigationEngine(
                         error = errorMsg,
                         capturedVideoUrls = capturedVideoUrls.toList(),
                         capturedVideoRequests = capturedVideoRequests.toList(),
+                        capturedEmbedRequests = capturedEmbedRequests.toList(),
                         mainFrameHtml = capturedMainFrameHtml
                     ))
                 }
@@ -661,6 +690,48 @@ class NavigationEngine(
                         // Catches what the path tests miss: manifests behind a query string, and the
                         // /hls/ paths some CDNs serve with a .txt or .php name.
                         || VideoUrlClassifier.isVideoUrl(reqUrl)
+                // === CAPTURE PLAYER EMBEDS (worth more than the streams) ===
+                //
+                // A subframe asking for a document is an iframe, and on a watch page that is either an
+                // ad slot or the player embed. The embed URL fed to its extractor gives the whole
+                // quality ladder from the player's own params, where a sniffed stream only ever gives
+                // the rendition ABR happened to pick — on VK the bottom rung, signed per rendition so
+                // nothing better can be derived from it.
+                //
+                // Keyed on `Accept: text/html` rather than `Sec-Fetch-Dest: iframe`, because WebView
+                // does not send Sec-Fetch-Dest here (2026-07-30 log). In a whole session that test
+                // matched exactly two requests: the watch page itself and the VK embed.
+                if (!isMain) {
+                    val accept = reqHeaders.entries
+                        .firstOrNull { it.key.equals("Accept", ignoreCase = true) }?.value ?: ""
+                    val dest = reqHeaders.entries
+                        .firstOrNull { it.key.equals("Sec-Fetch-Dest", ignoreCase = true) }?.value ?: ""
+                    val isDocument = accept.contains("text/html", ignoreCase = true) ||
+                        dest.equals("iframe", ignoreCase = true)
+                    // Any document subframe that is not the page itself is a candidate. Deliberately
+                    // NOT restricted to third-party hosts: some servers embed their player from the
+                    // site's own domain, and losing those would push us back onto the sniffed stream.
+                    // Ad frames are excluded by host instead, which is the distinction that matters.
+                    val notThePageItself = reqUrl.substringBefore("#") != lastPageUrl.substringBefore("#")
+
+                    if (isDocument && notThePageItself && !VideoUrlClassifier.isLikelyAdFrame(reqUrl)) {
+                        if (capturedEmbedRequests.none { it.url == reqUrl }) {
+                            capturedEmbedRequests.add(
+                                CapturedEmbedRequest(
+                                    url = reqUrl,
+                                    headers = reqHeaders,
+                                    pageUrl = lastPageUrl
+                                )
+                            )
+                            ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                "🎯 CAPTURED EMBED: ${reqUrl.take(160)}")
+                        }
+                    } else if (isDocument && notThePageItself) {
+                        ProviderLogger.d(TAG, "shouldInterceptRequest",
+                            "Ignoring ad/consent frame: ${reqUrl.take(120)}")
+                    }
+                }
+
                 // Thumbnails ride the same hosts as the stream and are fetched first, so capturing one
                 // as "the video" hands a JPEG to the player. See VideoUrlClassifier.isPreviewAsset.
                 if (isVideoStream && VideoUrlClassifier.isPreviewAsset(reqUrl)) {
@@ -2086,7 +2157,10 @@ class NavigationEngine(
             setOnDismissListener {
                 tvMouseController?.detach()
                 tvMouseController = null
-                ProviderLogger.d(TAG, "createDialog", "Dialog dismissed")
+                // A waiting step has to know, or closing the window leaves the caller polling until
+                // its timeout with nothing on screen (WaitForCapturedVideo allows 300s).
+                dialogDismissedByUser = true
+                ProviderLogger.i(TAG, "createDialog", "Dialog dismissed by user — ending any wait")
             }
         }
     }

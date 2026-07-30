@@ -83,6 +83,22 @@ data class CapturedVideoRequest(
 )
 
 /**
+ * A third-party **iframe document** seen by [NavigationEngine]'s interceptor — i.e. a player embed.
+ *
+ * This is the more valuable capture of the two. A sniffed stream is whatever the embed's ABR happened
+ * to fetch in the moment (on VK, the bottom rung), and its CDN URL is signed per rendition so no
+ * higher quality can be derived from it. The embed URL, handed to the matching extractor, yields the
+ * whole quality ladder from the player's own parameters — an HLS master, or one progressive URL per
+ * quality.
+ */
+data class CapturedEmbedRequest(
+    val url: String,
+    val headers: Map<String, String>,
+    /** The document that hosted the iframe — the Referer the embed expects. */
+    val pageUrl: String
+)
+
+/**
  * A single step in a multi-step WebView navigation flow.
  */
 sealed class NavigationStep {
@@ -145,11 +161,15 @@ sealed class NavigationStep {
     ) : NavigationStep()
 
     /**
-     * Hold the session open until the request interceptor sees a playable video URL on the network.
+     * Hold the session open until the request interceptor sees a **player embed** (preferred) or a
+     * playable video URL on the network.
      *
      * Built for Mode.FULLSCREEN: the user is looking at the page and clicking a server and a play
      * button, so this step is what keeps the WebView alive while that happens instead of tearing it
-     * down as soon as the scripted steps run out.
+     * down as soon as the scripted steps run out. It also ends the moment the user dismisses the
+     * dialog — otherwise closing the window would leave the caller polling until [timeoutMs].
+     *
+     * An embed counts as success because it is the better outcome: see [CapturedEmbedRequest].
      *
      * @param graceMs extra time to keep collecting after the first hit. A player asks for an HLS
      *   master and then its variant playlists a few hundred ms later, and those carry the per-quality
@@ -200,6 +220,8 @@ data class NavigationResult(
      * than values reconstructed afterwards.
      */
     val capturedVideoRequests: List<CapturedVideoRequest> = emptyList(),
+    /** Third-party iframe documents seen on the wire — player embeds. See [CapturedEmbedRequest]. */
+    val capturedEmbedRequests: List<CapturedEmbedRequest> = emptyList(),
     /** Raw HTML of the last intercepted main-frame response (e.g. cimanow.cc /watching/).
      *  Populated by the request interceptor. Contains the server-rendered DOM before the
      *  page's anti-bot JS can clear/patch it. */

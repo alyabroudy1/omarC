@@ -484,14 +484,53 @@ class CimaNowProvider : BaseProvider() {
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
-            Log.i(TAG_SURF, "Captured: ${navResult.capturedVideoRequests.size} video request(s)")
+            Log.i(TAG_SURF, "Captured: ${navResult.capturedEmbedRequests.size} embed(s), " +
+                "${navResult.capturedVideoRequests.size} video request(s)")
+
+            // ---------- PHASE 4a: embeds → extractors (the good path) ----------
+            // The iframe URL the page loaded when the user picked a server is the same embed URL the
+            // old sandbox flow used to dig out of the decrypted <li data-index> list via core.php. Its
+            // extractor asks the player for the whole quality ladder, which is the only way to get
+            // above what ABR happened to fetch: VK signs each rendition separately (`sig` differs per
+            // `type=`), so a sniffed 480p URL cannot be promoted to 1080p.
+            var found = false
+            val embedCallback: (ExtractorLink) -> Unit = { link ->
+                found = true
+                Log.i(TAG_SURF, ">>> EMBED LINK q=${link.quality} ${link.name} ${link.url.take(140)}")
+                callback(link)
+            }
+
+            for (embed in navResult.capturedEmbedRequests.distinctBy { it.url }) {
+                val serverName = try {
+                    java.net.URI(embed.url).host ?: "Surf"
+                } catch (_: Exception) { "Surf" }
+                Log.i(TAG_SURF, "Resolving embed via extractor: host=$serverName url=${embed.url.take(140)}")
+                try {
+                    // Referer = the page that hosted the iframe, which is what the embed expects.
+                    fallbackExtractIframe(
+                        iframeUrl = embed.url,
+                        serverName = serverName,
+                        referer = embed.pageUrl.ifBlank { navResult.finalUrl },
+                        callback = embedCallback
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG_SURF, "Extractor threw for $serverName: ${e.message}")
+                }
+            }
+
+            if (found) {
+                Log.i(TAG_SURF, "✅ Extractors produced links from ${navResult.capturedEmbedRequests.size} embed(s) " +
+                    "— skipping the sniffed-stream fallback")
+                return true
+            }
+            Log.w(TAG_SURF, "No extractor produced links — falling back to the sniffed stream(s)")
 
             // A rejection filter, NOT VideoUrlClassifier.isVideoUrl — see isPlayableCapture. The VK
             // servers stream from `vk6-3.vkuser.net/?expires=…&type=1&…`, which has no extension and
             // no /hls/ path, so a recognition filter discards the one thing the sniffer was for.
             val playable = navResult.capturedVideoRequests
-                .distinctBy { it.url }
                 .filter { VideoUrlClassifier.isPlayableCapture(it.url) }
+                .distinctBy { renditionKey(it.url) }
 
             if (playable.isEmpty()) {
                 Log.w(TAG_SURF, "No playable video seen on the wire " +
@@ -499,7 +538,6 @@ class CimaNowProvider : BaseProvider() {
                 return false
             }
 
-            var found = false
             for (capture in playable) {
                 val link = buildSurfLink(capture, userAgent)
                 Log.i(TAG_SURF, ">>> LINK q=${link.quality} ${link.url.take(150)} referer=${link.referer.take(80)}")
@@ -523,6 +561,42 @@ class CimaNowProvider : BaseProvider() {
      * are dropped — ExoPlayer sets its own, and passing `Host` or `Connection` through breaks the
      * request outright.
      */
+    /**
+     * Identity of a stream *rendition*, for de-duplicating sniffed captures.
+     *
+     * The raw URL is not that identity. A player re-requests the same rendition with volatile
+     * parameters — VK varies `ct=` (11 vs 12), adds `fromCache=1`, and reorders the query string — so
+     * `distinctBy { url }` let the same 480p stream through twice and put two identical entries in the
+     * picker (2026-07-30). What actually identifies a VK rendition is its signature and type, since
+     * each rung is signed separately. Falls back to host + path + a sorted query with the known
+     * volatile keys stripped.
+     */
+    private fun renditionKey(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            val query = uri.rawQuery ?: ""
+            val params = query.split("&").mapNotNull { pair ->
+                val name = pair.substringBefore("=", "")
+                if (name.isBlank()) null else name.lowercase() to pair.substringAfter("=", "")
+            }.toMap()
+
+            // VK: sig is per-rendition, type is the quality rung. Together they are the identity.
+            val sig = params["sig"]
+            val type = params["type"]
+            if (sig != null && type != null) {
+                return "${uri.host}|type=$type|sig=$sig"
+            }
+
+            val volatileKeys = setOf("ct", "fromcache", "bytes", "range", "_", "cachebust", "ch")
+            val stable = params.filterKeys { it !in volatileKeys }
+                .entries.sortedBy { it.key }
+                .joinToString("&") { "${it.key}=${it.value}" }
+            "${uri.host}${uri.path}|$stable"
+        } catch (_: Exception) {
+            url
+        }
+    }
+
     /**
      * Resolution for a VK CDN stream, whose URL states its quality only as `type=N`.
      *

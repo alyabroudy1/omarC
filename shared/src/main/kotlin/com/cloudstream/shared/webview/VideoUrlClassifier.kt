@@ -139,6 +139,29 @@ object VideoUrlClassifier {
         return true
     }
 
+    /**
+     * Ad, consent and popunder networks that serve their payload in an iframe.
+     *
+     * An ad slot and a player embed are both third-party documents in a subframe, so anything hunting
+     * for embeds has to reject these or it will hand an ad frame to an extractor. Drawn from what a
+     * CimaNow watch page actually loads (2026-07-30): Google's ad and Funding-Choices endpoints, and
+     * the `luugy.com` popunder the page gates playback on.
+     */
+    private val AD_FRAME_HOSTS = listOf(
+        "googlesyndication.com", "doubleclick.net", "googleadservices.com",
+        "fundingchoicesmessages.google.com", "google.com/ads", "adservice.google",
+        "luugy.com", "popads.net", "popcash", "adsterra", "exoclick", "juicyads",
+        "propellerads", "mgid.com", "taboola.com", "outbrain.com", "onclickads",
+        "hilltopads", "adnxs.com", "criteo", "yandex.ru/ads", "vk.ru/js", "top-fwz1.mail.ru"
+    )
+
+    /** True for iframe documents that are advertising/consent frames rather than player embeds. */
+    fun isLikelyAdFrame(url: String): Boolean {
+        val lower = url.lowercase()
+        if (isBlacklisted(lower)) return true
+        return AD_FRAME_HOSTS.any { lower.contains(it) }
+    }
+
     /** Markers that identify a quality-specific (variant) playlist rather than a master. */
     private val QUALITY_MARKERS = listOf(
         "2160", "1440", "1080", "720", "480", "360", "240", "144",

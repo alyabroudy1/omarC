@@ -33,9 +33,13 @@
 >    interceptor captures it, the engine navigates with the blog-post page as `Referer` (§0.1 rule 5:
 >    without it the gate runs `location.replace('/home')`).
 > 3. **Step 2 is the only addition:** `NavigationStep.WaitForCapturedVideo` holds the visible session
->    open while the user picks a server and presses play, then ends `graceMs` after the first stream so
->    the HLS variants (which carry the per-quality tokens) land too. Segments are ignored as an exit
->    trigger — a `.ts` proves playback started but plays nothing on its own.
+>    open while the user picks a server and presses play, then ends `graceMs` after the first hit.
+>    Satisfied by a **player embed** (preferred — see §5 below) or a playable stream; segments are
+>    ignored as a trigger, since a `.ts` proves playback started but plays nothing on its own. Also
+>    ends immediately if the user closes the window.
+> 3b. **Resolution order: embeds → extractors, streams only as fallback.** `fallbackExtractIframe()` on
+>    each captured iframe gives the full quality ladder; the sniffed stream is one ABR-chosen rendition.
+>    See §5.
 > 4. **`destinationLockPatterns = /(watch|watching)/`**, same as before, and it earns its keep here:
 >    once on `/watching/` every main-frame navigation is refused silently, so the ad redirects a stray
 >    tap fires cannot steal the screen. Servers switch by AJAX into an iframe, so nothing legitimate
@@ -124,6 +128,48 @@
 > VIDEO**. The asymmetry is the argument: a mislabelled manifest costs one source, a mislabelled
 > progressive stream costs every VK server in the provider.
 >
+> ### 5. Sniff the **embed**, not the stream — extractors give the full quality ladder
+>
+> With playback finally working, only 480p was ever available. The reason is structural, not a bug:
+> what we sniff is whatever the embed's ABR decided to fetch, and VK starts at the bottom rung and
+> steps up over tens of seconds. Worse, **each rendition is signed separately** (`type=1` →
+> `sig=N71T2BJj-…`, `type=3` → `sig=5xRX3euizrE`), so a captured 480p URL cannot be rewritten into
+> 1080p. Waiting longer is not a fix either — the ladder only appears if the player chooses to climb it.
+>
+> The embed URL, however, is already passing through the same interceptor, and it arrives **before** any
+> video bytes:
+>
+> ```
+> 10:46:06.664  URL: https://vkvideo.ru/video_ext.php?oid=-231591796&id=456240644   MAIN: false
+> 10:46:09.132  🎬 CAPTURED VIDEO URL: …vkuser.net/?…type=1…      (2.47s later)
+> ```
+>
+> Handed to `VKVideoEmbed`, that URL yields the whole ladder from the player's own parameters — `"hls"`
+> (a master playlist, so ExoPlayer switches quality itself) or `"url240"…"url1080"`. So the flow now
+> resolves **embeds first** via the existing `fallbackExtractIframe()` — the same dispatcher
+> (CimaNowTVEmbed → VKVideoEmbed → `loadExtractor` → HTTP regex) that the sandbox path fed from the
+> decrypted `<li data-index>` list — and only falls back to the sniffed stream when no extractor claims
+> the host.
+>
+> That has a consequence worth stating plainly: **the surf replaces the decrypted server list
+> entirely.** Those iframe documents *are* what `core.php` used to be resolved into, so every existing
+> per-server extractor is reachable again without decrypting anything.
+>
+> Detection rule: a subframe request (`isForMainFrame == false`) whose `Accept` contains `text/html`,
+> excluding ad/consent frames by host (`VideoUrlClassifier.isLikelyAdFrame`). Keyed on `Accept` because
+> **WebView does not send `Sec-Fetch-Dest` here**; across a whole session that test matched exactly two
+> requests — the watch page and the VK embed. It is deliberately *not* restricted to third-party hosts:
+> some servers embed their player from the site's own domain, and ad frames are already excluded by host.
+>
+> Two smaller fixes shipped with it:
+> - **Rendition identity, not URL identity** (`renditionKey()`). VK re-requests the same rung with
+>   `ct=11` vs `ct=12`, `fromCache=1`, and a reordered query, so `distinctBy { url }` produced two
+>   identical 480p entries in the picker. A VK rendition is `host|type|sig`; everything else falls back
+>   to host + path + sorted query minus the volatile keys.
+> - **Closing the surf window now ends the wait.** The dialog's dismiss listener sets a flag that
+>   `WaitForCapturedVideo` polls; previously it only logged, so backing out left `loadLinks` polling for
+>   up to 300 s with nothing on screen.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -131,8 +177,11 @@
 >    produced content (delta=…)`. A blank screen and a decryption failure are indistinguishable
 >    without this line.
 > 3. `Popup honoured into a blank sink window` — the ad gate will not fire.
-> 4. `🎬 CAPTURED VIDEO URL` followed by `Video captured — collecting variants`. Captures without that
->    second line mean the filter is eating them.
+> 4. **`🎯 CAPTURED EMBED`** — the good path. Followed by `Resolving embed via extractor` and
+>    `>>> EMBED LINK`, which means the full quality ladder came from the player's own params.
+> 5. `🎬 CAPTURED VIDEO URL` then `Source captured — collecting`. Reaching `No extractor produced links
+>    — falling back to the sniffed stream(s)` means you are back to single-rendition ABR quality: find
+>    out why the embed was not captured or not claimed, rather than accepting 480p.
 >
 > **Still unproven, for the record:** whether `navigator.userAgentData.brands` (which reports
 > `"Android WebView"` regardless of `userAgentString` and the spoofed `sec-ch-ua` headers) matters. It
