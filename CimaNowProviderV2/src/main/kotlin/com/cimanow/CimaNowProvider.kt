@@ -77,6 +77,16 @@ class CimaNowProvider : BaseProvider() {
      */
     private val SURF_TIMEOUT_MS = 300_000L
 
+    /**
+     * Per-embed ceiling for extractor resolution.
+     *
+     * This phase runs with the surf window already closed, so every second is a spinner on a blank
+     * screen. `VKVideoEmbed` alone can spend 45 s in a headless sniffer when the embed page carries no
+     * player params, which is exactly what a dead embed does (2026-07-30: 49 s, then failure). 12 s is
+     * comfortably above the healthy case measured at 0.7 s.
+     */
+    private val EMBED_RESOLVE_TIMEOUT_MS = 12_000L
+
     override val mainPage = mainPageOf(
         mainUrl + "/الاحدث/" to "الاحدث",
         mainUrl + "/category/افلام-اجنبية/page/" to "افلام اجنبية",
@@ -500,19 +510,30 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
-            for (embed in navResult.capturedEmbedRequests.distinctBy { it.url }) {
+            // Most recent first: the last iframe the page inserted is the server the user just picked,
+            // and the earlier ones may be from a server they had already given up on.
+            val embeds = navResult.capturedEmbedRequests.distinctBy { it.url }.reversed()
+            for (embed in embeds) {
                 val serverName = try {
                     java.net.URI(embed.url).host ?: "Surf"
                 } catch (_: Exception) { "Surf" }
                 Log.i(TAG_SURF, "Resolving embed via extractor: host=$serverName url=${embed.url.take(140)}")
                 try {
-                    // Referer = the page that hosted the iframe, which is what the embed expects.
-                    fallbackExtractIframe(
-                        iframeUrl = embed.url,
-                        serverName = serverName,
-                        referer = embed.pageUrl.ifBlank { navResult.finalUrl },
-                        callback = embedCallback
-                    )
+                    // Capped, because the user is watching a spinner with no WebView on screen.
+                    // VKVideoEmbed falls back to a 45s HEADLESS sniffer session when the embed page
+                    // has no player params, and on 2026-07-30 a dead VK embed (its error page) spent
+                    // 49s in there before failing. A bound turns that into a quick "next".
+                    kotlinx.coroutines.withTimeout(EMBED_RESOLVE_TIMEOUT_MS) {
+                        // Referer = the page that hosted the iframe, which is what the embed expects.
+                        fallbackExtractIframe(
+                            iframeUrl = embed.url,
+                            serverName = serverName,
+                            referer = embed.pageUrl.ifBlank { navResult.finalUrl },
+                            callback = embedCallback
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    Log.w(TAG_SURF, "⏱ Extractor for $serverName exceeded ${EMBED_RESOLVE_TIMEOUT_MS}ms — moving on")
                 } catch (e: Exception) {
                     Log.w(TAG_SURF, "Extractor threw for $serverName: ${e.message}")
                 }

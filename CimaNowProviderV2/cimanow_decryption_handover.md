@@ -33,10 +33,12 @@
 >    interceptor captures it, the engine navigates with the blog-post page as `Referer` (§0.1 rule 5:
 >    without it the gate runs `location.replace('/home')`).
 > 3. **Step 2 is the only addition:** `NavigationStep.WaitForCapturedVideo` holds the visible session
->    open while the user picks a server and presses play, then ends `graceMs` after the first hit.
->    Satisfied by a **player embed** (preferred — see §5 below) or a playable stream; segments are
->    ignored as a trigger, since a `.ts` proves playback started but plays nothing on its own. Also
->    ends immediately if the user closes the window.
+>    open while the user picks a server and presses play, then ends `graceMs` after the first hit —
+>    `embedGraceMs` (600 ms) instead once an embed is in hand, since its extractor makes the variant
+>    playlists redundant. Satisfied only by a **playable stream**: an embed is not proof that the server
+>    works (§6), and segments do not count either, since a `.ts` proves playback started but plays
+>    nothing on its own. Ends immediately if the user closes the window, and hands over any embeds it
+>    has even when no stream arrives.
 > 3b. **Resolution order: embeds → extractors, streams only as fallback.** `fallbackExtractIframe()` on
 >    each captured iframe gives the full quality ladder; the sniffed stream is one ABR-chosen rendition.
 >    See §5.
@@ -170,6 +172,43 @@
 >   `WaitForCapturedVideo` polls; previously it only logged, so backing out left `loadLinks` polling for
 >   up to 300 s with nothing on screen.
 >
+> ### 6. Wait for a **stream**, not an embed — an embed is not proof of playback
+>
+> The failure mode that taught this (2026-07-30, Sonic): the surf window vanished, a spinner ran for
+> ~49 s, then "no links". What the log showed:
+>
+> ```
+> Step 2: Done | embeds=3, playableStreams=0, totalStreamCaptures=0
+> Dialog dismissed …                                    (27 ms later — our own cleanup)
+> Resolving embed: ep2.adtrafficquality.google/sodar/…/runner.html
+> Resolving embed: www.google.com/recaptcha/api2/aframe
+> Resolving embed: vkvideo.ru/video_ext.php?oid=792310950&id=456242753
+>   → st1-55.vkvideo.ru/dist/webl/video_embed_error.isolated…  +  images/icons/cry_dog.png
+> No extractor produced links                            (11:18:52, 49 s after the window closed)
+> ```
+>
+> `totalStreamCaptures=0` is the whole story: **the page never fetched one byte of video.** That VK
+> embed was VK's own error page. We had exited the surf on the embed capture alone, so the user never
+> saw the error and never got to pick another server — and `VKVideoEmbed`, finding no player params,
+> fell into its 45 s headless sniffer while the screen showed a spinner with no WebView behind it.
+>
+> Three corrections, each aimed at one link in that chain:
+> - **The exit condition is a playable stream again.** Embeds no longer satisfy the wait; they are still
+>   resolved first (quality) and still handed over when no stream ever arrives, so nothing is lost. In
+>   the healthy case the stream follows the embed within ~2 s, so this costs nothing — and when a server
+>   is broken the window stays open and the user simply picks another.
+> - **Captcha/verification frames are not embeds.** `adtrafficquality.google`, `/sodar`, `recaptcha`,
+>   `/aframe`, `gstatic.com`, `hcaptcha`, `challenges.cloudflare.com`, `turnstile` added to
+>   `isLikelyAdFrame`. They are third-party iframe documents, structurally identical to a player embed —
+>   only the host tells them apart.
+> - **`EMBED_RESOLVE_TIMEOUT_MS = 12 s` per embed.** This phase runs with the window already closed, so
+>   every second is a blank spinner. Healthy resolution measured 0.7 s; 45 s of sniffer for a dead embed
+>   is never worth waiting for.
+>
+> Also fixed: `cleanupWebView` dismissing the dialog no longer logs (or records) "dismissed by user" —
+> it set `dialogDismissedByUser` 27 ms after the step ended, which was both untrue and left the flag set
+> for whatever came next.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -270,6 +309,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 18 | **`return true` from `onCreateWindow` and call it popup support** | 2026-07-30. Without filling `resultMsg`'s `WebView.WebViewTransport` and calling `sendToTarget()`, no window is created and `window.open()` returns `null`. The page runs an Adcash "iclick" popunder (`luugy.com/5/…?oo=1`), gates play/server-switch on it, and shows a SweetAlert2 "allow the ads" modal when it comes back null. Ads themselves were loading fine the whole time. Hand over a blank sink WebView instead. |
 | 19 | **Filter sniffer captures with `VideoUrlClassifier.isVideoUrl()`** | 2026-07-30. VK streams from `vk6-3.vkuser.net/?…&type=1&…` — no extension, no `/hls/` — so a *recognition* filter drops the very streams a sniffer exists to find (four captured, zero links, no `Video captured` line in the log). Use `isPlayableCapture()`, which rejects segments/thumbnails/trackers/DASH and passes everything else. |
 | 20 | **Default an unrecognised URL to `ExtractorLinkType.M3U8`** | 2026-07-30. `getLinkType()`'s `else -> M3U8` sent the extension-less VK stream to ExoPlayer's HLS reader: `ParserException: Input does not start with the #EXTM3U header`, plus `M3u8Helper2.hslLazy` reading a 5 MB video as text. Sniffed extension-less URLs are progressive files behind a token — default to `VIDEO` and detect manifests positively (`.m3u8`, `/hls/`). |
+| 21 | **Treat an embed capture as proof that the server works** | 2026-07-30. A captured iframe proves an iframe was inserted, nothing more. A VK embed that was VK's *error page* (`video_embed_error`, `cry_dog.png`) ended the surf with `totalStreamCaptures=0`, closed the window before the user could pick another server, then burned 49 s in `VKVideoEmbed`'s headless-sniffer fallback and failed. Exit on a **stream**; use the embed for quality. |
 
 ### 0.2 Always do these
 

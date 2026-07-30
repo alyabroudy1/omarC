@@ -76,6 +76,16 @@ class NavigationEngine(
     @Volatile
     private var dialogDismissedByUser = false
 
+    /**
+     * True while *we* are dismissing the dialog during cleanup.
+     *
+     * Without it the dismiss listener cannot tell a user's back-press from our own teardown, and logged
+     * "Dialog dismissed by user" 27 ms after the step finished — a claim about the user that was simply
+     * untrue, and a flag left set for whatever came next.
+     */
+    @Volatile
+    private var dismissingForCleanup = false
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -292,35 +302,59 @@ class NavigationEngine(
                                 fun playable() = capturedVideoRequests.filter {
                                     VideoUrlClassifier.isPlayableCapture(it.url)
                                 }
-                                fun haveSource() = capturedEmbedRequests.isNotEmpty() || playable().isNotEmpty()
 
+                                // Wait for a STREAM, not for an embed.
+                                //
+                                // An embed capture proves an iframe was inserted; it proves nothing
+                                // about whether it plays. 2026-07-30: a VK embed was captured, this
+                                // step exited 0.5s later, the window closed — and the embed was VK's
+                                // error page (`video_embed_error`, `cry_dog.png`) with
+                                // `totalStreamCaptures=0`. The user never got to pick another server,
+                                // and the doomed embed then held a spinner for 49s. A byte of video on
+                                // the wire is the only honest proof, and waiting for it costs nothing
+                                // in the healthy case (the stream follows the embed within ~2s).
+                                //
+                                // The embed is still what gets resolved first afterwards — it carries
+                                // the quality ladder — and embeds are handed back even when no stream
+                                // ever arrives, so a slow-but-working server is not lost.
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
-                                while (!haveSource() && !dialogDismissedByUser &&
+                                while (playable().isEmpty() && !dialogDismissedByUser &&
                                     System.currentTimeMillis() < deadline
                                 ) {
                                     delay(step.pollIntervalMs)
                                 }
 
-                                if (!haveSource()) {
+                                if (playable().isEmpty()) {
                                     val why = if (dialogDismissedByUser) "user closed the window"
-                                        else "nothing seen within ${step.timeoutMs}ms"
-                                    ProviderLogger.w(TAG, "execute", "Step $index: No source — $why")
-                                    if (step.abortOnFailure) {
-                                        failedStep = index
-                                        errorMsg = "No video captured ($why)"
-                                        break
+                                        else "no stream within ${step.timeoutMs}ms"
+                                    if (capturedEmbedRequests.isNotEmpty()) {
+                                        // Not a failure: the caller can still try the extractors.
+                                        ProviderLogger.w(TAG, "execute",
+                                            "Step $index: No stream ($why) — handing over " +
+                                                "${capturedEmbedRequests.size} embed(s) to try anyway")
+                                    } else {
+                                        ProviderLogger.w(TAG, "execute", "Step $index: No source — $why")
+                                        if (step.abortOnFailure) {
+                                            failedStep = index
+                                            errorMsg = "No video captured ($why)"
+                                            break
+                                        }
                                     }
                                 } else {
+                                    // An embed makes the long grace pointless — see embedGraceMs.
+                                    val grace = if (capturedEmbedRequests.isNotEmpty()) {
+                                        step.embedGraceMs
+                                    } else {
+                                        step.graceMs
+                                    }
                                     ProviderLogger.i(TAG, "execute",
-                                        "Step $index: Source captured — collecting for ${step.graceMs}ms",
+                                        "Step $index: Source captured — collecting for ${grace}ms",
                                         "embeds" to capturedEmbedRequests.size,
                                         "streams" to playable().size,
                                         "first" to (capturedEmbedRequests.firstOrNull()?.url
                                             ?: playable().first().url).take(120))
-                                    // Grace still applies with an embed in hand: a second server the
-                                    // user tried, or the stream itself, may still be worth having as a
-                                    // fallback. Cut it short if the user closes the window.
-                                    val graceEnd = System.currentTimeMillis() + step.graceMs
+                                    // Cut it short if the user closes the window.
+                                    val graceEnd = System.currentTimeMillis() + grace
                                     while (System.currentTimeMillis() < graceEnd && !dialogDismissedByUser) {
                                         delay(step.pollIntervalMs)
                                     }
@@ -2159,8 +2193,12 @@ class NavigationEngine(
                 tvMouseController = null
                 // A waiting step has to know, or closing the window leaves the caller polling until
                 // its timeout with nothing on screen (WaitForCapturedVideo allows 300s).
-                dialogDismissedByUser = true
-                ProviderLogger.i(TAG, "createDialog", "Dialog dismissed by user — ending any wait")
+                if (dismissingForCleanup) {
+                    ProviderLogger.d(TAG, "createDialog", "Dialog dismissed by cleanup")
+                } else {
+                    dialogDismissedByUser = true
+                    ProviderLogger.i(TAG, "createDialog", "Dialog dismissed by user — ending any wait")
+                }
             }
         }
     }
@@ -2228,6 +2266,7 @@ class NavigationEngine(
 
     private fun cleanupWebView(webView: WebView?, dialog: android.app.Dialog?) {
         try {
+            dismissingForCleanup = true
             dialog?.dismiss()
             // Popup sinks outlive the page on purpose (the page holds references to them), so they
             // are only safe to destroy once the session itself is over.

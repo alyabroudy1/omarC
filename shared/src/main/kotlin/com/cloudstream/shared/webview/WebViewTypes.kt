@@ -179,6 +179,17 @@ sealed class NavigationStep {
         val timeoutMs: Long = 300_000L,
         val pollIntervalMs: Long = 250L,
         val graceMs: Long = 2_500L,
+        /**
+         * Grace used instead of [graceMs] once an embed has been captured.
+         *
+         * Much shorter, because the reason for a long grace does not apply: [graceMs] exists to catch
+         * the HLS variant playlists that follow a master on the *sniffed* path, and an embed makes
+         * those redundant — its extractor produces the whole ladder. Measured 2026-07-30: with the
+         * embed in hand at +0.15s the full 2.5s window then collected three streams that were
+         * immediately discarded, a third of the time to first frame spent on nothing. Not zero, so a
+         * second server the user already clicked can still land.
+         */
+        val embedGraceMs: Long = 600L,
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 

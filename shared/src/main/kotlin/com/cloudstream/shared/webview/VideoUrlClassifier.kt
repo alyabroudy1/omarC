@@ -152,7 +152,13 @@ object VideoUrlClassifier {
         "fundingchoicesmessages.google.com", "google.com/ads", "adservice.google",
         "luugy.com", "popads.net", "popcash", "adsterra", "exoclick", "juicyads",
         "propellerads", "mgid.com", "taboola.com", "outbrain.com", "onclickads",
-        "hilltopads", "adnxs.com", "criteo", "yandex.ru/ads", "vk.ru/js", "top-fwz1.mail.ru"
+        "hilltopads", "adnxs.com", "criteo", "yandex.ru/ads", "vk.ru/js", "top-fwz1.mail.ru",
+        // Verification, captcha and ad-quality frames. These are iframe documents on a third-party
+        // host, exactly like a player embed, and a 2026-07-30 run handed two of them to extractors:
+        // `ep2.adtrafficquality.google/sodar/sodar2/255/runner.html` and
+        // `www.google.com/recaptcha/api2/aframe`.
+        "adtrafficquality.google", "/sodar", "recaptcha", "/aframe", "gstatic.com",
+        "hcaptcha.com", "challenges.cloudflare.com", "turnstile"
     )
 
     /** True for iframe documents that are advertising/consent frames rather than player embeds. */
