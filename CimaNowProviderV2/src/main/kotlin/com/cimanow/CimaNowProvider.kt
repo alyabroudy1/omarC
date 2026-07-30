@@ -511,7 +511,10 @@ class CimaNowProvider : BaseProvider() {
                 // what the gate actually checks: that the popup **stays open** past 800 ms
                 // (`dipPageVisibility`), which a blank sink already satisfies. So loading the ad for
                 // real bought nothing and cost real impressions on the user's connection.
-                loadPopupsInSink = false
+                loadPopupsInSink = false,
+                // Also CimaNow-only: capturing embeds means the engine answers the iframe request
+                // itself to keep a copy of the HTML, and no other provider should inherit that.
+                captureEmbeds = true
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")

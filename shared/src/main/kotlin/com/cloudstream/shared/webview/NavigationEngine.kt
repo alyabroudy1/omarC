@@ -122,7 +122,17 @@ class NavigationEngine(
          * [MAX_POPUP_SINKS], [POPUP_SINK_TTL_MS], no nested popups, and http(s) only — and nothing it
          * loads can reach the main frame.
          */
-        loadPopupsInSink: Boolean = false
+        loadPopupsInSink: Boolean = false,
+        /**
+         * Capture player embeds — subframe navigations — and keep a copy of their HTML.
+         *
+         * **Off by default and opt-in per provider**, because it is not passive: to keep the bytes the
+         * engine has to answer the iframe request itself (`fetchEmbedDocument`), so a provider whose
+         * player iframe is sensitive to being re-issued — cookies not yet set, an IP-pinned token, a
+         * POST, or simply a slower round trip — would be affected by a feature it never asked for.
+         * CimaNow needs it (§5/§7 of the handover); nothing else should pay for it.
+         */
+        captureEmbeds: Boolean = false
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -182,7 +192,7 @@ class NavigationEngine(
             try {
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
-                    destinationLockPatterns, injectSpoofingJs, loadPopupsInSink)
+                    destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -770,7 +780,8 @@ class NavigationEngine(
         allowedDomains: Set<String> = emptySet(),
         destinationLockPatterns: List<Regex> = emptyList(),
         injectSpoofingJs: Boolean = true,
-        loadPopupsInSink: Boolean = false
+        loadPopupsInSink: Boolean = false,
+        captureEmbeds: Boolean = false
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -881,7 +892,7 @@ class NavigationEngine(
                 // Keyed on `Accept: text/html` rather than `Sec-Fetch-Dest: iframe`, because WebView
                 // does not send Sec-Fetch-Dest here (2026-07-30 log). In a whole session that test
                 // matched exactly two requests: the watch page itself and the VK embed.
-                if (!isMain) {
+                if (!isMain && captureEmbeds) {
                     fun header(name: String) = reqHeaders.entries
                         .firstOrNull { it.key.equals(name, ignoreCase = true) }?.value ?: ""
 
