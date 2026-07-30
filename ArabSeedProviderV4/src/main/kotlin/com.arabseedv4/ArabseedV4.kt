@@ -15,6 +15,17 @@ class ArabseedV4 : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
     override val paginationFormat get() = "page/%d/"
 
+    /**
+     * 60 s, because this origin really is that slow: measured **~40 s to load in a desktop browser**
+     * (2026-07-30). Against CloudStream's ~10 s client default every request died before the site
+     * answered — the watch-page GET, and all five `get__watch__server/` POSTs, which surfaced as
+     * "No Links Found" ten seconds after pressing play.
+     *
+     * Deliberately set here and not in the shared default: the cost of a high ceiling is that genuine
+     * failures take a minute to report, and no other provider should pay that for this site.
+     */
+    override val requestTimeoutMs get() = 60_000L
+
     override val mainPage = mainPageOf(
         "$mainUrl/category/films/" to "مضاف حديثا",
         "$mainUrl/category/films/foreign-movies/" to "أفلام أجنبية",

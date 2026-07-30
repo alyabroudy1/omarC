@@ -34,8 +34,14 @@ data class ProviderConfig(
     /** Cookie max age in ms (default: 30 minutes) */
     val cookieMaxAgeMs: Long = 30 * 60 * 1000,
     
-    /** Request timeout in ms */
-    val requestTimeoutMs: Long = 30_000,
+    /**
+     * HTTP timeout in ms, or null to inherit CloudStream's client defaults (~10 s).
+     *
+     * Was declared and never read until 2026-07-30, so every provider silently got the ~10 s default.
+     * Set it only for a site that genuinely needs longer — ArabSeed's origin takes ~40 s in a browser —
+     * because a higher ceiling also makes real failures slower to surface.
+     */
+    val requestTimeoutMs: Long? = null,
     
     /** Video sniff timeout in ms */
     val videoSniffTimeoutMs: Long = 35_000,

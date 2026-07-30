@@ -72,7 +72,7 @@ class ArabseedV4Parser : NewBaseParser() {
         val highestQuality = availableQualities.firstOrNull()?.quality
             ?: extractDefaultQuality(doc, availableQualities)
         
-        Log.d("[ArabseedV4Parser]", "extractWatchServersUrls: highestQuality=$highestQuality, servers=${visibleServers.size}, qualities=${availableQualities.size}")
+        Log.d("ArabseedV4.parser", "extractWatchServersUrls: highestQuality=$highestQuality, servers=${visibleServers.size}, qualities=${availableQualities.size}")
         
         // Build lazy URLs for highest quality × visible servers.
         // Multi-quality extraction happens inside the extractor (M3U8 parsing).
@@ -99,7 +99,7 @@ class ArabseedV4Parser : NewBaseParser() {
             (it.startsWith("arabseed-lazy://") || (it.startsWith("http") && it.length > 10))
         }
         
-        Log.d("[ArabseedV4Parser]", "extractWatchServersUrls: total=${validUrls.size} valid URLs out of ${urls.size}")
+        Log.d("ArabseedV4.parser", "extractWatchServersUrls: total=${validUrls.size} valid URLs out of ${urls.size}")
         
         return validUrls
     }

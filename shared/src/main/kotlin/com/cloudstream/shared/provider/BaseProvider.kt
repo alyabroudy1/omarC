@@ -61,6 +61,14 @@ abstract class BaseProvider : MainAPI() {
     /** Pagination URL format for main page (null = no pagination, e.g. "page/%d/") */
     open val paginationFormat: String? = null
 
+    /**
+     * HTTP timeout in ms for this provider, or null to keep CloudStream's client defaults (~10 s).
+     *
+     * Override only for a site that is genuinely slow: a higher ceiling also delays real failures.
+     * See [ProviderConfig.requestTimeoutMs].
+     */
+    open val requestTimeoutMs: Long? = null
+
     protected abstract fun getParser(): NewBaseParser
 
 
@@ -79,6 +87,7 @@ abstract class BaseProvider : MainAPI() {
                 userAgent = userAgent,
                 preferIpv6 = preferIpv6,
                 preferIpv4 = preferIpv4,
+                requestTimeoutMs = requestTimeoutMs,
             ),
             parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }
@@ -92,7 +101,7 @@ abstract class BaseProvider : MainAPI() {
     open fun getSyncWorkerUrl(): String = "https://omarstreamcloud.alyabroudy1.workers.dev"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val methodTag = "[$name] [getMainPage]"
+        val methodTag = "$providerName.getMainPage"
         Log.i(methodTag, "START page=$page, data=${request.data}, name=${request.name}")
 
         try {
@@ -145,7 +154,7 @@ abstract class BaseProvider : MainAPI() {
     }
 
     open suspend fun searchNormal(query: String): List<SearchResponse> {
-        val methodTag = "[$name] [searchNormal]"
+        val methodTag = "$providerName.searchNormal"
         try {
             httpService.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
@@ -178,7 +187,7 @@ abstract class BaseProvider : MainAPI() {
         val bypassLazy = query.startsWith("LAZY_BYPASS:")
         val realQuery = if (bypassLazy) query.removePrefix("LAZY_BYPASS:") else query
 
-        val methodTag = "[$name] [search]"
+        val methodTag = "$providerName.search"
         Log.i(methodTag, "START query='$realQuery', bypassLazy=$bypassLazy")
 
         // ── Lazy search path: if the app supports it AND this provider opts in ──
@@ -227,7 +236,7 @@ abstract class BaseProvider : MainAPI() {
      * The full [search] method (with CF solve) is called later if the user taps the placeholder.
      */
     open suspend fun searchLazy(query: String): List<SearchResponse> {
-        val methodTag = "[$name] [searchLazy]"
+        val methodTag = "$providerName.searchLazy"
         Log.i(methodTag, "START query='$query'")
 
         httpService.ensureInitialized()
@@ -275,7 +284,7 @@ abstract class BaseProvider : MainAPI() {
     open suspend fun resolveServerUrl(url: String, referer: String): String? = url
 
     override suspend fun load(url: String): LoadResponse? {
-        val methodTag = "[$name] [load]"
+        val methodTag = "$providerName.load"
         Log.i(methodTag, "START url='$url'")
         
         try {
@@ -397,7 +406,7 @@ abstract class BaseProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val methodTag = "[$name] [loadLinks]"
+        val methodTag = "$providerName.loadLinks"
         Log.i(methodTag, "START data='$data'")
         
         try {
@@ -615,7 +624,7 @@ abstract class BaseProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.w("[$name] [collectExtractorLinks]", "Exception: ${e.message}")
+            Log.w("$providerName.collectExtractorLinks", "Exception: ${e.message}")
         }
         
         Log.d("BaseProvider", "collectExtractorLinks finished. Found ${collected.size} links")
@@ -636,7 +645,7 @@ abstract class BaseProvider : MainAPI() {
         timeoutMs: Long,
         selector: com.cloudstream.shared.extractors.SnifferSelector? = null
     ): Boolean {
-        Log.d("[$name] [awaitSnifferResult]", "=== START === target=${targetUrl.take(80)}, hasSelector=${selector != null}")
+        Log.d("$providerName.awaitSnifferResult", "=== START === target=${targetUrl.take(80)}, hasSelector=${selector != null}")
         
         return try {
             withTimeoutOrNull(timeoutMs) {
@@ -649,29 +658,29 @@ abstract class BaseProvider : MainAPI() {
                     referer,
                     selector
                 )
-                Log.d("[$name] [awaitSnifferResult]", "Sniffer URL: $sniffUrl")
+                Log.d("$providerName.awaitSnifferResult", "Sniffer URL: $sniffUrl")
                 
                 // Use loadExtractor which will trigger SnifferExtractor
                 loadExtractor(sniffUrl, referer, subtitleCallback) { link ->
-                    Log.i("[$name] [awaitSnifferResult]", "CALLBACK FIRED! URL=${link.url.take(80)}")
+                    Log.i("$providerName.awaitSnifferResult", "CALLBACK FIRED! URL=${link.url.take(80)}")
                     val isAudioChunk = link.url.contains("audio", ignoreCase = true) && link.url.contains(".mp4", ignoreCase = true)
                     if (!found && !isAudioChunk) {
                         found = true
                         callback(link)
                         deferred.complete(true)
                     } else if (isAudioChunk) {
-                        Log.w("[$name] [awaitSnifferResult]", "Rejected AUDIO fragment from sniffer: ${link.url.take(80)}")
+                        Log.w("$providerName.awaitSnifferResult", "Rejected AUDIO fragment from sniffer: ${link.url.take(80)}")
                     }
                 }
                 
                 // loadExtractor returned — if callback never fired (user cancelled, error, no video),
                 // complete deferred so we don't hang for 3 hours
                 if (!found) {
-                    Log.w("[$name] [awaitSnifferResult]", "loadExtractor returned without callback — completing as cancelled")
+                    Log.w("$providerName.awaitSnifferResult", "loadExtractor returned without callback — completing as cancelled")
                     deferred.complete(false)
                 }
                 val result = deferred.await()
-                Log.d("[$name] [awaitSnifferResult]", "=== END === result=$result")
+                Log.d("$providerName.awaitSnifferResult", "=== END === result=$result")
                 result
             } ?: false
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -680,15 +689,15 @@ abstract class BaseProvider : MainAPI() {
             // within 10800000ms" — a 3-hour timeout it never came close to spending — which reads as
             // "we tried and the server was dead" when nothing was tried at all.
             if (!currentCoroutineContext().isActive) {
-                Log.e("[$name] [awaitSnifferResult]",
+                Log.e("$providerName.awaitSnifferResult",
                     "ABORTED by the outer loadLinks budget — this server was never really tried " +
                         "(own timeout ${timeoutMs}ms was not reached)")
             } else {
-                Log.e("[$name] [awaitSnifferResult]", "TIMEOUT! No video found within ${timeoutMs}ms")
+                Log.e("$providerName.awaitSnifferResult", "TIMEOUT! No video found within ${timeoutMs}ms")
             }
             false
         } catch (e: Exception) {
-            Log.e("[$name] [awaitSnifferResult]", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+            Log.e("$providerName.awaitSnifferResult", "EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }

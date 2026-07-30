@@ -241,6 +241,28 @@ class ProviderHttpService private constructor(
         if (config.preferIpv4 || config.preferIpv6) fastFallback(false)
     }
 
+    /**
+     * Applies [ProviderConfig.requestTimeoutMs] when the provider set one.
+     *
+     * Null leaves CloudStream's `app.baseClient` defaults alone, which is ~10 s — fine for a healthy
+     * site and fatal for a slow one. ArabSeed's origin took **40 s to load in a desktop browser**
+     * (2026-07-30), so every request died at 10 s: the watch page GET, and all five
+     * `get__watch__server/` POSTs in parallel, which surfaced as "No Links Found" ten seconds after
+     * pressing play with no fallback attempted.
+     *
+     * Deliberately opt-in: a longer ceiling also makes genuine failures take longer, and no provider
+     * should inherit that because another one is slow.
+     */
+    private fun okhttp3.OkHttpClient.Builder.applyProviderTimeout(): okhttp3.OkHttpClient.Builder = apply {
+        config.requestTimeoutMs?.let { ms ->
+            val d = java.time.Duration.ofMillis(ms)
+            connectTimeout(d)
+            readTimeout(d)
+            writeTimeout(d)
+            callTimeout(java.time.Duration.ofMillis(ms * 2))
+        }
+    }
+
     suspend fun getRaw(url: String, headers: Map<String, String> = emptyMap()): okhttp3.Response {
         val fullUrl = buildUrl(url)
         val request = okhttp3.Request.Builder()
@@ -250,6 +272,7 @@ class ProviderHttpService private constructor(
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             .applyDnsPolicy()
+                .applyProviderTimeout()
             .build()
         return directClient.newCall(request).execute()
     }
@@ -710,6 +733,7 @@ class ProviderHttpService private constructor(
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                 .applyDnsPolicy()
+                .applyProviderTimeout()
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
@@ -789,6 +813,7 @@ class ProviderHttpService private constructor(
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
                 .applyDnsPolicy()
+                .applyProviderTimeout()
                 .build()
 
             val headerBuilder = okhttp3.Headers.Builder()
