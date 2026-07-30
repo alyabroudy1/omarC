@@ -141,7 +141,22 @@ class NavigationEngine(
          * POST, or simply a slower round trip — would be affected by a feature it never asked for.
          * CimaNow needs it (§5/§7 of the handover); nothing else should pay for it.
          */
-        captureEmbeds: Boolean = false
+        captureEmbeds: Boolean = false,
+        /**
+         * Rewrite `document.write('<script src=…')` in a cimanow.cc main-frame response and inject the
+         * `document.write` interceptor.
+         *
+         * **Pass false for the surf flow.** Both exist to serve the old sandbox, which needed those CDN
+         * scripts to load so it could scrape the decrypted server list out of the DOM. The surf flow
+         * scrapes nothing — the user watches the page and we read the network — so the rewrite has no
+         * purpose, while the injected hook is the `document.write` wrapper that handover §0.1 rule 3
+         * forbids outright.
+         *
+         * This is what made *some* titles render white while others played (2026-07-30): the injection
+         * only fires when the payload actually contains `document.write('<script…')` calls, so it was
+         * dormant on the titles we tested and fatal on the ones we did not.
+         */
+        rewriteDocumentWrite: Boolean = true
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -202,7 +217,8 @@ class NavigationEngine(
             try {
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
-                    destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds)
+                    destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
+                    rewriteDocumentWrite)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -796,7 +812,8 @@ class NavigationEngine(
         destinationLockPatterns: List<Regex> = emptyList(),
         injectSpoofingJs: Boolean = true,
         loadPopupsInSink: Boolean = false,
-        captureEmbeds: Boolean = false
+        captureEmbeds: Boolean = false,
+        rewriteDocumentWrite: Boolean = true
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -1179,6 +1196,17 @@ class NavigationEngine(
                                 // anti-bot JS can clear/patch it. This is parsed in Kotlin
                                 // after execute() completes, bypassing the WebView JS entirely.
                                 this@NavigationEngine.capturedMainFrameHtml = html
+                                if (!rewriteDocumentWrite) {
+                                    // Serve the page exactly as the server sent it. Nothing rewritten,
+                                    // nothing injected — see the rewriteDocumentWrite doc.
+                                    ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                        "Serving cimanow.cc main-frame verbatim (${html.length} chars) — " +
+                                            "no document.write rewrite, no interceptor injected")
+                                    return WebResourceResponse(
+                                        mime, charset.name(),
+                                        java.io.ByteArrayInputStream(html.toByteArray(charset))
+                                    )
+                                }
                                 val scriptCount = Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*><\\/script>\s*'\s*\)""").findAll(html).count()
                                 val linkCount = Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)""").findAll(html).count()
                                 var rewritten = html.replace(

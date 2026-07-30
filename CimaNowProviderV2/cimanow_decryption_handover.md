@@ -378,6 +378,37 @@
 > Look for **`🚫 SITE SENT US AWAY`**. It means try another title or check the referrer — not that the
 > flow is broken.
 >
+> ### 12. THE white-page bug: we were still injecting the `document.write` hook
+>
+> White page on some titles, fine on others — and unlike §11 this one **was ours**. The log names it
+> (2026-07-30, 15:18):
+>
+> ```
+> 15:18:34.772  Injected document.write interceptor for cimanow.cc main-frame (5211 chars) — rewrote N call(s)
+> 15:18:34.820  [CW] document.write hook active           ← our own injected script
+> 15:18:35.176  [CW] Poll check #1: body.length=4320169 no data-index
+> 15:18:35.190  bodyLength=4320169 → delta=-49 — decryptor wrote nothing
+> ```
+>
+> That is `ANTI_ANTI_BOT_JS` — the wrapper §0.1 rule 3 forbids — running in the page. It fires **only
+> when the payload contains `document.write('<script src=…')` calls to rewrite**, so on the titles we
+> happened to test the log said *"No document.write on this page — skipping"* and everything worked,
+> while titles whose payload does contain them went white. Exactly the "some movies work" pattern.
+>
+> The code even anticipated it and assumed it was unreachable: *"On this page the rewrite finds nothing
+> to rewrite … so injecting it was pure tripwire for zero benefit."* That assumption held for one title
+> and was never true in general.
+>
+> `execute(rewriteDocumentWrite = false)` for the surf flow: the main frame is now served **verbatim**,
+> nothing rewritten, nothing injected. Both the rewrite and the hook existed for the sandbox, which
+> needed those CDN scripts so it could scrape the server list out of the DOM. The surf flow scrapes no
+> DOM at all, so the rewrite buys nothing and the hook costs everything.
+>
+> **The lesson is the same one as §1, and it took a second, worse form to learn it:** "we inject nothing"
+> has to mean *nothing*, on every code path, including one that only arms itself on certain inputs. Grep
+> for injection sites before believing the claim — `Serving cimanow.cc main-frame verbatim` is the line
+> that proves it now.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.
@@ -484,6 +515,7 @@ day. If you are about to do something on this list, the answer is already known.
 | 23 | **Guess at a page-side gate from network traffic** | 2026-07-30, twice, before the decrypted page settled it in minutes. `luugy.com/ct?rb=…` re-firing looked like the ad network waiting for the popunder to load; it fires identically when the ad *has* loaded — a heartbeat. The real check was a **dwell test** (`window.open` must survive 800 ms; on mobile the first `touchstart`/`mousemove`/`visibilitychange` decides) plus a SweetAlert saying so in Arabic. Read the page (`test/gate.js`, or the `📜 SCRIPT DUMP`); do not infer from packets. |
 | 24 | **Identify an iframe by `Accept: text/html`** | 2026-07-30. A Chromium speculation-rules **prefetch** sends the same navigation-style Accept: 208 of 209 candidates in one run were prefetched static assets, giving `embeds=728`, 728 needless re-fetches, and a 30 s+ black screen in the resolution loop. Require `Sec-Fetch-Dest: iframe\|document`, or `Accept: text/html` **with `Upgrade-Insecure-Requests`**; reject `Sec-Purpose` and `X-Requested-With: XMLHttpRequest`. Bound the phase too — a per-item timeout is not a phase budget. |
 | 25 | **Assume a missing extractor means the extractor does not exist** | 2026-07-30. uqload produced no links and the conclusion was "CloudStream has no extractor for uqload.is". `UqloadIs` (mainUrl `https://uqload.is`) was already in `SharedExtractors.kt`; **`CimaNowPlugin` simply never called `registerSharedExtractors()`**, so `loadExtractor` had an empty registry and every server fell through to the sniffed stream. Check the plugin's registration before blaming the extractor. |
+| 26 | **Believe "we inject nothing" without grepping every injection site** | 2026-07-30. `SPOOFING_JS` was switched off (§1) and the flow declared clean, while the interceptor still injected `ANTI_ANTI_BOT_JS` — the `document.write` wrapper of rule 3 — on any title whose payload contained `document.write('<script src=…')`. Dormant on the titles tested, fatal on the rest: white page, `delta=-49`, `[CW] document.write hook active` in our own log. Serve the main frame verbatim (`rewriteDocumentWrite = false`). |
 
 ### 0.2 Always do these
 

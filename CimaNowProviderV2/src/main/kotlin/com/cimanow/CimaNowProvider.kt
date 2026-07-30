@@ -514,7 +514,15 @@ class CimaNowProvider : BaseProvider() {
                 loadPopupsInSink = false,
                 // Also CimaNow-only: capturing embeds means the engine answers the iframe request
                 // itself to keep a copy of the HTML, and no other provider should inherit that.
-                captureEmbeds = true
+                captureEmbeds = true,
+                // THE white-page bug (2026-07-30). Left at its default, the engine rewrites
+                // `document.write('<script src=…')` in the payload and injects the document.write
+                // interceptor — §0.1 rule 3, the one hook the decryptor explicitly refuses to run
+                // under. It only fires on titles whose payload actually contains those calls, which is
+                // why some titles played and others rendered white with `delta=-49` and our own
+                // `[CW] document.write hook active` in the log. The surf flow scrapes no DOM, so the
+                // rewrite buys nothing and the hook costs everything.
+                rewriteDocumentWrite = false
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
