@@ -79,6 +79,37 @@ class CimaNowProvider : BaseProvider() {
     private val SURF_TIMEOUT_MS = 300_000L
 
     /**
+     * Surf with a TV user agent so the watch page's own `isTv()` check disables its ad gate.
+     *
+     * **Off, and it should stay off unless the whole session can move to a TV identity together.** The
+     * gate bypass is real (see §14), but the UA is not a free variable:
+     *  - `cf_clearance` is bound to the UA that solved the challenge. Solve as a phone over HTTP, then
+     *    present a TV UA in the WebView, and the clearance is void the moment Cloudflare appears.
+     *  - Our own interceptor derives `sec-ch-ua` from the Chrome build while `sec-ch-ua-mobile` stays
+     *    `?1`, so a TV UA ships with mobile client hints — a mismatch a CF fingerprint check reads
+     *    directly.
+     *  - The HTTP half of the chain (`navigateToTimerPageViaHttp`) keeps the session UA regardless, so
+     *    the two halves would disagree about what device this is.
+     * The flow also worked end to end with the phone UA hours earlier, so the regression is elsewhere.
+     */
+    private val SURF_AS_TV_UA = false
+
+    /**
+     * Rewrites a UA so the page's `isTv()` regex matches, changing as little else as possible.
+     *
+     * Keeps the real Chrome build and everything the anti-bot's other checks look at; only the device
+     * descriptor changes, since the regex only needs one of its tokens (`android tv` here).
+     */
+    private fun asTvUserAgent(ua: String): String {
+        if (Regex("(?i)smart-?tv|hbbtv|netcast|webos|tizen|viera|aquos|android tv|apple tv|roku|fire tv")
+                .containsMatchIn(ua)
+        ) return ua
+        // "Linux; Android 16; SM-S918B Build/…" → "Linux; Android 16; Android TV"
+        val replaced = ua.replace(Regex("""\(Linux; Android ([\d.]+)[^)]*\)"""), "(Linux; Android $1; Android TV)")
+        return if (replaced != ua) replaced else "$ua Android TV"
+    }
+
+    /**
      * Per-embed ceiling for extractor resolution.
      *
      * This phase runs with the surf window already closed, so every second is a spinner on a blank
@@ -444,7 +475,27 @@ class CimaNowProvider : BaseProvider() {
         Log.i(TAG_SURF, "Movie URL: $movieUrl")
 
         try {
-            val userAgent = httpService.userAgent
+            // The page turns its entire ad gate off for TV user agents — its own code, first line of
+            // the handler (decrypted page, 2026-07-30):
+            //
+            //     if (isTv()) return;                      // before any button is touched
+            //     isTv = () => /smart-tv|smarttv|hbbtv|netcast|webos|tizen|viera|aquos|
+            //                   android tv|apple tv|roku|fire tv/.test(navigator.userAgent)
+            //
+            // Everything we have been fighting sits *after* that return: the popunder `window.open`,
+            // the 800 ms dwell check, the "allow the ads" modal, and `$("main article ul.btns li")
+            // .remove()` — which is the site emptying its own button list when a button has no href,
+            // and the likeliest source of the "white empty page" after a second server tap.
+            //
+            // So claim to be an Android TV and the site skips all of it. This is a path the page
+            // provides, not a hook or an injection — presumably because a TV cannot show a popunder.
+            val userAgent = if (SURF_AS_TV_UA) {
+                asTvUserAgent(httpService.userAgent).also {
+                    Log.i(TAG_SURF, "Surfing with a TV UA so the site's own isTv() bypass applies: $it")
+                }
+            } else {
+                httpService.userAgent
+            }
 
             // ---------- PHASE 1: token chain over HTTP, up to the timer page ----------
             val timerHtml = navigateToTimerPageViaHttp(movieUrl)

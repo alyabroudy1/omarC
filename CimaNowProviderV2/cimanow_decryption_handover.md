@@ -432,6 +432,43 @@
 > black now (as `VideoSnifferEngine`'s already was) and the dwell is 900 ms rather than 1200, since the
 > gate's threshold is 800.
 >
+> ### 14. The page turns its whole ad gate off for TV user agents
+>
+> After §13 the white page persisted, and the log (16:29, new build confirmed by `Page hidden for 900ms`)
+> showed the tap producing **only** the popunder — no navigation, no iframe, no `core.php`, no `[CW]`. So
+> the blanking is page-side, and the decrypted page says how:
+>
+> ```js
+> $(document).ready(function(){
+>   if (isTv()) return;                                     // ← everything below is skipped
+>   if ($("#xqeqjp").length===0 && $("#xqeqjp3").length===0){
+>       MESSAGE(null); $("main article ul.btns li").remove(); return }
+>   $("#xqeqjp, #xqeqjp3").each(function(){
+>       if (!$(this).attr("href") || $(this).attr("href").trim()===""){
+>           MESSAGE($(this)); $("main article ul.btns li").remove() } });   // ← empties its own UI
+>   $("#xqeqjp, #xqeqjp3").on("click", adGateHandler)
+> })
+>
+> isTv = () => /smart-tv|smarttv|hbbtv|netcast|webos|tizen|viera|aquos|android tv|apple tv|roku|fire tv/
+>              .test(navigator.userAgent.toLowerCase())
+> ```
+>
+> `$("main article ul.btns li").remove()` is the site **emptying its own button list** when a button has
+> no href — a blank action area with no navigation and no network activity, which is exactly the reported
+> symptom. And every one of the things we have been fighting — the popunder, the 800 ms dwell (§9), the
+> "allow the ads" modal, this UI removal — sits *after* `if (isTv()) return`.
+>
+> So `SURF_AS_TV_UA = true`: surf with an Android TV UA and the site skips its own gate. This is a path
+> the page offers (a TV cannot show a popunder), not a hook or an injection, so rule 3/17 are untouched.
+> `asTvUserAgent()` changes only the device descriptor and keeps the real Chrome build, since the regex
+> needs just one token.
+>
+> **Untested risk, flip `SURF_AS_TV_UA` to false if it bites:** the `get-link.php` token chain runs
+> through this same WebView session and has only ever been exercised with a phone UA. If
+> `No watching URL captured` starts appearing, suspect this first. The site may also serve TVs a
+> different layout. If the gate is genuinely gone, `dipPageVisibility` and the popup sink become dead
+> weight for this provider and can go.
+>
 > ### Diagnostics to read first, in this order
 >
 > 1. `Spoofing JS NOT injected (pristine page context)` — the page context is clean.

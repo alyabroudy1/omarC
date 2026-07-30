@@ -95,6 +95,11 @@ class NavigationEngine(
     @Volatile
     private var dismissingForCleanup = false
 
+    /** Set by `onRenderProcessGone`: the page is blank because the renderer died. Terminal. */
+    @Volatile
+    var rendererGone = false
+        private set
+
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
@@ -179,6 +184,7 @@ class NavigationEngine(
             lastHtmlBaseUrl = null
             lastPageUrl = ""
             siteRejectedNavigationUrl = null
+            rendererGone = false
             capturedMainFrameHtml = null
             capturedVideoUrls.clear()
             capturedVideoRequests.clear()
@@ -382,15 +388,28 @@ class NavigationEngine(
                                 // the quality ladder — and embeds are handed back even when no stream
                                 // ever arrives, so a slow-but-working server is not lost.
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
+                                var lastHeartbeat = 0L
                                 while (playable().isEmpty() && !dialogDismissedByUser &&
-                                    siteRejectedNavigationUrl == null &&
+                                    siteRejectedNavigationUrl == null && !rendererGone &&
                                     System.currentTimeMillis() < deadline
                                 ) {
                                     delay(step.pollIntervalMs)
+                                    // Heartbeat: without it a stuck surf logs nothing for minutes, so a
+                                    // blank page and a page nobody touched look identical afterwards.
+                                    val nowMs = System.currentTimeMillis()
+                                    if (nowMs - lastHeartbeat >= 5_000L) {
+                                        lastHeartbeat = nowMs
+                                        ProviderLogger.i(TAG, "execute", "⏳ Waiting for a stream",
+                                            "embeds" to capturedEmbedRequests.size,
+                                            "streamCaptures" to capturedVideoRequests.size,
+                                            "sinks" to popupSinks.size,
+                                            "url" to (webView?.url ?: lastPageUrl).take(110))
+                                    }
                                 }
 
                                 if (playable().isEmpty()) {
                                     val why = when {
+                                        rendererGone -> "render process died — the blank page was a renderer crash"
                                         siteRejectedNavigationUrl != null ->
                                             "site sent us to ${siteRejectedNavigationUrl} — title blocked or session rejected"
                                         dialogDismissedByUser -> "user closed the window"
@@ -1210,6 +1229,24 @@ class NavigationEngine(
                                 // anti-bot JS can clear/patch it. This is parsed in Kotlin
                                 // after execute() completes, bypassing the WebView JS entirely.
                                 this@NavigationEngine.capturedMainFrameHtml = html
+                                // Keep the exact bytes we hand the WebView. The blanking is page-side
+                                // and invisible on the wire, so the only way to stop guessing at it is
+                                // to read what the page was given: the `#xqeqjp` hrefs (an empty one
+                                // makes the site run `$("main article ul.btns li").remove()` and empty
+                                // its own UI) and whether the rewrite had anything to match.
+                                try {
+                                    activityProvider()?.let { ctx ->
+                                        val dir = ctx.externalCacheDir ?: ctx.cacheDir
+                                        dir.mkdirs()
+                                        val f = java.io.File(dir, "watchpage_served.html")
+                                        f.writeText(html)
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "📄 WATCH PAGE DUMP: ${f.absolutePath} (${html.length} chars)")
+                                    }
+                                } catch (e: Exception) {
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "Watch page dump failed: ${e.message}")
+                                }
                                 if (!rewriteDocumentWrite) {
                                     // Serve the page exactly as the server sent it. Nothing rewritten,
                                     // nothing injected — see the rewriteDocumentWrite doc.
@@ -1246,8 +1283,8 @@ class NavigationEngine(
                                 // change inside the sandbox can shift.
                                 val total = scriptCount + linkCount
                                 val injected = if (total > 0 && !injectDocumentWriteHook) {
-                                    ProviderLogger.i(TAG, "shouldInterceptRequest",
-                                        "Rewrote $total document.write call(s) into direct tags; " +
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "🔧 REWRITE: $total document.write call(s) → direct tags; " +
                                             "hook NOT injected (document.write stays native)")
                                     rewritten
                                 } else if (total > 0) {
@@ -1257,9 +1294,9 @@ class NavigationEngine(
                                             "(${antiBotTag.length} chars) — rewrote $total document.write call(s)")
                                     "$antiBotTag$rewritten"
                                 } else {
-                                    ProviderLogger.i(TAG, "shouldInterceptRequest",
-                                        "No document.write on this page — skipping the interceptor injection " +
-                                            "so document.write stays native (gate rule 3)")
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "🔧 REWRITE: nothing to rewrite on this page (0 matches) — " +
+                                            "document.write stays native, nothing injected")
                                     rewritten
                                 }
                                 ProviderLogger.d(TAG, "shouldInterceptRequest", "HTML ${html.length} chars for cimanow.cc main-frame")
@@ -1443,6 +1480,26 @@ class NavigationEngine(
 
                 ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "ALLOWED (sub-frame)", "url" to nextUrl.take(120), "host" to nextHost, "mainFrame" to isMainFrame.toString())
                 return false
+            }
+
+            /**
+             * A dead render process blanks the WebView instantly, with **no navigation and no network
+             * activity** — indistinguishable in a log from the page clearing itself, which is exactly the
+             * ambiguity that cost several rounds of guessing here. It was not observed at all before.
+             * A 4.7 MB DOM plus a VK player plus sink WebViews is a plausible OOM.
+             *
+             * Returning true also stops Android killing the whole app along with the renderer.
+             */
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: android.webkit.RenderProcessGoneDetail?
+            ): Boolean {
+                val crashed = try { detail?.didCrash() } catch (_: Exception) { null }
+                ProviderLogger.w(TAG, "onRenderProcessGone",
+                    "💥 RENDER PROCESS GONE — blank page is a renderer death, not a navigation",
+                    "didCrash" to crashed, "url" to lastPageUrl.take(120))
+                rendererGone = true
+                return true
             }
 
             override fun onReceivedError(
