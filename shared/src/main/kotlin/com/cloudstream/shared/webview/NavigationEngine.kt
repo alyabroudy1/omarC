@@ -909,6 +909,29 @@ class NavigationEngine(
                         }
                     }
                 }
+                // === ENHANCED PAGE STATE DIAGNOSTIC ===
+                // Check whether the decryptor produced a server list, whether jQuery loaded,
+                // and whether the gate emptied the UI. These run after onPageFinished because
+                // the decryptor may still be executing.
+                view?.evaluateJavascript("""(function(){
+                    var r = {};
+                    r.scripts = document.querySelectorAll('script').length;
+                    r.styles = document.querySelectorAll('link[rel="stylesheet"]').length;
+                    r.hasJQuery = typeof jQuery !== 'undefined';
+                    r.btns = document.querySelectorAll('#xqeqjp, #xqeqjp3').length;
+                    r.liDataIndex = document.querySelectorAll('li[data-index]').length;
+                    r.watchDiv = !!document.getElementById('watch');
+                    r.downloadDiv = !!document.getElementById('download');
+                    r.iframes = document.querySelectorAll('iframe').length;
+                    var firstErr = '';
+                    try { firstErr = document.querySelector('.swal2-html-container')?.textContent || ''; } catch(e){}
+                    r.swalText = firstErr.substring(0, 150);
+                    r.visibleText = (document.body.innerText || '').substring(0, 200);
+                    return JSON.stringify(r);
+                })();""".trimIndent()) { result ->
+                    ProviderLogger.w(TAG, "onPageFinished",
+                        "📊 PAGE STATE: $result")
+                }
             }
 
             override fun shouldInterceptRequest(
@@ -1250,9 +1273,42 @@ class NavigationEngine(
                                 if (!rewriteDocumentWrite) {
                                     // Serve the page exactly as the server sent it. Nothing rewritten,
                                     // nothing injected — see the rewriteDocumentWrite doc.
+                                    //
+                                    // === DIAGNOSTIC: understand what the page looks like without rewriting ===
+                                    val dwScriptPattern = Regex("""document\.write\s*\(\s*'<script[^>]*src=["']([^"']+)["'][^>]*><\\/script>\s*'\s*\)""")
+                                    val dwLinkPattern = Regex("""document\.write\s*\(\s*'<link[^>]*href=["']([^"']+)["'][^>]*>\s*'\s*\)""")
+                                    val dwScriptMatches = dwScriptPattern.findAll(html).toList()
+                                    val dwLinkMatches = dwLinkPattern.findAll(html).toList()
+                                    val dwTotal = dwScriptMatches.size + dwLinkMatches.size
+                                    val scriptBlockCount = Regex("""<script[\s>]""", RegexOption.IGNORE_CASE).findAll(html).count()
                                     ProviderLogger.i(TAG, "shouldInterceptRequest",
                                         "Serving cimanow.cc main-frame verbatim (${html.length} chars) — " +
-                                            "no document.write rewrite, no interceptor injected")
+                                            "no document.write rewrite, no interceptor injected | " +
+                                            "scriptBlocks=$scriptBlockCount, dwCalls=$dwTotal " +
+                                            "(${dwScriptMatches.size} script + ${dwLinkMatches.size} link)")
+                                    // Show context around each document.write match so we can see whether
+                                    // they're in standalone <script> blocks or inside larger scripts
+                                    for ((idx, m) in dwScriptMatches.withIndex()) {
+                                        val start = (m.range.first - 120).coerceAtLeast(0)
+                                        val end = (m.range.last + 120).coerceAtMost(html.length - 1)
+                                        val context = html.substring(start, end + 1)
+                                            .replace("\n", "↵").replace("\r", "")
+                                        val src = m.groupValues.getOrElse(1) { "?" }
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "📝 DW_SCRIPT[$idx] src=${src.takeLast(80)} | context=${context.take(300)}")
+                                    }
+                                    for ((idx, m) in dwLinkMatches.withIndex()) {
+                                        val start = (m.range.first - 120).coerceAtLeast(0)
+                                        val end = (m.range.last + 120).coerceAtMost(html.length - 1)
+                                        val context = html.substring(start, end + 1)
+                                            .replace("\n", "↵").replace("\r", "")
+                                        val href = m.groupValues.getOrElse(1) { "?" }
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "📝 DW_LINK[$idx] href=${href.takeLast(80)} | context=${context.take(300)}")
+                                    }
+                                    // Log the first 500 chars to see if the page starts with a BOM, doctype, or something unexpected
+                                    ProviderLogger.d(TAG, "shouldInterceptRequest",
+                                        "📄 HTML HEAD: ${html.take(500).replace("\n", "↵").replace("\r", "")}")
                                     return WebResourceResponse(
                                         mime, charset.name(),
                                         java.io.ByteArrayInputStream(html.toByteArray(charset))

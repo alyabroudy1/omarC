@@ -566,22 +566,19 @@ class CimaNowProvider : BaseProvider() {
                 // Also CimaNow-only: capturing embeds means the engine answers the iframe request
                 // itself to keep a copy of the HTML, and no other provider should inherit that.
                 captureEmbeds = true,
-                // THE white-page bug (2026-07-30). Left at its default, the engine rewrites
-                // `document.write('<script src=…')` in the payload and injects the document.write
-                // interceptor — §0.1 rule 3, the one hook the decryptor explicitly refuses to run
-                // under. It only fires on titles whose payload actually contains those calls, which is
-                // why some titles played and others rendered white with `delta=-49` and our own
-                // `[CW] document.write hook active` in the log. The surf flow scrapes no DOM, so the
-                // rewrite buys nothing and the hook costs everything.
-                // Rewrite YES, hook NO — the two are separate and only the hook is forbidden.
+                // 2026-08-01: rewrite OFF. The page structure changed since July 30 — the 2
+                // matched document.write calls are now inside inline <script> blocks. The
+                // rewrite's </script> in the replacement prematurely closes the enclosing block,
+                // producing a syntax error that kills ALL subsequent scripts: zero subresources
+                // load, the decryptor never runs (delta=-57), the page sits blank for 2 minutes.
                 //
-                // Turning both off (2026-07-30) cured the decoy and immediately broke something else:
-                // with the payload served verbatim, its own `document.write('<script src=…')` calls run
-                // natively, and one firing after load wipes the document — a blank page on the second
-                // server click with no navigation and no network activity anywhere in the log. The
-                // rewrite turns those into plain tags before the page ever runs them, and leaves
-                // `document.write` itself untouched, so rule 3 still holds.
-                rewriteDocumentWrite = true,
+                // Without the rewrite, document.write during initial parse is safe (it appends
+                // to the parser, doesn't wipe). The "second server click wipes the doc" issue
+                // from §13 may or may not recur with the current page structure — test and
+                // re-enable if needed (handover §15, rule 28).
+                //
+                // The hook stays OFF — §0.1 rule 3 still applies.
+                rewriteDocumentWrite = false,
                 injectDocumentWriteHook = false
             )
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")

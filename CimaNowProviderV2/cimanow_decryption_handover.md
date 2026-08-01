@@ -566,6 +566,33 @@
 > **Reverting:** `USE_FULLSCREEN_SURF = false` in `CimaNowProvider` restores the sandbox path below,
 > which is left fully intact.
 >
+> ### 15. The rewrite can break the page when `document.write` is inside multi-statement `<script>` blocks
+>
+> **2026-08-01.** White page, `delta=-57`, zero subresource loads, zero embeds, 2-minute timeout.
+> The rewrite (§13) matched 2 `document.write('<script src=…')` calls and replaced them with
+> direct `<script src="…"></script>` tags. The `</script>` in the replacement prematurely
+> closed the enclosing inline `<script>` block, producing a syntax error and preventing ALL
+> subsequent scripts — including the decryptor — from executing. The page "finished" in 239ms
+> with zero CSS/JS/image requests, empty title, and body identical to the raw HTML.
+>
+> The rewrite was designed for standalone `<script>document.write(…)</script>` one-liners where
+> the replacement harmlessly sits as text inside the (now-closed) script block. When the page
+> restructured to put these calls inside larger script blocks, the replacement killed everything
+> after the match point.
+>
+> **Diagnosis:** `delta` near 0, zero subresource requests after main frame, `onPageFinished` in
+> <300ms, `REWRITE: N document.write call(s)` with N>0.
+>
+> **Fix:** `rewriteDocumentWrite = false`. Without the rewrite, `document.write` during initial
+> parse is safe (it appends to the parser, doesn't wipe). If the "second server click wipes the
+> doc" from §13 recurs, the replacement regex must be fixed to properly break out of the
+> enclosing script block (`</script><script src="…"></script><script>` instead of
+> `<script src="…"></script>`).
+>
+> | # | Do not | Why — and when we learned it |
+> |---|---|---|
+> | 28 | **Inject `</script>` into a replacement that will be placed inside an inline `<script>` block** | 2026-08-01. The HTML parser treats it as the end of the enclosing block regardless of context, killing the rest of the script and everything after it. |
+>
 > ---
 >
 > **⚠️ PREVIOUS IMPLEMENTATION (2026-07, superseded by the above) — history from here down.**
