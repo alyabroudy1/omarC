@@ -169,6 +169,41 @@ sealed class NavigationStep {
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
+    /**
+     * Hold a **visible** session open until the main frame lands on a URL matching [urlPattern],
+     * because the page will only go there when the user acts.
+     *
+     * For a page whose next step is a real click, not a redirect. CimaNow's countdown page fills in
+     * `#downloadbtn.href` when the timer expires and then *waits* — nothing navigates on its own, so
+     * there is no redirect to follow and no response to read. Previously the URL was lifted out of the
+     * `get-link.php` response by the request interceptor, which stopped working the moment the site
+     * moved that endpoint from a GET with query parameters to a `multipart/form-data` POST: a POST body
+     * cannot be forwarded through `shouldInterceptRequest`, so re-issuing it produced a tokenless
+     * answer, and declining to intercept it means never seeing the answer at all (2026-08-03, both
+     * failure modes observed in one afternoon).
+     *
+     * Waiting for the user's tap needs neither. The navigation the button triggers carries the page's
+     * own `Referer` — which is exactly the one the destination demands — and the URL it goes to is the
+     * tokenised one, whatever the site's current scheme for minting it. Nothing is read out of the
+     * page, nothing is re-issued, and a change to the token format cannot break it.
+     *
+     * Main-frame navigations are auto-approved while this step runs, so a mis-tap on an ad will be
+     * followed too; it logs every URL it sees and keeps waiting for one that matches.
+     */
+    data class AwaitMainFrameUrl(
+        /** Matched against each main-frame URL as it starts loading. */
+        val urlPattern: Regex,
+        /** Ends the step unsuccessfully. Generous: a human has to read a countdown and press a button. */
+        val timeoutMs: Long = 120_000L,
+        val pollIntervalMs: Long = 250L,
+        /**
+         * A second gate on a URL that already matched [urlPattern] — for "matches, but is not usable".
+         * Return false and the step keeps waiting rather than accepting it.
+         */
+        val accept: ((String) -> Boolean)? = null,
+        val abortOnFailure: Boolean = true
+    ) : NavigationStep()
+
     /** Navigate to the watching URL captured by the request interceptor from get-link.php */
     data class NavigateToWatchingUrl(
         val abortOnFailure: Boolean = true,

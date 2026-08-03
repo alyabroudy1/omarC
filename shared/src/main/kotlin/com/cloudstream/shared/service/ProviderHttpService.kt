@@ -706,6 +706,16 @@ class ProviderHttpService private constructor(
                 }
                 
                 if (cfResult.success && cfResult.html != null) {
+                    // Cache it, same as the clean path below.
+                    //
+                    // This used to return without writing `recentPages`, so a CF-solved page was
+                    // never remembered — and on a site that yields no clearance cookie there is
+                    // nothing else to remember either, so every repeat of the same URL paid for
+                    // another WebView session (2026-08-03: one visible dialog per request).
+                    // `allowCached` is opt-in per caller, so an extra entry costs nothing to anyone
+                    // who does not ask for it.
+                    recentPages[url] = CachedPage(
+                        cfResult.html, cfResult.finalUrl ?: url, System.currentTimeMillis())
                     // CRITICAL: Disable domain change checks for WebView CF solve strategy.
                     // CF challenges often involve intermediate URLs or temporary subdomains.
                     // We DO NOT want these to trigger a permanent provider domain change.
@@ -897,17 +907,39 @@ class ProviderHttpService private constructor(
             val result = executeRequestHelper(directClient, okRequest)
 
             // ── Tier 3 TLS Fallback ──
-            // If OkHttp got CF-blocked despite having valid cookies + browser headers,
-            // this is a TLS fingerprint block. Retry via ChromiumFetcher (Chrome TLS).
-            if (result.isCloudflareBlocked && cookiesForDomain.isNotEmpty()) {
+            //
+            // A CF block that OkHttp cannot talk its way out of is a **TLS fingerprint** block:
+            // Chromium's JA3/JA4 differs from OkHttp's, and no header or cookie changes that.
+            // [ChromiumFetcher] re-issues the request through the WebView's own network stack — an
+            // invisible, reused WebView, ~1-3 s, no dialog.
+            //
+            // **It used to require `cookiesForDomain.isNotEmpty()`, which made it unreachable exactly
+            // when it was needed.** 2026-08-03, cimanow: every request blocked, session cookie count
+            // 0, so the condition was false, so this never ran — and each request fell through to the
+            // CF-solve WebView instead, which every provider runs FULLSCREEN
+            // (`BaseProvider.skipHeadless = true`). The solve then harvested **zero** cookies
+            // (`hasClearance=false`) because the site issues none: it was never challenging us, it was
+            // refusing our TLS. So the session stayed empty, the next request repeated it, and the
+            // user got a visible WebView per request — several on one page load. A chicken-and-egg:
+            // blocked because no cookies, no TLS fallback because no cookies.
+            //
+            // Cookies are irrelevant to whether a TLS block is worth retrying, so the condition is
+            // gone. The cost when it does not help is one invisible fetch on a path that was already
+            // heading for a full WebView session.
+            if (result.isCloudflareBlocked) {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
                     "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
-                    "url" to targetUrl.take(80))
+                    "url" to targetUrl.take(80),
+                    "hadCookies" to cookiesForDomain.isNotEmpty().toString())
 
                 val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
-                if (chromiumResponse.success) {
+                // Success is a status code, which a block page also has. Check the body too, or a
+                // challenge gets handed back as content and parsed as if it were the site.
+                val stillBlocked = chromiumResponse.isCloudflareBlocked ||
+                    CloudflareDetector.isBlocked(chromiumResponse.statusCode, chromiumResponse.body)
+                if (chromiumResponse.success && !stillBlocked) {
                     ProviderLogger.i(TAG_PROVIDER_HTTP, "executeDirectRequest",
-                        "✅ Chrome TLS fallback succeeded",
+                        "✅ Chrome TLS fallback succeeded — no WebView solve needed",
                         "url" to targetUrl.take(80),
                         "htmlLength" to chromiumResponse.body.length)
 
@@ -923,8 +955,9 @@ class ProviderHttpService private constructor(
                     )
                 } else {
                     ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
-                        "Chrome TLS fallback also failed",
+                        "Chrome TLS fallback did not get through — leaving it to the CF solve",
                         "code" to chromiumResponse.statusCode,
+                        "stillBlocked" to stillBlocked.toString(),
                         "error" to (chromiumResponse.error ?: ""))
                 }
             }

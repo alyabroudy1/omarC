@@ -502,6 +502,69 @@ class NavigationEngine(
                                         "closedByUser" to dialogDismissedByUser)
                                 }
                             }
+                            is NavigationStep.AwaitMainFrameUrl -> {
+                                // The page will not navigate on its own — the user has to press the
+                                // button. See AwaitMainFrameUrl.
+                                //
+                                // Auto-approve is on for the same reason NavigateToWatchingUrl turns it
+                                // on: the route to the destination runs through ad domains that change
+                                // per session, and a blocked hop is a dead end. The destination lock
+                                // takes over the moment we arrive (onPageStarted).
+                                this@NavigationEngine.autoApproveAllRedirects = true
+                                val deadline = System.currentTimeMillis() + step.timeoutMs
+                                var landedOn: String? = null
+                                var lastSeen = ""
+                                var lastHeartbeat = 0L
+                                while (System.currentTimeMillis() < deadline &&
+                                    !dialogDismissedByUser && !rendererGone
+                                ) {
+                                    val here = (webView?.url ?: lastPageUrl)
+                                    if (here.isNotBlank() && here != lastSeen) {
+                                        lastSeen = here
+                                        ProviderLogger.i(TAG, "execute",
+                                            "Step $index: main frame now at ${here.take(120)}")
+                                    }
+                                    if (here.isNotBlank() && step.urlPattern.containsMatchIn(here)) {
+                                        if (step.accept?.invoke(here) != false) {
+                                            landedOn = here
+                                            break
+                                        }
+                                        ProviderLogger.w(TAG, "execute",
+                                            "Step $index: URL matches but was rejected — still waiting",
+                                            "url" to here.take(140))
+                                    }
+                                    val nowMs = System.currentTimeMillis()
+                                    if (nowMs - lastHeartbeat >= 10_000L) {
+                                        lastHeartbeat = nowMs
+                                        ProviderLogger.i(TAG, "execute",
+                                            "Step $index: ⏳ waiting for the user to reach " +
+                                                "${step.urlPattern}",
+                                            "at" to lastSeen.take(110),
+                                            "remainingMs" to (deadline - nowMs).toString())
+                                    }
+                                    delay(step.pollIntervalMs)
+                                }
+                                if (landedOn != null) {
+                                    currentUrl = landedOn
+                                    // Recorded so the legacy consumers of this value still see it.
+                                    this@NavigationEngine.interceptedWatchingUrl = landedOn
+                                    ProviderLogger.w(TAG, "execute",
+                                        "Step $index: ✅ reached ${landedOn.take(140)}")
+                                } else {
+                                    val why = when {
+                                        dialogDismissedByUser -> "user closed the window"
+                                        rendererGone -> "render process died"
+                                        else -> "no matching URL within ${step.timeoutMs}ms " +
+                                            "(last seen: ${lastSeen.take(110)})"
+                                    }
+                                    ProviderLogger.w(TAG, "execute", "Step $index: $why")
+                                    if (step.abortOnFailure) {
+                                        failedStep = index
+                                        errorMsg = why
+                                        break
+                                    }
+                                }
+                            }
                             is NavigationStep.NavigateToWatchingUrl -> {
                                 // Enable auto-approve for the redirect chain through ad domains
                                 this@NavigationEngine.autoApproveAllRedirects = true

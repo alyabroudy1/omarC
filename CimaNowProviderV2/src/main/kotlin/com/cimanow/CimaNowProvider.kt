@@ -104,6 +104,16 @@ class CimaNowProvider : BaseProvider() {
     private val SURF_TIMEOUT_MS = 300_000L
 
     /**
+     * How long the timer page stays up waiting for the user to press the watch button.
+     *
+     * The countdown itself is ~10 s, and the button only appears after it. Then a person has to notice
+     * it and aim at it on a page covered in ads. Two minutes is not generous, it is realistic — and the
+     * window closes the moment they either succeed or dismiss it, so a long ceiling costs nothing when
+     * things go well.
+     */
+    private val WATCH_BUTTON_TIMEOUT_MS = 120_000L
+
+    /**
      * Surf with a TV user agent so the watch page's own `isTv()` check disables its ad gate.
      *
      * **Off, and it should stay off unless the whole session can move to a TV identity together.** The
@@ -613,16 +623,33 @@ class CimaNowProvider : BaseProvider() {
                     baseUrl = TIMER_PAGE_URL,
                     referer = REDIRECTING_PAGE_URL
                 ),
-                // The countdown fires get-link.php, the interceptor captures the tokenised link, and
-                // the engine navigates to it with TIMER_PAGE_URL as Referer — without which the gate
-                // runs location.replace('/home'). Same step, same headers as the sandbox flow.
-                // Rejects the tokenless fallback URL rather than navigating to an ad interstitial and
-                // showing the user a white screen for the whole window — see isTokenisedWatchUrl.
-                NavigationStep.NavigateToWatchingUrl(
-                    abortOnFailure = true,
-                    accept = ::isTokenisedWatchUrl
+                // The countdown finishes, the page fills in the watch button's href — and stops. It
+                // does not navigate on its own, so the user presses the button, exactly as they would
+                // in a browser.
+                //
+                // This replaces `NavigateToWatchingUrl`, which read the tokenised URL out of the
+                // `get-link.php` response and navigated there itself. That worked only while
+                // `get-link.php` was a GET carrying its parameters in the query string. The site moved
+                // it to a `multipart/form-data` POST, and a POST cannot survive
+                // `shouldInterceptRequest`: `WebResourceRequest` exposes no body, so re-issuing it
+                // dropped `request_id`/`hmac_token` and got back the tokenless
+                // `https://cimanow.cc/pig/watching/` — which cimanow answers with an ad interstitial,
+                // i.e. the white page. Declining to intercept it fixed the corruption and removed the
+                // only place the URL was ever captured.
+                //
+                // Waiting for the tap needs neither the response body nor the token format. The
+                // navigation the button fires carries the timer page as `Referer` (handover rule 5)
+                // and goes to whatever URL the site currently mints, and nothing is read out of the
+                // page to get it (rule 28).
+                NavigationStep.AwaitMainFrameUrl(
+                    urlPattern = Regex("""cimanow\.[a-z]+/.*watch(ing)?/"""),
+                    timeoutMs = WATCH_BUTTON_TIMEOUT_MS,
+                    // A match is not enough: the tokenless fallback URL matches too, and navigating
+                    // there is what produced the white page. Keep waiting instead.
+                    accept = ::isTokenisedWatchUrl,
+                    abortOnFailure = true
                 ),
-                // Now hand the screen to the user: pick a server, press play. Ends a beat after the
+                // The user is already on the page: pick a server, press play. Ends a beat after the
                 // first stream request so the HLS variants land too.
                 NavigationStep.WaitForCapturedVideo(
                     timeoutMs = SURF_TIMEOUT_MS,
@@ -643,8 +670,12 @@ class CimaNowProvider : BaseProvider() {
                 steps = steps,
                 userAgent = userAgent,
                 mode = Mode.FULLSCREEN,
-                // Must outlast the surf itself: the user is clicking through servers by hand.
-                overallTimeoutMs = SURF_TIMEOUT_MS + 60_000L,
+                // Must outlast **every** hand-driven phase, not just the surf: the user first waits
+                // out the countdown and presses the watch button (up to WATCH_BUTTON_TIMEOUT_MS), and
+                // only then starts picking servers (SURF_TIMEOUT_MS). Budget for one and the overall
+                // timeout tears the WebView down mid-surf — with the step timeouts each looking
+                // perfectly reasonable in isolation.
+                overallTimeoutMs = WATCH_BUTTON_TIMEOUT_MS + SURF_TIMEOUT_MS + 60_000L,
                 allowedDomains = allowedDomains,
                 // Same lock as the sandbox flow, and it earns its keep here: once the WebView is on
                 // /watching/ every main-frame navigation is refused silently, so the ad redirects this
