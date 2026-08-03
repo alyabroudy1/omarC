@@ -250,5 +250,13 @@ data class NavigationResult(
     /** Raw HTML of the last intercepted main-frame response (e.g. cimanow.cc /watching/).
      *  Populated by the request interceptor. Contains the server-rendered DOM before the
      *  page's anti-bot JS can clear/patch it. */
-    val mainFrameHtml: String? = null
+    val mainFrameHtml: String? = null,
+    /**
+     * Requests the engine re-issued and was refused on — see [InterceptChallenge].
+     *
+     * Empty for every provider that never gets challenged, and safe to ignore: a refused
+     * interception falls through to Chromium exactly as it always did. Providers that care can
+     * distinguish "the site blocked us" from "the page had nothing" instead of guessing.
+     */
+    val interceptChallenges: List<InterceptChallenge> = emptyList()
 )

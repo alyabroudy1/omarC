@@ -53,12 +53,28 @@
 > WebView**; they pick a server and press play, and we read the stream URL off the network. **We no
 > longer try to read the decrypted server list at all** — no reader script, no exfil channel, no DOM
 > scraping, and — as of 2026-07-30 — **not even `SPOOFING_JS`**, which turned out to be the last thing
-> giving us away. The only JS we still run is the `title`/`bodyLength` diagnostic pair in
-> `onPageFinished`, after the page has already decided about us.
+> giving us away.
 >
-> One thing we *do* still change: the served HTML is **rewritten** so `document.write('<script src=…')`
-> becomes a plain tag (§13). That edits bytes before the page runs; it never wraps `document.write`, so
-> rule 3 holds. The hook that does wrap it stays off (`injectDocumentWriteHook = false`).
+> **As of 2026-08-03 we run NO JavaScript in the page at all — not even a diagnostic.** The three
+> `evaluateJavascript` reads that used to sit in `onPageFinished` (`document.title`,
+> `document.body.innerHTML.length` for the `delta==47` decoy detector, and a `querySelectorAll` state
+> dump) are gone, as are the two `document.documentElement.outerHTML` failure dumps in `execute()`.
+> They were defended as "harmless, they run after the page has decided", but that is an assumption
+> about the page's timing rather than a guarantee — the decryptor is still executing at
+> `onPageFinished`, a `MutationObserver` or a getter on `document.title` sees the read whenever it
+> happens, and `evaluateJavascript` runs on an isolated-world stack that an `isBot()` stack inspection
+> exists to notice. Rules 6 and 7 now hold with no exceptions.
+>
+> **The replacement is network-side and strictly weaker.** `onPageFinished` logs the length of the
+> HTML *we served* plus `subresourceRequestsSinceMainFrame` (counted in `shouldInterceptRequest`); a
+> full payload followed by almost no subresource requests is the old `delta==47` signature seen from
+> outside. It cannot distinguish the 47-char decoy from scripts that died early — only that neither
+> produced traffic. Failure dumps now write `capturedMainFrameHtml` instead of asking the page for its
+> DOM. **If you find yourself wanting the old numbers back, that is the trade you are reopening.**
+>
+> Also gone: the served HTML **rewrite** of `document.write('<script src=…')` → plain tag is off
+> (`rewriteDocumentWrite = false`, see the 2026-08-01 note in the code). The hook that wraps
+> `document.write` stays off too (`injectDocumentWriteHook = false`) — rule 3.
 >
 > Why this replaces the sandbox: every entry in §0.1 fails for the same structural reason — the gate
 > inspects **its own environment**, not its input. Any hook, bridge, marker or `evaluateJavascript`
@@ -679,6 +695,10 @@ day. If you are about to do something on this list, the answer is already known.
 | 25 | **Assume a missing extractor means the extractor does not exist** | 2026-07-30. uqload produced no links and the conclusion was "CloudStream has no extractor for uqload.is". `UqloadIs` (mainUrl `https://uqload.is`) was already in `SharedExtractors.kt`; **`CimaNowPlugin` simply never called `registerSharedExtractors()`**, so `loadExtractor` had an empty registry and every server fell through to the sniffed stream. Check the plugin's registration before blaming the extractor. |
 | 26 | **Believe "we inject nothing" without grepping every injection site** | 2026-07-30. `SPOOFING_JS` was switched off (§1) and the flow declared clean, while the interceptor still injected `ANTI_ANTI_BOT_JS` — the `document.write` wrapper of rule 3 — on any title whose payload contained `document.write('<script src=…')`. Dormant on the titles tested, fatal on the rest: white page, `delta=-49`, `[CW] document.write hook active` in our own log. Serve the main frame verbatim (`rewriteDocumentWrite = false`). |
 | 27 | **Disable a flag that controls two behaviours** | 2026-07-30. `rewriteDocumentWrite` gated both the HTML rewrite (harmless — edits bytes, `document.write` stays native) and the `ANTI_ANTI_BOT_JS` injection (rule 3). Killing both cured the decoy and caused a blank page on the next server click, because the payload's own post-load `document.write` then wiped the document. Split them: rewrite on, hook off. |
+| 28 | **Read the page with `evaluateJavascript`, even "only as a diagnostic, after it has decided"** | 2026-08-03. Three probes lived in `onPageFinished` (`document.title`, `document.body.innerHTML.length` for the `delta==47` detector, a `querySelectorAll` state dump) plus two `document.documentElement.outerHTML` failure dumps, all justified by timing. But the decryptor is *still executing* at `onPageFinished` — the state probe's own comment said so — a getter or `MutationObserver` sees the read whenever it lands, and rule 9 already says `isBot()` inspects the stack for `evaluatejavascript`. A diagnostic that can change the outcome it measures is not a diagnostic. All five are gone; the replacement counts subresource requests in `shouldInterceptRequest` and dumps `capturedMainFrameHtml`. It is weaker, and that is the price. |
+| 29 | **Fetch a Cloudflare-protected page with `httpService.getRaw()`** | 2026-08-03, and it broke the flow completely. Step 1 of the token chain used `getRaw(url, UA + Accept)`. `getRaw` is a bare OkHttp call — it sends only the headers handed to it, so no `cf_clearance`, no `Sec-Ch-Ua`, no `Referer`, no `Sec-Fetch-*` — and has no CF handling at all. Cloudflare answered **403 with a 128,267-byte block page**, which has no `freex2line` href, and the chain logged `FATAL: No freex URL found in movie page` — a *parsing* error for a *session* failure. `load()` had fetched the same URL seconds earlier via `getDocument` and succeeded. The status code was read into `movieStatus` and never checked, which is what let the block masquerade. Use `getDocument(rewriteDomain = true)` for anything behind CF; keep `getRaw` for hosts that are not (the freex hops). **`getRaw` was also fixed for everyone**: it now attaches the session cookies for the URL's domain (scoped — an unrelated host still gets none) plus the session UA and matching client hints when the caller brought no UA, and it logs a loud `🔒 Cloudflare blocked a getRaw() call` when a 403/503/429 carries CF markers. It deliberately does *not* set `Accept`, and does not mix its hints with a caller-supplied UA. It still cannot solve a challenge — that needs `getDocument`. |
+| 30 | **Treat a non-null `getDocument` as proof the CF solve worked** | 2026-08-03. `getDocument` parses whatever bytes it received, so a Cloudflare block page returns a perfectly valid `Document` — a failed or cancelled solve reads as success and the retry walks into a second doomed session. Check the body is not itself a challenge (`CloudflareDetector.isCloudflareChallenge`) and look at the resulting cookies. See `reestablishSession` in `CimaNowSession.kt`. |
+| 31 | **Assume a CF solve leaves the session no worse than it found it** | 2026-08-03. `solveCloudflareThenRequest` calls `invalidateSession` **and** `clearSystemCookies` *before* opening its dialog, and returns a plain failure when the user presses back — nothing restores what it discarded. So a flow that merely *might* have needed a solve can end with no clearance at all, and everything after it fails for an unrelated-looking reason. Wrap anything that can trigger a solve in `withSessionGuard` (snapshot, restore only if the session came out strictly poorer — never roll back a successful solve). |
 
 ### 0.2 Always do these
 

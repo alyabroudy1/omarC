@@ -52,6 +52,19 @@ class NavigationEngine(
      */
     @Volatile
     var capturedMainFrameHtml: String? = null
+
+    /**
+     * Subresource requests seen since the last main-frame body was served.
+     *
+     * The JS-free stand-in for "did the page's own scripts run?", which used to be answered by
+     * reading `document.body.innerHTML.length` out of the page — see [onPageFinished]'s state log.
+     * A page that really executed pulls scripts, styles, fonts and images; a page that took a
+     * bail-out path pulls next to nothing. Reset on each main-frame interception so the number
+     * always describes the current document.
+     */
+    @Volatile
+    private var subresourceRequestsSinceMainFrame: Int = 0
+
     var autoApproveAllRedirects: Boolean = false
 
     /** Last baseUrl used by a LoadHtml step — used as the Referer when navigating
@@ -71,6 +84,14 @@ class NavigationEngine(
      * why these are worth more than the streams.
      */
     val capturedEmbedRequests = java.util.concurrent.CopyOnWriteArrayList<CapturedEmbedRequest>()
+
+    /**
+     * Requests the engine re-issued and was refused on — see [InterceptChallenge].
+     *
+     * Reported, never acted on here: solving a challenge would mean a second WebView over the one on
+     * screen, and only the caller knows whether a retry is worth it.
+     */
+    val interceptChallenges = java.util.concurrent.CopyOnWriteArrayList<InterceptChallenge>()
 
     /** Set when the user closes the FULLSCREEN dialog, so a waiting step can stop immediately. */
     @Volatile
@@ -174,7 +195,13 @@ class NavigationEngine(
          *
          * The rewrite alone leaves `document.write` native; only this flag hooks it.
          */
-        injectDocumentWriteHook: Boolean = true
+        injectDocumentWriteHook: Boolean = true,
+        /**
+         * The provider's say in what happens to cookies and challenges on responses the engine
+         * answers itself. Defaults to [NavigationSessionPolicy.None] — do neither, which is what
+         * every caller got before the interface existed.
+         */
+        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -186,9 +213,11 @@ class NavigationEngine(
             siteRejectedNavigationUrl = null
             rendererGone = false
             capturedMainFrameHtml = null
+            subresourceRequestsSinceMainFrame = 0
             capturedVideoUrls.clear()
             capturedVideoRequests.clear()
             capturedEmbedRequests.clear()
+            interceptChallenges.clear()
             dialogDismissedByUser = false
 
             val activity = activityProvider()
@@ -228,7 +257,8 @@ class NavigationEngine(
                         // playback moments before the clock ran out, and those captures still play.
                         capturedVideoUrls = capturedVideoUrls.toList(),
                         capturedVideoRequests = capturedVideoRequests.toList(),
-                        capturedEmbedRequests = capturedEmbedRequests.toList()
+                        capturedEmbedRequests = capturedEmbedRequests.toList(),
+                        interceptChallenges = interceptChallenges.toList()
                     ))
                 }
             }
@@ -237,7 +267,7 @@ class NavigationEngine(
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
-                    rewriteDocumentWrite, injectDocumentWriteHook)
+                    rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -520,7 +550,13 @@ class NavigationEngine(
                     val isSuccess = failedStep == null && errorMsg == null
                     if (!isSuccess && webView != null) {
                         try {
-                            val html = extractHtmlFromWebView(webView, null)
+                            // The bytes we SERVED, not the DOM we would have to ask the page for.
+                            // `extractHtmlFromWebView` runs `document.documentElement.outerHTML`
+                            // inside the page, and a failure is precisely when the session gets
+                            // retried — so that read would be the last thing the site sees us do
+                            // before we come back. Same diagnostic value for a served payload,
+                            // zero JS. See onPageFinished for the same trade.
+                            val html = capturedMainFrameHtml
                             val len = html?.length ?: 0
                             val dumpKey = "failure_step_${failedStep ?: completedSteps}"
                             activityProvider()?.let { ctx ->
@@ -554,7 +590,8 @@ class NavigationEngine(
                         capturedVideoUrls = capturedVideoUrls.toList(),
                         capturedVideoRequests = capturedVideoRequests.toList(),
                         capturedEmbedRequests = capturedEmbedRequests.toList(),
-                        mainFrameHtml = capturedMainFrameHtml
+                        mainFrameHtml = capturedMainFrameHtml,
+                        interceptChallenges = interceptChallenges.toList()
                     ))
                 }
             } catch (e: Exception) {
@@ -563,7 +600,8 @@ class NavigationEngine(
                     timeoutJob.cancel()
                     if (webView != null) {
                         try {
-                            val html = extractHtmlFromWebView(webView, null)
+                            // Served bytes, not a DOM read — see the failure dump above.
+                            val html = capturedMainFrameHtml
                             val len = html?.length ?: 0
                             activityProvider()?.let { ctx ->
                                 val file = java.io.File(ctx.cacheDir, "cimanow_html_failure_exception.html")
@@ -587,7 +625,8 @@ class NavigationEngine(
                         cookies = emptyMap(), extractedHtml = extractedHtml,
                         completedSteps = completedSteps,
                         failedAtStep = completedSteps, error = e.message,
-                        capturedVideoUrls = capturedVideoUrls.toList()
+                        capturedVideoUrls = capturedVideoUrls.toList(),
+                        interceptChallenges = interceptChallenges.toList()
                     ))
                 }
             }
@@ -846,7 +885,8 @@ class NavigationEngine(
         loadPopupsInSink: Boolean = false,
         captureEmbeds: Boolean = false,
         rewriteDocumentWrite: Boolean = true,
-        injectDocumentWriteHook: Boolean = true
+        injectDocumentWriteHook: Boolean = true,
+        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -869,7 +909,6 @@ class NavigationEngine(
                     }
                 }
                 if (injectSpoofingJs) {
-                    view?.evaluateJavascript("(function(){ return document.title; })();", null)
                     view?.evaluateJavascript(SPOOFING_JS, null)
                 } else {
                     // Page context left pristine on purpose — see the injectSpoofingJs param doc.
@@ -881,56 +920,42 @@ class NavigationEngine(
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (url != null) lastPageUrl = url
                 ProviderLogger.i(TAG, "onPageFinished", "URL=${url}")
-                view?.evaluateJavascript("(function(){ return document.title; })();") { result ->
-                    val title = try { org.json.JSONTokener(result).nextValue().toString() } catch (_: Exception) { result }
-                    ProviderLogger.i(TAG, "onPageFinished", "title=$title")
-                }
-                view?.evaluateJavascript("(function(){ return document.body.innerHTML.length; })();") { result ->
-                    ProviderLogger.i(TAG, "onPageFinished", "bodyLength=$result")
-                    // Say out loud which of the three outcomes this is, instead of leaving it to be
-                    // inferred from a white screen. CimaNow's decryptor, when it decides it is being
-                    // automated, does not abort — it writes a 47-char decoy
-                    // (`<div id="watch"></div><div id="download"></div>`), so the scrape "succeeds"
-                    // with zero servers and the page renders blank white.
-                    val bodyLen = result?.toLongOrNull()
-                    val htmlLen = capturedMainFrameHtml?.length?.toLong()
-                    if (bodyLen != null && htmlLen != null) {
-                        val delta = bodyLen - htmlLen
-                        when {
-                            delta == 47L -> ProviderLogger.e(TAG, "onPageFinished",
-                                "🚩 DECOY SERVED — flagged as a bot (bodyLen-htmlLen==47). The page " +
-                                    "rendered blank on purpose; look for a remaining automation signal, " +
-                                    "not a decryption bug.")
-                            delta < 200L -> ProviderLogger.w(TAG, "onPageFinished",
-                                "Body barely larger than the raw HTML (delta=$delta) — decryptor " +
-                                    "probably wrote nothing")
-                            else -> ProviderLogger.i(TAG, "onPageFinished",
-                                "Decryptor produced content (delta=$delta)")
-                        }
-                    }
-                }
-                // === ENHANCED PAGE STATE DIAGNOSTIC ===
-                // Check whether the decryptor produced a server list, whether jQuery loaded,
-                // and whether the gate emptied the UI. These run after onPageFinished because
-                // the decryptor may still be executing.
-                view?.evaluateJavascript("""(function(){
-                    var r = {};
-                    r.scripts = document.querySelectorAll('script').length;
-                    r.styles = document.querySelectorAll('link[rel="stylesheet"]').length;
-                    r.hasJQuery = typeof jQuery !== 'undefined';
-                    r.btns = document.querySelectorAll('#xqeqjp, #xqeqjp3').length;
-                    r.liDataIndex = document.querySelectorAll('li[data-index]').length;
-                    r.watchDiv = !!document.getElementById('watch');
-                    r.downloadDiv = !!document.getElementById('download');
-                    r.iframes = document.querySelectorAll('iframe').length;
-                    var firstErr = '';
-                    try { firstErr = document.querySelector('.swal2-html-container')?.textContent || ''; } catch(e){}
-                    r.swalText = firstErr.substring(0, 150);
-                    r.visibleText = (document.body.innerText || '').substring(0, 200);
-                    return JSON.stringify(r);
-                })();""".trimIndent()) { result ->
+                // === PAGE STATE, READ ENTIRELY FROM OUR SIDE OF THE BOUNDARY ===
+                //
+                // Nothing is read out of the document. There used to be three `evaluateJavascript`
+                // probes here — `document.title`, `document.body.innerHTML.length` (the delta==47
+                // decoy detector) and a `querySelectorAll` state dump — and all three are gone.
+                //
+                // They were justified as "harmless, they run after the page has decided", but that
+                // is an assumption about the page's timing, not a guarantee: the decryptor is still
+                // executing at `onPageFinished` (the old comment on the state probe said so
+                // outright), a `MutationObserver` or a getter on `document.title` sees the read
+                // whenever it happens, and `evaluateJavascript` runs on an isolated-world stack
+                // that an `isBot()` stack inspection is built to notice. A diagnostic that can
+                // change the outcome it measures is not a diagnostic. Handover §0.1 rules 6/7 —
+                // touch nothing in the page context — now hold with no exceptions.
+                //
+                // What replaces them is strictly weaker and strictly safe. `capturedMainFrameHtml`
+                // is the body we served, and the request counts are what the page asked for
+                // afterwards. A page whose scripts really ran pulls dozens of subresources; the
+                // decoy pulls almost none. That distinguishes the two outcomes the flow actually
+                // branches on, without a byte of JS.
+                val htmlLen = capturedMainFrameHtml?.length ?: -1
+                val subresources = subresourceRequestsSinceMainFrame
+                ProviderLogger.i(TAG, "onPageFinished", "📊 PAGE STATE (network-side only)",
+                    "servedHtmlLen" to htmlLen.toString(),
+                    "subresourceRequests" to subresources.toString(),
+                    "embeds" to capturedEmbedRequests.size.toString(),
+                    "streamCaptures" to capturedVideoRequests.size.toString())
+                if (htmlLen > 10_000 && subresources < 5) {
+                    // The old delta==47 signature, observed from the outside: a full payload was
+                    // served, and then the page asked for essentially nothing. Either the decoy, or
+                    // scripts that died before they could fetch anything.
                     ProviderLogger.w(TAG, "onPageFinished",
-                        "📊 PAGE STATE: $result")
+                        "🚩 A full page was served (${htmlLen} chars) but only $subresources " +
+                            "subresource request(s) followed — the page's own scripts either never " +
+                            "ran or took a bail-out path. Look for an automation signal, not a " +
+                            "decryption bug.")
                 }
             }
 
@@ -947,6 +972,10 @@ class NavigationEngine(
                 val path = request.url?.path?.lowercase() ?: ""
                 val reqHeaders = request.requestHeaders ?: emptyMap()
                 val isMain = request.isForMainFrame
+
+                // Feeds the JS-free "did the page's own scripts run?" signal — see the field doc.
+                if (isMain) subresourceRequestsSinceMainFrame = 0
+                else subresourceRequestsSinceMainFrame++
 
                 android.util.Log.d("NavEngineNet", "shouldInterceptRequest: url=$reqUrl main=$isMain headers=${reqHeaders.entries.joinToString(", ") { "${it.key}=${it.value}" }}")
 
@@ -1182,6 +1211,27 @@ class NavigationEngine(
 
                         val code = conn.responseCode
 
+                        // Hand the response's cookies to the provider's policy BEFORE the body is
+                        // served, so anything the page fetches next already carries them.
+                        //
+                        // Chromium's jar never sees a response we answered ourselves, so without
+                        // this a session the site tried to establish on the main frame is simply
+                        // lost — the embed path had this back-propagation from the start
+                        // (`fetchEmbedDocument`) and this one never did. Default policy is a no-op,
+                        // so nothing changes for a provider that has not opted in.
+                        try {
+                            val setCookies = conn.headerFields?.entries
+                                ?.firstOrNull { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
+                                ?.value
+                                ?: emptyList()
+                            if (setCookies.isNotEmpty()) {
+                                sessionPolicy.onInterceptedResponseCookies(reqUrl, setCookies, isMain)
+                            }
+                        } catch (e: Exception) {
+                            ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                "Set-Cookie policy hook threw: ${e.message}")
+                        }
+
                         if (code == 200) {
                             val ct = conn.contentType ?: "application/octet-stream"
                             val reportedMime = ct.substringBefore(";").trim()
@@ -1391,7 +1441,51 @@ class NavigationEngine(
                             }
                             return WebResourceResponse(mime, charset.name(), bodyStream)
                         } else {
-                            ProviderLogger.w(TAG, "shouldInterceptRequest", "Intercept non-200 ($code) for ${reqUrl.take(80)}")
+                            // Record the refusal, then behave exactly as before: fall through to
+                            // Chromium.
+                            //
+                            // Falling through is not a good outcome and never was — Chromium reissues
+                            // the request with `sec-ch-ua: "Android WebView"`, which is the
+                            // fingerprint this whole interception exists to avoid, so a challenge
+                            // degrades into the one request shape known not to work. But solving it
+                            // here would mean opening a second WebView on top of the one already on
+                            // screen, and the engine cannot know whether the caller would rather
+                            // retry, fall back, or give up. So it reports and lets the provider act
+                            // once WebView lifecycles are no longer overlapping.
+                            //
+                            // The body is read only on this path, and only when the status could be a
+                            // challenge, so a healthy session pays nothing.
+                            val couldBeChallenge = code == 403 || code == 503 || code == 429
+                            var preview = ""
+                            var isCf = false
+                            if (couldBeChallenge) {
+                                preview = try {
+                                    val stream = conn.errorStream ?: conn.inputStream
+                                    stream?.bufferedReader()?.use { reader ->
+                                        val buf = CharArray(CHALLENGE_BODY_PREVIEW_CHARS)
+                                        val n = reader.read(buf)
+                                        if (n > 0) String(buf, 0, n) else ""
+                                    } ?: ""
+                                } catch (_: Exception) { "" }
+                                isCf = com.cloudstream.shared.cloudflare.CloudflareDetector
+                                    .isCloudflareChallenge(preview, code)
+                            }
+                            interceptChallenges.add(
+                                InterceptChallenge(
+                                    url = reqUrl,
+                                    statusCode = code,
+                                    isCloudflare = isCf,
+                                    isMainFrame = isMain,
+                                    bodyPreview = preview.take(CHALLENGE_BODY_PREVIEW_CHARS)
+                                )
+                            )
+                            ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                "Intercept refused — falling through to Chromium (which will send " +
+                                    "the WebView fingerprint)",
+                                "code" to code.toString(),
+                                "cloudflare" to isCf.toString(),
+                                "mainFrame" to isMain.toString(),
+                                "url" to reqUrl.take(100))
                             return null
                         }
                     } catch (e: Exception) {
@@ -2800,6 +2894,14 @@ class NavigationEngine(
          * it was reported as the page having navigated away.
          */
         private const val POPUNDER_DWELL_MS = 900L
+
+        /**
+         * How much of a refusal body is kept for [InterceptChallenge.bodyPreview].
+         *
+         * Enough for Cloudflare's markers, which sit in the `<head>`, and far short of the ~128 KB a
+         * real block page runs to — this is a diagnostic, not a copy of the response.
+         */
+        private const val CHALLENGE_BODY_PREVIEW_CHARS = 4096
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:

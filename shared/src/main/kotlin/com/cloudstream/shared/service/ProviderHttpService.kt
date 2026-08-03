@@ -145,6 +145,58 @@ class ProviderHttpService private constructor(
     }
 
     /**
+     * The current session, for a caller that intends to put it back.
+     *
+     * Exists because a Cloudflare solve is destructive up front: [solveCloudflareThenRequest] calls
+     * `invalidateSession` and `clearSystemCookies` *before* opening the WebView, and returns a plain
+     * failure if the user backs out of the dialog. Nothing restores what it threw away, so a
+     * cancelled solve leaves the provider with fewer cookies than it had when the request started —
+     * and a flow that was only *probably* going to need a solve is now definitely broken.
+     *
+     * Snapshot before anything that can trigger a solve, restore if it came back empty-handed. See
+     * `CimaNowSession.withSessionGuard`.
+     */
+    fun snapshotSession(): SessionState = sessionState
+
+    /**
+     * Puts a [snapshotSession] result back, cookies and all.
+     *
+     * Only meaningful when the current session is *worse* than the snapshot — a solve that succeeded
+     * must not be rolled back over, so callers check first. Re-syncs the system CookieManager, since
+     * a failed solve cleared that too.
+     *
+     * @param reason logged, because a session appearing to travel backwards in time is otherwise
+     *   impossible to account for when reading a log.
+     */
+    @Synchronized
+    fun restoreSession(snapshot: SessionState, reason: String) {
+        if (snapshot.cookies.isEmpty()) return
+        sessionState = snapshot
+        sessionStore.save(sessionState)
+        SessionProvider.update(sessionState)
+        syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
+        for (alias in SessionProvider.getDomainAliases()) {
+            syncCookiesToSystemCookieManager(alias, sessionState.cookies)
+        }
+        ProviderLogger.w(TAG_PROVIDER_HTTP, "restoreSession", "Session restored from snapshot",
+            "reason" to reason,
+            "cookies" to snapshot.cookies.size,
+            "hasClearance" to snapshot.cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
+    }
+
+    /**
+     * Merge cookies a provider obtained out-of-band into the session, as an HTTP response would.
+     *
+     * For cookies that arrive on a path the service did not drive itself — a WebView response the
+     * provider's own interceptor answered, say. Merging (never replacing) so a `cf_clearance` already
+     * in hand cannot be dropped by an unrelated `Set-Cookie`.
+     */
+    fun mergeSessionCookies(cookies: Map<String, String>) {
+        if (cookies.isEmpty()) return
+        updateCookies(cookies, fromWebView = false)
+    }
+
+    /**
      * Publicly expose cookie storage for CDN domains captured during extractions.
      */
     fun storeCdnCookies(url: String, cookies: Map<String, String>) {
@@ -269,18 +321,107 @@ class ProviderHttpService private constructor(
         }
     }
 
-    suspend fun getRaw(url: String, headers: Map<String, String> = emptyMap()): okhttp3.Response {
+    /**
+     * A raw [okhttp3.Response] — for callers that need the status line, the headers, or an unparsed
+     * body, and will handle the outcome themselves.
+     *
+     * **This used to send only the headers it was handed**, which made it a trap: a caller passing
+     * `User-Agent` and `Accept` got a request with no `cf_clearance`, no client hints, no `Referer` and
+     * no Cloudflare handling whatsoever, on a service whose every other method carries the session.
+     * CimaNow's token chain hit exactly that (2026-08-03): Cloudflare answered 403 with a 128 KB block
+     * page, the caller found no link in it, and the failure surfaced as "the site changed its markup".
+     * `load()` had fetched the same URL through [getDocument] seconds earlier and succeeded.
+     *
+     * So the session **identity** is now attached by default: the cookies for this URL's domain, plus
+     * the session `User-Agent` and its matching client hints when the caller did not bring its own UA.
+     * Nothing else — `Accept` and `Accept-Language` stay the caller's business, since several callers
+     * probe media and JSON endpoints where an HTML `Accept` changes the answer. Caller headers always
+     * win, so an explicit `Referer`, `Cookie` or UA overrides the defaults rather than stacking.
+     *
+     * What this method still cannot do is **solve** a challenge: that means consuming the response and
+     * re-issuing it, which would defeat the point of handing back a raw [okhttp3.Response]. It detects
+     * one and says so loudly instead. If you see that warning, the fix is to call [getDocument]
+     * (`rewriteDomain = true`), which owns the solve-and-retry path.
+     *
+     * @param useSession pass false for a host that must see an anonymous request — an unauthenticated
+     *   CDN probe, or a redirect hop where a stale cookie changes the answer.
+     */
+    suspend fun getRaw(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        useSession: Boolean = true
+    ): okhttp3.Response {
         val fullUrl = buildUrl(url)
+
+        val effectiveHeaders = linkedMapOf<String, String>()
+        if (useSession) {
+            val urlDomain = try { java.net.URL(fullUrl).host } catch (_: Exception) { null }
+            val cookiesForDomain = if (urlDomain != null && urlDomain != sessionState.domain) {
+                // Returns nothing for a host unrelated to the session, so a third-party request
+                // cannot walk off with cf_clearance.
+                SessionProvider.getCookiesForDomain(urlDomain)
+            } else {
+                sessionState.cookies
+            }
+            if (cookiesForDomain.isNotEmpty()) {
+                effectiveHeaders["Cookie"] =
+                    cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            }
+
+            // Identity only — deliberately NOT Accept / Accept-Language.
+            //
+            // Content negotiation belongs to the caller: several existing callers probe media URLs
+            // (`KrmzyProvider` checks an m3u8, `TukTukcima` fetches an Inertia JSON endpoint) without
+            // setting `Accept`, and defaulting them to an HTML `Accept` invites a 406 or a different
+            // response body for a request that used to work.
+            //
+            // And the client hints go with the UA or not at all: a caller that supplies its own UA
+            // (Krmzy sends a *desktop* Chrome 120) must not be given mobile Android hints derived from
+            // the session UA — that mismatch is precisely the fingerprint inconsistency a bot check
+            // reads. Either the whole identity is ours, or none of it is.
+            val callerSetUserAgent = headers.keys.any { it.equals("User-Agent", ignoreCase = true) }
+            if (!callerSetUserAgent) {
+                effectiveHeaders["User-Agent"] = sessionState.userAgent
+                effectiveHeaders["Sec-Ch-Ua"] = WebConfig.buildSecChUa(sessionState.userAgent)
+                effectiveHeaders["Sec-Ch-Ua-Mobile"] = "?1"
+                effectiveHeaders["Sec-Ch-Ua-Platform"] = "\"Android\""
+            }
+        }
+        // The caller asked for these explicitly; they replace the defaults, never stack with them.
+        for ((k, v) in headers) effectiveHeaders[k] = v
+
         val request = okhttp3.Request.Builder()
             .url(fullUrl)
-            .apply { for ((k, v) in headers) { addHeader(k, v) } }
+            .apply { for ((k, v) in effectiveHeaders) { header(k, v) } }
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
             .applyDnsPolicy()
                 .applyProviderTimeout()
             .build()
-        return directClient.newCall(request).execute()
+        val response = directClient.newCall(request).execute()
+
+        // Peeked, not read: `peekBody` buffers a copy and leaves the caller's body intact.
+        if (response.code == 403 || response.code == 503 || response.code == 429) {
+            val preview = try {
+                response.peekBody(CF_PEEK_BYTES).string()
+            } catch (_: Exception) { "" }
+            if (CloudflareDetector.isBlocked(response.code, preview)) {
+                ProviderLogger.e(TAG_PROVIDER_HTTP, "getRaw",
+                    "🔒 Cloudflare blocked a getRaw() call — this method cannot solve a challenge, " +
+                        "so the body you are about to parse is a block page, not the site. Use " +
+                        "getDocument(rewriteDomain = true) for anything behind Cloudflare.",
+                    null,
+                    "url" to fullUrl.take(100),
+                    "code" to response.code.toString(),
+                    "sentCookies" to effectiveHeaders.containsKey("Cookie").toString(),
+                    "useSession" to useSession.toString())
+            } else {
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "getRaw", "Non-OK response",
+                    "url" to fullUrl.take(100), "code" to response.code.toString())
+            }
+        }
+        return response
     }
 
     suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): Document? {
@@ -1104,6 +1245,14 @@ class ProviderHttpService private constructor(
     
     companion object {
         private val instances = mutableMapOf<String, ProviderHttpService>()
+
+        /**
+         * How much of a refused body [getRaw] peeks at to recognise a Cloudflare block.
+         *
+         * Cloudflare's markers are in the `<head>`; a real block page runs to ~128 KB, and buffering
+         * that on every 403 to answer a yes/no question would be waste.
+         */
+        private const val CF_PEEK_BYTES = 32L * 1024L
         
         fun create(
             context: Context,

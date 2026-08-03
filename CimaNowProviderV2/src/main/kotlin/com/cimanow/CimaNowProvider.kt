@@ -13,6 +13,7 @@ import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.CapturedEmbedRequest
 import com.cloudstream.shared.webview.CapturedVideoRequest
 import com.cloudstream.shared.webview.VideoUrlClassifier
+import com.cloudstream.shared.webview.InterceptChallenge
 import com.cloudstream.shared.extractors.CimaNowTVEmbed
 import com.cloudstream.shared.extractors.VKVideoEmbed
 import kotlinx.coroutines.*
@@ -63,8 +64,32 @@ class CimaNowProvider : BaseProvider() {
      * Flip to false to fall back to the sandbox-decryption path (resolveViaWebViewSandbox), which is
      * kept intact for exactly that reason — see the arms-race history in
      * `cimanow_decryption_handover.md`.
+     *
+     * **Flipping it is not a free rollback, and this is the part that is easy to miss.** The surf path
+     * runs *no* JavaScript in the page: as of 2026-08-03 not even a diagnostic read (handover rule 28).
+     * The sandbox path is the opposite — it injects an in-page reader script and exfiltrates the
+     * decrypted DOM through a side channel, which is the very thing rules 6, 7, 9 and 10 were written
+     * about. It also runs against the real cimanow.cc in the same session and from the same IP as
+     * everything else, so being flagged there is not contained to that one request.
+     *
+     * So: it is a fallback for when the surf stops working *structurally*, not a knob to try when a
+     * single title misbehaves. If you flip it, expect the decoy, and read §0.1 first.
+     * [resolveViaWebViewSandbox] says the same thing at the point of no return.
      */
     private val USE_FULLSCREEN_SURF = true
+
+    /**
+     * Write every unparseable embed page to disk.
+     *
+     * Off by default. The dump exists to answer one open question — why [resolveEmbedFromHtml] has
+     * never resolved a single embed in a real run (handover §7) — and answering it needs one debugging
+     * session, not a file written on every playback forever. Left on, it costs the user disk I/O per
+     * embed per play, on the failure path of a fast path that always fails, while the registered
+     * extractors do the actual work moments later.
+     *
+     * Turn it on when you sit down to fix that path; turn it off again after.
+     */
+    private val DUMP_UNPARSEABLE_EMBED_HTML = false
 
     /** The freex blog-post page: countdown host, and the Referer the watch page's gate demands. */
     private val TIMER_PAGE_URL = "https://rm.freex2line.online/2020/02/blog-post.html/"
@@ -430,7 +455,7 @@ class CimaNowProvider : BaseProvider() {
         Log.i("CimaNowLoadLinks", "================ [START LOADLINKS] ================")
         Log.d("CimaNowLoadLinks", "-> Data URL: $data")
         val found = if (USE_FULLSCREEN_SURF) {
-            resolveViaFullscreenSurf(data, callback)
+            resolveViaFullscreenSurfWithRetry(data, callback)
         } else {
             // Legacy path: fight the watch page's anti-bot for the decrypted server list.
             resolveViaWebViewSandbox(data, subtitleCallback, callback)
@@ -440,6 +465,78 @@ class CimaNowProvider : BaseProvider() {
     }
 
     // ==================== Fullscreen surf ====================
+
+    /**
+     * The surf, plus one retry when Cloudflare — not the site's content — is what stopped it.
+     *
+     * The engine cannot solve a challenge in the middle of a session: it would mean a second WebView
+     * on top of the one the user is looking at. So it records what happened
+     * ([NavigationResult.interceptChallenges]) and falls through to Chromium, which reissues the
+     * request with the `sec-ch-ua: "Android WebView"` fingerprint the interception existed to avoid —
+     * a request cimanow bounces. That is why a challenge on the watch page shows up as a blank
+     * fullscreen window rather than an error.
+     *
+     * Handled here instead, where the window is already closed and WebView lifecycles no longer
+     * overlap: solve through the ordinary session path, then surf once more.
+     *
+     * Deliberately narrow. The retry costs the user a second pass at picking a server, so it fires
+     * only when the first attempt produced **nothing usable at all** *and* a cimanow-domain challenge
+     * was recorded. A surf that captured even one embed is not retried — the user got a choice, and
+     * some other thing failed.
+     */
+    private suspend fun resolveViaFullscreenSurfWithRetry(
+        movieUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val TAG_RETRY = "CimaNowSurf"
+        val first = resolveViaFullscreenSurf(movieUrl, callback)
+        if (first.found) return true
+
+        val block = first.challenges.cimaCloudflareBlock()
+        if (block == null) {
+            Log.i(TAG_RETRY, "Surf found nothing and no Cloudflare block was recorded — " +
+                "not retrying (nothing suggests a second attempt would differ)")
+            return false
+        }
+        if (first.producedCandidates) {
+            Log.i(TAG_RETRY, "Cloudflare refused ${block.url.take(80)} but the surf still produced " +
+                "candidates — not retrying, the failure is downstream of the block")
+            return false
+        }
+
+        Log.w(TAG_RETRY, "🔒 Cloudflare blocked the surf at its source | code=${block.statusCode} " +
+            "mainFrame=${block.isMainFrame} url=${block.url.take(100)}")
+        Log.w(TAG_RETRY, "Body preview: ${block.bodyPreview.take(200).replace("\n", " ")}")
+
+        // Solve through the ordinary session path: getDocument sees the 403 + CF markers and runs the
+        // WebView solve itself, then updateCookies syncs the clearance into the system CookieManager —
+        // which is exactly where the surf's interceptor reads its cookies from. The home page is the
+        // cheapest thing to ask for; what matters is the session it leaves behind, not the bytes.
+        if (!reestablishSession(httpService, mainUrl, TAG_RETRY)) {
+            Log.e(TAG_RETRY, "❌ Could not re-establish a session — the CF solve failed or the user " +
+                "cancelled it. Not surfing again.")
+            return false
+        }
+        Log.i(TAG_RETRY, "✅ Session re-established — surfing once more")
+        return resolveViaFullscreenSurf(movieUrl, callback).found
+    }
+
+    /**
+     * What one surf attempt came to.
+     *
+     * A return value rather than fields on the provider. The retry needs three facts — did we get
+     * links, was Cloudflare in the way, did the user get a real choice — and holding them on the
+     * instance made the decision non-reentrant: two concurrent `loadLinks` calls would each read
+     * whatever the other wrote last, and every early return had to remember to reset them.
+     */
+    private data class SurfOutcome(
+        /** Links were delivered to the callback. Nothing else matters when this is true. */
+        val found: Boolean,
+        /** Requests the engine re-issued and was refused on — see [InterceptChallenge]. */
+        val challenges: List<InterceptChallenge> = emptyList(),
+        /** An embed or stream was captured, i.e. the user reached a working server list. */
+        val producedCandidates: Boolean = false
+    )
 
     /**
      * Play by showing the user the watch page and taking the stream off the network.
@@ -469,7 +566,7 @@ class CimaNowProvider : BaseProvider() {
     private suspend fun resolveViaFullscreenSurf(
         movieUrl: String,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ): SurfOutcome {
         val TAG_SURF = "CimaNowSurf"
         Log.i(TAG_SURF, "========== [START] fullscreen surf resolve ==========")
         Log.i(TAG_SURF, "Movie URL: $movieUrl")
@@ -501,7 +598,9 @@ class CimaNowProvider : BaseProvider() {
             val timerHtml = navigateToTimerPageViaHttp(movieUrl)
             if (timerHtml == null) {
                 Log.e(TAG_SURF, "❌ Could not reach the timer page — no token chain, nothing to surf")
-                return false
+                // No navigation happened, so there is nothing to report and nothing to retry: a
+                // failure here was already diagnosed by navigateToTimerPageViaHttp.
+                return SurfOutcome(found = false)
             }
             Log.i(TAG_SURF, "✅ Timer page HTML: ${timerHtml.length} chars")
 
@@ -579,8 +678,21 @@ class CimaNowProvider : BaseProvider() {
                 //
                 // The hook stays OFF — §0.1 rule 3 still applies.
                 rewriteDocumentWrite = false,
-                injectDocumentWriteHook = false
+                injectDocumentWriteHook = false,
+                // Keeps the WebView jar and the HTTP session in step for responses the engine answers
+                // itself — see CimaNowNavigationPolicy. Default policy is a no-op, so this is the only
+                // provider that pays for it.
+                sessionPolicy = CimaNowNavigationPolicy(httpService)
             )
+            val challenges = navResult.interceptChallenges
+            val producedCandidates = navResult.capturedEmbedRequests.isNotEmpty() ||
+                navResult.capturedVideoRequests.isNotEmpty()
+            if (navResult.interceptChallenges.isNotEmpty()) {
+                Log.w(TAG_SURF, "⚠️ ${navResult.interceptChallenges.size} intercepted request(s) " +
+                    "were refused: " + navResult.interceptChallenges.take(5).joinToString("; ") {
+                        "${it.statusCode}${if (it.isCloudflare) "/CF" else ""} ${it.url.take(60)}"
+                    })
+            }
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
             Log.i(TAG_SURF, "Captured: ${navResult.capturedEmbedRequests.size} embed(s), " +
@@ -681,7 +793,7 @@ class CimaNowProvider : BaseProvider() {
             if (found) {
                 Log.i(TAG_SURF, "✅ Extractors produced links from ${navResult.capturedEmbedRequests.size} embed(s) " +
                     "— skipping the sniffed-stream fallback")
-                return true
+                return SurfOutcome(true, challenges, producedCandidates)
             }
             Log.w(TAG_SURF, "No extractor produced links — falling back to the sniffed stream(s)")
 
@@ -695,7 +807,7 @@ class CimaNowProvider : BaseProvider() {
             if (playable.isEmpty()) {
                 Log.w(TAG_SURF, "No playable video seen on the wire " +
                     "(${navResult.capturedVideoRequests.size} capture(s), all segments/assets)")
-                return false
+                return SurfOutcome(false, challenges, producedCandidates)
             }
 
             for (capture in playable) {
@@ -704,11 +816,11 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
                 found = true
             }
-            return found
+            return SurfOutcome(found, challenges, producedCandidates)
         } catch (e: Exception) {
             Log.e(TAG_SURF, "Surf resolve failed: ${e.message}")
             Log.e(TAG_SURF, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
-            return false
+            return SurfOutcome(found = false)
         }
     }
 
@@ -805,7 +917,12 @@ class CimaNowProvider : BaseProvider() {
             .toList()
 
         if (urls.isEmpty()) {
-            dumpEmbedHtml(embed, serverName, html)
+            // A length and a host are enough to tell "this was an ad iframe" from "this was a player
+            // page we failed to parse", which is all the log needs day to day. The bytes themselves
+            // only matter to someone actually fixing this path — see DUMP_UNPARSEABLE_EMBED_HTML.
+            Log.i(TAG_EH, "No media URLs in $serverName embed HTML (${html.length} chars) — " +
+                "leaving it to the registered extractors")
+            if (DUMP_UNPARSEABLE_EMBED_HTML) dumpEmbedHtml(embed, serverName, html)
             return false
         }
         Log.i(TAG_EH, "Generic scan found ${urls.size} media URL(s) in $serverName embed HTML")
@@ -1491,6 +1608,18 @@ class CimaNowProvider : BaseProvider() {
      * @param movieUrl The CimaNow movie/episode page URL
      * @return The blog-post.html/ timer HTML (158KB) or null on failure
      */
+    /**
+     * The first `freex2line` link in a page — the "loadon" hop that starts the token chain.
+     *
+     * Kept as a function so the caller can try it against several bodies (cache-busted, plain,
+     * decoded) without repeating the pattern, and so a miss is distinguishable from a block.
+     */
+    private fun extractFreexUrl(html: String): String? {
+        if (html.isEmpty()) return null
+        val m = Pattern.compile("href=[\"'](https?://[^\"']*freex2line[^\"']*)[\"']").matcher(html)
+        return if (m.find()) m.group(1) else null
+    }
+
     private suspend fun navigateToTimerPageViaHttp(movieUrl: String): String? {
         val TAG_HT = "CimaNowHttpNav"
         try {
@@ -1498,41 +1627,90 @@ class CimaNowProvider : BaseProvider() {
             Log.i(TAG_HT, "movieUrl: $movieUrl")
 
             // ====================== Step 1: Get movie page ======================
+            //
+            // Through the session-aware path, NOT `getRaw`.
+            //
+            // 2026-08-03: this step fetched the movie page with `httpService.getRaw(fetchUrl, UA +
+            // Accept)`. `getRaw` is a bare OkHttp call — it sends exactly the headers it is handed,
+            // so no `cf_clearance`, no `Sec-Ch-Ua`, no `Referer`, no `Sec-Fetch-*` — and it has no
+            // Cloudflare handling of any kind. Cloudflare answered **HTTP 403 with a 128,267-byte
+            // block page**, which of course contains no `freex2line` href, and the chain died with
+            // "FATAL: No freex URL found in movie page" — a message that reads like the site changed
+            // its markup when in fact we were never let in. Total elapsed time: 60 ms.
+            //
+            // The status code was fetched into `movieStatus` and then never checked, which is what
+            // let a block masquerade as a parse failure.
+            //
+            // `getDocument(rewriteDomain = true)` is the same path `load()` uses on this very URL
+            // seconds earlier — and that one succeeds. It carries the session cookies (including a
+            // `cf_clearance` already minted for this UA), real-Chrome client hints, and falls back
+            // to a WebView CF solve when a 403 carries CF markers.
             Log.i(TAG_HT, "Step 1/4: Fetching movie page to extract freex URL")
-            val cacheBuster = "?_ts=${System.currentTimeMillis()}"
-            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl$cacheBuster"
-            val rawHeaders = mapOf(
-                "User-Agent" to httpService.userAgent,
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            Log.d(TAG_HT, "GET $fetchUrl")
-            Log.d(TAG_HT, "Headers: UA=${httpService.userAgent.take(50)}...")
+            val cacheBuster = "_ts=${System.currentTimeMillis()}"
+            // Was `"?_ts=…"` concatenated after a `&`, producing `…&?_ts=…` on any URL that already
+            // had a query. Harmless on this URL shape, wrong on every other.
+            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl?$cacheBuster"
+            Log.d(TAG_HT, "GET $fetchUrl (session path: cookies + client hints + CF fallback)")
 
-            val movieResponse = httpService.getRaw(fetchUrl, headers = rawHeaders)
-            val movieStatus = movieResponse.code
-            val movieHeaders = movieResponse.headers
-            val movieHtml = movieResponse.body?.string() ?: ""
-            movieResponse.close()
-            Log.i(TAG_HT, "Movie page response: HTTP $movieStatus, ${movieHtml.length} bytes")
-            Log.d(TAG_HT, "Response headers: ${movieHeaders.joinToString("; ") { "${it.first}=${it.second.take(60)}" }}")
+            // Guarded: this is the first call in the flow that can trigger a CF solve, and a solve the
+            // user cancels clears the old session without restoring it — which would break the surf
+            // below for a reason unrelated to the surf. See withSessionGuard.
+            val fetched = withSessionGuard(httpService, TAG_HT) {
+                var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
+                var html = doc?.outerHtml() ?: ""
+                Log.i(TAG_HT, "Movie page: ${html.length} chars")
+                var freex = extractFreexUrl(html)
 
-            // Extract the first freex2line URL (loadon link)
-            val freexMatcher = Pattern.compile("href=[\"'](https?://[^\"']*freex2line[^\"']*)[\"']").matcher(movieHtml)
-            if (!freexMatcher.find()) {
-                Log.e(TAG_HT, "FATAL: No freex URL found in movie page")
+                // Retry without the cache-buster before giving up. The `?_ts=` param guarantees a
+                // Cloudflare cache MISS, so every attempt is evaluated by the WAF at the origin — the
+                // one request shape most likely to be challenged, for a page whose freex link does not
+                // change minute to minute.
+                if (freex == null) {
+                    Log.w(TAG_HT, "No freex URL with the cache-buster — retrying the plain URL")
+                    doc = httpService.getDocument(movieUrl, rewriteDomain = true)
+                    html = doc?.outerHtml() ?: ""
+                    Log.i(TAG_HT, "Movie page (plain URL): ${html.length} chars")
+                    freex = extractFreexUrl(html)
+                }
+                Triple(doc, html, freex)
+            }
+            val movieDoc = fetched.first
+            val movieHtml = fetched.second
+            var freexUrl = fetched.third
+
+            // Last resort: the link may be inside the page's encoded payload rather than the markup.
+            if (freexUrl == null && movieDoc != null) {
+                val decoded = decodeHtml(movieDoc).outerHtml()
+                if (decoded.length != movieHtml.length) {
+                    Log.i(TAG_HT, "Searching the decoded payload (${decoded.length} chars)")
+                    freexUrl = extractFreexUrl(decoded)
+                }
+            }
+
+            val resolvedFreexUrl = freexUrl
+            if (resolvedFreexUrl == null) {
+                // Say which failure this is. The two are fixed in completely different places.
+                val cfBlocked = com.cloudstream.shared.cloudflare.CloudflareDetector
+                    .isCloudflareChallenge(movieHtml, 403)
+                if (cfBlocked || movieHtml.isEmpty()) {
+                    Log.e(TAG_HT, "FATAL: Cloudflare/WAF blocked the movie page — no markup to " +
+                        "search (${movieHtml.length} chars). This is a session problem, not a " +
+                        "parsing problem: the CF solve did not run or its clearance was rejected.")
+                } else {
+                    Log.e(TAG_HT, "FATAL: Movie page loaded (${movieHtml.length} chars) but carries " +
+                        "no freex2line href — the site's watch-link markup changed")
+                }
                 return null
             }
-            val freexUrl = freexMatcher.group(1)
-            Log.i(TAG_HT, "Extracted freex URL: $freexUrl")
-            Log.d(TAG_HT, "freexMatcher found match in movieHtml[${freexMatcher.start()}:${freexMatcher.end()}]")
+            Log.i(TAG_HT, "Extracted freex URL: $resolvedFreexUrl")
 
             // ====================== Step 2: Fetch loadon ======================
-            Log.i(TAG_HT, "Step 2/4: Fetching loadon → $freexUrl")
+            Log.i(TAG_HT, "Step 2/4: Fetching loadon → $resolvedFreexUrl")
             val sessionHeaders = mutableMapOf<String, String>()
             sessionHeaders["User-Agent"] = httpService.userAgent
             sessionHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
-            val loadonResponse = httpService.getRaw(freexUrl, headers = sessionHeaders)
+            val loadonResponse = httpService.getRaw(resolvedFreexUrl, headers = sessionHeaders)
             val loadonStatus = loadonResponse.code
             val loadonBody = loadonResponse.body?.string() ?: ""
             Log.i(TAG_HT, "loadon response: HTTP $loadonStatus, ${loadonBody.length} bytes")
@@ -1572,7 +1750,7 @@ class CimaNowProvider : BaseProvider() {
 
             // ====================== Step 3: Fetch redirectingfree ======================
             Log.i(TAG_HT, "Step 3/4: Fetching redirectingfree")
-            sessionHeaders["Referer"] = freexUrl
+            sessionHeaders["Referer"] = resolvedFreexUrl
             Log.d(TAG_HT, "GET https://rm.freex2line.online/redirectingfree/")
             Log.d(TAG_HT, "Request headers: ${sessionHeaders.entries.joinToString(", ") { "${it.key}=${it.value.take(50)}" }}")
 
@@ -1712,6 +1890,12 @@ class CimaNowProvider : BaseProvider() {
         val TAG_TEST = "CimaNowResolve"
         Log.i(TAG_TEST, "========== [START] WebView sandbox resolve ==========")
         Log.i(TAG_TEST, "Target URL: $movieUrl")
+        // Said out loud, because the difference does not show up anywhere else in the log and the two
+        // paths otherwise look alike from the outside.
+        Log.w(TAG_TEST, "⚠️ LEGACY PATH (USE_FULLSCREEN_SURF = false): this injects an in-page reader " +
+            "script and exfiltrates the decrypted DOM — handover rules 6/7/9/10 — against the real " +
+            "cimanow.cc in this session. The surf path runs no JS in the page at all. If you did not " +
+            "mean to flip that flag, flip it back.")
 
         // Declared OUTSIDE the try: links are handed to the player through `callback` as they are
         // found, so a late failure (a slow server blowing a timeout) must not erase the fact that
