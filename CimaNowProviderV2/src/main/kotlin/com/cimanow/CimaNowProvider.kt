@@ -135,6 +135,32 @@ class CimaNowProvider : BaseProvider() {
     private val USE_REAL_TIMER_NAVIGATION = true
 
     /**
+     * Reads the watch button's href on the freex countdown page.
+     *
+     * Deliberately trivial, and deliberately not a selector we invented: `#downloadbtn` is the id in the
+     * page's own markup, sitting next to a hard-coded placeholder href that the page replaces once
+     * `get-link.php` answers. Reading `.href` gives the resolved absolute URL, so a relative value or a
+     * protocol-relative one still comes back usable.
+     *
+     * Falls back to the anchor's class (`.downloadbtn`) because the markup carries a duplicate `id`
+     * attribute — `id="downloadbtn"` *and* `id="redirectLink"` on the same element — and duplicate ids
+     * are exactly the sort of thing a page edit turns into a `getElementById` miss.
+     *
+     * Returns "" rather than null when there is nothing to read, so the caller sees a stable value
+     * instead of a parse artefact.
+     */
+    private val FREEX_WATCH_HREF_PROBE = """
+        (function(){
+          try {
+            var a = document.getElementById('downloadbtn')
+                 || document.querySelector('a.downloadbtn')
+                 || document.getElementById('redirectLink');
+            return (a && a.href) ? a.href : '';
+          } catch (e) { return ''; }
+        })();
+    """.trimIndent()
+
+    /**
      * The one page that counts as arriving: the watch page **with its token**.
      *
      * From the 2026-07-02 HAR, the request that returns the real 335 KB player document:
@@ -734,6 +760,21 @@ class CimaNowProvider : BaseProvider() {
                     // freex2line only: the ads on the timer page are iframes, and the real arrival
                     // matches urlPattern, so nothing legitimate needs a main-frame nav elsewhere.
                     stayWithin = Regex("""freex2line\.online"""),
+                    // Read the link out of the button, on the freex page only.
+                    //
+                    // Everything else was tried and is in the log: the endpoint cannot be intercepted
+                    // (it is a POST and `WebResourceRequest` has no body), the click is spent on an ad
+                    // rather than a navigation, and the session identity, the countdown timing, the ad
+                    // impressions and the popup-close cycle were each eliminated in turn. The tokenised
+                    // URL exists in `#downloadbtn`'s href and nowhere else we can reach.
+                    //
+                    // Scoped by `probeOnlyOnHosts`, which the engine enforces before evaluating: this
+                    // never runs on cimanow.cc, so the decryptor's `isBot()` stack check (rule 9) and
+                    // the 47-byte decoy are untouched — they live in a different document, later. And
+                    // it is a pure read of one attribute: no assignment, no synthetic click, nothing
+                    // left behind on `window` (rules 6, 7, 10).
+                    probeJs = FREEX_WATCH_HREF_PROBE,
+                    probeOnlyOnHosts = Regex("""freex2line\.online"""),
                     abortOnFailure = true
                 ),
                 // The user is already on the page: pick a server, press play. Ends a beat after the
@@ -829,7 +870,25 @@ class CimaNowProvider : BaseProvider() {
                 // Keeps the WebView jar and the HTTP session in step for responses the engine answers
                 // itself — see CimaNowNavigationPolicy. Default policy is a no-op, so this is the only
                 // provider that pays for it.
-                sessionPolicy = CimaNowNavigationPolicy(httpService)
+                sessionPolicy = CimaNowNavigationPolicy(httpService),
+                // The ad cycle, completed without the user seeing an ad.
+                //
+                // The manual flow is: click → an ad opens in a new tab → **close it** → click again →
+                // after N rounds the countdown page navigates to the real watch page. Closing the tab
+                // is the part that counts, and our sink never closed: with popups swallowed the
+                // retirement timer did not run at all, so every window we handed the page stayed open
+                // for the whole session and its ad counter never advanced. That is the best explanation
+                // yet for a watch button whose href survived 13 clicks unchanged.
+                //
+                // 1.5 s: past the 800 ms dwell the gate checks (a window closed sooner reads as a
+                // *blocked* popup, which is worse than none), and short enough that clicking again is
+                // not a wait. The ad itself is never fetched — loadPopupsInSink is false — so the user
+                // sees nothing at any point.
+                popupSinkTtlMs = 1_500L,
+                // If the page ever opens the watch page itself via window.open instead of navigating,
+                // that is the destination and not an ad: take it out of the sink and put it on screen.
+                // Costs nothing when it never fires.
+                promotePopupsMatching = PLAYER_PAGE_PATTERN
             )
             val challenges = navResult.interceptChallenges
             val producedCandidates = navResult.capturedEmbedRequests.isNotEmpty() ||

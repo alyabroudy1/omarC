@@ -136,6 +136,13 @@ class NavigationEngine(
      * same placeholder is a different finding from one attempt at an ad, and the difference decides
      * whether the next thing to change is the site's gate or our own containment.
      */
+    /**
+     * The popup URL that was promoted to the main frame, if any — see `promotePopupsMatching`.
+     */
+    @Volatile
+    var promotedPopupUrl: String? = null
+        private set
+
     private val refusedMainFrameNavigations =
         java.util.Collections.synchronizedMap(linkedMapOf<String, Int>())
 
@@ -260,7 +267,37 @@ class NavigationEngine(
          * answers itself. Defaults to [NavigationSessionPolicy.None] — do neither, which is what
          * every caller got before the interface existed.
          */
-        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None
+        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None,
+        /**
+         * A popup whose URL matches this is **not** a popup — it is where the page meant to send the
+         * user, and it is loaded into the main frame instead of a throwaway sink.
+         *
+         * `window.open` is how an ad-funded page opens its ads, and it is also how some of them open
+         * the thing you actually asked for. Sinking every popup indiscriminately therefore risks
+         * discarding the destination: it loads into a detached WebView nobody sees and is destroyed on
+         * a timer. Naming the destination pattern lets the engine tell the two apart.
+         *
+         * Null (default) sinks everything, which is what every existing caller expects.
+         */
+        promotePopupsMatching: Regex? = null,
+        /**
+         * How long a popup sink lives before it is destroyed — i.e. before the page sees its
+         * `window.open()` handle report `closed === true`.
+         *
+         * **This is a functional signal, not cleanup.** An ad-funded page that gates content on ad
+         * views counts a view when the window it opened is *closed*; that is exactly what a user does
+         * when they shut the ad tab and click again. A sink that never closes leaves the page waiting
+         * forever for a cycle that, from its point of view, never completed.
+         *
+         * 2026-08-03: the retirement timer only ran when [loadPopupsInSink] was true, so with popups
+         * swallowed — the mode that shows the user no ads — sinks lived for the entire session. The
+         * freex countdown page never rewrote its watch button's href across 13 clicks, and this is the
+         * likeliest reason: every click opened a window that never closed.
+         *
+         * Must exceed the dwell threshold the page checks (800 ms in cimanow's gate, see
+         * [POPUNDER_DWELL_MS]) or the window looks like a blocked popup instead of a viewed one.
+         */
+        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -283,6 +320,7 @@ class NavigationEngine(
             mainFramePageStartedAtMs = 0L
             linkMintCallCount = 0
             refusedMainFrameNavigations.clear()
+            promotedPopupUrl = null
             dialogDismissedByUser = false
 
             val activity = activityProvider()
@@ -332,7 +370,8 @@ class NavigationEngine(
                 webView = createWebView(activity, userAgent)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
-                    rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy)
+                    rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy,
+                    promotePopupsMatching, popupSinkTtlMs)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -573,6 +612,9 @@ class NavigationEngine(
                                 var lastSeen = ""
                                 var lastRejected: String? = null
                                 var lastHeartbeat = 0L
+                                var lastProbe = 0L
+                                var lastProbeValue: String? = null
+                                var probeSkipLogged = false
                                 while (System.currentTimeMillis() < deadline &&
                                     !dialogDismissedByUser && !rendererGone
                                 ) {
@@ -601,6 +643,60 @@ class NavigationEngine(
                                             "url" to rejected.take(140))
                                     }
                                     val nowMs = System.currentTimeMillis()
+
+                                    // ── The one page read in this flow — see AwaitMainFrameUrl.probeJs ──
+                                    //
+                                    // Host-guarded in code, not by convention: no match, no evaluation.
+                                    if (step.probeJs != null &&
+                                        nowMs - lastProbe >= step.probeIntervalMs &&
+                                        webView != null
+                                    ) {
+                                        lastProbe = nowMs
+                                        val hereNow = webView.url ?: lastPageUrl
+                                        val allowed = step.probeOnlyOnHosts
+                                            ?.containsMatchIn(hereNow) ?: false
+                                        if (!allowed) {
+                                            if (!probeSkipLogged) {
+                                                probeSkipLogged = true
+                                                ProviderLogger.i(TAG, "execute",
+                                                    "Step $index: probe NOT run — current page is " +
+                                                        "outside probeOnlyOnHosts",
+                                                    "at" to hereNow.take(110))
+                                            }
+                                        } else {
+                                            probeSkipLogged = false
+                                            val probed = try {
+                                                executeJsInWebView(webView, step.probeJs)
+                                            } catch (e: Exception) {
+                                                ProviderLogger.w(TAG, "execute",
+                                                    "Step $index: probe threw: ${e.message}")
+                                                null
+                                            }
+                                            if (probed != lastProbeValue) {
+                                                lastProbeValue = probed
+                                                ProviderLogger.w(TAG, "execute",
+                                                    "Step $index: 🔎 probe → ${probed?.take(160) ?: "<null>"}")
+                                            }
+                                            if (!probed.isNullOrBlank() &&
+                                                step.urlPattern.containsMatchIn(probed) &&
+                                                step.accept?.invoke(probed) != false
+                                            ) {
+                                                ProviderLogger.w(TAG, "execute",
+                                                    "Step $index: ✅ the page is holding the real link — " +
+                                                        "navigating there directly, no click needed",
+                                                    "url" to probed.take(160))
+                                                val ref = hereNow.takeIf {
+                                                    it.isNotBlank() && it != "about:blank"
+                                                }
+                                                // Pre-approve so the guard and the redirect check both
+                                                // let it through, then let the loop notice the arrival
+                                                // through the same path a click would have taken.
+                                                this@NavigationEngine.pendingRedirectUrl = probed
+                                                loadUrlInWebView(webView, probed, ref, emptyMap())
+                                            }
+                                        }
+                                    }
+
                                     if (nowMs - lastHeartbeat >= 10_000L) {
                                         lastHeartbeat = nowMs
                                         ProviderLogger.i(TAG, "execute",
@@ -1094,7 +1190,9 @@ class NavigationEngine(
         captureEmbeds: Boolean = false,
         rewriteDocumentWrite: Boolean = true,
         injectDocumentWriteHook: Boolean = true,
-        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None
+        sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None,
+        promotePopupsMatching: Regex? = null,
+        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -2049,21 +2147,78 @@ class NavigationEngine(
                                         "Blocked non-web popup scheme", "scheme" to scheme)
                                     return true
                                 }
+                                val popupUrl = req?.url?.toString() ?: ""
+
+                                // Promote, don't sink: this is the destination, not an ad.
+                                if (promotePopupsMatching?.containsMatchIn(popupUrl) == true) {
+                                    ProviderLogger.w(TAG, "popupSink",
+                                        "🎯 POPUP IS THE DESTINATION — promoting it to the main frame " +
+                                            "instead of throwing it away",
+                                        "url" to popupUrl.take(160))
+                                    promotedPopupUrl = popupUrl
+                                    Handler(Looper.getMainLooper()).post {
+                                        try {
+                                            val referer = lastPageUrl.takeIf {
+                                                it.isNotBlank() && it != "about:blank"
+                                            }
+                                            loadUrlInWebView(webView, popupUrl, referer, emptyMap())
+                                        } catch (e: Exception) {
+                                            ProviderLogger.e(TAG, "popupSink",
+                                                "Promotion failed", e, "url" to popupUrl.take(120))
+                                        }
+                                    }
+                                    return true
+                                }
+
+                                // Every popup URL, at a level that survives a filtered log. What a
+                                // click actually opens is the only way to tell an ad-counter click from
+                                // a real one without reading the page.
                                 return if (loadPopupsInSink) {
-                                    ProviderLogger.d(TAG, "popupSink", "Loading popup for real (hidden)",
-                                        "url" to req?.url?.toString()?.take(120))
+                                    ProviderLogger.i(TAG, "popupSink",
+                                        "🪟 POPUP (loading for real, hidden)", "url" to popupUrl.take(160))
                                     false
                                 } else {
-                                    ProviderLogger.d(TAG, "popupSink", "Swallowed popup navigation",
-                                        "url" to req?.url?.toString()?.take(120))
+                                    ProviderLogger.i(TAG, "popupSink",
+                                        "🪟 POPUP (swallowed)", "url" to popupUrl.take(160))
                                     true
                                 }
                             }
 
                             override fun shouldInterceptRequest(
                                 v: WebView?, req: WebResourceRequest?
-                            ): WebResourceResponse? =
-                                if (loadPopupsInSink) {
+                            ): WebResourceResponse? {
+                                // `window.open(url)` loads its target straight into this view without
+                                // consulting shouldOverrideUrlLoading, so the promotion test has to run
+                                // here as well or the one case that matters is the one case missed.
+                                val u = req?.url?.toString() ?: ""
+                                if (req?.isForMainFrame == true &&
+                                    promotePopupsMatching?.containsMatchIn(u) == true &&
+                                    promotedPopupUrl == null
+                                ) {
+                                    ProviderLogger.w(TAG, "popupSink",
+                                        "🎯 POPUP IS THE DESTINATION (seen on its own request) — " +
+                                            "promoting to the main frame",
+                                        "url" to u.take(160))
+                                    promotedPopupUrl = u
+                                    Handler(Looper.getMainLooper()).post {
+                                        try {
+                                            val referer = lastPageUrl.takeIf {
+                                                it.isNotBlank() && it != "about:blank"
+                                            }
+                                            loadUrlInWebView(webView, u, referer, emptyMap())
+                                        } catch (e: Exception) {
+                                            ProviderLogger.e(TAG, "popupSink", "Promotion failed", e)
+                                        }
+                                    }
+                                    return WebResourceResponse("text/html", "utf-8",
+                                        java.io.ByteArrayInputStream(ByteArray(0)))
+                                }
+                                if (req?.isForMainFrame == true) {
+                                    ProviderLogger.i(TAG, "popupSink", "🪟 POPUP TARGET",
+                                        "url" to u.take(160), "mode" to
+                                            (if (loadPopupsInSink) "loading" else "swallowed"))
+                                }
+                                return if (loadPopupsInSink) {
                                     // Let it fetch. This is the whole point of the mode: the ad network
                                     // re-fires its conversion ping until the popunder actually loads.
                                     null
@@ -2076,6 +2231,7 @@ class NavigationEngine(
                                         java.io.ByteArrayInputStream(ByteArray(0))
                                     )
                                 }
+                            }
                         }
                         // No popups from a popup. An ad landing page that opens more windows would
                         // otherwise spawn sinks until the limit, for no benefit.
@@ -2098,21 +2254,25 @@ class NavigationEngine(
                         else "Popup honoured into a blank sink window",
                         "sinks" to popupSinks.size, "isUserGesture" to isUserGesture)
 
-                    if (loadPopupsInSink) {
-                        // Long enough for the ad to load and its tracker to fire, short enough that a
-                        // heavy landing page is not left running behind the player. Destroying it marks
-                        // the window `closed`, which by then nothing is still checking.
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            try {
-                                if (popupSinks.remove(sink)) {
-                                    sink.stopLoading()
-                                    sink.destroy()
-                                    ProviderLogger.d(TAG, "popupSink",
-                                        "Sink retired after ${POPUP_SINK_TTL_MS}ms")
-                                }
-                            } catch (_: Exception) {}
-                        }, POPUP_SINK_TTL_MS)
-                    }
+                    // ALWAYS retire the sink, whether or not it loaded anything.
+                    //
+                    // This used to be inside `if (loadPopupsInSink)`, which meant that in the mode that
+                    // shows the user no ads the window stayed open for the whole session — and a page
+                    // that counts ad views by watching for its popup to *close* therefore never counted
+                    // one. See popupSinkTtlMs. Destroying the WebView is what makes the page's handle
+                    // report `closed === true`, i.e. what a user closing the ad tab looks like.
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            if (popupSinks.remove(sink)) {
+                                sink.stopLoading()
+                                sink.destroy()
+                                ProviderLogger.i(TAG, "popupSink",
+                                    "🪟 Sink closed after ${popupSinkTtlMs}ms — the page's window " +
+                                        "handle now reports closed=true",
+                                    "remainingSinks" to popupSinks.size)
+                            }
+                        } catch (_: Exception) {}
+                    }, popupSinkTtlMs)
                     true
                 } catch (e: Exception) {
                     ProviderLogger.w(TAG, "onCreateWindow", "Sink creation failed: ${e.message}")
