@@ -216,6 +216,30 @@ sealed class NavigationStep {
          * Null keeps the old behaviour: every main-frame navigation approved.
          */
         val stayWithin: Regex? = null,
+        /**
+         * A JS expression polled while waiting, expected to return a URL string. When it returns one
+         * matching [urlPattern], the engine navigates there itself — no click needed.
+         *
+         * **This is the one place in this flow that reads the page, and it is deliberately narrow.**
+         * Everything else was tried first: intercepting the endpoint (impossible — the site moved it to
+         * a POST and `WebResourceRequest` exposes no body), inferring from the navigation (the click is
+         * spent on an ad), matching the session identity, the countdown timing, the ad impressions and
+         * the popup-close cycle. The link exists in the page and nowhere else we can reach.
+         *
+         * [probeOnlyOnHosts] is not advice, it is the guard: without a match the expression is never
+         * evaluated, so a page this was not written for cannot be touched by it. Keep the expression a
+         * pure read — no assignment, no `click()`, no listeners — because a read can be observed but a
+         * mutation can be *acted on*.
+         */
+        val probeJs: String? = null,
+        /**
+         * [probeJs] runs only while the main frame's URL matches this. Required in practice: a probe
+         * with no host guard is a probe that will eventually run somewhere it should not.
+         */
+        val probeOnlyOnHosts: Regex? = null,
+        /** How often to run [probeJs]. Deliberately slower than [pollIntervalMs] — it is a real
+         *  round trip into the page, and the answer does not change from millisecond to millisecond. */
+        val probeIntervalMs: Long = 1_000L,
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 
