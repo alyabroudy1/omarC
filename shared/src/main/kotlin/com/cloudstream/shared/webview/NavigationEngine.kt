@@ -646,8 +646,11 @@ class NavigationEngine(
                                             "Step $index: main frame now at ${here.take(120)}")
                                     }
                                     // Every URL the main frame has *been* to, not just where it is
-                                    // now: a waypoint can come and go inside one poll interval.
-                                    val candidates = (mainFrameUrlsSeen + here).filter { it.isNotBlank() }
+                                    // now: a waypoint can come and go inside one poll interval — plus
+                                    // whatever the interceptor read out of a link-minting response,
+                                    // which arrives without any navigation at all.
+                                    val candidates = (mainFrameUrlsSeen + here +
+                                        listOfNotNull(interceptedWatchingUrl)).filter { it.isNotBlank() }
                                     val hit = candidates.lastOrNull { url ->
                                         step.urlPattern.containsMatchIn(url) &&
                                             step.accept?.invoke(url) != false

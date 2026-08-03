@@ -204,6 +204,15 @@ class CimaNowProvider : BaseProvider() {
             } catch(e){ say('xhr wrap failed ' + e); }
 
             // --- fetch ---
+            //
+            // The POST is why this whole flow stalls. Its body cannot be forwarded through
+            // shouldInterceptRequest, so the engine has to decline it, so it leaves Chromium carrying
+            // `sec-ch-ua: "Android WebView"` — and the endpoint answers a block page instead of a link.
+            // A desktop browser sending the same params gets the link.
+            //
+            // The params themselves are fine; only the envelope is wrong. So re-send them as a **GET with a
+            // query string**, which is the shape this endpoint used in July and which the engine *can*
+            // intercept — and therefore re-issue with real-Chrome client hints.
             try {
               if (typeof fetch === 'function') {
                 var F = fetch;
@@ -211,7 +220,29 @@ class CimaNowProvider : BaseProvider() {
                   var u = ''; try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
                   say('fetch ' + u.slice(0, 110));
                   var p = F.apply(this, arguments);
-                  try { if (URLRE.test(u)) p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t); }); } catch(e){} }); } catch(e){}
+                  try {
+                    if (URLRE.test(u)) {
+                      // Watch the page's own attempt, so its failure is on the record.
+                      p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t); }); } catch(e){} });
+                      // And replay it in a shape we can dress properly.
+                      var init = arguments[1];
+                      var b = init && init.body;
+                      if (b && typeof b.entries === 'function') {
+                        var parts = [], it = b.entries(), n;
+                        while (!(n = it.next()).done) {
+                          try { parts.push(encodeURIComponent(n.value[0]) + '=' + encodeURIComponent(String(n.value[1]))); } catch(e){}
+                        }
+                        var qs = parts.join('&');
+                        say('replaying as GET with ' + parts.length + ' param(s): ' + qs.slice(0, 220));
+                        F(u + (u.indexOf('?') < 0 ? '?' : '&') + qs, { credentials: 'include' })
+                          .then(function(r2){ return r2.text(); })
+                          .then(function(t2){ land('get-replay', t2); })
+                          .catch(function(e){ say('replay failed ' + e); });
+                      } else {
+                        say('body is not FormData (' + (b && b.constructor && b.constructor.name) + ') — cannot replay');
+                      }
+                    }
+                  } catch(e){ say('fetch hook threw ' + e); }
                   return p;
                 };
                 say('fetch wrapped');
