@@ -225,19 +225,39 @@ class CimaNowProvider : BaseProvider() {
                       // Watch the page's own attempt, so its failure is on the record.
                       p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t); }); } catch(e){} });
                       // And replay it in a shape we can dress properly.
-                      var init = arguments[1];
-                      var b = init && init.body;
-                      if (b && typeof b.entries === 'function') {
-                        var parts = [], it = b.entries(), n;
-                        while (!(n = it.next()).done) {
-                          try { parts.push(encodeURIComponent(n.value[0]) + '=' + encodeURIComponent(String(n.value[1]))); } catch(e){}
-                        }
-                        var qs = parts.join('&');
-                        say('replaying as GET with ' + parts.length + ' param(s): ' + qs.slice(0, 220));
-                        F(u + (u.indexOf('?') < 0 ? '?' : '&') + qs, { credentials: 'include' })
+                      // Replay it with the app's name taken off the request.
+                      //
+                      // Verified on-device with curl: this exact POST returns the 35-byte link answer normally,
+                      // and a **4,576-byte Cloudflare block page** the moment
+                      // `X-Requested-With: com.lagradost.cloudstream3` is attached — which is byte-for-byte what
+                      // the app was getting. Android WebView appends the package name to every request it issues
+                      // itself, and the engine's interceptor strips it, but a POST cannot be intercepted (no body
+                      // access) so it went out wearing it. Setting the header explicitly here keeps Chromium from
+                      // appending anything: 'XMLHttpRequest' is the value curl proved passes cleanly.
+                      var init = arguments[1] || {};
+                      var b = init.body;
+                      if (b) {
+                        var h2 = { 'X-Requested-With': 'XMLHttpRequest' };
+                        say('replaying POST with X-Requested-With stripped');
+                        F(u, { method: 'POST', body: b, credentials: 'include', headers: h2 })
                           .then(function(r2){ return r2.text(); })
-                          .then(function(t2){ land('get-replay', t2); })
+                          .then(function(t2){ land('post-replay', t2); })
                           .catch(function(e){ say('replay failed ' + e); });
+                        // Park the params where Kotlin can reach them, in case the header override is ignored
+                        // and the call has to be made from OkHttp instead.
+                        try {
+                          if (typeof b.entries === 'function') {
+                            var parts = [], it = b.entries(), n;
+                            while (!(n = it.next()).done) {
+                              parts.push(encodeURIComponent(n.value[0]) + '=' + encodeURIComponent(String(n.value[1])));
+                            }
+                            var qs = parts.join('&');
+                            var pn = document.createElement('div');
+                            pn.id = 'cs-payload'; pn.setAttribute('data-qs', qs); pn.style.display = 'none';
+                            if (document.body) document.body.appendChild(pn);
+                            say('payload parked (' + parts.length + ' params, ' + qs.length + ' chars)');
+                          }
+                        } catch(e){ say('payload park failed ' + e); }
                       } else {
                         say('body is not FormData (' + (b && b.constructor && b.constructor.name) + ') — cannot replay');
                       }
