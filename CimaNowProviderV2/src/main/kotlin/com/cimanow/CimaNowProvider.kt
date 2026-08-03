@@ -160,50 +160,80 @@ class CimaNowProvider : BaseProvider() {
      */
     private val FREEX_LINK_CAPTURE_JS = """
         (function(){
+          var TAG = 'CSHOOK';
+          function say(m){ try { console.log(TAG + ' ' + m); } catch(e){} }
           try {
             var URLRE = /get-link/i;
-            var TOK   = /^https?:\/\/\S+$/;
-            function land(text){
+            var ABS   = /^https?:\/\/\S+$/;
+
+            function land(where, text){
               try {
                 var t = String(text || '').replace(/^﻿/, '').replace(/^»/, '').trim();
-                if (!TOK.test(t)) return;
+                say('response via ' + where + ' len=' + t.length + ' head=' + t.slice(0, 90));
+                if (!ABS.test(t)) { say('not a URL — ignoring'); return; }
                 var a = document.getElementById('downloadbtn')
                      || document.querySelector('a.downloadbtn')
                      || document.getElementById('redirectLink');
-                if (a) { a.setAttribute('href', t); }
+                if (a) { a.setAttribute('href', t); say('href set'); } else { say('button not found'); }
                 var d = document.createElement('div');
-                d.id = 'cs-link-sink';
-                d.setAttribute('data-link', t);
-                d.style.display = 'none';
-                if (document.body) document.body.appendChild(d);
-              } catch (e) {}
+                d.id = 'cs-link-sink'; d.setAttribute('data-link', t); d.style.display = 'none';
+                if (document.body) { document.body.appendChild(d); say('sink appended'); }
+              } catch (e) { say('land threw ' + e); }
             }
-            var O = XMLHttpRequest.prototype.open, S2 = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
-            XMLHttpRequest.prototype.send = function(){
-              var x = this;
-              try {
-                x.addEventListener('load', function(){
-                  try { if (URLRE.test(String(x.__csu || ''))) land(x.responseText); } catch(e){}
-                });
-              } catch(e){}
-              return S2.apply(this, arguments);
-            };
-            if (typeof fetch === 'function') {
-              var F = fetch;
-              fetch = function(){
-                var u = '';
-                try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
-                var p = F.apply(this, arguments);
-                try {
-                  if (URLRE.test(u)) {
-                    p.then(function(res){ try { res.clone().text().then(land); } catch(e){} });
-                  }
-                } catch(e){}
-                return p;
+
+            // --- XMLHttpRequest ---
+            try {
+              var O = XMLHttpRequest.prototype.open, S2 = XMLHttpRequest.prototype.send;
+              XMLHttpRequest.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
+              XMLHttpRequest.prototype.send = function(){
+                var x = this, u = String(x.__csu || '');
+                say('xhr ' + u.slice(0, 110));
+                try { x.addEventListener('load', function(){ try { if (URLRE.test(u)) land('xhr', x.responseText); } catch(e){} }); } catch(e){}
+                return S2.apply(this, arguments);
               };
-            }
-          } catch (e) {}
+              say('xhr wrapped');
+            } catch(e){ say('xhr wrap failed ' + e); }
+
+            // --- fetch ---
+            try {
+              if (typeof fetch === 'function') {
+                var F = fetch;
+                window.fetch = function(){
+                  var u = ''; try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
+                  say('fetch ' + u.slice(0, 110));
+                  var p = F.apply(this, arguments);
+                  try { if (URLRE.test(u)) p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t); }); } catch(e){} }); } catch(e){}
+                  return p;
+                };
+                say('fetch wrapped');
+              }
+            } catch(e){ say('fetch wrap failed ' + e); }
+
+            // --- sendBeacon: fire-and-forget, so the page cannot read a response either. If the mint call
+            //     goes out this way, the link does NOT come from it and we are looking in the wrong place.
+            try {
+              if (navigator && typeof navigator.sendBeacon === 'function') {
+                var B = navigator.sendBeacon.bind(navigator);
+                navigator.sendBeacon = function(u, d){
+                  say('sendBeacon ' + String(u || '').slice(0, 110) + '  ← NO RESPONSE IS READABLE BY ANYONE');
+                  return B(u, d);
+                };
+                say('sendBeacon wrapped');
+              }
+            } catch(e){ say('beacon wrap failed ' + e); }
+
+            // --- form submit into a hidden iframe is the other multipart producer ---
+            try {
+              var SUB = HTMLFormElement.prototype.submit;
+              HTMLFormElement.prototype.submit = function(){
+                say('form.submit action=' + String(this.action || '').slice(0, 110) + ' target=' + this.target);
+                return SUB.apply(this, arguments);
+              };
+              say('form wrapped');
+            } catch(e){ say('form wrap failed ' + e); }
+
+            say('installed on ' + location.href.slice(0, 90));
+          } catch (e) { say('install threw ' + e); }
         })();
     """.trimIndent()
 
