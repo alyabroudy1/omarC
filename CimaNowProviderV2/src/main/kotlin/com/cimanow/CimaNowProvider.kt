@@ -169,8 +169,17 @@ class CimaNowProvider : BaseProvider() {
             function land(where, text){
               try {
                 var t = String(text || '').replace(/^﻿/, '').replace(/^»/, '').trim();
-                say('response via ' + where + ' len=' + t.length + ' head=' + t.slice(0, 90));
-                if (!ABS.test(t)) { say('not a URL — ignoring'); return; }
+                say('response via ' + where + ' len=' + t.length);
+                if (!ABS.test(t)) {
+                  // Not a URL: dump it so we can read what the endpoint actually said. 2026-08-03 it answered
+                  // 4,576 chars of HTML, and a 90-char head ('<!DOCTYPE html>') identifies nothing.
+                  say('NOT A URL — dumping ' + t.length + ' chars');
+                  var CH = 300;
+                  for (var k = 0; k < t.length && k < 6000; k += CH) {
+                    say('body[' + (k / CH) + '] ' + t.substr(k, CH).replace(/\s+/g, ' '));
+                  }
+                  return;
+                }
                 var a = document.getElementById('downloadbtn')
                      || document.querySelector('a.downloadbtn')
                      || document.getElementById('redirectLink');
