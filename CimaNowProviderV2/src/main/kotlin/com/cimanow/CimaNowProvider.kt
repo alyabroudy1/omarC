@@ -114,6 +114,27 @@ class CimaNowProvider : BaseProvider() {
     private val WATCH_BUTTON_TIMEOUT_MS = 120_000L
 
     /**
+     * Reach the timer page by **navigating to it**, instead of rendering bytes we fetched over HTTP.
+     *
+     * The one remaining split identity in the flow, and the leading suspect for why the watch button's
+     * href is never filled. `LoadHtml` renders a snapshot fetched by **OkHttp**, while the
+     * `get-link.php` call the countdown makes is issued by **Chromium** — so if the `request_id` /
+     * `hmac_token` embedded in that HTML are bound to the session that fetched it, the POST arrives as a
+     * stranger and the answer is the placeholder. 2026-08-03: `get-link.php` fired once, 11 s later the
+     * button still held `https://cimanow.cc/pig/watching/`.
+     *
+     * A real navigation puts the fetch, the token minting and the POST in one session with one cookie
+     * jar. The HTTP chain still runs first either way — that is what establishes the freex session
+     * cookies, and they are flushed to the CookieManager the WebView reads.
+     *
+     * **This contradicts the handover's stated reason for `LoadHtml`** (§0.1 rule: keep Cloudflare from
+     * seeing `sec-ch-ua: "Android WebView"` on the page request) — but that protection now comes from
+     * `NavigationEngine`'s interceptor, which re-issues main-frame requests with real-Chrome client
+     * hints regardless of who asked. Flip to false to go straight back if this turns out worse.
+     */
+    private val USE_REAL_TIMER_NAVIGATION = true
+
+    /**
      * The one page that counts as arriving: the watch page **with its token**.
      *
      * From the 2026-07-02 HAR, the request that returns the real 335 KB player document:
@@ -639,15 +660,33 @@ class CimaNowProvider : BaseProvider() {
             }
             Log.i(TAG_SURF, "✅ Timer page HTML: ${timerHtml.length} chars")
 
+            // What the WebView is about to start from. The whole USE_REAL_TIMER_NAVIGATION question is
+            // whether the session that mints the token is the same one that spends it, so the cookie
+            // jars are worth naming rather than assuming.
+            logCookieState(TAG_SURF, "before nav", "https://rm.freex2line.online/", "https://cimanow.cc/")
+
             // ---------- PHASE 2: navigate to the watch page, VISIBLY, and wait for a stream ----------
-            val steps = listOf(
-                // Rendered from our own bytes rather than fetched by the WebView, which keeps
-                // Cloudflare from seeing sec-ch-ua: "Android WebView" on the page request.
+            val firstStep = if (USE_REAL_TIMER_NAVIGATION) {
+                Log.w(TAG_SURF, "🧪 Timer page via REAL NAVIGATION (USE_REAL_TIMER_NAVIGATION=true) — " +
+                    "the WebView fetches it itself, so the page, its token and the get-link.php POST " +
+                    "all share one session. The ${timerHtml.length}-char HTTP copy is used only to " +
+                    "confirm the chain worked.")
+                NavigationStep.LoadUrl(
+                    url = TIMER_PAGE_URL,
+                    referer = REDIRECTING_PAGE_URL
+                )
+            } else {
+                Log.w(TAG_SURF, "Timer page via LoadHtml (USE_REAL_TIMER_NAVIGATION=false) — rendering " +
+                    "${timerHtml.length} chars fetched over HTTP. Note the split identity: this HTML " +
+                    "came from OkHttp, get-link.php will be issued by Chromium.")
                 NavigationStep.LoadHtml(
                     html = timerHtml,
                     baseUrl = TIMER_PAGE_URL,
                     referer = REDIRECTING_PAGE_URL
-                ),
+                )
+            }
+            val steps = listOf(
+                firstStep,
                 // The countdown finishes, the page fills in the watch button's href — and stops. It
                 // does not navigate on its own, so the user presses the button, exactly as they would
                 // in a browser.
@@ -672,6 +711,15 @@ class CimaNowProvider : BaseProvider() {
                     // interstitial (which is the white page).
                     urlPattern = PLAYER_PAGE_PATTERN,
                     timeoutMs = WATCH_BUTTON_TIMEOUT_MS,
+                    // Keep the session on the countdown page. A tap on the button before its href is
+                    // filled goes to cimanow's redirect stub, which meta-refreshes into an ad chain
+                    // (2026-08-03: six hops, no way back, user closed the window after 13 s). Refusing
+                    // the navigation instead leaves them looking at the countdown, free to tap again
+                    // once the button is live.
+                    //
+                    // freex2line only: the ads on the timer page are iframes, and the real arrival
+                    // matches urlPattern, so nothing legitimate needs a main-frame nav elsewhere.
+                    stayWithin = Regex("""freex2line\.online"""),
                     abortOnFailure = true
                 ),
                 // The user is already on the page: pick a server, press play. Ends a beat after the
@@ -776,11 +824,32 @@ class CimaNowProvider : BaseProvider() {
                 callback(link)
             }
 
+            // Nothing captured before the watch page can be a player embed.
+            //
+            // If the session never reached PLAYER_PAGE_PATTERN, every iframe it saw belongs to the
+            // countdown page or to whatever ad chain a stray tap led into. 2026-08-03: three
+            // `zs-kv-rhm.com` ad iframes (854 chars each) were treated as servers and put through the
+            // full resolution loop — captured HTML parse, `loadExtractor`, then an HTTP re-fetch of the
+            // same ad page — three times over, for URLs that were never going to yield video. Cheap in
+            // this instance and unbounded in principle.
+            val reachedPlayerPage = PLAYER_PAGE_PATTERN.containsMatchIn(navResult.finalUrl) ||
+                navResult.capturedEmbedRequests.any { PLAYER_PAGE_PATTERN.containsMatchIn(it.pageUrl) }
+            val embedSource = if (reachedPlayerPage) {
+                navResult.capturedEmbedRequests
+            } else {
+                if (navResult.capturedEmbedRequests.isNotEmpty()) {
+                    Log.w(TAG_SURF, "Discarding ${navResult.capturedEmbedRequests.size} embed(s): the " +
+                        "session never reached the watch page, so these are ads, not servers " +
+                        "(final URL: ${navResult.finalUrl.take(90)})")
+                }
+                emptyList()
+            }
+
             // Most recent first: the last iframe the page inserted is the server the user just picked,
             // and the earlier ones may be from a server they had already given up on. Capped and
             // time-boxed because this phase runs with the surf window already closed — a 307-embed loop
             // at up to 12 s each is what put a black screen in front of the user for 30 s+ (2026-07-30).
-            val embeds = navResult.capturedEmbedRequests
+            val embeds = embedSource
                 .distinctBy { it.url }
                 .reversed()
                 .take(MAX_EMBEDS_TO_RESOLVE)
@@ -1673,6 +1742,31 @@ class CimaNowProvider : BaseProvider() {
      * @param movieUrl The CimaNow movie/episode page URL
      * @return The blog-post.html/ timer HTML (158KB) or null on failure
      */
+    /**
+     * Names the cookies each host will present, at a moment that matters.
+     *
+     * A count is not enough here. The question this flow keeps running into is *which* session is
+     * talking: the freex hosts need whatever `loadon`/`redirectingfree` issued (that is what ties the
+     * timer page's token to us), cimanow needs its clearance, and a silent mismatch between the two is
+     * exactly what produces a placeholder instead of a link. Names make that visible in a log.
+     */
+    private fun logCookieState(tag: String, at: String, vararg urls: String) {
+        val cm = try {
+            android.webkit.CookieManager.getInstance()
+        } catch (e: Exception) {
+            Log.w(tag, "🍪 [$at] CookieManager unavailable: ${e.message}")
+            return
+        }
+        for (url in urls) {
+            val raw = try { cm.getCookie(url) } catch (_: Exception) { null }
+            val names = raw?.split(";")
+                ?.mapNotNull { it.trim().substringBefore('=', "").takeIf(String::isNotBlank) }
+                ?: emptyList()
+            Log.i(tag, "🍪 [$at] ${java.net.URI(url).host}: ${names.size} cookie(s)" +
+                if (names.isEmpty()) " — NONE" else " → ${names.joinToString(",")}")
+        }
+    }
+
     /**
      * The first `freex2line` link in a page — the "loadon" hop that starts the token chain.
      *

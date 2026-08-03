@@ -187,8 +187,8 @@ sealed class NavigationStep {
      * tokenised one, whatever the site's current scheme for minting it. Nothing is read out of the
      * page, nothing is re-issued, and a change to the token format cannot break it.
      *
-     * Main-frame navigations are auto-approved while this step runs, so a mis-tap on an ad will be
-     * followed too; it logs every URL it sees and keeps waiting for one that matches.
+     * Main-frame navigations are approved while this step runs, bounded by [stayWithin]; every URL the
+     * main frame reaches is logged, and the step keeps waiting until one matches.
      */
     data class AwaitMainFrameUrl(
         /** Matched against each main-frame URL as it starts loading. */
@@ -201,6 +201,21 @@ sealed class NavigationStep {
          * Return false and the step keeps waiting rather than accepting it.
          */
         val accept: ((String) -> Boolean)? = null,
+        /**
+         * While this step runs, refuse any main-frame navigation matching neither [urlPattern] nor
+         * this — so a mis-aimed or premature tap cannot take the screen somewhere there is no way back
+         * from.
+         *
+         * The waiting page is a page the user is *interacting with*, and on an ad-funded site most of
+         * its surface is not the button. 2026-08-03: a tap on the not-yet-filled watch button went to
+         * cimanow's redirect stub, which meta-refreshed into a **six-hop ad chain** — viiqkzqv →
+         * fhvfd → girlzsearch → traffichunt → territoryofp… → zs-kv-rhm — every hop approved, no
+         * route back to the countdown, and the user closed the window after 13 s of ads. The step was
+         * still patiently waiting for a URL that could no longer arrive.
+         *
+         * Null keeps the old behaviour: every main-frame navigation approved.
+         */
+        val stayWithin: Regex? = null,
         val abortOnFailure: Boolean = true
     ) : NavigationStep()
 

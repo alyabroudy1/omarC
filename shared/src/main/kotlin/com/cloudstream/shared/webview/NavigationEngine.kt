@@ -103,6 +103,32 @@ class NavigationEngine(
      */
     private val mainFrameUrlsSeen = java.util.concurrent.CopyOnWriteArrayList<String>()
 
+    /**
+     * While set, a main-frame navigation whose URL does not match is refused.
+     *
+     * The destination lock's counterpart for the phase *before* arrival — see
+     * [NavigationStep.AwaitMainFrameUrl.stayWithin]. Set for the duration of that step only.
+     */
+    @Volatile
+    private var mainFrameNavigationGuard: Regex? = null
+
+    /**
+     * When the current main-frame document started loading, and how many times the link-minting
+     * endpoint has been called since.
+     *
+     * `get-link.php`'s response is the one thing in this flow we can no longer see — it is a POST, so
+     * the interceptor must decline it and Chromium keeps the body to itself. What is still observable is
+     * *when* it fires, *how often*, and *what the page did afterwards*, and that turns out to be most of
+     * what a diagnosis needs: 2026-08-03 it fired exactly once, 2 s after load, and the button's href
+     * was still a placeholder 11 s later — which says the call was answered uselessly rather than
+     * never made, and that the countdown a real user waits out had not run.
+     */
+    @Volatile
+    private var mainFramePageStartedAtMs: Long = 0L
+
+    @Volatile
+    private var linkMintCallCount: Int = 0
+
     /** Set when the user closes the FULLSCREEN dialog, so a waiting step can stop immediately. */
     @Volatile
     private var dialogDismissedByUser = false
@@ -243,6 +269,9 @@ class NavigationEngine(
             capturedEmbedRequests.clear()
             interceptChallenges.clear()
             mainFrameUrlsSeen.clear()
+            mainFrameNavigationGuard = null
+            mainFramePageStartedAtMs = 0L
+            linkMintCallCount = 0
             dialogDismissedByUser = false
 
             val activity = activityProvider()
@@ -522,6 +551,12 @@ class NavigationEngine(
                                 // per session, and a blocked hop is a dead end. The destination lock
                                 // takes over the moment we arrive (onPageStarted).
                                 this@NavigationEngine.autoApproveAllRedirects = true
+                                // Contain the session to pages that can still lead somewhere. Without
+                                // this, one stray tap hands the screen to an ad chain and the step waits
+                                // out its whole timeout for a URL that can no longer arrive.
+                                this@NavigationEngine.mainFrameNavigationGuard = step.stayWithin?.let {
+                                    Regex("(${step.urlPattern.pattern})|(${it.pattern})")
+                                }
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 var landedOn: String? = null
                                 var lastSeen = ""
@@ -561,9 +596,23 @@ class NavigationEngine(
                                             "Step $index: ⏳ waiting for the user to reach " +
                                                 "${step.urlPattern}",
                                             "at" to lastSeen.take(110),
+                                            "mainFrameHops" to mainFrameUrlsSeen.size.toString(),
+                                            "linkMintCalls" to linkMintCallCount.toString(),
+                                            "embedsSoFar" to capturedEmbedRequests.size.toString(),
+                                            "elapsedMs" to (nowMs - (deadline - step.timeoutMs)).toString(),
                                             "remainingMs" to (deadline - nowMs).toString())
                                     }
                                     delay(step.pollIntervalMs)
+                                }
+                                this@NavigationEngine.mainFrameNavigationGuard = null
+                                // The route taken, whatever the outcome: which hops happened, in order,
+                                // is the difference between "the user never pressed it" and "the press
+                                // went somewhere useless".
+                                ProviderLogger.i(TAG, "execute",
+                                    "Step $index: main-frame path (${mainFrameUrlsSeen.size} hop(s), " +
+                                        "$linkMintCallCount link-mint call(s)):")
+                                mainFrameUrlsSeen.forEachIndexed { hop, url ->
+                                    ProviderLogger.i(TAG, "execute", "    [$hop] ${url.take(150)}")
                                 }
                                 if (landedOn != null) {
                                     currentUrl = landedOn
@@ -1033,6 +1082,7 @@ class NavigationEngine(
                 if (url != null) {
                     lastPageUrl = url
                     if (mainFrameUrlsSeen.lastOrNull() != url) mainFrameUrlsSeen.add(url)
+                    mainFramePageStartedAtMs = System.currentTimeMillis()
                     ProviderLogger.i(TAG, "onPageStarted", "URL=${url}")
                     if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
                         if (!isOnDestination) {
@@ -1313,10 +1363,39 @@ class NavigationEngine(
                 // beats a clean one on a request that is silently wrong.
                 val method = try { request.method ?: "GET" } catch (_: Exception) { "GET" }
                 if (!method.equals("GET", ignoreCase = true)) {
-                    ProviderLogger.i(TAG, "shouldInterceptRequest",
-                        "Not intercepting a $method — the body cannot be forwarded, so Chromium must " +
-                            "issue this one itself",
-                        "url" to reqUrl.take(120), "main" to isMain.toString())
+                    // The link-minting endpoint gets its own line: it is the hinge of the whole flow and
+                    // its response is invisible to us, so everything observable about the *request* is
+                    // worth stating explicitly rather than leaving in a sea of identical skip lines.
+                    if (path.contains("get-link.php")) {
+                        linkMintCallCount++
+                        val sincePageStart = if (mainFramePageStartedAtMs > 0L) {
+                            System.currentTimeMillis() - mainFramePageStartedAtMs
+                        } else -1L
+                        val cookieNames = try {
+                            CookieManager.getInstance().getCookie(reqUrl)
+                                ?.split(";")
+                                ?.mapNotNull { it.trim().substringBefore('=', "").takeIf(String::isNotBlank) }
+                                ?: emptyList()
+                        } catch (_: Exception) { emptyList() }
+                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                            "🔑 LINK MINT CALL #$linkMintCallCount ($method) — Chromium will issue this " +
+                                "one; we never see the response. Watch what the page does next: an href " +
+                                "that stays a placeholder means the answer was useless, not missing.",
+                            "url" to reqUrl.take(140),
+                            "msSincePageStart" to sincePageStart.toString(),
+                            "referer" to (reqHeaders.entries
+                                .firstOrNull { it.key.equals("Referer", true) }?.value?.take(90) ?: "<none>"),
+                            "origin" to (reqHeaders.entries
+                                .firstOrNull { it.key.equals("Origin", true) }?.value?.take(60) ?: "<none>"),
+                            // Chromium strips Cookie from requestHeaders, so read the jar it will use.
+                            "jarCookies" to (if (cookieNames.isEmpty()) "NONE"
+                                else "${cookieNames.size}: ${cookieNames.joinToString(",")}"))
+                    } else {
+                        ProviderLogger.i(TAG, "shouldInterceptRequest",
+                            "Not intercepting a $method — the body cannot be forwarded, so Chromium must " +
+                                "issue this one itself",
+                            "url" to reqUrl.take(120), "main" to isMain.toString())
+                    }
                     return null
                 }
 
@@ -1714,6 +1793,23 @@ class NavigationEngine(
                     ProviderLogger.i(TAG, "shouldOverrideUrlLoading", "USER APPROVED REDIRECT",
                         "url" to nextUrl.take(120), "host" to nextHost, "mainFrame" to isMainFrame.toString())
                     return false
+                }
+
+                // === PRE-ARRIVAL CONTAINMENT ===
+                // Refuse a main-frame navigation that cannot lead to the destination, so a premature
+                // or mis-aimed tap leaves the user where they were instead of in an ad chain with no
+                // way back. Checked before auto-approve, which would otherwise wave it through.
+                val navGuard = this@NavigationEngine.mainFrameNavigationGuard
+                if (navGuard != null && isMainFrame && !navGuard.containsMatchIn(nextUrl)) {
+                    ProviderLogger.w(TAG, "shouldOverrideUrlLoading",
+                        "⛔ Refused a main-frame navigation that cannot reach the destination — " +
+                            "staying on the current page. If this is the site's own domain, the " +
+                            "button was pressed before its href was filled in; if it is a third " +
+                            "party, it was an ad.",
+                        "url" to nextUrl.take(140),
+                        "host" to nextHost,
+                        "guard" to navGuard.pattern.take(90))
+                    return true
                 }
 
                 // === AUTO-APPROVE ALL REDIRECTS DURING WATCHING PHASE ===
