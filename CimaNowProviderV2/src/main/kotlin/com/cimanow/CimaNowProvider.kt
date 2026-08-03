@@ -135,7 +135,80 @@ class CimaNowProvider : BaseProvider() {
     private val USE_REAL_TIMER_NAVIGATION = true
 
     /**
-     * Reads the watch button's href on the freex countdown page.
+     * Captures `get-link.php`'s answer on the freex page, by wrapping the two ways it can be sent.
+     *
+     * **Why this rather than building the request ourselves.** The HAR shows the call carries four
+     * params — `request_id` (32 hex), `hmac_token` (a base64 32-byte HMAC), `ch` (16 hex) and
+     * `fp` (base64 of the UA prefix) — and none of the four appears in **any** response body across all
+     * 837 entries. They are computed in the page, so reproducing them means recovering an HMAC key from
+     * a control-flow-flattened VM. Meanwhile the page computes them correctly on every single run and
+     * sends the call successfully; the only thing we lack is the *response*, and only because the
+     * endpoint became a POST (`WebResourceRequest` exposes no body, so the interceptor must decline it —
+     * rule 32). Reading the answer is a fraction of the work of forging the question.
+     *
+     * The captured URL is written to the watch button's `href` — where the page's own code was going to
+     * put it — and mirrored into a hidden node. Both are places [FREEX_WATCH_HREF_PROBE] already looks,
+     * so nothing downstream needs to know this happened.
+     *
+     * **This mutates the page**, unlike the probe, which is why it is confined to freex by
+     * `earlyInjectOnHosts` and must never be pointed at cimanow: wrapping a native function is exactly
+     * what the decryptor's `Function.prototype.toString` check detects (rule 3), and the freex countdown
+     * page has no such check — it logs no console errors and its own ad scripts wrap things freely.
+     *
+     * Verified in Node against a simulated page before shipping: both the XHR and `fetch` paths land the
+     * URL in the href and the sink node.
+     */
+    private val FREEX_LINK_CAPTURE_JS = """
+        (function(){
+          try {
+            var URLRE = /get-link/i;
+            var TOK   = /^https?:\/\/\S+$/;
+            function land(text){
+              try {
+                var t = String(text || '').replace(/^﻿/, '').replace(/^»/, '').trim();
+                if (!TOK.test(t)) return;
+                var a = document.getElementById('downloadbtn')
+                     || document.querySelector('a.downloadbtn')
+                     || document.getElementById('redirectLink');
+                if (a) { a.setAttribute('href', t); }
+                var d = document.createElement('div');
+                d.id = 'cs-link-sink';
+                d.setAttribute('data-link', t);
+                d.style.display = 'none';
+                if (document.body) document.body.appendChild(d);
+              } catch (e) {}
+            }
+            var O = XMLHttpRequest.prototype.open, S2 = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
+            XMLHttpRequest.prototype.send = function(){
+              var x = this;
+              try {
+                x.addEventListener('load', function(){
+                  try { if (URLRE.test(String(x.__csu || ''))) land(x.responseText); } catch(e){}
+                });
+              } catch(e){}
+              return S2.apply(this, arguments);
+            };
+            if (typeof fetch === 'function') {
+              var F = fetch;
+              fetch = function(){
+                var u = '';
+                try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
+                var p = F.apply(this, arguments);
+                try {
+                  if (URLRE.test(u)) {
+                    p.then(function(res){ try { res.clone().text().then(land); } catch(e){} });
+                  }
+                } catch(e){}
+                return p;
+              };
+            }
+          } catch (e) {}
+        })();
+    """.trimIndent()
+
+    /**
+     * Looks for the tokenised watch URL anywhere the freex countdown page keeps it.
      *
      * Deliberately trivial, and deliberately not a selector we invented: `#downloadbtn` is the id in the
      * page's own markup, sitting next to a hard-coded placeholder href that the page replaces once
@@ -146,17 +219,45 @@ class CimaNowProvider : BaseProvider() {
      * attribute — `id="downloadbtn"` *and* `id="redirectLink"` on the same element — and duplicate ids
      * are exactly the sort of thing a page edit turns into a `getElementById` miss.
      *
-     * Returns "" rather than null when there is nothing to read, so the caller sees a stable value
-     * instead of a parse artefact.
+     * Three places, in order of directness: the button's resolved `href`, any attribute on it (a page
+     * that stages a link often parks it in a `data-*` first), then the whole document via `outerHTML` —
+     * which **includes inline script text**, so a link the page received and stashed in markup is found
+     * even if it never reaches the button.
+     *
+     * 2026-08-03 established that the href alone is not enough: it read
+     * `https://cimanow.cc/pig/watching/` one second after load and never changed again, across the mint
+     * call and two ad cycles. Only a tokenised match is returned as a hit; anything else falls through
+     * to reporting the button's current value, so the log distinguishes "still the placeholder" from
+     * "could not read the page at all".
      */
     private val FREEX_WATCH_HREF_PROBE = """
         (function(){
           try {
+            var TOK = /https?:(?:\/\/|\\\/\\\/)[^"'\s\\<>]*watching\/\?[^"'\s\\<>]*token=[A-Za-z0-9]{8,}/;
             var a = document.getElementById('downloadbtn')
                  || document.querySelector('a.downloadbtn')
                  || document.getElementById('redirectLink');
+
+            // 1. the button itself, resolved
+            if (a && a.href && TOK.test(a.href)) return a.href;
+
+            // 2. any attribute on it — a page that stages the link often parks it in a data-*
+            if (a && a.attributes) {
+              for (var i = 0; i < a.attributes.length; i++) {
+                var v = a.attributes[i].value || '';
+                if (TOK.test(v)) return v.replace(/\\\//g, '/');
+              }
+            }
+
+            // 3. anywhere in the document, INCLUDING inline script text, which outerHTML contains.
+            //    If the page received the link and stashed it anywhere reachable, this finds it.
+            var m = document.documentElement.outerHTML.match(TOK);
+            if (m) return m[0].replace(/\\\//g, '/');
+
+            // Nothing tokenised anywhere: report what the button currently holds, so the log
+            // distinguishes "still the placeholder" from "could not read the page at all".
             return (a && a.href) ? a.href : '';
-          } catch (e) { return ''; }
+          } catch (e) { return 'probe-error: ' + e; }
         })();
     """.trimIndent()
 
@@ -888,7 +989,11 @@ class CimaNowProvider : BaseProvider() {
                 // If the page ever opens the watch page itself via window.open instead of navigating,
                 // that is the destination and not an ad: take it out of the sink and put it on screen.
                 // Costs nothing when it never fires.
-                promotePopupsMatching = PLAYER_PAGE_PATTERN
+                promotePopupsMatching = PLAYER_PAGE_PATTERN,
+                // Capture get-link.php's response on the freex page — see FREEX_LINK_CAPTURE_JS. The
+                // host guard is what keeps it away from cimanow, where wrapping anything is fatal.
+                earlyInjectJs = FREEX_LINK_CAPTURE_JS,
+                earlyInjectOnHosts = Regex("""freex2line\.online""")
             )
             val challenges = navResult.interceptChallenges
             val producedCandidates = navResult.capturedEmbedRequests.isNotEmpty() ||

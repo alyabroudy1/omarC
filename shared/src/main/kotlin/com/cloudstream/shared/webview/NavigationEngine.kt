@@ -297,7 +297,28 @@ class NavigationEngine(
          * Must exceed the dwell threshold the page checks (800 ms in cimanow's gate, see
          * [POPUNDER_DWELL_MS]) or the window looks like a blocked popup instead of a viewed one.
          */
-        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS
+        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS,
+        /**
+         * JS injected at `onPageStarted` — before the page's own scripts — but **only** on pages whose
+         * URL matches [earlyInjectOnHosts].
+         *
+         * Unlike a probe this can change the page, so it is the heaviest tool here and the last one to
+         * reach for. It exists for one situation: the page performs a request whose *response* we need
+         * and cannot otherwise see. `shouldInterceptRequest` cannot forward a POST body, so a POST
+         * endpoint's answer is invisible to the engine — but not to the page, which is about to receive
+         * it anyway.
+         *
+         * Timing is the reason this is not a step: a wrapper around `XMLHttpRequest` or `fetch` is only
+         * effective if it is installed before the page captures its own reference, which means
+         * `onPageStarted` and nowhere later.
+         *
+         * The host guard is enforced before evaluation, so a page this was not written for is never
+         * touched. Providers whose target inspects its own environment should not use this at all —
+         * see `cimanow_decryption_handover.md` §0.1.
+         */
+        earlyInjectJs: String? = null,
+        /** [earlyInjectJs] runs only on URLs matching this. Without it, nothing is injected anywhere. */
+        earlyInjectOnHosts: Regex? = null
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
@@ -371,7 +392,7 @@ class NavigationEngine(
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
                     rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy,
-                    promotePopupsMatching, popupSinkTtlMs)
+                    promotePopupsMatching, popupSinkTtlMs, earlyInjectJs, earlyInjectOnHosts)
 
                 if (mode == Mode.FULLSCREEN) {
                     dialog = createDialog(activity, webView)
@@ -1192,7 +1213,9 @@ class NavigationEngine(
         injectDocumentWriteHook: Boolean = true,
         sessionPolicy: NavigationSessionPolicy = NavigationSessionPolicy.None,
         promotePopupsMatching: Regex? = null,
-        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS
+        popupSinkTtlMs: Long = POPUP_SINK_TTL_MS,
+        earlyInjectJs: String? = null,
+        earlyInjectOnHosts: Regex? = null
     ) {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -1236,6 +1259,17 @@ class NavigationEngine(
                         offDestinationNavigationUrl = url
                         try { view?.stopLoading() } catch (_: Exception) {}
                     }
+                }
+                // Host-guarded early injection — see earlyInjectJs. Before the page's own scripts,
+                // which is the only moment a wrapper on XMLHttpRequest/fetch can still take effect.
+                if (earlyInjectJs != null && url != null &&
+                    earlyInjectOnHosts?.containsMatchIn(url) == true
+                ) {
+                    ProviderLogger.w(TAG, "onPageStarted",
+                        "💉 Early inject on a matching host (${earlyInjectJs.length} chars) — " +
+                            "capturing a response the engine cannot see",
+                        "url" to url.take(110))
+                    view?.evaluateJavascript(earlyInjectJs, null)
                 }
                 if (injectSpoofingJs) {
                     view?.evaluateJavascript(SPOOFING_JS, null)
