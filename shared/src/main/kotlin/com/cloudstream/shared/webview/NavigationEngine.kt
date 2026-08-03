@@ -93,6 +93,16 @@ class NavigationEngine(
      */
     val interceptChallenges = java.util.concurrent.CopyOnWriteArrayList<InterceptChallenge>()
 
+    /**
+     * Every main-frame URL `onPageStarted` has reported, in order.
+     *
+     * Polling `webView.url` is not enough to know where the session has been. 2026-08-03: the chain
+     * passes through `cimanow.cc/pig/watching/`, which lives for **133 ms** before its meta-refresh
+     * moves on — invisible to a 250 ms poll, so a step waiting for that URL never saw it even though
+     * the log shows the engine both serving and rendering it. Recorded on the event instead.
+     */
+    private val mainFrameUrlsSeen = java.util.concurrent.CopyOnWriteArrayList<String>()
+
     /** Set when the user closes the FULLSCREEN dialog, so a waiting step can stop immediately. */
     @Volatile
     private var dialogDismissedByUser = false
@@ -232,6 +242,7 @@ class NavigationEngine(
             capturedVideoRequests.clear()
             capturedEmbedRequests.clear()
             interceptChallenges.clear()
+            mainFrameUrlsSeen.clear()
             dialogDismissedByUser = false
 
             val activity = activityProvider()
@@ -514,6 +525,7 @@ class NavigationEngine(
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 var landedOn: String? = null
                                 var lastSeen = ""
+                                var lastRejected: String? = null
                                 var lastHeartbeat = 0L
                                 while (System.currentTimeMillis() < deadline &&
                                     !dialogDismissedByUser && !rendererGone
@@ -524,14 +536,23 @@ class NavigationEngine(
                                         ProviderLogger.i(TAG, "execute",
                                             "Step $index: main frame now at ${here.take(120)}")
                                     }
-                                    if (here.isNotBlank() && step.urlPattern.containsMatchIn(here)) {
-                                        if (step.accept?.invoke(here) != false) {
-                                            landedOn = here
-                                            break
-                                        }
+                                    // Every URL the main frame has *been* to, not just where it is
+                                    // now: a waypoint can come and go inside one poll interval.
+                                    val candidates = (mainFrameUrlsSeen + here).filter { it.isNotBlank() }
+                                    val hit = candidates.lastOrNull { url ->
+                                        step.urlPattern.containsMatchIn(url) &&
+                                            step.accept?.invoke(url) != false
+                                    }
+                                    if (hit != null) {
+                                        landedOn = hit
+                                        break
+                                    }
+                                    val rejected = candidates.lastOrNull { step.urlPattern.containsMatchIn(it) }
+                                    if (rejected != null && rejected != lastRejected) {
+                                        lastRejected = rejected
                                         ProviderLogger.w(TAG, "execute",
                                             "Step $index: URL matches but was rejected — still waiting",
-                                            "url" to here.take(140))
+                                            "url" to rejected.take(140))
                                     }
                                     val nowMs = System.currentTimeMillis()
                                     if (nowMs - lastHeartbeat >= 10_000L) {
@@ -1011,6 +1032,7 @@ class NavigationEngine(
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 if (url != null) {
                     lastPageUrl = url
+                    if (mainFrameUrlsSeen.lastOrNull() != url) mainFrameUrlsSeen.add(url)
                     ProviderLogger.i(TAG, "onPageStarted", "URL=${url}")
                     if (destinationLockPatterns.any { it.containsMatchIn(url) }) {
                         if (!isOnDestination) {

@@ -114,6 +114,31 @@ class CimaNowProvider : BaseProvider() {
     private val WATCH_BUTTON_TIMEOUT_MS = 120_000L
 
     /**
+     * The one page that counts as arriving: the watch page **with its token**.
+     *
+     * From the 2026-07-02 HAR, the request that returns the real 335 KB player document:
+     * ```
+     * GET https://cimanow.cc/<slug>/watching/?token=03720e1fb6a3de…  (64 hex)
+     * Referer: https://rm.freex2line.online/2020/02/blog-post.html/
+     * ```
+     *
+     * **`https://cimanow.cc/pig/watching/` is a placeholder**, not a destination — it is what the watch
+     * button's `href` holds until the countdown's `get-link.php` call replaces it with the URL above.
+     * Follow it and cimanow answers with a 3.7 KB `<title>Redirect</title>` stub that meta-refreshes to
+     * an ad network. Every white screen in this flow has been that stub.
+     *
+     * Which is why the query string is part of the pattern and not a separate check. A pattern of
+     * `/(watch|watching)/` matches the placeholder, and on 2026-08-03 that single fact broke the surf
+     * twice over: the destination lock engaged on the placeholder, so the session was pinned to a page
+     * that was never the page — and worse, `shouldOverrideUrlLoading` treats a *same-site* navigation
+     * away from a locked destination as terminal, so the user's **second, correct** tap would have been
+     * recorded as "the site sent us away" and killed the session outright.
+     *
+     * `cimanow\.[a-z]+` rather than a literal domain: the provider's domain rotates.
+     */
+    private val PLAYER_PAGE_PATTERN = Regex("""cimanow\.[a-z]+/.+/watching/\?.+""")
+
+    /**
      * Surf with a TV user agent so the watch page's own `isTv()` check disables its ad gate.
      *
      * **Off, and it should stay off unless the whole session can move to a TV identity together.** The
@@ -642,11 +667,11 @@ class CimaNowProvider : BaseProvider() {
                 // and goes to whatever URL the site currently mints, and nothing is read out of the
                 // page to get it (rule 28).
                 NavigationStep.AwaitMainFrameUrl(
-                    urlPattern = Regex("""cimanow\.[a-z]+/.*watch(ing)?/"""),
+                    // Requires the token — see PLAYER_PAGE_PATTERN. A tap on the unfilled placeholder
+                    // does not match, so the step keeps waiting instead of declaring arrival at the
+                    // interstitial (which is the white page).
+                    urlPattern = PLAYER_PAGE_PATTERN,
                     timeoutMs = WATCH_BUTTON_TIMEOUT_MS,
-                    // A match is not enough: the tokenless fallback URL matches too, and navigating
-                    // there is what produced the white page. Keep waiting instead.
-                    accept = ::isTokenisedWatchUrl,
                     abortOnFailure = true
                 ),
                 // The user is already on the page: pick a server, press play. Ends a beat after the
@@ -681,7 +706,11 @@ class CimaNowProvider : BaseProvider() {
                 // /watching/ every main-frame navigation is refused silently, so the ad redirects this
                 // page fires on a stray tap cannot steal the screen from under the user. Servers are
                 // switched by AJAX into an iframe, so nothing legitimate needs a main-frame nav.
-                destinationLockPatterns = listOf(Regex("/(watch|watching)/")),
+                // The tokenised page only. `/(watch|watching)/` also matched the `pig/watching/`
+                // placeholder, which pinned the lock to the interstitial and turned the user's next
+                // (correct) tap into a same-site "site sent us away" — terminal. See
+                // PLAYER_PAGE_PATTERN.
+                destinationLockPatterns = listOf(PLAYER_PAGE_PATTERN),
                 // The one thing that is NOT the same as before, because the same-as-before attempt
                 // produced the decoy: 2026-07-30 the watch page loaded fully (4,249,217-byte body)
                 // and rendered blank white, and bodyLen-htmlLen was exactly 47 — the decryptor's
