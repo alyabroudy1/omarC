@@ -171,7 +171,19 @@ sealed class NavigationStep {
 
     /** Navigate to the watching URL captured by the request interceptor from get-link.php */
     data class NavigateToWatchingUrl(
-        val abortOnFailure: Boolean = true
+        val abortOnFailure: Boolean = true,
+        /**
+         * Checked before navigating. Return false to treat the captured URL as a failed chain.
+         *
+         * A URL being *present* is not the same as it being *usable*. 2026-08-03: `get-link.php`,
+         * answered without its POST body, returned the bare `https://cimanow.cc/pig/watching/` with no
+         * token — and the step navigated there quite happily, so the site's ad interstitial rendered
+         * as a white screen for 300 s. The chain had already failed one request earlier; nothing
+         * looked at what it produced.
+         *
+         * Null means accept anything, which is what every caller did before this existed.
+         */
+        val accept: ((String) -> Boolean)? = null
     ) : NavigationStep()
 
     /**

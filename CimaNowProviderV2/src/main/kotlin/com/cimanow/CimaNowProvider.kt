@@ -616,7 +616,12 @@ class CimaNowProvider : BaseProvider() {
                 // The countdown fires get-link.php, the interceptor captures the tokenised link, and
                 // the engine navigates to it with TIMER_PAGE_URL as Referer — without which the gate
                 // runs location.replace('/home'). Same step, same headers as the sandbox flow.
-                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
+                // Rejects the tokenless fallback URL rather than navigating to an ad interstitial and
+                // showing the user a white screen for the whole window — see isTokenisedWatchUrl.
+                NavigationStep.NavigateToWatchingUrl(
+                    abortOnFailure = true,
+                    accept = ::isTokenisedWatchUrl
+                ),
                 // Now hand the screen to the user: pick a server, press play. Ends a beat after the
                 // first stream request so the HLS variants land too.
                 NavigationStep.WaitForCapturedVideo(
@@ -1938,7 +1943,12 @@ class CimaNowProvider : BaseProvider() {
                 // Step 1: Navigate to the watching URL once the countdown timer fires get-link.php.
                 //         The request interceptor stashes the raw HTTP response (capturedMainFrameHtml)
                 //         — that encrypted HTML is ALL we need; decryption happens later in the sandbox.
-                NavigationStep.NavigateToWatchingUrl(abortOnFailure = true),
+                // Rejects the tokenless fallback URL rather than navigating to an ad interstitial and
+                // showing the user a white screen for the whole window — see isTokenisedWatchUrl.
+                NavigationStep.NavigateToWatchingUrl(
+                    abortOnFailure = true,
+                    accept = ::isTokenisedWatchUrl
+                ),
 
                 // Step 2: Wait until the WebView is actually ON the watching page — i.e. the
                 //         navigation committed and the request interceptor has fetched+stashed the

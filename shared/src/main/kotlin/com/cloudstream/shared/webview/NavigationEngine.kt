@@ -107,6 +107,19 @@ class NavigationEngine(
         private set
 
     /**
+     * Set when the main frame left the destination page by a route the redirect callback never sees —
+     * a `<meta http-equiv="refresh">` or a script navigation.
+     *
+     * Kept separate from [siteRejectedNavigationUrl] because the cause and the fix differ: that one is
+     * the site refusing to play, this one is an interstitial or an ad taking the screen. Both are
+     * terminal for a step waiting on a stream, and telling them apart is the difference between
+     * "this title is blocked" and "we were never on the real page".
+     */
+    @Volatile
+    var offDestinationNavigationUrl: String? = null
+        private set
+
+    /**
      * True while *we* are dismissing the dialog during cleanup.
      *
      * Without it the dismiss listener cannot tell a user's back-press from our own teardown, and logged
@@ -211,6 +224,7 @@ class NavigationEngine(
             lastHtmlBaseUrl = null
             lastPageUrl = ""
             siteRejectedNavigationUrl = null
+            offDestinationNavigationUrl = null
             rendererGone = false
             capturedMainFrameHtml = null
             subresourceRequestsSinceMainFrame = 0
@@ -420,7 +434,8 @@ class NavigationEngine(
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 var lastHeartbeat = 0L
                                 while (playable().isEmpty() && !dialogDismissedByUser &&
-                                    siteRejectedNavigationUrl == null && !rendererGone &&
+                                    siteRejectedNavigationUrl == null &&
+                                    offDestinationNavigationUrl == null && !rendererGone &&
                                     System.currentTimeMillis() < deadline
                                 ) {
                                     delay(step.pollIntervalMs)
@@ -442,6 +457,10 @@ class NavigationEngine(
                                         rendererGone -> "render process died — the blank page was a renderer crash"
                                         siteRejectedNavigationUrl != null ->
                                             "site sent us to ${siteRejectedNavigationUrl} — title blocked or session rejected"
+                                        offDestinationNavigationUrl != null ->
+                                            "the page took the main frame off the destination via a " +
+                                                "meta-refresh or script nav (${offDestinationNavigationUrl}) " +
+                                                "— we were never on the real watch page"
                                         dialogDismissedByUser -> "user closed the window"
                                         else -> "no stream within ${step.timeoutMs}ms"
                                     }
@@ -491,7 +510,24 @@ class NavigationEngine(
                                 // loadDataWithBaseURL, so prefer lastHtmlBaseUrl and never send about:blank.
                                 val refererForWatching = (lastHtmlBaseUrl ?: currentUrl)
                                     .takeIf { it.isNotBlank() && it != "about:blank" }
+
+                                // A captured URL the caller rejects is a failed chain, not a
+                                // destination — see NavigateToWatchingUrl.accept.
+                                fun acceptable(url: String): Boolean {
+                                    val ok = step.accept?.invoke(url) ?: true
+                                    if (!ok) {
+                                        ProviderLogger.e(TAG, "execute",
+                                            "Step $index: 🚫 Captured watching URL REJECTED by the " +
+                                                "caller — the chain produced a link, but not a usable " +
+                                                "one. Not navigating.",
+                                            null,
+                                            "url" to url.take(140), "length" to url.length.toString())
+                                    }
+                                    return ok
+                                }
+
                                 val watchUrl = this@NavigationEngine.interceptedWatchingUrl
+                                    ?.takeIf { acceptable(it) }
                                 if (!watchUrl.isNullOrBlank()) {
                                     ProviderLogger.w(TAG, "execute", "Step $index: Navigating to watching URL: ${watchUrl.take(120)}")
                                     ProviderLogger.w(TAG, "execute", "Step $index: Watching Referer = ${refererForWatching ?: "<none>"}")
@@ -505,7 +541,14 @@ class NavigationEngine(
                                     val deadline = System.currentTimeMillis() + 15_000L
                                     var polled = false
                                     while (System.currentTimeMillis() < deadline) {
-                                        val url = this@NavigationEngine.interceptedWatchingUrl
+                                        val captured = this@NavigationEngine.interceptedWatchingUrl
+                                        if (!captured.isNullOrBlank() && !acceptable(captured)) {
+                                            // Rejected, and polling cannot improve it: get-link.php
+                                            // already answered. Stop rather than spend the remaining
+                                            // 15 s re-reading the same value.
+                                            break
+                                        }
+                                        val url = captured
                                         if (!url.isNullOrBlank()) {
                                             ProviderLogger.w(TAG, "execute", "Step $index: Watching URL appeared after polling: ${url.take(120)}")
                                             ProviderLogger.w(TAG, "execute", "Step $index: Watching Referer = ${refererForWatching ?: "<none>"}")
@@ -519,10 +562,16 @@ class NavigationEngine(
                                         delay(500)
                                     }
                                     if (!polled) {
-                                        ProviderLogger.w(TAG, "execute", "Step $index: No watching URL captured within timeout")
+                                        val captured = this@NavigationEngine.interceptedWatchingUrl
+                                        val why = if (!captured.isNullOrBlank()) {
+                                            "Watching URL captured but rejected: ${captured.take(120)}"
+                                        } else {
+                                            "No watching URL captured"
+                                        }
+                                        ProviderLogger.w(TAG, "execute", "Step $index: $why")
                                         if (step.abortOnFailure) {
                                             failedStep = index
-                                            errorMsg = "No watching URL captured"
+                                            errorMsg = why
                                             break
                                         }
                                     }
@@ -906,6 +955,27 @@ class NavigationEngine(
                         }
                         isOnDestination = true
                         autoApproveAllRedirects = false
+                    } else if (isOnDestination) {
+                        // ── The destination lock's second half, and the one that was missing ──
+                        //
+                        // The lock lived entirely in `shouldOverrideUrlLoading`, and **that callback is
+                        // not invoked for a `<meta http-equiv="refresh">` navigation**. 2026-08-03:
+                        // cimanow served a 3,755-byte `<title>Redirect</title>` stub whose meta-refresh
+                        // took the main frame to an ad network 9 ms after `onPageFinished`. The log
+                        // shows no `shouldOverrideUrlLoading` line for it at all — not blocked, not
+                        // auto-approved, simply never seen. The lock then blocked the *ad's* own next
+                        // hop, so the WebView sat parked on the ad for the remaining ~295 s.
+                        //
+                        // By `onPageStarted` the navigation has begun, so this cannot prevent it — but
+                        // `stopLoading()` keeps the ad from finishing, and recording it lets a waiting
+                        // step give up now instead of burning its whole timeout on a page that can
+                        // never produce a stream.
+                        ProviderLogger.w(TAG, "onPageStarted",
+                            "🚫 LEFT THE DESTINATION without passing through shouldOverrideUrlLoading " +
+                                "(meta-refresh or script navigation) — stopping the load",
+                            "url" to url.take(140))
+                        offDestinationNavigationUrl = url
+                        try { view?.stopLoading() } catch (_: Exception) {}
                     }
                 }
                 if (injectSpoofingJs) {
@@ -947,15 +1017,28 @@ class NavigationEngine(
                     "subresourceRequests" to subresources.toString(),
                     "embeds" to capturedEmbedRequests.size.toString(),
                     "streamCaptures" to capturedVideoRequests.size.toString())
-                if (htmlLen > 10_000 && subresources < 5) {
-                    // The old delta==47 signature, observed from the outside: a full payload was
-                    // served, and then the page asked for essentially nothing. Either the decoy, or
-                    // scripts that died before they could fetch anything.
-                    ProviderLogger.w(TAG, "onPageFinished",
-                        "🚩 A full page was served (${htmlLen} chars) but only $subresources " +
-                            "subresource request(s) followed — the page's own scripts either never " +
-                            "ran or took a bail-out path. Look for an automation signal, not a " +
-                            "decryption bug.")
+                // Two different failures, and the earlier version only caught one of them.
+                if (subresources < 5) {
+                    if (htmlLen in 1..3_000) {
+                        // 2026-08-03: 3,755 chars where a real watch page is ~4 MB. That was not the
+                        // page at all — it was a `<title>Redirect</title>` interstitial with a
+                        // meta-refresh to an ad. A size threshold on the *large* side missed it
+                        // entirely, so it is called out from the small side too.
+                        ProviderLogger.w(TAG, "onPageFinished",
+                            "🚩 A very small page ($htmlLen chars) with $subresources subresource " +
+                                "request(s) — this is an interstitial, an error page or a redirect " +
+                                "stub, not the page you asked for. Check the served dump before " +
+                                "blaming the parser.")
+                    } else {
+                        // The old delta==47 signature, observed from the outside: a full payload was
+                        // served, and then the page asked for essentially nothing. Either the decoy,
+                        // or scripts that died before they could fetch anything.
+                        ProviderLogger.w(TAG, "onPageFinished",
+                            "🚩 A full page was served ($htmlLen chars) but only $subresources " +
+                                "subresource request(s) followed — the page's own scripts either " +
+                                "never ran or took a bail-out path. Look for an automation signal, " +
+                                "not a decryption bug.")
+                    }
                 }
             }
 
@@ -1123,6 +1206,33 @@ class NavigationEngine(
                         "image/x-icon", "utf-8",
                         java.io.ByteArrayInputStream(ByteArray(0))
                     )
+                }
+
+                // ── Never intercept anything but a GET ──────────────────────────────────────────
+                //
+                // `WebResourceRequest` exposes the method and the headers but **not the body**, and
+                // `HttpURLConnection` here is never told a method, so it defaults to GET. Every
+                // intercepted POST was therefore re-issued as a bodyless GET with the original
+                // `Content-Type: multipart/form-data; boundary=…` still attached — a request no
+                // browser produces, missing exactly the data that gave it meaning.
+                //
+                // 2026-08-03, and it cost a whole flow: cimanow's countdown calls `get-link.php` as a
+                // multipart POST. Stripped of its form fields it answered with the bare, **tokenless**
+                // `https://cimanow.cc/pig/watching/` (32 chars, no `?token=`), cimanow served its ad
+                // interstitial for that instead of the player — `<title>Redirect</title>`, 3,755 bytes,
+                // a meta-refresh to an ad network — and the user got a white screen for 300 s.
+                //
+                // Chromium can issue it correctly, body and all; we cannot. It will carry
+                // `sec-ch-ua: "Android WebView"`, which matters for a *protected main frame* and has
+                // never mattered for an XHR to an ad host — and a fingerprint on a request that works
+                // beats a clean one on a request that is silently wrong.
+                val method = try { request.method ?: "GET" } catch (_: Exception) { "GET" }
+                if (!method.equals("GET", ignoreCase = true)) {
+                    ProviderLogger.i(TAG, "shouldInterceptRequest",
+                        "Not intercepting a $method — the body cannot be forwarded, so Chromium must " +
+                            "issue this one itself",
+                        "url" to reqUrl.take(120), "main" to isMain.toString())
+                    return null
                 }
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints

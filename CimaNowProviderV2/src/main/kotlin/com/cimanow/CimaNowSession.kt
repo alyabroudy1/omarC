@@ -86,6 +86,24 @@ class CimaNowNavigationPolicy(
 }
 
 /**
+ * Is this a watch URL worth navigating to, or the bare fallback `get-link.php` hands out when it was
+ * asked without its form data?
+ *
+ * 2026-08-03: the chain captured `https://cimanow.cc/pig/watching/` — 32 characters, no query at all —
+ * and the surf navigated there, where cimanow answered with a `<title>Redirect</title>` ad
+ * interstitial that rendered as a white screen for 300 s. The working flow's URL carries a token
+ * (`/watching/?token=…`, see the HAR in the handover).
+ *
+ * Deliberately a test for *a query string*, not for the literal `token=`: the parameter name is the
+ * site's to change, while "the URL identifies a session" is the actual requirement. A bare path is
+ * unambiguously the fallback.
+ */
+fun isTokenisedWatchUrl(url: String): Boolean {
+    val query = url.substringAfter('?', "").substringBefore('#')
+    return query.isNotBlank()
+}
+
+/**
  * Was this navigation refused by Cloudflare on cimanow's own domain?
  *
  * The distinction that matters: a challenge on the main frame means we never got the page, which is
