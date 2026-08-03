@@ -767,14 +767,24 @@ class CimaNowProvider : BaseProvider() {
                 // navigator.plugins == [1,2,3,4,5] (Android Chrome reports an empty PluginArray).
                 // Handover §0.1 rules 6 and 7 say exactly this: do not set anything on window.
                 injectSpoofingJs = false,
-                // Back to false, on evidence. It was turned on because `luugy.com/ct?rb=…` kept
-                // re-firing against a swallowed popunder, which looked like the ad network waiting for
-                // the popup to load. The next log showed `/ct` fires at the same cadence with the ad
-                // fully loaded — it is a heartbeat, not a retry — and the decrypted page then showed
-                // what the gate actually checks: that the popup **stays open** past 800 ms
-                // (`dipPageVisibility`), which a blank sink already satisfies. So loading the ad for
-                // real bought nothing and cost real impressions on the user's connection.
-                loadPopupsInSink = false,
+                // On again, for a different page and a different reason than last time.
+                //
+                // It was turned off on 2026-07-30 after being tried against **cimanow's** watch-page
+                // gate, where the real check turned out to be a dwell test a blank sink already
+                // satisfies — so loading the ad for real bought nothing and cost impressions.
+                //
+                // The page that is failing now is not that one. The **freex countdown page** never
+                // rewrites its watch button's href: the placeholder is hard-coded in the markup, the
+                // countdown's `onComplete` only un-hides the button, and the code that should replace
+                // the href with `get-link.php`'s tokenised answer never does (2026-08-03: the POST goes
+                // out correctly at 10.3 s with PHPSESSID and cf_clearance, and 8 taps over 30 s all
+                // still went to the placeholder). That page is ad-funded, the button sits between its
+                // `AdAbove`/`AdBelow` slots, and until now every popunder it opened got a live-but-blank
+                // window. If its minting is gated on a real impression, this is the unlock.
+                //
+                // Flip back to false if the log shows the sinks loading and the href still unchanged —
+                // it costs real ad loads on the user's connection, so it should not stay on for nothing.
+                loadPopupsInSink = true,
                 // Also CimaNow-only: capturing embeds means the engine answers the iframe request
                 // itself to keep a copy of the HTML, and no other provider should inherit that.
                 captureEmbeds = true,

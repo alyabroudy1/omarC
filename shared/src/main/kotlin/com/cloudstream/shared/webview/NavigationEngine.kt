@@ -129,6 +129,16 @@ class NavigationEngine(
     @Volatile
     private var linkMintCallCount: Int = 0
 
+    /**
+     * Main-frame navigations refused by [mainFrameNavigationGuard], counted per URL.
+     *
+     * The observable half of "did the page ever produce a real link?". A tally of eight attempts at the
+     * same placeholder is a different finding from one attempt at an ad, and the difference decides
+     * whether the next thing to change is the site's gate or our own containment.
+     */
+    private val refusedMainFrameNavigations =
+        java.util.Collections.synchronizedMap(linkedMapOf<String, Int>())
+
     /** Set when the user closes the FULLSCREEN dialog, so a waiting step can stop immediately. */
     @Volatile
     private var dialogDismissedByUser = false
@@ -272,6 +282,7 @@ class NavigationEngine(
             mainFrameNavigationGuard = null
             mainFramePageStartedAtMs = 0L
             linkMintCallCount = 0
+            refusedMainFrameNavigations.clear()
             dialogDismissedByUser = false
 
             val activity = activityProvider()
@@ -613,6 +624,21 @@ class NavigationEngine(
                                         "$linkMintCallCount link-mint call(s)):")
                                 mainFrameUrlsSeen.forEachIndexed { hop, url ->
                                     ProviderLogger.i(TAG, "execute", "    [$hop] ${url.take(150)}")
+                                }
+                                // Refused attempts, aggregated. Repeated tries at one URL mean the page
+                                // kept offering the same dead link — i.e. it never minted a real one —
+                                // which is the difference between "the site did not cooperate" and
+                                // "the user never pressed the button".
+                                if (refusedMainFrameNavigations.isNotEmpty()) {
+                                    val total = refusedMainFrameNavigations.values.sum()
+                                    ProviderLogger.w(TAG, "execute",
+                                        "Step $index: refused $total main-frame navigation(s) to " +
+                                            "${refusedMainFrameNavigations.size} distinct URL(s):")
+                                    synchronized(refusedMainFrameNavigations) {
+                                        refusedMainFrameNavigations.forEach { (url, n) ->
+                                            ProviderLogger.w(TAG, "execute", "    ${n}× ${url.take(150)}")
+                                        }
+                                    }
                                 }
                                 if (landedOn != null) {
                                     currentUrl = landedOn
@@ -1801,6 +1827,7 @@ class NavigationEngine(
                 // way back. Checked before auto-approve, which would otherwise wave it through.
                 val navGuard = this@NavigationEngine.mainFrameNavigationGuard
                 if (navGuard != null && isMainFrame && !navGuard.containsMatchIn(nextUrl)) {
+                    refusedMainFrameNavigations.merge(nextUrl, 1, Int::plus)
                     ProviderLogger.w(TAG, "shouldOverrideUrlLoading",
                         "⛔ Refused a main-frame navigation that cannot reach the destination — " +
                             "staying on the current page. If this is the site's own domain, the " +
