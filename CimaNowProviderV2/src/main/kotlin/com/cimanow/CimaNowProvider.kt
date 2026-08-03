@@ -665,6 +665,20 @@ class CimaNowProvider : BaseProvider() {
             // jars are worth naming rather than assuming.
             logCookieState(TAG_SURF, "before nav", "https://rm.freex2line.online/", "https://cimanow.cc/")
 
+            // Keep the page whose code we cannot read.
+            //
+            // Three hypotheses for the un-rewritten watch button are now dead — session identity
+            // (`PHPSESSID` + `cf_clearance` both present on the mint call), countdown timing (10.3 s,
+            // matching the page's own `countdown360({seconds: 10})`) and ad impressions (five popunders
+            // loaded for real, 17:45, no effect). What is left is the page's own minting code, and it is
+            // behind a control-flow-flattened `Function("…","function*…")` obfuscator that builds the
+            // endpoint URL at runtime — which is why grepping the source for `get-link` finds nothing.
+            //
+            // So keep the bytes. Reading them offline is the only way left that does not involve
+            // executing anything of ours in the page (rule 28). The HAR copy is a month old and predates
+            // the switch from a GET with query parameters to a multipart POST; this is the live page.
+            dumpTimerPageHtml(timerHtml)
+
             // ---------- PHASE 2: navigate to the watch page, VISIBLY, and wait for a stream ----------
             val firstStep = if (USE_REAL_TIMER_NAVIGATION) {
                 Log.w(TAG_SURF, "🧪 Timer page via REAL NAVIGATION (USE_REAL_TIMER_NAVIGATION=true) — " +
@@ -767,7 +781,17 @@ class CimaNowProvider : BaseProvider() {
                 // navigator.plugins == [1,2,3,4,5] (Android Chrome reports an empty PluginArray).
                 // Handover §0.1 rules 6 and 7 say exactly this: do not set anything on window.
                 injectSpoofingJs = false,
-                // On again, for a different page and a different reason than last time.
+                // Off again — the experiment ran and failed. Kept written down because it is the
+                // second time this flag has been tried and the second time the answer was no.
+                //
+                // 2026-08-03 17:45, with it ON: five popunders genuinely loaded across three sinks
+                // (`luugy.com`, `cdn.aabdw.com`, `viiukuhe.com`, `fhvfd.com`, `vulkanvegas.com`, one of
+                // them with `isUserGesture=true`), the mint call went out at 10.3 s carrying **seven**
+                // cookies including `PHPSESSID`, `cf_clearance` and Google's `__gads`/`__gpi`/`__eoi` —
+                // and the watch button still pointed at the placeholder through four taps. Impressions
+                // are not what the freex page is withholding the link for.
+                //
+                // Everything below the line was the previous rationale, and still stands:
                 //
                 // It was turned off on 2026-07-30 after being tried against **cimanow's** watch-page
                 // gate, where the real check turned out to be a dwell test a blank sink already
@@ -784,7 +808,7 @@ class CimaNowProvider : BaseProvider() {
                 //
                 // Flip back to false if the log shows the sinks loading and the href still unchanged —
                 // it costs real ad loads on the user's connection, so it should not stay on for nothing.
-                loadPopupsInSink = true,
+                loadPopupsInSink = false,
                 // Also CimaNow-only: capturing embeds means the engine answers the iframe request
                 // itself to keep a copy of the HTML, and no other provider should inherit that.
                 captureEmbeds = true,
@@ -1752,6 +1776,26 @@ class CimaNowProvider : BaseProvider() {
      * @param movieUrl The CimaNow movie/episode page URL
      * @return The blog-post.html/ timer HTML (158KB) or null on failure
      */
+    /**
+     * Writes the freex countdown page to external cache for offline analysis.
+     *
+     * The counterpart to the watch-page dump the engine already makes. Not a diagnostic that gets read
+     * in the field — a copy of the only remaining unknown, so the minting code can be deobfuscated
+     * without a device in hand.
+     */
+    private fun dumpTimerPageHtml(html: String) {
+        try {
+            val ctx = if (::context.isInitialized) context else null
+            val dir = ctx?.externalCacheDir ?: ctx?.cacheDir ?: return
+            dir.mkdirs()
+            val file = java.io.File(dir, "timerpage_fetched.html")
+            file.writeText(html)
+            Log.w("CimaNowTimerDump", "📄 TIMER PAGE DUMP: ${file.absolutePath} (${html.length} chars)")
+        } catch (e: Exception) {
+            Log.w("CimaNowTimerDump", "Timer page dump failed: ${e.message}")
+        }
+    }
+
     /**
      * Names the cookies each host will present, at a moment that matters.
      *
