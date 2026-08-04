@@ -1695,6 +1695,21 @@ class NavigationEngine(
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
 
+                        // Exactly what this connection is about to send, as we set it.
+                        //
+                        // Every hypothesis about this 403 has been checked by replaying my *guess* at
+                        // our header set through curl, and every guess returned 200. Guessing is the
+                        // problem: `WebResourceRequest.requestHeaders` shows what Chromium told us, not
+                        // what we then built, and the two are not the same object. So print ours.
+                        if (isProtectedDomain && !isMain) {
+                            try {
+                                val mine = conn.requestProperties.entries
+                                    .joinToString(" | ") { "${it.key}: ${it.value.joinToString(",").take(90)}" }
+                                ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                    "📤 OUR REQUEST for ${path.takeLast(40)} → $mine")
+                            } catch (_: Exception) {}
+                        }
+
                         val code = conn.responseCode
 
                         // Hand the response's cookies to the provider's policy BEFORE the body is
@@ -1972,8 +1987,9 @@ class NavigationEngine(
                                         echo.readTimeout = 8000
                                         val seen = echo.inputStream.bufferedReader().use { it.readText() }
                                         ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                            "🪞 HEADER ECHO — what our HttpURLConnection really sends: " +
-                                                seen.replace(Regex("\\s+"), " ").take(700))
+                                            "🪞 ECHO — every header this app's HttpURLConnection " +
+                                                "actually emits, as the server receives them: " +
+                                                seen.replace(Regex("\\s+"), " ").take(900))
                                     } catch (e: Exception) {
                                         ProviderLogger.w(TAG, "shouldInterceptRequest",
                                             "Header echo failed: ${e.message}")
@@ -3601,11 +3617,20 @@ class NavigationEngine(
         private const val ASSET_RETRY_DELAY_MS = 300L
 
         /**
-         * Echo endpoint for the one-shot header diagnostic. Returns the request headers as JSON, so a
-         * header added below `WebResourceRequest.requestHeaders` — the whole class of bug that has been
-         * driving this — becomes visible instead of inferred.
+         * Endpoint for the one-shot self-identification diagnostic, run on the first refusal.
+         *
+         * Cloudflare's trace returns plain text with `ip=`, `uag=`, `tls=` and `http=` as the *server*
+         * sees them. That is the one thing left unmeasured: headers, cookies, timing and three separate
+         * HTTP stacks have all been eliminated, and the app's own block pages have quoted IPs that do
+         * not match what `adb shell curl` exits from on the same handset (`2001:16b8:…` and
+         * `93.88.156.23` against the shell's `194.213.108.5`). If the app leaves by a different route
+         * than the shell, that explains a 403 no header change can fix.
+         *
+         * `httpbin.org/headers` was tried first and refused the request outright; `postman-echo.com`
+         * answers 200 from this handset and reports the full header set, including anything the stack
+         * appends below our own code.
          */
-        private const val HEADER_ECHO_URL = "https://httpbin.org/headers"
+        private const val HEADER_ECHO_URL = "https://postman-echo.com/get"
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:
