@@ -1934,6 +1934,58 @@ class NavigationEngine(
                             // retry, fall back, or give up. So it reports and lets the provider act
                             // once WebView lifecycles are no longer overlapping.
                             //
+                            // ── One plain retry before giving up on a static asset ──
+                            //
+                            // A 403 here is not reproducible by hand: measured on-device with curl, the
+                            // same asset URL returns 200 for every header combination this engine sends
+                            // — plain, with Referer, with the spoofed sec-ch-ua trio, with the CSS
+                            // Accept, with gzip-only, forced HTTP/1.1. So the trigger is not a header;
+                            // it is either Android's HttpURLConnection TLS fingerprint or the fact that
+                            // these four assets go out as a parallel burst. The main frame 403'ing twice
+                            // and then succeeding points at the burst.
+                            //
+                            // Either way it is worth one more try with nothing but a browser's minimum,
+                            // because falling through is not a neutral outcome: Chromium then fetches
+                            // the asset itself and cimanow serves `.js`/`.css` as `text/html`, so strict
+                            // MIME checking refuses it. That is how jQuery went missing, which left the
+                            // watch page unstyled and its lazy-loaded player needing a manual scroll.
+                            if (code == 403 && isProtectedDomain && !isMain) {
+                                try {
+                                    Thread.sleep(ASSET_RETRY_DELAY_MS)
+                                    val retry = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
+                                    retry.instanceFollowRedirects = true
+                                    retry.setRequestProperty("User-Agent", userAgent)
+                                    reqHeaders["Referer"]?.let { retry.setRequestProperty("Referer", it) }
+                                    retry.setRequestProperty("Accept", "*/*")
+                                    retry.connectTimeout = 15000
+                                    retry.readTimeout = 15000
+                                    val retryCode = retry.responseCode
+                                    if (retryCode == 200) {
+                                        val ct2 = retry.contentType ?: "application/octet-stream"
+                                        val reported2 = ct2.substringBefore(";").trim()
+                                        val enc2 = ct2.substringAfter("charset=", "utf-8").trim()
+                                        val cs2 = try { Charset.forName(enc2) } catch (_: Exception) { Charsets.UTF_8 }
+                                        val fixed2 = when {
+                                            path.endsWith(".js") -> "application/javascript"
+                                            path.endsWith(".css") -> "text/css"
+                                            path.endsWith(".json") -> "application/json"
+                                            else -> reported2
+                                        }
+                                        ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                            "♻️ 403 on first try, 200 on a plain retry — serving it",
+                                            "url" to reqUrl.take(90),
+                                            "mime" to "$reported2 -> $fixed2")
+                                        return WebResourceResponse(fixed2, cs2.name(), retry.inputStream)
+                                    }
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "Plain retry also refused ($retryCode) — falling through",
+                                        "url" to reqUrl.take(90))
+                                } catch (e: Exception) {
+                                    ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                        "Plain retry threw: ${e.message}")
+                                }
+                            }
+
                             // The body is read only on this path, and only when the status could be a
                             // challenge, so a healthy session pays nothing.
                             val couldBeChallenge = code == 403 || code == 503 || code == 429
@@ -3487,6 +3539,14 @@ class NavigationEngine(
          * real block page runs to — this is a diagnostic, not a copy of the response.
          */
         private const val CHALLENGE_BODY_PREVIEW_CHARS = 4096
+
+        /**
+         * Pause before the plain retry of a 403'd asset.
+         *
+         * Long enough to fall outside a burst window — the four assets that fail arrive within
+         * milliseconds of each other — and short enough not to delay a page render noticeably.
+         */
+        private const val ASSET_RETRY_DELAY_MS = 300L
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:
