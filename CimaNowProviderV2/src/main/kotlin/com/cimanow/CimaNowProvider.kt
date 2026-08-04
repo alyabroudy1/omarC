@@ -165,132 +165,123 @@ class CimaNowProvider : BaseProvider() {
           try {
             var URLRE = /get-link/i;
             var ABS   = /^https?:\/\/\S+$/;
+            var XRW   = 'X-Requested-With';
+            var SAFE  = 'XMLHttpRequest';
+            var replayed = false;
+            var navigated = false;
 
-            function land(where, text){
+            function land(where, text, body){
               try {
                 var t = String(text || '').replace(/^﻿/, '').replace(/^»/, '').trim();
                 say('response via ' + where + ' len=' + t.length);
-                if (!ABS.test(t)) {
-                  // Not a URL: dump it so we can read what the endpoint actually said. 2026-08-03 it answered
-                  // 4,576 chars of HTML, and a 90-char head ('<!DOCTYPE html>') identifies nothing.
-                  say('NOT A URL — dumping ' + t.length + ' chars');
-                  var CH = 300;
-                  for (var k = 0; k < t.length && k < 6000; k += CH) {
-                    say('body[' + (k / CH) + '] ' + t.substr(k, CH).replace(/\s+/g, ' '));
+                if (ABS.test(t)) {
+                  // Write it where the page's own code would have, and where the Kotlin probe looks — both
+                  // stay as fallbacks in case the navigation below is refused for any reason.
+                  var a = document.getElementById('downloadbtn')
+                       || document.querySelector('a.downloadbtn')
+                       || document.getElementById('redirectLink');
+                  if (a) { a.setAttribute('href', t); say('href set'); }
+                  var d = document.createElement('div');
+                  d.id = 'cs-link-sink'; d.setAttribute('data-link', t); d.style.display = 'none';
+                  if (document.body) { document.body.appendChild(d); say('sink appended'); }
+
+                  // Then go, immediately. Waiting for the 1 s probe to notice a URL we are already holding
+                  // buys nothing, and depends on the DOM write having landed somewhere the probe can see.
+                  // A page-driven navigation is what a click would have produced anyway, and the engine's
+                  // navigation guard admits it because it matches the destination pattern.
+                  if (!navigated) {
+                    navigated = true;
+                    say('navigating now → ' + t.slice(0, 120));
+                    try { location.href = t; }
+                    catch (e) { say('location.href failed ' + e); try { location.assign(t); } catch (e2) { say('assign failed ' + e2); } }
                   }
                   return;
                 }
-                var a = document.getElementById('downloadbtn')
-                     || document.querySelector('a.downloadbtn')
-                     || document.getElementById('redirectLink');
-                if (a) { a.setAttribute('href', t); say('href set'); } else { say('button not found'); }
-                var d = document.createElement('div');
-                d.id = 'cs-link-sink'; d.setAttribute('data-link', t); d.style.display = 'none';
-                if (document.body) { document.body.appendChild(d); say('sink appended'); }
+                // Not a URL. If it is Cloudflare's block page the request carried the app's package name in
+                // X-Requested-With — verified on-device with curl: the identical POST returns a 35-byte link
+                // normally and a ~4.5 KB block page with that header attached. Retry once, explicitly, so
+                // Chromium has no absent header to append the package name to.
+                var blocked = /Attention Required|cf-error-details|you have been blocked/i.test(t);
+                say('NOT A URL (' + (blocked ? 'CF BLOCK' : 'unknown') + ') len=' + t.length);
+                if (!blocked) { for (var k = 0; k < t.length && k < 3000; k += 300) say('body[' + (k/300) + '] ' + t.substr(k,300).replace(/\s+/g,' ')); }
+                if (blocked && body && !replayed) {
+                  replayed = true;
+                  say('retrying with ' + XRW + ' forced to ' + SAFE);
+                  var h = {}; h[XRW] = SAFE;
+                  F(LAST_URL, { method: 'POST', body: body, credentials: 'include', headers: h })
+                    .then(function(r){ return r.text(); })
+                    .then(function(t2){ land('retry', t2, null); })
+                    .catch(function(e){ say('retry failed ' + e); });
+                }
               } catch (e) { say('land threw ' + e); }
             }
 
-            // --- XMLHttpRequest ---
+            var LAST_URL = '';
+            var F = (typeof fetch === 'function') ? fetch : null;
+
+            function park(b){
+              try {
+                if (!b || typeof b.entries !== 'function') return;
+                var parts = [], it = b.entries(), n;
+                while (!(n = it.next()).done) parts.push(encodeURIComponent(n.value[0]) + '=' + encodeURIComponent(String(n.value[1])));
+                var pn = document.createElement('div');
+                pn.id = 'cs-payload'; pn.setAttribute('data-qs', parts.join('&')); pn.style.display = 'none';
+                if (document.body) document.body.appendChild(pn);
+                say('payload parked (' + parts.length + ' params)');
+              } catch(e){ say('park failed ' + e); }
+            }
+
+            // --- XMLHttpRequest: set the header on the page's OWN request, before it is sent ---
             try {
               var O = XMLHttpRequest.prototype.open, S2 = XMLHttpRequest.prototype.send;
               XMLHttpRequest.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
-              XMLHttpRequest.prototype.send = function(){
+              XMLHttpRequest.prototype.send = function(b){
                 var x = this, u = String(x.__csu || '');
                 say('xhr ' + u.slice(0, 110));
-                try { x.addEventListener('load', function(){ try { if (URLRE.test(u)) land('xhr', x.responseText); } catch(e){} }); } catch(e){}
+                if (URLRE.test(u)) {
+                  LAST_URL = u;
+                  try { x.setRequestHeader(XRW, SAFE); say('xhr ' + XRW + ' forced'); } catch(e){ say('xhr header set failed ' + e); }
+                  park(b);
+                  try { x.addEventListener('load', function(){ try { land('xhr', x.responseText, b); } catch(e){} }); } catch(e){}
+                }
                 return S2.apply(this, arguments);
               };
               say('xhr wrapped');
             } catch(e){ say('xhr wrap failed ' + e); }
 
-            // --- fetch ---
-            //
-            // The POST is why this whole flow stalls. Its body cannot be forwarded through
-            // shouldInterceptRequest, so the engine has to decline it, so it leaves Chromium carrying
-            // `sec-ch-ua: "Android WebView"` — and the endpoint answers a block page instead of a link.
-            // A desktop browser sending the same params gets the link.
-            //
-            // The params themselves are fine; only the envelope is wrong. So re-send them as a **GET with a
-            // query string**, which is the shape this endpoint used in July and which the engine *can*
-            // intercept — and therefore re-issue with real-Chrome client hints.
+            // --- fetch: same idea, mutate the init the page passes ---
             try {
-              if (typeof fetch === 'function') {
-                var F = fetch;
+              if (F) {
                 window.fetch = function(){
                   var u = ''; try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
                   say('fetch ' + u.slice(0, 110));
-                  var p = F.apply(this, arguments);
-                  try {
-                    if (URLRE.test(u)) {
-                      // Watch the page's own attempt, so its failure is on the record.
-                      p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t); }); } catch(e){} });
-                      // And replay it in a shape we can dress properly.
-                      // Replay it with the app's name taken off the request.
-                      //
-                      // Verified on-device with curl: this exact POST returns the 35-byte link answer normally,
-                      // and a **4,576-byte Cloudflare block page** the moment
-                      // `X-Requested-With: com.lagradost.cloudstream3` is attached — which is byte-for-byte what
-                      // the app was getting. Android WebView appends the package name to every request it issues
-                      // itself, and the engine's interceptor strips it, but a POST cannot be intercepted (no body
-                      // access) so it went out wearing it. Setting the header explicitly here keeps Chromium from
-                      // appending anything: 'XMLHttpRequest' is the value curl proved passes cleanly.
-                      var init = arguments[1] || {};
-                      var b = init.body;
-                      if (b) {
-                        var h2 = { 'X-Requested-With': 'XMLHttpRequest' };
-                        say('replaying POST with X-Requested-With stripped');
-                        F(u, { method: 'POST', body: b, credentials: 'include', headers: h2 })
-                          .then(function(r2){ return r2.text(); })
-                          .then(function(t2){ land('post-replay', t2); })
-                          .catch(function(e){ say('replay failed ' + e); });
-                        // Park the params where Kotlin can reach them, in case the header override is ignored
-                        // and the call has to be made from OkHttp instead.
-                        try {
-                          if (typeof b.entries === 'function') {
-                            var parts = [], it = b.entries(), n;
-                            while (!(n = it.next()).done) {
-                              parts.push(encodeURIComponent(n.value[0]) + '=' + encodeURIComponent(String(n.value[1])));
-                            }
-                            var qs = parts.join('&');
-                            var pn = document.createElement('div');
-                            pn.id = 'cs-payload'; pn.setAttribute('data-qs', qs); pn.style.display = 'none';
-                            if (document.body) document.body.appendChild(pn);
-                            say('payload parked (' + parts.length + ' params, ' + qs.length + ' chars)');
-                          }
-                        } catch(e){ say('payload park failed ' + e); }
-                      } else {
-                        say('body is not FormData (' + (b && b.constructor && b.constructor.name) + ') — cannot replay');
-                      }
-                    }
-                  } catch(e){ say('fetch hook threw ' + e); }
-                  return p;
+                  if (URLRE.test(u)) {
+                    LAST_URL = u;
+                    var init = arguments[1] = (arguments[1] || {});
+                    try {
+                      var hh = init.headers;
+                      if (!hh) { hh = {}; hh[XRW] = SAFE; init.headers = hh; }
+                      else if (typeof hh.set === 'function') hh.set(XRW, SAFE);
+                      else hh[XRW] = SAFE;
+                      say('fetch ' + XRW + ' forced');
+                    } catch(e){ say('fetch header set failed ' + e); }
+                    park(init.body);
+                    var p = F.apply(this, arguments);
+                    try { p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t, init.body); }); } catch(e){} }); } catch(e){}
+                    return p;
+                  }
+                  return F.apply(this, arguments);
                 };
                 say('fetch wrapped');
               }
             } catch(e){ say('fetch wrap failed ' + e); }
 
-            // --- sendBeacon: fire-and-forget, so the page cannot read a response either. If the mint call
-            //     goes out this way, the link does NOT come from it and we are looking in the wrong place.
             try {
               if (navigator && typeof navigator.sendBeacon === 'function') {
                 var B = navigator.sendBeacon.bind(navigator);
-                navigator.sendBeacon = function(u, d){
-                  say('sendBeacon ' + String(u || '').slice(0, 110) + '  ← NO RESPONSE IS READABLE BY ANYONE');
-                  return B(u, d);
-                };
-                say('sendBeacon wrapped');
+                navigator.sendBeacon = function(u){ if (URLRE.test(String(u||''))) say('sendBeacon ' + String(u).slice(0,90) + ' ← unreadable'); return B.apply(null, arguments); };
               }
-            } catch(e){ say('beacon wrap failed ' + e); }
-
-            // --- form submit into a hidden iframe is the other multipart producer ---
-            try {
-              var SUB = HTMLFormElement.prototype.submit;
-              HTMLFormElement.prototype.submit = function(){
-                say('form.submit action=' + String(this.action || '').slice(0, 110) + ' target=' + this.target);
-                return SUB.apply(this, arguments);
-              };
-              say('form wrapped');
-            } catch(e){ say('form wrap failed ' + e); }
+            } catch(e){}
 
             say('installed on ' + location.href.slice(0, 90));
           } catch (e) { say('install threw ' + e); }
