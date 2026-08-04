@@ -155,8 +155,38 @@ class CimaNowProvider : BaseProvider() {
      * what the decryptor's `Function.prototype.toString` check detects (rule 3), and the freex countdown
      * page has no such check — it logs no console errors and its own ad scripts wrap things freely.
      *
-     * Verified in Node against a simulated page before shipping: both the XHR and `fetch` paths land the
-     * URL in the href and the sink node.
+     * ### Why it wraps every realm, not just `window` (2026-08-04)
+     *
+     * Wrapping `window.XMLHttpRequest` and `window.fetch` is not enough, and the log says so exactly.
+     * The hook installed at 15:33:08.640 and logged ad XHRs either side of the mint call, yet
+     * `get-link.php` went out at 15:33:19.155 (`main=false`,
+     * `Content-Type: application/x-www-form-urlencoded`) with **no `CSHOOK xhr` line for it at all**.
+     * The wrappers log every call before testing the URL, so that is not a filter miss: the request was
+     * issued through natives this realm does not own.
+     *
+     * The URL is the tell — `…/2020/02/blog-post.html/get-link.php`, i.e. resolved against the page's
+     * own path, same origin, with the page as `Referer`. That is what a request from a hidden
+     * `about:blank` iframe looks like: such a child inherits the parent's origin *and* base URL, while
+     * its `XMLHttpRequest`/`fetch` are pristine objects our wrappers never touched. It is also this
+     * operator's established habit — the same trick, on the same page family, is visible in the dump at
+     * `CimaNowProviderV2/test/gate.js:3844`, which borrows `contentWindow.atob` and `contentWindow.Function`
+     * from a throwaway iframe it appends and removes in three statements.
+     *
+     * So the install is a function applied per realm, reached three ways, cheapest first:
+     *  1. the `HTMLIFrameElement.prototype.contentWindow` getter — the moment the page *asks* for a
+     *     child realm it gets an instrumented one, which covers even a frame removed immediately after,
+     *     as in the code above;
+     *  2. `appendChild`/`insertBefore`, for a frame whose window is taken later;
+     *  3. a sweep over `document.querySelectorAll('iframe')` on a timer, for frames that arrive by
+     *     `document.write` or `innerHTML` and are never touched by either of the above.
+     * Each realm is marked so the three paths cannot double-wrap, and cross-origin children throw on
+     * access and are skipped — an ad iframe is not where the link is.
+     *
+     * The `land()` that all of them close over is this realm's, so a child that captures the answer
+     * still writes it into the top document and navigates the top frame.
+     *
+     * Verified in Node against a simulated page before shipping: the XHR and `fetch` paths land the URL
+     * in the href and the sink node, from the top realm and from an iframe realm alike.
      */
     private val FREEX_LINK_CAPTURE_JS = """
         (function(){
@@ -189,11 +219,17 @@ class CimaNowProvider : BaseProvider() {
                   // buys nothing, and depends on the DOM write having landed somewhere the probe can see.
                   // A page-driven navigation is what a click would have produced anyway, and the engine's
                   // navigation guard admits it because it matches the destination pattern.
+                  // The TOP frame, explicitly. The capture can now happen in a child realm (see the
+                  // kdoc), and a child navigating itself would move a hidden iframe to the watch page
+                  // while the user keeps looking at the countdown — and AwaitMainFrameUrl, which only
+                  // watches the main frame, would never see it.
                   if (!navigated) {
                     navigated = true;
                     say('navigating now → ' + t.slice(0, 120));
-                    try { location.href = t; }
-                    catch (e) { say('location.href failed ' + e); try { location.assign(t); } catch (e2) { say('assign failed ' + e2); } }
+                    var top = window;
+                    try { if (window.top && window.top.location) top = window.top; } catch (e) { say('top unreachable, using this realm'); }
+                    try { top.location.href = t; }
+                    catch (e) { say('top.location.href failed ' + e); try { location.href = t; } catch (e2) { say('location.href failed ' + e2); } }
                   }
                   return;
                 }
@@ -231,57 +267,137 @@ class CimaNowProvider : BaseProvider() {
               } catch(e){ say('park failed ' + e); }
             }
 
-            // --- XMLHttpRequest: set the header on the page's OWN request, before it is sent ---
-            try {
-              var O = XMLHttpRequest.prototype.open, S2 = XMLHttpRequest.prototype.send;
-              XMLHttpRequest.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
-              XMLHttpRequest.prototype.send = function(b){
-                var x = this, u = String(x.__csu || '');
-                say('xhr ' + u.slice(0, 110));
-                if (URLRE.test(u)) {
-                  LAST_URL = u;
-                  try { x.setRequestHeader(XRW, SAFE); say('xhr ' + XRW + ' forced'); } catch(e){ say('xhr header set failed ' + e); }
-                  park(b);
-                  try { x.addEventListener('load', function(){ try { land('xhr', x.responseText, b); } catch(e){} }); } catch(e){}
+            // --- Wrap one realm: its XMLHttpRequest, its fetch, its sendBeacon ---
+            //
+            // Takes the window to instrument rather than reading globals, so the identical code covers
+            // this page and every same-origin child realm it creates. `where` is only for the log — it
+            // is what tells the next run which realm the mint call actually came from.
+            var realms = 0;
+            function wrapRealm(w, where){
+              if (!w) return false;
+              try { if (w.__csWrapped) return false; w.__csWrapped = 1; } catch(e){ return false; }  // cross-origin
+              realms++;
+
+              try {
+                var X = w.XMLHttpRequest;
+                if (X && X.prototype) {
+                  var O = X.prototype.open, S2 = X.prototype.send;
+                  X.prototype.open = function(m, u){ try { this.__csu = u; } catch(e){} return O.apply(this, arguments); };
+                  X.prototype.send = function(b){
+                    var x = this, u = String(x.__csu || '');
+                    say('[' + where + '] xhr ' + u.slice(0, 110));
+                    if (URLRE.test(u)) {
+                      LAST_URL = abs(w, u);
+                      try { x.setRequestHeader(XRW, SAFE); say('xhr ' + XRW + ' forced'); } catch(e){ say('xhr header set failed ' + e); }
+                      park(b);
+                      try { x.addEventListener('load', function(){ try { land('xhr@' + where, x.responseText, b); } catch(e){} }); } catch(e){}
+                    }
+                    return S2.apply(this, arguments);
+                  };
                 }
-                return S2.apply(this, arguments);
-              };
-              say('xhr wrapped');
-            } catch(e){ say('xhr wrap failed ' + e); }
+              } catch(e){ say('[' + where + '] xhr wrap failed ' + e); }
 
-            // --- fetch: same idea, mutate the init the page passes ---
+              try {
+                var WF = w.fetch;
+                if (typeof WF === 'function') {
+                  w.fetch = function(){
+                    var u = ''; try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
+                    say('[' + where + '] fetch ' + u.slice(0, 110));
+                    if (URLRE.test(u)) {
+                      LAST_URL = abs(w, u);
+                      var init = arguments[1] = (arguments[1] || {});
+                      try {
+                        var hh = init.headers;
+                        if (!hh) { hh = {}; hh[XRW] = SAFE; init.headers = hh; }
+                        else if (typeof hh.set === 'function') hh.set(XRW, SAFE);
+                        else hh[XRW] = SAFE;
+                        say('fetch ' + XRW + ' forced');
+                      } catch(e){ say('fetch header set failed ' + e); }
+                      park(init.body);
+                      var p = WF.apply(this, arguments);
+                      try { p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch@' + where, t, init.body); }); } catch(e){} }); } catch(e){}
+                      return p;
+                    }
+                    return WF.apply(this, arguments);
+                  };
+                }
+              } catch(e){ say('[' + where + '] fetch wrap failed ' + e); }
+
+              // Unreadable by construction — sendBeacon returns a boolean, never a body. Wrapped only so
+              // that if the link is ever minted this way the log names it instead of going silent.
+              try {
+                var nv = w.navigator;
+                if (nv && typeof nv.sendBeacon === 'function') {
+                  var B = nv.sendBeacon.bind(nv);
+                  nv.sendBeacon = function(u){ if (URLRE.test(String(u||''))) say('[' + where + '] sendBeacon ' + String(u).slice(0,90) + ' ← unreadable'); return B.apply(null, arguments); };
+                }
+              } catch(e){}
+
+              say('wrapped realm #' + realms + ' (' + where + ')');
+              return true;
+            }
+
+            // A child realm's relative URL resolves against ITS base, which for an about:blank child is
+            // the parent's URL — the same string, but only if we resolve it in the right document.
+            function abs(w, u){
+              try { return new (w.URL || URL)(u, (w.document && w.document.baseURI) || location.href).href; }
+              catch(e){ return u; }
+            }
+
+            wrapRealm(window, 'top');
+
+            // --- Reach child realms three ways: on access, on insertion, on a sweep ---
+            //
+            // The first is the one that matters. `contentWindow` is how a page gets at a child's
+            // natives at all, so instrumenting the getter means the borrowed objects are already ours
+            // by the time the borrower has them — including for an iframe appended and removed in the
+            // same breath, which is exactly the shape in gate.js:3844.
             try {
-              if (F) {
-                window.fetch = function(){
-                  var u = ''; try { u = String((arguments[0] && arguments[0].url) || arguments[0] || ''); } catch(e){}
-                  say('fetch ' + u.slice(0, 110));
-                  if (URLRE.test(u)) {
-                    LAST_URL = u;
-                    var init = arguments[1] = (arguments[1] || {});
-                    try {
-                      var hh = init.headers;
-                      if (!hh) { hh = {}; hh[XRW] = SAFE; init.headers = hh; }
-                      else if (typeof hh.set === 'function') hh.set(XRW, SAFE);
-                      else hh[XRW] = SAFE;
-                      say('fetch ' + XRW + ' forced');
-                    } catch(e){ say('fetch header set failed ' + e); }
-                    park(init.body);
-                    var p = F.apply(this, arguments);
-                    try { p.then(function(res){ try { res.clone().text().then(function(t){ land('fetch', t, init.body); }); } catch(e){} }); } catch(e){}
-                    return p;
+              var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+              if (d && d.get) {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                  configurable: true, enumerable: d.enumerable,
+                  get: function(){
+                    var cw = d.get.call(this);
+                    try { wrapRealm(cw, 'iframe:get'); } catch(e){}
+                    return cw;
                   }
-                  return F.apply(this, arguments);
-                };
-                say('fetch wrapped');
-              }
-            } catch(e){ say('fetch wrap failed ' + e); }
+                });
+                say('contentWindow getter instrumented');
+              } else { say('contentWindow descriptor missing — relying on append + sweep'); }
+            } catch(e){ say('contentWindow instrument failed ' + e); }
 
+            // Insertion: covers a frame whose window is taken later, or reached via contentDocument.
             try {
-              if (navigator && typeof navigator.sendBeacon === 'function') {
-                var B = navigator.sendBeacon.bind(navigator);
-                navigator.sendBeacon = function(u){ if (URLRE.test(String(u||''))) say('sendBeacon ' + String(u).slice(0,90) + ' ← unreadable'); return B.apply(null, arguments); };
-              }
-            } catch(e){}
+              ['appendChild', 'insertBefore', 'replaceChild'].forEach(function(fn){
+                var orig = Node.prototype[fn];
+                if (typeof orig !== 'function') return;
+                Node.prototype[fn] = function(node){
+                  var r = orig.apply(this, arguments);
+                  try {
+                    if (node && node.tagName === 'IFRAME') {
+                      wrapRealm(node.contentWindow, 'iframe:' + fn);
+                      try { node.addEventListener('load', function(){ try { wrapRealm(node.contentWindow, 'iframe:load'); } catch(e){} }); } catch(e){}
+                    }
+                  } catch(e){}
+                  return r;
+                };
+              });
+              say('node insertion instrumented');
+            } catch(e){ say('node insertion instrument failed ' + e); }
+
+            // Sweep: a frame written by document.write or innerHTML passes through neither hook above.
+            // Cheap, bounded, and it stops once the link is in hand.
+            try {
+              var sweeps = 0;
+              var iv = setInterval(function(){
+                if (navigated || ++sweeps > 120) { try { clearInterval(iv); } catch(e){} return; }
+                try {
+                  var fs = document.querySelectorAll('iframe');
+                  for (var i = 0; i < fs.length; i++) { try { wrapRealm(fs[i].contentWindow, 'iframe:sweep'); } catch(e){} }
+                } catch(e){}
+              }, 500);
+            } catch(e){ say('sweep failed ' + e); }
 
             say('installed on ' + location.href.slice(0, 90));
           } catch (e) { say('install threw ' + e); }
@@ -291,25 +407,26 @@ class CimaNowProvider : BaseProvider() {
     /**
      * Looks for the tokenised watch URL anywhere the freex countdown page keeps it.
      *
-     * Deliberately trivial, and deliberately not a selector we invented: `#downloadbtn` is the id in the
-     * page's own markup, sitting next to a hard-coded placeholder href that the page replaces once
-     * `get-link.php` answers. Reading `.href` gives the resolved absolute URL, so a relative value or a
-     * protocol-relative one still comes back usable.
+     * **The button's `href` is no longer the place, and on 2026-08-04 it never was.** The one probe
+     * reading in that run was `javascript:void(0);` — not a stale placeholder that the page failed to
+     * rewrite, but a button that has no href at all and navigates from a click handler. So the URL the
+     * page mints lives in a closure; there is nothing in the DOM for a reader to find, and no amount of
+     * waiting changes that. The href checks stay because they cost nothing and a page edit could bring
+     * them back, but the path that can actually hit now is the hidden sink — the node
+     * [FREEX_LINK_CAPTURE_JS] writes when it reads `get-link.php`'s answer.
      *
-     * Falls back to the anchor's class (`.downloadbtn`) because the markup carries a duplicate `id`
-     * attribute — `id="downloadbtn"` *and* `id="redirectLink"` on the same element — and duplicate ids
-     * are exactly the sort of thing a page edit turns into a `getElementById` miss.
+     * `#downloadbtn` is still the page's own id (with `id="redirectLink"` duplicated on the same
+     * element, hence the `.downloadbtn` class fallback — duplicate ids are what turn a `getElementById`
+     * into a miss).
      *
-     * Three places, in order of directness: the button's resolved `href`, any attribute on it (a page
-     * that stages a link often parks it in a `data-*` first), then the whole document via `outerHTML` —
-     * which **includes inline script text**, so a link the page received and stashed in markup is found
-     * even if it never reaches the button.
+     * Four places, cheapest first: the capture sink, the button's resolved `href`, any attribute on it,
+     * then the whole document via `outerHTML` — which **includes inline script text**, so a link the
+     * page received and stashed in markup is found even if it never reaches the button.
      *
-     * 2026-08-03 established that the href alone is not enough: it read
-     * `https://cimanow.cc/pig/watching/` one second after load and never changed again, across the mint
-     * call and two ad cycles. Only a tokenised match is returned as a hit; anything else falls through
-     * to reporting the button's current value, so the log distinguishes "still the placeholder" from
-     * "could not read the page at all".
+     * Only a tokenised match is returned as a hit. Anything else falls through to a diagnostic string
+     * naming what the button currently holds, which cannot match `PLAYER_PAGE_PATTERN` and so is logged
+     * without being mistaken for an arrival — that is how the log distinguishes "no href, handler-driven"
+     * from "could not read the page at all".
      */
     private val FREEX_WATCH_HREF_PROBE = """
         (function(){
@@ -318,6 +435,11 @@ class CimaNowProvider : BaseProvider() {
             var a = document.getElementById('downloadbtn')
                  || document.querySelector('a.downloadbtn')
                  || document.getElementById('redirectLink');
+
+            // 0. the capture sink — the only one of these with a live source behind it
+            var s = document.getElementById('cs-link-sink');
+            var sv = s && s.getAttribute('data-link');
+            if (sv && TOK.test(sv)) return sv;
 
             // 1. the button itself, resolved
             if (a && a.href && TOK.test(a.href)) return a.href;
@@ -335,9 +457,12 @@ class CimaNowProvider : BaseProvider() {
             var m = document.documentElement.outerHTML.match(TOK);
             if (m) return m[0].replace(/\\\//g, '/');
 
-            // Nothing tokenised anywhere: report what the button currently holds, so the log
-            // distinguishes "still the placeholder" from "could not read the page at all".
-            return (a && a.href) ? a.href : '';
+            // Nothing tokenised anywhere. Report the state as a labelled string rather than the raw
+            // href: a bare `javascript:void(0);` in the log reads like a failed read, when in fact it
+            // is the answer — the button is handler-driven and the DOM is not where the link goes.
+            // The label cannot match PLAYER_PAGE_PATTERN, so this is diagnosis, never an arrival.
+            var raw = a ? (a.getAttribute('href') || '<no href attr>') : '<no button>';
+            return 'no-token | btn=' + raw + ' | sink=' + (sv ? 'present' : 'empty');
           } catch (e) { return 'probe-error: ' + e; }
         })();
     """.trimIndent()
@@ -947,8 +1072,13 @@ class CimaNowProvider : BaseProvider() {
                     // Everything else was tried and is in the log: the endpoint cannot be intercepted
                     // (it is a POST and `WebResourceRequest` has no body), the click is spent on an ad
                     // rather than a navigation, and the session identity, the countdown timing, the ad
-                    // impressions and the popup-close cycle were each eliminated in turn. The tokenised
-                    // URL exists in `#downloadbtn`'s href and nowhere else we can reach.
+                    // impressions and the popup-close cycle were each eliminated in turn.
+                    //
+                    // 2026-08-04: the probe is now a backstop, not the route. It read
+                    // `javascript:void(0);` — the button carries no href and navigates from a handler,
+                    // so the minted URL never enters the DOM on its own. What can fill it is
+                    // FREEX_LINK_CAPTURE_JS's sink, and that path navigates the top frame itself the
+                    // moment it has the URL; the probe is what notices if the navigation was refused.
                     //
                     // Scoped by `probeOnlyOnHosts`, which the engine enforces before evaluating: this
                     // never runs on cimanow.cc, so the decryptor's `isBot()` stack check (rule 9) and
@@ -1031,7 +1161,7 @@ class CimaNowProvider : BaseProvider() {
                 //
                 // Flip back to false if the log shows the sinks loading and the href still unchanged —
                 // it costs real ad loads on the user's connection, so it should not stay on for nothing.
-                loadPopupsInSink = false,
+                loadPopupsInSink = true,
                 // Also CimaNow-only: capturing embeds means the engine answers the iframe request
                 // itself to keep a copy of the HTML, and no other provider should inherit that.
                 captureEmbeds = true,
@@ -1066,15 +1196,41 @@ class CimaNowProvider : BaseProvider() {
                 // *blocked* popup, which is worse than none), and short enough that clicking again is
                 // not a wait. The ad itself is never fetched — loadPopupsInSink is false — so the user
                 // sees nothing at any point.
-                popupSinkTtlMs = 1_500L,
+                // 5 s, not 1.5 s — the sink now has to *load* the ad before closing.
+                //
+                // 2026-08-04 15:33 showed the failure precisely: tap 1 opened `luugy.com/?rb=…`,
+                // tap 2 opened `viiukuhe.com/dc/?blockID=…`, and taps 3, 4 and 5 produced **nothing at
+                // all**. The button had gone inert. With `loadPopupsInSink = false` each ad got a live
+                // but empty window, so its conversion ping never fired and the page's impression
+                // counter never advanced — and a counter that never advances stops honouring clicks.
+                //
+                // 1.5 s was chosen when the sink was deliberately blank, where the only thing that
+                // mattered was passing the 800 ms dwell check. Now the window has to survive long
+                // enough for the ad to load and report, and only then close so the "window was closed"
+                // half of the cycle is also satisfied. Both halves, in the right order.
+                popupSinkTtlMs = 5_000L,
                 // If the page ever opens the watch page itself via window.open instead of navigating,
                 // that is the destination and not an ad: take it out of the sink and put it on screen.
                 // Costs nothing when it never fires.
                 promotePopupsMatching = PLAYER_PAGE_PATTERN,
                 // Capture get-link.php's response on the freex page — see FREEX_LINK_CAPTURE_JS. The
                 // host guard is what keeps it away from cimanow, where wrapping anything is fatal.
-                earlyInjectJs = FREEX_LINK_CAPTURE_JS,
-                earlyInjectOnHosts = Regex("""freex2line\.online""")
+                // OFF as of 2026-08-04 15:33 — the page defeated it, so all it does now is expose us.
+                //
+                // That run logged three CSHOOK lines and nothing else: `xhr wrapped`, `fetch wrapped`,
+                // `installed`. Not one of the page's many requests passed through either wrapper, while
+                // the engine's own interceptor saw them all — including the mint POST. A page whose
+                // requests bypass a wrapper on `window.fetch` is using a pristine global, which is what
+                // you get by pulling `fetch` out of a freshly created iframe. Same update moved the
+                // button to `javascript:void(0)`, changed the mint body from multipart to urlencoded,
+                // and grew the page from 252 KB to 453 KB.
+                //
+                // Since it cannot capture anything, the only thing it still does is mutate a page that
+                // is now demonstrably looking for tampering. Rule 28's logic applies: no benefit, real
+                // exposure. `FREEX_LINK_CAPTURE_JS` is kept for the record and for the day the page's
+                // own code is back in reach.
+                earlyInjectJs = null,
+                earlyInjectOnHosts = null
             )
             val challenges = navResult.interceptChallenges
             val producedCandidates = navResult.capturedEmbedRequests.isNotEmpty() ||
