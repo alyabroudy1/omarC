@@ -86,8 +86,7 @@ class CimaNowNavigationPolicy(
      * The engine has already tried twice by the time this runs, and the refusal is a transport
      * fingerprint rather than a header problem — verified on-device: identical URL, identical UA,
      * curl gets 200 `text/javascript` under every header combination the engine sends, Android's
-     * `HttpURLConnection` gets 403 every time. `fetchViaChromeTls` goes out through the WebView's own
-     * stack, which the same log proves cimanow accepts ("✅ Chrome TLS fallback succeeded").
+     * `HttpURLConnection` gets 403 every time. So this tries a third transport, OkHttp.
      *
      * Only `.js`, `.css` and `.json` — the file types whose `Content-Type` cimanow deliberately
      * mislabels as `text/html` and which Chromium therefore refuses. Everything else is left alone:
@@ -112,20 +111,37 @@ class CimaNowNavigationPolicy(
             return it to mime
         }
 
-        // Blocking on purpose — the caller is a WebResourceResponse that has to be returned now. The
-        // timeout matters more than the elegance: a hung fetch here stalls the page render, and an
-        // unstyled page is a better outcome than a blank one.
+        // OkHttp, not ChromiumFetcher.
+        //
+        // `fetchViaChromeTls` looked like the obvious answer — the log proves Chromium's stack gets
+        // through where ours does not — but it cannot return a script. It **navigates a WebView to the
+        // URL and scrapes `document.documentElement.outerHTML`**, so a `.js` file comes back wrapped and
+        // HTML-escaped inside `<html><body><pre>…`. Fine for an HTML page, useless for an asset.
+        //
+        // OkHttp is byte-accurate, streams, and is a genuinely different transport from the
+        // `HttpURLConnection` the engine already tried twice — which is the only variable left, since
+        // every header combination the engine sends returns 200 to curl on the same device.
         val body = try {
             kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeoutOrNull(CHROME_TLS_TIMEOUT_MS) {
-                    httpService.fetchViaChromeTls(
+                kotlinx.coroutines.withTimeoutOrNull(ASSET_FETCH_TIMEOUT_MS) {
+                    val res = httpService.getRaw(
                         url,
-                        buildMap { referer?.let { put("Referer", it) }; put("Accept", "*/*") }
+                        headers = buildMap {
+                            referer?.let { put("Referer", it) }
+                            put("Accept", "*/*")
+                        }
                     )
+                    val code = res.code
+                    val text = res.body?.string()
+                    res.close()
+                    if (code != 200) {
+                        Log.w(TAG, "OkHttp asset fetch got HTTP $code for ${url.takeLast(60)}")
+                        null
+                    } else text
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Chrome-TLS asset fetch threw for ${url.takeLast(60)}: ${e.message}")
+            Log.w(TAG, "OkHttp asset fetch threw for ${url.takeLast(60)}: ${e.message}")
             null
         }
 
@@ -135,7 +151,9 @@ class CimaNowNavigationPolicy(
             return null
         }
         // A block page would be HTML, and serving that as JavaScript is worse than serving nothing:
-        // the parser would choke instead of the loader simply failing.
+        // the parser would choke instead of the loader simply failing. This guard is what stopped the
+        // first version of this method — which used ChromiumFetcher — from serving `<pre>`-wrapped
+        // markup as a script.
         if (body.trimStart().startsWith("<", ignoreCase = true)) {
             Log.w(TAG, "❌ Chrome-TLS returned HTML for an asset (${body.length} chars) — refusing to " +
                 "serve markup as $mime: ${url.takeLast(60)}")
@@ -151,10 +169,10 @@ class CimaNowNavigationPolicy(
         private const val TAG = "CimaNowPolicy"
 
         /**
-         * Ceiling for one Chrome-TLS asset fetch. Generous enough for the ~1-3 s a serialised
-         * ChromiumFetcher round trip costs, short enough that four of them cannot hang a page load.
+         * Ceiling for one asset fetch. This blocks a page render, so it is deliberately tight — an
+         * unstyled page beats a stalled one.
          */
-        private const val CHROME_TLS_TIMEOUT_MS = 8_000L
+        private const val ASSET_FETCH_TIMEOUT_MS = 6_000L
 
         /**
          * Fetched assets, kept for the process. The same jQuery/carousel/animate trio is requested by

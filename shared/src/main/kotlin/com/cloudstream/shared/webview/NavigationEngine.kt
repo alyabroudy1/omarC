@@ -129,6 +129,10 @@ class NavigationEngine(
     @Volatile
     private var linkMintCallCount: Int = 0
 
+    /** The header echo runs once per session, on the first refusal — see HEADER_ECHO_URL. */
+    @Volatile
+    private var echoDiagnosticDone = false
+
     /**
      * Main-frame navigations refused by [mainFrameNavigationGuard], counted per URL.
      *
@@ -340,6 +344,7 @@ class NavigationEngine(
             mainFrameNavigationGuard = null
             mainFramePageStartedAtMs = 0L
             linkMintCallCount = 0
+            echoDiagnosticDone = false
             refusedMainFrameNavigations.clear()
             promotedPopupUrl = null
             dialogDismissedByUser = false
@@ -1950,6 +1955,30 @@ class NavigationEngine(
                             // MIME checking refuses it. That is how jQuery went missing, which left the
                             // watch page unstyled and its lazy-loaded player needing a manual scroll.
                             if (code == 403 && isProtectedDomain && !isMain) {
+                                // One-shot: ask an echo service what our client actually puts on the
+                                // wire. Every theory about this 403 has been about headers we cannot
+                                // see — WebView adding a package name below the API surface, an empty
+                                // value we set ourselves, client hints. Guessing has cost days; the
+                                // echo answers it in one request, built by this same code so the answer
+                                // describes the real client and not a test harness.
+                                if (!echoDiagnosticDone) {
+                                    echoDiagnosticDone = true
+                                    try {
+                                        val echo = java.net.URL(HEADER_ECHO_URL)
+                                            .openConnection() as java.net.HttpURLConnection
+                                        echo.setRequestProperty("User-Agent", userAgent)
+                                        echo.setRequestProperty("Accept", "*/*")
+                                        echo.connectTimeout = 8000
+                                        echo.readTimeout = 8000
+                                        val seen = echo.inputStream.bufferedReader().use { it.readText() }
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "🪞 HEADER ECHO — what our HttpURLConnection really sends: " +
+                                                seen.replace(Regex("\\s+"), " ").take(700))
+                                    } catch (e: Exception) {
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "Header echo failed: ${e.message}")
+                                    }
+                                }
                                 try {
                                     Thread.sleep(ASSET_RETRY_DELAY_MS)
                                     val retry = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
@@ -3570,6 +3599,13 @@ class NavigationEngine(
          * milliseconds of each other — and short enough not to delay a page render noticeably.
          */
         private const val ASSET_RETRY_DELAY_MS = 300L
+
+        /**
+         * Echo endpoint for the one-shot header diagnostic. Returns the request headers as JSON, so a
+         * header added below `WebResourceRequest.requestHeaders` — the whole class of bug that has been
+         * driving this — becomes visible instead of inferred.
+         */
+        private const val HEADER_ECHO_URL = "https://httpbin.org/headers"
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:
