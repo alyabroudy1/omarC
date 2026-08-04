@@ -41,6 +41,27 @@ interface NavigationSessionPolicy {
         isMainFrame: Boolean
     ) {}
 
+    /**
+     * Last resort for a subresource the engine cannot fetch itself: return its bytes, or null.
+     *
+     * Called only after the engine's own re-issue has been refused **twice** — once normally and once
+     * with nothing but a browser's minimum headers. At that point the refusal is not about headers:
+     * measured on-device 2026-08-04, cimanow returns 200 to curl for the identical URL under every
+     * header combination the engine sends, and 403 to Android's `HttpURLConnection` every time. It is a
+     * transport fingerprint, and no header rearranging fixes it.
+     *
+     * Why it matters enough to have a hook: falling through is not neutral. Chromium then fetches the
+     * asset itself and cimanow serves `.js`/`.css` as `text/html`, so strict MIME checking refuses it —
+     * which is how jQuery went missing, leaving the watch page unstyled and its lazy-loaded player
+     * needing a manual scroll to appear.
+     *
+     * Implementations are expected to be **blocking and cached**: this runs on the WebView's request
+     * thread, in the middle of a page load, and the same asset must not be fetched twice.
+     *
+     * @return body and the Content-Type to serve it as, or null to let Chromium try.
+     */
+    fun fetchRefusedSubresource(url: String, referer: String?): Pair<String, String>? = null
+
     companion object {
         /** Do nothing — the behaviour every caller had before this interface existed. */
         val None: NavigationSessionPolicy = object : NavigationSessionPolicy {}

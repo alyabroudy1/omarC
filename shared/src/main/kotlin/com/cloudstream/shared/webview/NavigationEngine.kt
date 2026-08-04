@@ -1978,8 +1978,31 @@ class NavigationEngine(
                                         return WebResourceResponse(fixed2, cs2.name(), retry.inputStream)
                                     }
                                     ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                        "Plain retry also refused ($retryCode) — falling through",
+                                        "Plain retry also refused ($retryCode) — asking the provider " +
+                                            "policy for the bytes",
                                         "url" to reqUrl.take(90))
+                                    // Refused twice with different headers, so it is the transport
+                                    // being fingerprinted, not the request. Let the provider fetch it
+                                    // through a stack the site accepts (Chromium's own, in CimaNow's
+                                    // case) rather than dropping to Chromium and losing MIME control.
+                                    val supplied = try {
+                                        sessionPolicy.fetchRefusedSubresource(reqUrl, reqHeaders["Referer"])
+                                    } catch (e: Exception) {
+                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                                            "Policy subresource fetch threw: ${e.message}")
+                                        null
+                                    }
+                                    if (supplied != null && supplied.first.isNotEmpty()) {
+                                        ProviderLogger.i(TAG, "shouldInterceptRequest",
+                                            "🩹 Served by the provider policy after a double refusal",
+                                            "url" to reqUrl.take(90),
+                                            "bytes" to supplied.first.length.toString(),
+                                            "mime" to supplied.second)
+                                        return WebResourceResponse(
+                                            supplied.second, "utf-8",
+                                            java.io.ByteArrayInputStream(supplied.first.toByteArray(Charsets.UTF_8))
+                                        )
+                                    }
                                 } catch (e: Exception) {
                                     ProviderLogger.w(TAG, "shouldInterceptRequest",
                                         "Plain retry threw: ${e.message}")

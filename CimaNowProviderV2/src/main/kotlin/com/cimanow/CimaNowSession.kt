@@ -80,8 +80,87 @@ class CimaNowNavigationPolicy(
         }
     }
 
+    /**
+     * Fetches an asset cimanow refused us, through Chromium's own network stack.
+     *
+     * The engine has already tried twice by the time this runs, and the refusal is a transport
+     * fingerprint rather than a header problem — verified on-device: identical URL, identical UA,
+     * curl gets 200 `text/javascript` under every header combination the engine sends, Android's
+     * `HttpURLConnection` gets 403 every time. `fetchViaChromeTls` goes out through the WebView's own
+     * stack, which the same log proves cimanow accepts ("✅ Chrome TLS fallback succeeded").
+     *
+     * Only `.js`, `.css` and `.json` — the file types whose `Content-Type` cimanow deliberately
+     * mislabels as `text/html` and which Chromium therefore refuses. Everything else is left alone:
+     * an image that renders from Chromium's own fetch needs no help from us.
+     *
+     * Cached because this blocks a page load: the same four files are requested on every watch page,
+     * and each Chrome-TLS fetch costs a second or two on a serialised WebView.
+     */
+    override fun fetchRefusedSubresource(url: String, referer: String?): Pair<String, String>? {
+        val path = try {
+            java.net.URI(url).path?.lowercase() ?: ""
+        } catch (_: Exception) { "" }
+        val mime = when {
+            path.endsWith(".js") -> "application/javascript"
+            path.endsWith(".css") -> "text/css"
+            path.endsWith(".json") -> "application/json"
+            else -> return null
+        }
+
+        assetCache[url]?.let {
+            Log.i(TAG, "🗃 Asset served from cache (${it.length} chars): ${url.takeLast(60)}")
+            return it to mime
+        }
+
+        // Blocking on purpose — the caller is a WebResourceResponse that has to be returned now. The
+        // timeout matters more than the elegance: a hung fetch here stalls the page render, and an
+        // unstyled page is a better outcome than a blank one.
+        val body = try {
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(CHROME_TLS_TIMEOUT_MS) {
+                    httpService.fetchViaChromeTls(
+                        url,
+                        buildMap { referer?.let { put("Referer", it) }; put("Accept", "*/*") }
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Chrome-TLS asset fetch threw for ${url.takeLast(60)}: ${e.message}")
+            null
+        }
+
+        if (body.isNullOrEmpty()) {
+            Log.w(TAG, "❌ Chrome-TLS asset fetch returned nothing for ${url.takeLast(60)} — " +
+                "letting Chromium try (it will be refused for MIME, so expect no styling)")
+            return null
+        }
+        // A block page would be HTML, and serving that as JavaScript is worse than serving nothing:
+        // the parser would choke instead of the loader simply failing.
+        if (body.trimStart().startsWith("<", ignoreCase = true)) {
+            Log.w(TAG, "❌ Chrome-TLS returned HTML for an asset (${body.length} chars) — refusing to " +
+                "serve markup as $mime: ${url.takeLast(60)}")
+            return null
+        }
+        assetCache[url] = body
+        Log.i(TAG, "✅ Chrome-TLS fetched the refused asset (${body.length} chars) as $mime: " +
+            url.takeLast(60))
+        return body to mime
+    }
+
     companion object {
         private const val TAG = "CimaNowPolicy"
+
+        /**
+         * Ceiling for one Chrome-TLS asset fetch. Generous enough for the ~1-3 s a serialised
+         * ChromiumFetcher round trip costs, short enough that four of them cannot hang a page load.
+         */
+        private const val CHROME_TLS_TIMEOUT_MS = 8_000L
+
+        /**
+         * Fetched assets, kept for the process. The same jQuery/carousel/animate trio is requested by
+         * every watch page, and re-fetching them per title would multiply the cost by every play.
+         */
+        private val assetCache = java.util.Collections.synchronizedMap(HashMap<String, String>())
     }
 }
 
