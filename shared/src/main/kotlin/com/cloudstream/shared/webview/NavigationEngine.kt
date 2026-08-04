@@ -1966,7 +1966,11 @@ class NavigationEngine(
                                 "code" to code.toString(),
                                 "cloudflare" to isCf.toString(),
                                 "mainFrame" to isMain.toString(),
-                                "url" to reqUrl.take(100))
+                                "url" to reqUrl.take(100),
+                                // Whose block page is this? `cloudflare=false` on 2026-08-04 meant the
+                                // site's own anti-bot, and without a sample of the body there was no
+                                // way to tell that from a plain error.
+                                "body" to preview.take(180).replace(Regex("\\s+"), " "))
                             return null
                         }
                     } catch (e: Exception) {
@@ -2372,7 +2376,27 @@ class NavigationEngine(
         extraHeaders: Map<String, String>
     ) {
         val headers = mutableMapOf<String, String>()
-        headers["X-Requested-With"] = ""
+        // A single space, not "" — and not omitted either. Both alternatives are known to fail.
+        //
+        // The point of setting this at all is to stop WebView filling it with the package name, which
+        // it demonstrably does (the get-link.php XHR was blocked until the page's own request forced a
+        // value). But "" is not a neutral overwrite: it produces `X-Requested-With:` with no value,
+        // which no browser ever sends. Measured against cimanow.cc on-device, same URL, same UA:
+        //
+        //     no such header                    → 200, text/javascript
+        //     X-Requested-With: <empty>         → 403, 127 KB block page
+        //     X-Requested-With: <space>         → 200, text/javascript
+        //     X-Requested-With: XMLHttpRequest  → 200, text/javascript
+        //     X-Requested-With: <package name>  → 403, 127 KB block page
+        //
+        // So the empty value we were sending is why the watch page 403'd twice and why jQuery,
+        // owl.carousel and animate.css never loaded — the page rendered unstyled, and its jQuery-driven
+        // lazy-load never fired, which is why the video only appeared after a manual scroll.
+        //
+        // A space is chosen over "XMLHttpRequest" deliberately: this header goes on **document**
+        // navigations, and claiming a navigation is an XHR invites a server to answer with an
+        // AJAX-shaped partial instead of the page. A space asserts nothing and still occupies the slot.
+        headers["X-Requested-With"] = " "
         if (referer != null) headers["Referer"] = referer
         headers.putAll(extraHeaders)
         ProviderLogger.i(TAG, "loadUrl", "url=$url headers=${headers.entries.joinToString(",") { "${it.key}=${it.value.take(20)}" }}")
