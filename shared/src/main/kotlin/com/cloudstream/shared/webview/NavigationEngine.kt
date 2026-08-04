@@ -992,6 +992,52 @@ class NavigationEngine(
     }
 
     private fun hideXRequestedWithHeader(webView: WebView) {
+        // Approach 0: the supported API — androidx.webkit's origin allow-list.
+        //
+        // The four reflection approaches below target WebView internals that moved years ago; on
+        // WebView 150 they all fail, and the engine has been logging "X-Requested-With may leak" ever
+        // since without anyone reading it. That leak is not cosmetic: verified on-device with curl,
+        // `X-Requested-With: <package>` turns freex2line's 35-byte answer into a 4.5 KB Cloudflare
+        // block page. Intercepted GETs escape it because they are re-issued through
+        // HttpURLConnection; a POST cannot be intercepted, so it goes out wearing the app's name.
+        //
+        // `setRequestedWithHeaderOriginAllowList(emptySet())` means "send it to no origin at all",
+        // which is the only setting that reaches requests the interceptor never sees.
+        //
+        // Reached by reflection on purpose: androidx.webkit may or may not be on the host app's
+        // classpath, and a missing class must degrade to the old behaviour rather than crash the
+        // plugin. Nothing here throws outward.
+        try {
+            val featureCls = Class.forName("androidx.webkit.WebViewFeature")
+            val supported = featureCls
+                .getMethod("isFeatureSupported", String::class.java)
+                .invoke(null, "REQUESTED_WITH_HEADER_ALLOW_LIST") as? Boolean ?: false
+            if (supported) {
+                Class.forName("androidx.webkit.WebSettingsCompat")
+                    .getMethod(
+                        "setRequestedWithHeaderOriginAllowList",
+                        android.webkit.WebSettings::class.java,
+                        Set::class.java
+                    )
+                    .invoke(null, webView.settings, emptySet<String>())
+                ProviderLogger.w(TAG, "hideXRequestedWithHeader",
+                    "✅ X-Requested-With disabled for ALL origins via androidx.webkit " +
+                        "(setRequestedWithHeaderOriginAllowList) — this covers requests the " +
+                        "interceptor cannot touch, POSTs included")
+                return
+            }
+            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
+                "androidx.webkit present but REQUESTED_WITH_HEADER_ALLOW_LIST unsupported by this " +
+                    "WebView — falling through to reflection")
+        } catch (e: ClassNotFoundException) {
+            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
+                "androidx.webkit not on the classpath — cannot use the supported API, falling " +
+                    "through to reflection (which fails on modern WebView; see the leak warning below)")
+        } catch (e: Exception) {
+            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
+                "androidx.webkit attempt failed: ${e.javaClass.simpleName}: ${e.message}")
+        }
+
         try {
             // Approach 1: Direct method on WebView itself (newer Chrome WebViews)
             try {
