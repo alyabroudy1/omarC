@@ -577,14 +577,60 @@ class NavigationEngine(
                                         capturedVideoRequests.isEmpty()
                                 }
 
+                                // Once a **substantive** embed is in hand, stop waiting minutes for a
+                                // stream that is not coming.
+                                //
+                                // 2026-08-05, and this is the spinner the user sees. A VK embed was
+                                // captured 2.7 s into the step with 73,963 chars of its own HTML — the
+                                // good path, the one that yields the whole quality ladder — and the step
+                                // then sat for the rest of its 300 s budget because `streamCaptures`
+                                // stayed 0. It stays 0 because the page's own player never initialises:
+                                // jQuery is one of the assets cimanow refuses (`$ is not defined`), so
+                                // nothing ever asks for video. The embed was already enough; in the
+                                // 09:44 run the identical URL produced three playable links from its
+                                // captured HTML with no request made at all.
+                                //
+                                // The existing comment above is right that a stream is the only honest
+                                // proof of playback — and that "the stream follows the embed within ~2s"
+                                // in the healthy case. So this does not stop waiting, it stops waiting
+                                // *forever*: a short grace after the embed, then hand it over, which the
+                                // code below already treats as a non-failure.
+                                //
+                                // Guarded against rule 21 (an embed is not proof the server works): a VK
+                                // `video_embed_error` page and an ad frame are both small — the ad frames
+                                // in the 08-03 log were 854 chars — so only an embed carrying real markup
+                                // starts the clock.
+                                // Timed from when this loop first *sees* it rather than from a field on the
+                                // capture: the poll interval is a fraction of the grace, so the two are
+                                // the same number, and the shared capture type stays untouched.
+                                fun hasSubstantiveEmbed() = capturedEmbedRequests.any {
+                                    (it.html?.length ?: 0) >= SUBSTANTIVE_EMBED_HTML_CHARS
+                                }
+
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 var lastHeartbeat = 0L
+                                var substantiveEmbedSeenAt = 0L
+                                var embedGraceExpired = false
                                 while (playable().isEmpty() && !dialogDismissedByUser &&
                                     siteRejectedNavigationUrl == null &&
                                     offDestinationNavigationUrl == null && !rendererGone &&
-                                    !inertPage() &&
+                                    !inertPage() && !embedGraceExpired &&
                                     System.currentTimeMillis() < deadline
                                 ) {
+                                    if (substantiveEmbedSeenAt == 0L && hasSubstantiveEmbed()) {
+                                        substantiveEmbedSeenAt = System.currentTimeMillis()
+                                        ProviderLogger.i(TAG, "execute",
+                                            "A substantive embed is in hand — capping the stream wait",
+                                            "graceMs" to EMBED_STREAM_GRACE_MS.toString(),
+                                            "embeds" to capturedEmbedRequests.size.toString())
+                                    }
+                                    if (substantiveEmbedSeenAt > 0L &&
+                                        System.currentTimeMillis() - substantiveEmbedSeenAt >=
+                                        EMBED_STREAM_GRACE_MS
+                                    ) {
+                                        embedGraceExpired = true
+                                        continue
+                                    }
                                     delay(step.pollIntervalMs)
                                     // Heartbeat: without it a stuck surf logs nothing for minutes, so a
                                     // blank page and a page nobody touched look identical afterwards.
@@ -602,6 +648,11 @@ class NavigationEngine(
                                 if (playable().isEmpty()) {
                                     val why = when {
                                         rendererGone -> "render process died — the blank page was a renderer crash"
+                                        embedGraceExpired ->
+                                            "no stream within ${EMBED_STREAM_GRACE_MS}ms of a substantive " +
+                                                "embed — the page's own player never asked for video " +
+                                                "(jQuery is among the assets this site refuses), so the " +
+                                                "embed is the answer rather than a consolation"
                                         inertPage() ->
                                             "the page was served but stayed inert — " +
                                                 "$subresourceRequestsSinceMainFrame subresource request(s) " +
@@ -3822,6 +3873,23 @@ class NavigationEngine(
          * outcomes is not subtle: 2 for the stub cimanow served, 17 and 54 for pages that worked.
          */
         private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
+
+        /**
+         * How long to keep waiting for a stream after a substantive embed has been captured.
+         *
+         * The healthy case needs ~2 s ("the stream follows the embed within ~2s"), and the 09:44 run saw
+         * it at ~10 s. Fifteen covers both with room to spare, against a 300 s budget the user otherwise
+         * spends looking at a spinner.
+         */
+        private const val EMBED_STREAM_GRACE_MS = 15_000L
+
+        /**
+         * Captured-HTML size above which an embed is worth acting on.
+         *
+         * Rule 21's counter-examples are all small: VK's `video_embed_error` page and the ad frames from
+         * the 08-03 log (854 chars). A real player document is tens of KB — the VK embed here was 73,963.
+         */
+        private const val SUBSTANTIVE_EMBED_HTML_CHARS = 5_000
 
         /**
          * Pause before the plain retry of a 403'd asset.
