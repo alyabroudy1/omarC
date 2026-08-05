@@ -45,42 +45,47 @@ interface NavigationSessionPolicy {
      * Last resort for a subresource the engine cannot fetch itself: return its bytes, or null.
      *
      * Called only after the engine's own re-issue has been refused **twice** — once normally and once
-     * with nothing but a browser's minimum headers. At that point the refusal is not about headers:
-     * measured on-device 2026-08-04, cimanow returns 200 to curl for the identical URL under every
-     * header combination the engine sends, and 403 to Android's `HttpURLConnection` every time. It is a
-     * transport fingerprint, and no header rearranging fixes it.
+     * with nothing but a browser's minimum headers. At that point the refusal is not about headers, so an
+     * implementation's only useful move is a different client entirely.
      *
      * Implementations are expected to be **blocking and cached**: this runs on the WebView's request
      * thread, in the middle of a page load, and the same asset must not be fetched twice.
      *
-     * Note on what falling through actually costs, corrected 2026-08-05: the older comment here claimed
-     * cimanow "serves `.js`/`.css` as `text/html`", so that dropping to Chromium guaranteed a MIME
-     * refusal. It does not. Fetched over a transport the site accepts it answers `text/javascript` and
-     * `text/css` correctly; the `text/html` Chromium refuses is the body of the **403 block page**, not a
-     * mislabelled asset. Falling through is therefore neutral — Chromium gets its own chance, and on this
-     * site its stack is the one that works. See [provideCachedSubresource] for the cheap path.
+     * Two corrections from 2026-08-05, both of which cost real time to re-derive:
+     *  - Falling through is **neutral**, not harmful. The older comment claimed cimanow "serves
+     *    `.js`/`.css` as `text/html`" so that dropping to Chromium guaranteed a MIME refusal. It does not:
+     *    over an accepted transport it answers `text/javascript` and `text/css` correctly, and the
+     *    `text/html` Chromium refuses is the body of the 403 block page. Chromium's stack is in fact the
+     *    *best* client available here, so handing the request back is a reasonable outcome, not a loss.
+     *  - It is **not** a transport fingerprint. An in-page `fetch()` from a real WebView on the site's own
+     *    origin — indistinguishable from a browser — is refused too. The variable is the egress IP: from a
+     *    clean address every client gets 200, from a flagged VPN range no client does. A provider hook
+     *    cannot fix that, and should not be extended in the hope that it can.
      *
      * @return body and the Content-Type to serve it as, or null to let Chromium try.
      */
     fun fetchRefusedSubresource(url: String, referer: String?): Pair<String, String>? = null
 
     /**
-     * Bytes the provider **already holds** for a subresource, or null.
+     * A local copy of a subresource the provider can supply without asking the network, or null.
      *
-     * Consulted before any transport is attempted, so a cached asset costs one map lookup and no
-     * network at all. This is the counterpart to [fetchRefusedSubresource]: that one is a last-resort
-     * fetch after two refusals, this one is a pure cache read on the happy path.
+     * Consulted **before any request is made**, which is the entire point: it cannot be refused, cannot
+     * be fingerprinted and cannot be rate-limited, because nothing goes out. That makes it the only
+     * mechanism that still works once a site has decided to block the address rather than the client.
      *
-     * Strictly non-blocking. It runs on the WebView's request thread with a page load waiting on it, so
-     * an implementation must never fetch, and must never touch the network or the disk-slow path in a
-     * way that can stall. Warm the cache elsewhere, off the critical path.
+     * Distinct from [fetchRefusedSubresource] in both timing and cost. That one is a last-resort *fetch*
+     * after two refusals; this one is a lookup on the happy path and must stay that way — it runs on the
+     * WebView's request thread with a page load waiting on it, so an implementation must never touch the
+     * network and never block.
      *
-     * Serving a stylesheet this way is invisible to the page — `document.styleSheets` ends up exactly as
-     * it would in a browser that was allowed to download it. A *refused* stylesheet is the anomaly.
+     * Answering here is invisible to the page: `document.styleSheets` ends up exactly as it would in a
+     * browser that had been allowed to download the file. It is the *refusal* that is the anomaly — a
+     * page throwing MIME errors and `ReferenceError`s looks far less like a browser than one that got
+     * its stylesheet.
      *
-     * @return body and the Content-Type to serve it as, or null if nothing is cached.
+     * @return body and the Content-Type to serve it as, or null to let the normal path continue.
      */
-    fun provideCachedSubresource(url: String): Pair<String, String>? = null
+    fun provideLocalSubresource(url: String): Pair<String, String>? = null
 
     companion object {
         /** Do nothing — the behaviour every caller had before this interface existed. */
