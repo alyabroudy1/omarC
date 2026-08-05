@@ -177,6 +177,12 @@ class NavigationEngine(
         private set
 
     /**
+     * When the current document finished loading, or 0. Used only to age the inert-page test below.
+     */
+    @Volatile
+    private var lastPageFinishedAt = 0L
+
+    /**
      * True while *we* are dismissing the dialog during cleanup.
      *
      * Without it the dismiss listener cannot tell a user's back-press from our own teardown, and logged
@@ -333,6 +339,7 @@ class NavigationEngine(
             lastPageUrl = ""
             siteRejectedNavigationUrl = null
             offDestinationNavigationUrl = null
+            lastPageFinishedAt = 0L
             rendererGone = false
             capturedMainFrameHtml = null
             subresourceRequestsSinceMainFrame = 0
@@ -547,11 +554,35 @@ class NavigationEngine(
                                 // The embed is still what gets resolved first afterwards — it carries
                                 // the quality ladder — and embeds are handed back even when no stream
                                 // ever arrives, so a slow-but-working server is not lost.
+                                // An inert page: served, finished, and then did essentially nothing.
+                                //
+                                // 2026-08-05. cimanow answered the watch page with a stub — the whole
+                                // document pulled 2 subresources (a Cloudflare RUM beacon and a favicon)
+                                // and not one theme asset, where a real watch page pulls 17-54 and an
+                                // embed within seconds. There is no stream coming from that, but the step
+                                // had no way to know, so it sat out its entire budget with a dead page on
+                                // screen. The caller's retry — a Cloudflare solve and a second surf, which
+                                // is the one thing that might actually help — only runs after this returns.
+                                //
+                                // Aged deliberately: the count is read a few seconds *after*
+                                // `onPageFinished`, never at it, because a healthy page is still adding
+                                // requests as it finishes. Requiring zero embeds and zero captures too
+                                // means a slow-but-working server can never trip it.
+                                fun inertPage(): Boolean {
+                                    val finishedAt = lastPageFinishedAt
+                                    return finishedAt > 0L &&
+                                        System.currentTimeMillis() - finishedAt >= INERT_PAGE_GRACE_MS &&
+                                        subresourceRequestsSinceMainFrame < INERT_PAGE_SUBRESOURCE_FLOOR &&
+                                        capturedEmbedRequests.isEmpty() &&
+                                        capturedVideoRequests.isEmpty()
+                                }
+
                                 val deadline = System.currentTimeMillis() + step.timeoutMs
                                 var lastHeartbeat = 0L
                                 while (playable().isEmpty() && !dialogDismissedByUser &&
                                     siteRejectedNavigationUrl == null &&
                                     offDestinationNavigationUrl == null && !rendererGone &&
+                                    !inertPage() &&
                                     System.currentTimeMillis() < deadline
                                 ) {
                                     delay(step.pollIntervalMs)
@@ -571,6 +602,12 @@ class NavigationEngine(
                                 if (playable().isEmpty()) {
                                     val why = when {
                                         rendererGone -> "render process died — the blank page was a renderer crash"
+                                        inertPage() ->
+                                            "the page was served but stayed inert — " +
+                                                "$subresourceRequestsSinceMainFrame subresource request(s) " +
+                                                "and no embed, where a working watch page makes 17-54. The " +
+                                                "site handed us a stub, so no stream was ever coming; " +
+                                                "bailing out early instead of waiting ${step.timeoutMs}ms"
                                         siteRejectedNavigationUrl != null ->
                                             "site sent us to ${siteRejectedNavigationUrl} — title blocked or session rejected"
                                         offDestinationNavigationUrl != null ->
@@ -1437,6 +1474,7 @@ class NavigationEngine(
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (url != null) lastPageUrl = url
+                lastPageFinishedAt = System.currentTimeMillis()
                 ProviderLogger.i(TAG, "onPageFinished", "URL=${url}")
                 // === PAGE STATE, READ ENTIRELY FROM OUR SIDE OF THE BOUNDARY ===
                 //
@@ -3769,6 +3807,21 @@ class NavigationEngine(
          * real block page runs to — this is a diagnostic, not a copy of the response.
          */
         private const val CHALLENGE_BODY_PREVIEW_CHARS = 4096
+
+        /**
+         * How long after `onPageFinished` before a quiet page counts as inert.
+         *
+         * Long enough that a healthy page has unmistakably declared itself — the observed working runs
+         * had 17 and 54 subresource requests logged within a second of finishing — and short enough that
+         * a stub costs seconds instead of the step's whole budget.
+         */
+        private const val INERT_PAGE_GRACE_MS = 8_000L
+
+        /**
+         * Subresource count below which a finished page is considered a stub. The gap between the two
+         * outcomes is not subtle: 2 for the stub cimanow served, 17 and 54 for pages that worked.
+         */
+        private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
 
         /**
          * Pause before the plain retry of a 403'd asset.
