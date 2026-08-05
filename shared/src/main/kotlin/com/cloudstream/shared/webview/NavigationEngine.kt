@@ -3863,10 +3863,15 @@ class NavigationEngine(
          * How long after `onPageFinished` before a quiet page counts as inert.
          *
          * Long enough that a healthy page has unmistakably declared itself — the observed working runs
-         * had 17 and 54 subresource requests logged within a second of finishing — and short enough that
-         * a stub costs seconds instead of the step's whole budget.
+         * had 17, 25 and 54 subresource requests logged within a second of finishing — and short enough
+         * that a stub costs seconds instead of the step's whole budget.
+         *
+         * Was 8 s. Cut to 5 s because the gap it discriminates on is not marginal (2 against 17-54, so a
+         * healthy page is never near the floor) and because 8 s put the exit *past the end of a typical
+         * logcat capture*: the 13:15 run's stub page finished at :22.2 and the log stopped at :27.8,
+         * 2.4 s short of the bail-out. A fix nobody can see in the log gets re-debugged from scratch.
          */
-        private const val INERT_PAGE_GRACE_MS = 8_000L
+        private const val INERT_PAGE_GRACE_MS = 5_000L
 
         /**
          * Subresource count below which a finished page is considered a stub. The gap between the two
