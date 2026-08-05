@@ -1213,24 +1213,46 @@ class CimaNowProvider : BaseProvider() {
                 // that is the destination and not an ad: take it out of the sink and put it on screen.
                 // Costs nothing when it never fires.
                 promotePopupsMatching = PLAYER_PAGE_PATTERN,
-                // Capture get-link.php's response on the freex page — see FREEX_LINK_CAPTURE_JS. The
-                // host guard is what keeps it away from cimanow, where wrapping anything is fatal.
-                // OFF as of 2026-08-04 15:33 — the page defeated it, so all it does now is expose us.
+                // ON, freex only — and for the header, not for the response. See FREEX_LINK_CAPTURE_JS.
                 //
-                // That run logged three CSHOOK lines and nothing else: `xhr wrapped`, `fetch wrapped`,
-                // `installed`. Not one of the page's many requests passed through either wrapper, while
-                // the engine's own interceptor saw them all — including the mint POST. A page whose
-                // requests bypass a wrapper on `window.fetch` is using a pristine global, which is what
-                // you get by pulling `fetch` out of a freshly created iframe. Same update moved the
-                // button to `javascript:void(0)`, changed the mint body from multipart to urlencoded,
-                // and grew the page from 252 KB to 453 KB.
+                // **What this is actually for (2026-08-05).** The mint call fails before it is sent.
+                // `NavigationEngine`'s interceptor quietly rewrites `X-Requested-With` on every request
+                // it re-issues, and the on-device curl matrix at NavigationEngine.kt:2503 says what that
+                // header is worth on freex: the app's package name or an empty value → 403 block page;
+                // `XMLHttpRequest` or a single space → 200 and the 35-byte link. `get-link.php` became a
+                // POST, a POST cannot be intercepted (no body on `WebResourceRequest`), so it is the one
+                // request that goes out wearing the package name — and comes back a block page. The
+                // page's own handler then has no URL, which is why the button is inert, why no tap ever
+                // produces a main-frame hop, and why nothing downstream of it has ever fired. That is
+                // also the difference from 2026-07-30, when the call was a GET and the interceptor was
+                // fixing the header without anyone noticing.
                 //
-                // Since it cannot capture anything, the only thing it still does is mutate a page that
-                // is now demonstrably looking for tampering. Rule 28's logic applies: no benefit, real
-                // exposure. `FREEX_LINK_CAPTURE_JS` is kept for the record and for the day the page's
-                // own code is back in reach.
-                earlyInjectJs = null,
-                earlyInjectOnHosts = null
+                // The engine already has the correct fix — `setRequestedWithHeaderOriginAllowList`,
+                // which reaches requests the interceptor never sees. It cannot run here:
+                // `androidx.webkit` is not on the device. Declaring it as a dependency does not put it
+                // there either; the CloudStream gradle plugin dexes project classes only (see the note
+                // in this module's build.gradle.kts). So the header cannot be fixed from our side of
+                // the boundary at all.
+                //
+                // It can be fixed from the page's side. Chromium appends `X-Requested-With` only when
+                // the request does not already carry one, so the hook setting it explicitly on the
+                // page's OWN xhr/fetch — before `send()`, which is where `setRequestHeader` is legal —
+                // is enough to keep the package name off it. Reading the response is now the secondary
+                // benefit: `land()` navigates the top frame if the answer is a URL, and retries once
+                // with the header forced if it recognises a block page.
+                //
+                // Why it is worth another attempt after 2026-08-04 15:33 turned it off: that run's
+                // diagnosis — "the page's requests bypass a wrapper on `window.fetch`, which is what
+                // you get by pulling `fetch` out of a freshly created iframe" — was correct, and is
+                // exactly what the rewrite addresses. `wrapRealm` now follows the page into child
+                // realms via the `contentWindow` getter, node insertion and a sweep. The exposure
+                // argument was also weakened by that same run: the button went inert with **no injected
+                // code at all**, so whatever kills it is not a reaction to us.
+                //
+                // Still freex-only, enforced by the host guard. Never cimanow: wrapping a native there
+                // is what rule 3 is about.
+                earlyInjectJs = FREEX_LINK_CAPTURE_JS,
+                earlyInjectOnHosts = Regex("""freex2line\.online""")
             )
             val challenges = navResult.interceptChallenges
             val producedCandidates = navResult.capturedEmbedRequests.isNotEmpty() ||
