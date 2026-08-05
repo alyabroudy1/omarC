@@ -1716,7 +1716,53 @@ class NavigationEngine(
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
                 val isGetLink = path.contains("get-link.php") && !isCfChallenge
                 val isAjaxEndpoint = path.contains("core.php") && !isCfChallenge
-                val isAsset = (path.endsWith(".js") || path.endsWith(".css")) && !isCfChallenge
+                val isScriptAsset = path.endsWith(".js") && !isCfChallenge
+                val isStyleAsset = path.endsWith(".css") && !isCfChallenge
+
+                // Bytes we already have, served before any transport is tried.
+                //
+                // This is the whole happy path for an asset the site will not sell us: no network, no
+                // ladder, no MIME guessing. It is also why the check sits above the interception block
+                // rather than inside its failure handling — by the time the ladder has run, a page load
+                // has already been held up for a second or more for nothing.
+                if (isProtectedDomain && (isScriptAsset || isStyleAsset)) {
+                    val cached = try {
+                        sessionPolicy.provideCachedSubresource(reqUrl)
+                    } catch (e: Exception) {
+                        ProviderLogger.w(TAG, "shouldInterceptRequest",
+                            "Cached subresource lookup threw: ${e.message}")
+                        null
+                    }
+                    if (cached != null && cached.first.isNotEmpty()) {
+                        ProviderLogger.i(TAG, "shouldInterceptRequest",
+                            "🗃 Served from the provider's asset cache — no request made",
+                            "url" to reqUrl.takeLast(70),
+                            "bytes" to cached.first.length.toString(),
+                            "mime" to cached.second)
+                        return WebResourceResponse(
+                            cached.second, "utf-8",
+                            java.io.ByteArrayInputStream(cached.first.toByteArray(Charsets.UTF_8))
+                        )
+                    }
+                }
+
+                // cimanow's stylesheet is deliberately NOT routed through the interception ladder below.
+                //
+                // Verified 2026-08-05 against `/wp-content/themes/Cima Now New/Assets/…`: this app's
+                // transports cannot fetch it at all. `HttpURLConnection`, OkHttp, desktop curl and
+                // Playwright's Node client each receive the site's own 403 page — 127 KB,
+                // `<title>ستوب! المخرج عايز كدة</title>`, `cache-control: private, no-store` — while any
+                // request from a real Chromium stack gets 200 with the correct `text/css`, cache HIT and
+                // MISS alike, with or without cookies, `Referer` or a matching UA. Headers are not the
+                // variable; the transport is.
+                //
+                // So interception here had exactly one outcome: ~1.2 s spent per file walking
+                // intercept → 403 → retry → 403 → provider → 403, and then Chromium inherits the attempt
+                // anyway. Handing it straight to Chromium keeps the one stack that works, and costs
+                // nothing when it fails. `.js` is untouched — the watch page's scripts stay on the exact
+                // path that currently produces working streams. freex2line's `.css` is untouched too: its
+                // timer page intercepts cleanly today (`INTERCEPTED …/styleMob.css (text/css)`).
+                val isAsset = isScriptAsset || (isStyleAsset && !isCimaDomain)
 
                 // Intercept get-link.php with spoofed headers so the page's JS gets the
                 // watching URL. Also intercept assets, AJAX calls, header leaks, and

@@ -1,6 +1,7 @@
 package com.cimanow
 
 import com.lagradost.api.Log
+import kotlinx.coroutines.launch
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.webview.InterceptChallenge
@@ -81,19 +82,40 @@ class CimaNowNavigationPolicy(
     }
 
     /**
-     * Fetches an asset cimanow refused us, through Chromium's own network stack.
+     * Serves an asset from [CimaNowAssetCache] — bytes already fetched over a transport cimanow accepts.
      *
-     * The engine has already tried twice by the time this runs, and the refusal is a transport
-     * fingerprint rather than a header problem — verified on-device: identical URL, identical UA,
-     * curl gets 200 `text/javascript` under every header combination the engine sends, Android's
-     * `HttpURLConnection` gets 403 every time. So this tries a third transport, OkHttp.
+     * Consulted before the engine attempts anything, so a warm cache means the page's `<link>` resolves
+     * with no request at all. Only the stylesheet is ever cached (see [CimaNowAssetCache.warm]); a `.js`
+     * lookup falls straight through, which is deliberate — the watch page's scripts stay on exactly the
+     * path that currently produces working streams.
+     */
+    override fun provideCachedSubresource(url: String): Pair<String, String>? {
+        val path = try {
+            java.net.URI(url).path?.lowercase() ?: ""
+        } catch (_: Exception) { "" }
+        if (!path.endsWith(".css")) return null
+        val body = CimaNowAssetCache.get(url) ?: return null
+        return body to "text/css"
+    }
+
+    /**
+     * Last resort for a `.js` the engine could not fetch: try OkHttp, a transport it has not used yet.
      *
-     * Only `.js`, `.css` and `.json` — the file types whose `Content-Type` cimanow deliberately
-     * mislabels as `text/html` and which Chromium therefore refuses. Everything else is left alone:
-     * an image that renders from Chromium's own fetch needs no help from us.
+     * Reached only after the engine's own re-issue has been refused twice. On current evidence it will
+     * not succeed either — see [CimaNowAssetCache] for the 2026-08-05 measurements showing that *every*
+     * transport this app owns gets cimanow's 403 page while any real-Chromium request gets 200 — but it
+     * is cheap, it is the only thing standing between a refusal and a bare fall-through, and it costs
+     * nothing on a healthy asset.
      *
-     * Cached because this blocks a page load: the same four files are requested on every watch page,
-     * and each Chrome-TLS fetch costs a second or two on a serialised WebView.
+     * Two claims that used to live in this comment were wrong and are recorded here so they are not
+     * re-derived:
+     *  - *"curl gets 200 under every header combination."* Not any more. Curl is refused on every cimanow
+     *    path, the homepage included. What gets 200 is a real Chromium network stack, nothing else.
+     *  - *"cimanow mislabels `.js`/`.css` as `text/html`."* It does not. Over an accepted transport it
+     *    answers `text/javascript` and `text/css` correctly. The `text/html` Chromium refuses is the body
+     *    of the 403 block page (`<title>ستوب! المخرج عايز كدة</title>`), not a mislabelled asset.
+     *
+     * Cached because this blocks a page load: the same files are requested on every watch page.
      */
     override fun fetchRefusedSubresource(url: String, referer: String?): Pair<String, String>? {
         val path = try {
@@ -146,8 +168,8 @@ class CimaNowNavigationPolicy(
         }
 
         if (body.isNullOrEmpty()) {
-            Log.w(TAG, "❌ Chrome-TLS asset fetch returned nothing for ${url.takeLast(60)} — " +
-                "letting Chromium try (it will be refused for MIME, so expect no styling)")
+            Log.w(TAG, "❌ OkHttp asset fetch returned nothing for ${url.takeLast(60)} — letting " +
+                "Chromium try, which is the stack that actually works on this site")
             return null
         }
         // A block page would be HTML, and serving that as JavaScript is worse than serving nothing:
@@ -155,12 +177,12 @@ class CimaNowNavigationPolicy(
         // first version of this method — which used ChromiumFetcher — from serving `<pre>`-wrapped
         // markup as a script.
         if (body.trimStart().startsWith("<", ignoreCase = true)) {
-            Log.w(TAG, "❌ Chrome-TLS returned HTML for an asset (${body.length} chars) — refusing to " +
-                "serve markup as $mime: ${url.takeLast(60)}")
+            Log.w(TAG, "❌ OkHttp returned HTML for an asset (${body.length} chars) — that is the block " +
+                "page, and serving markup as $mime is worse than serving nothing: ${url.takeLast(60)}")
             return null
         }
         assetCache[url] = body
-        Log.i(TAG, "✅ Chrome-TLS fetched the refused asset (${body.length} chars) as $mime: " +
+        Log.i(TAG, "✅ OkHttp fetched the refused asset (${body.length} chars) as $mime: " +
             url.takeLast(60))
         return body to mime
     }
@@ -179,6 +201,217 @@ class CimaNowNavigationPolicy(
          * every watch page, and re-fetching them per title would multiply the cost by every play.
          */
         private val assetCache = java.util.Collections.synchronizedMap(HashMap<String, String>())
+    }
+}
+
+/**
+ * The theme stylesheet, fetched once through the only transport cimanow accepts and kept on disk.
+ *
+ * ## Why a cache and not a fetch
+ *
+ * The watch page renders unstyled because exactly one file is missing:
+ * `…/Assets/css/animate.css` — misleadingly named, it is the theme's *entire* stylesheet, 72 KB
+ * including the `@font-face` rules for "Cima Now Bold". (The 30 KB of inline `<style>` in the document
+ * does arrive, which is why the page is laid out but bare.)
+ *
+ * Measured 2026-08-05, the same URL over five clients:
+ *
+ * | client                              | result                        |
+ * |-------------------------------------|-------------------------------|
+ * | real Chromium network stack         | `200 text/css` (HIT and MISS) |
+ * | Android `HttpURLConnection`         | `403` block page              |
+ * | OkHttp                              | `403` block page              |
+ * | desktop curl                        | `403` block page              |
+ * | Playwright's Node client            | `403` block page              |
+ *
+ * Invariant under UA (device, desktop, none), cookies, `Referer`, referrer-policy, `Sec-Fetch-*`, and
+ * `<link>` vs `fetch()`. Only the transport moves it. So the bytes have to come from a Chromium stack,
+ * and [ChromiumFetcher.fetchSameOriginText] is how: a cheap document on cimanow's origin, then the
+ * page's own `fetch()`.
+ *
+ * ## Why warming is off the critical path
+ *
+ * Nothing here runs while the watch page is loading. [warm] is called after the surf has already
+ * produced its links, in a *separate* WebView — the watch page is never touched, never has JS injected,
+ * and never waits on us. The consequence is honest and worth stating: **the first ever play of a title
+ * is unstyled**, and every play after it is styled, on any title, until the site bumps `?v=`. Keying on
+ * the full URL is what makes that self-updating — a new `?v=` is simply a new key with no entry.
+ */
+object CimaNowAssetCache {
+    private const val TAG = "CimaNowAssets"
+
+    /** Served from here on the request thread. A disk read happens at most once per URL per process. */
+    private val memory = java.util.Collections.synchronizedMap(HashMap<String, String>())
+
+    /** URLs already looked for and not found, so a cold asset costs one disk stat, not one per request. */
+    private val absent = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /**
+     * Bytes for [url], or null. Safe to call on the WebView's request thread: memory first, then at most
+     * one disk read, then a negative marker so the miss is never paid twice.
+     */
+    fun get(url: String): String? {
+        memory[url]?.let { return it }
+        if (absent.contains(url)) return null
+        val file = fileFor(url)
+        if (file == null || !file.isFile || file.length() == 0L) {
+            absent.add(url)
+            return null
+        }
+        return try {
+            val body = file.readText()
+            if (body.isEmpty()) {
+                absent.add(url)
+                null
+            } else {
+                memory[url] = body
+                Log.i(TAG, "Loaded ${body.length} chars from disk for ${url.takeLast(60)}")
+                body
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Disk read failed for ${url.takeLast(60)}: ${e.message}")
+            absent.add(url)
+            null
+        }
+    }
+
+    /**
+     * Fetches and stores any of [assetUrls] not already held. Returns how many were newly cached.
+     *
+     * Only stylesheets are considered. Scripts are deliberately excluded: substituting one would change
+     * what runs on the watch page, and the extraction works as it stands.
+     *
+     * Never throws and never blocks anything that matters — call it fire-and-forget after the links are
+     * already in hand.
+     */
+    suspend fun warm(
+        assetUrls: List<String>,
+        fetcher: com.cloudstream.shared.network.ChromiumFetcher,
+        userAgent: String?,
+        fallbackOriginUrl: String? = null
+    ): Int {
+        val wanted = assetUrls
+            .filter { it.substringBefore('?').endsWith(".css", ignoreCase = true) }
+            .distinct()
+            .filter { get(it) == null }
+        if (wanted.isEmpty()) return 0
+
+        // Two origins, cheapest first. `/robots.txt` is the smallest same-origin document cimanow has and
+        // a text/plain viewer is still a real document with a working `fetch()` — but it is unverified,
+        // so a page known to load is kept behind it. The movie page is heavy and *proven*: an in-page
+        // fetch from it is the measurement this whole mechanism is built on.
+        val origins = buildList {
+            try {
+                val u = java.net.URI(wanted.first())
+                add("${u.scheme}://${u.host}/robots.txt")
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot derive an origin from ${wanted.first().take(60)}: ${e.message}")
+            }
+            fallbackOriginUrl?.let { add(it) }
+        }
+        if (origins.isEmpty()) return 0
+
+        var fetched: Map<String, String> = emptyMap()
+        for (origin in origins) {
+            Log.i(TAG, "🔥 Warming ${wanted.size} stylesheet(s) via the Chromium stack, " +
+                "origin=${origin.take(90)}")
+            fetched = try {
+                fetcher.fetchSameOriginText(
+                    originUrl = origin,
+                    assetUrls = wanted,
+                    headers = buildMap { userAgent?.let { put("User-Agent", it) } },
+                    // A 200 is not proof: a block page, an interstitial or a MITM proxy will all answer
+                    // 200 with HTML for a .css URL. Observed 2026-08-05 — a proxy returned 563 KB of
+                    // `<!DOCTYPE html>` as a 200 for this exact stylesheet.
+                    requireContentTypeContains = "css"
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Warm via ${origin.take(60)} failed: ${e.message}")
+                emptyMap()
+            }
+            if (fetched.isNotEmpty()) break
+            Log.w(TAG, "Nothing came back via ${origin.take(60)}" +
+                if (origin != origins.last()) " — trying the next origin" else "")
+        }
+        if (fetched.isEmpty()) return 0
+
+        var stored = 0
+        for ((url, body) in fetched) {
+            // Belt and braces alongside the Content-Type gate. Caching markup as CSS would render as
+            // nothing forever, and with the request gone there would be no signal left to explain it.
+            if (body.trimStart().startsWith("<")) {
+                Log.w(TAG, "Refusing to cache markup as CSS (${body.length} chars): ${url.takeLast(60)}")
+                continue
+            }
+            memory[url] = body
+            absent.remove(url)
+            stored++
+            val file = fileFor(url)
+            if (file == null) continue
+            try {
+                file.parentFile?.mkdirs()
+                file.writeText(body)
+                Log.i(TAG, "💾 Cached ${body.length} chars → ${file.name} for ${url.takeLast(60)}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Disk write failed for ${url.takeLast(60)}: ${e.message}")
+            }
+        }
+        Log.i(TAG, "🔥 Warm done: $stored/${wanted.size} stylesheet(s) now cached")
+        return stored
+    }
+
+    /**
+     * Fire-and-forget [warm]. Returns immediately; nothing in the play path waits on the result.
+     *
+     * Deliberately not tied to the caller's scope — `loadLinks` is finishing when this is called and
+     * cancelling the warm along with it would mean the cache never fills. At most one warm runs at a
+     * time, and a fully warm cache costs a list filter and returns without launching anything.
+     */
+    fun warmAsync(
+        assetUrls: List<String>,
+        fetcher: com.cloudstream.shared.network.ChromiumFetcher,
+        userAgent: String?,
+        fallbackOriginUrl: String? = null
+    ) {
+        if (warming) return
+        val wanted = assetUrls.filter {
+            it.substringBefore('?').endsWith(".css", ignoreCase = true) && get(it) == null
+        }
+        if (wanted.isEmpty()) return
+        warming = true
+        scope.launch {
+            try {
+                warm(wanted, fetcher, userAgent, fallbackOriginUrl)
+            } catch (e: Exception) {
+                Log.w(TAG, "Async warm threw: ${e.message}")
+            } finally {
+                warming = false
+            }
+        }
+    }
+
+    @Volatile
+    private var warming = false
+
+    /** Main dispatcher: [ChromiumFetcher] requires it, and the work inside suspends rather than blocks. */
+    private val scope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+    )
+
+    private fun fileFor(url: String): java.io.File? {
+        val ctx = com.cloudstream.shared.android.PluginContext.context ?: return null
+        return try {
+            java.io.File(ctx.cacheDir, "cimanow_asset_${hash(url)}.css")
+        } catch (_: Exception) { null }
+    }
+
+    /** Full URL in, stable filename out — the `?v=` is part of the identity, so a bump misses cleanly. */
+    private fun hash(url: String): String = try {
+        java.security.MessageDigest.getInstance("SHA-1")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+        url.hashCode().toUInt().toString(16)
     }
 }
 

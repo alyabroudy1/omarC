@@ -1263,6 +1263,22 @@ class CimaNowProvider : BaseProvider() {
                         "${it.statusCode}${if (it.isCloudflare) "/CF" else ""} ${it.url.take(60)}"
                     })
             }
+            // The watch page renders unstyled because its one real stylesheet is refused to every
+            // transport this app owns. Fetch it now, through a Chromium stack, in a WebView that has
+            // nothing to do with the watch page — the surf is already over and its links are already in
+            // hand, so this costs the user nothing and touches nothing that just worked. The next play
+            // serves it from cache and the page comes up styled. See CimaNowAssetCache.
+            if (themeStylesheetUrls.isNotEmpty()) {
+                CimaNowAssetCache.warmAsync(
+                    assetUrls = themeStylesheetUrls,
+                    fetcher = httpService.chromiumFetcher,
+                    userAgent = com.cloudstream.shared.util.WebConfig.getCachedUserAgent(),
+                    // Behind /robots.txt: heavier, but this is the document an in-page fetch was actually
+                    // measured against, so it is the one that must not be guessed at.
+                    fallbackOriginUrl = movieUrl
+                )
+            }
+
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
             Log.i(TAG_SURF, "Captured: ${navResult.capturedEmbedRequests.size} embed(s), " +
@@ -2245,6 +2261,40 @@ class CimaNowProvider : BaseProvider() {
     }
 
     /**
+     * Stylesheet URLs seen on the last cimanow page fetched over HTTP, for [CimaNowAssetCache].
+     *
+     * Read off the movie page rather than the watch page for two reasons: the theme is site-wide so the
+     * `href` (including its `?v=`) is identical on both, and the movie page HTML is already in hand here
+     * over a session that worked. The watch page's own HTML is not available — its main frame is refused
+     * through interception and served by Chromium, whose response the engine cannot see.
+     */
+    @Volatile
+    private var themeStylesheetUrls: List<String> = emptyList()
+
+    /**
+     * cimanow's own `.css` links, absolute, in document order.
+     *
+     * Restricted to cimanow hosts: fontawesome and jsdelivr load fine on their own and need no help.
+     */
+    private fun extractStylesheetUrls(html: String): List<String> {
+        if (html.isEmpty()) return emptyList()
+        val hrefPattern = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        return Regex("""<link\b[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(html)
+            .map { it.value }
+            .filter { it.contains("stylesheet", ignoreCase = true) }
+            .mapNotNull { hrefPattern.find(it)?.groupValues?.getOrNull(1) }
+            // Jsoup's outerHtml re-escapes the entity, and `&amp;v=` is a different cache key.
+            .map { it.replace("&amp;", "&").trim() }
+            .filter { url ->
+                url.contains("cimanow", ignoreCase = true) &&
+                    url.substringBefore('?').endsWith(".css", ignoreCase = true)
+            }
+            .distinct()
+            .toList()
+    }
+
+    /**
      * The first `freex2line` link in a page — the "loadon" hop that starts the token chain.
      *
      * Kept as a function so the caller can try it against several bodies (cache-busted, plain,
@@ -2313,6 +2363,15 @@ class CimaNowProvider : BaseProvider() {
             val movieDoc = fetched.first
             val movieHtml = fetched.second
             var freexUrl = fetched.third
+
+            // Noted now, fetched later. The warm needs the exact `?v=`, and this is the only place in the
+            // flow holding cimanow HTML that arrived intact.
+            themeStylesheetUrls = extractStylesheetUrls(movieHtml).also {
+                if (it.isNotEmpty()) {
+                    Log.i(TAG_HT, "Theme stylesheet(s) for the asset cache: " +
+                        it.joinToString(", ") { url -> url.takeLast(70) })
+                }
+            }
 
             // Last resort: the link may be inside the page's encoded payload rather than the markup.
             if (freexUrl == null && movieDoc != null) {

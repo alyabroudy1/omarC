@@ -50,17 +50,37 @@ interface NavigationSessionPolicy {
      * header combination the engine sends, and 403 to Android's `HttpURLConnection` every time. It is a
      * transport fingerprint, and no header rearranging fixes it.
      *
-     * Why it matters enough to have a hook: falling through is not neutral. Chromium then fetches the
-     * asset itself and cimanow serves `.js`/`.css` as `text/html`, so strict MIME checking refuses it —
-     * which is how jQuery went missing, leaving the watch page unstyled and its lazy-loaded player
-     * needing a manual scroll to appear.
-     *
      * Implementations are expected to be **blocking and cached**: this runs on the WebView's request
      * thread, in the middle of a page load, and the same asset must not be fetched twice.
+     *
+     * Note on what falling through actually costs, corrected 2026-08-05: the older comment here claimed
+     * cimanow "serves `.js`/`.css` as `text/html`", so that dropping to Chromium guaranteed a MIME
+     * refusal. It does not. Fetched over a transport the site accepts it answers `text/javascript` and
+     * `text/css` correctly; the `text/html` Chromium refuses is the body of the **403 block page**, not a
+     * mislabelled asset. Falling through is therefore neutral — Chromium gets its own chance, and on this
+     * site its stack is the one that works. See [provideCachedSubresource] for the cheap path.
      *
      * @return body and the Content-Type to serve it as, or null to let Chromium try.
      */
     fun fetchRefusedSubresource(url: String, referer: String?): Pair<String, String>? = null
+
+    /**
+     * Bytes the provider **already holds** for a subresource, or null.
+     *
+     * Consulted before any transport is attempted, so a cached asset costs one map lookup and no
+     * network at all. This is the counterpart to [fetchRefusedSubresource]: that one is a last-resort
+     * fetch after two refusals, this one is a pure cache read on the happy path.
+     *
+     * Strictly non-blocking. It runs on the WebView's request thread with a page load waiting on it, so
+     * an implementation must never fetch, and must never touch the network or the disk-slow path in a
+     * way that can stall. Warm the cache elsewhere, off the critical path.
+     *
+     * Serving a stylesheet this way is invisible to the page — `document.styleSheets` ends up exactly as
+     * it would in a browser that was allowed to download it. A *refused* stylesheet is the anomaly.
+     *
+     * @return body and the Content-Type to serve it as, or null if nothing is cached.
+     */
+    fun provideCachedSubresource(url: String): Pair<String, String>? = null
 
     companion object {
         /** Do nothing — the behaviour every caller had before this interface existed. */
