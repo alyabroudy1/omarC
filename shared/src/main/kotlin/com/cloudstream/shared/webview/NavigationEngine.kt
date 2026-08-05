@@ -1178,6 +1178,107 @@ class NavigationEngine(
         }
     }
 
+    /**
+     * The headers Chromium adds **after** it hands us the request, which we therefore cannot copy.
+     *
+     * `WebResourceRequest.getRequestHeaders()` is a snapshot taken before the network stack runs. The
+     * fetch-metadata set (`Sec-Fetch-Site`, `-Mode`, `-Dest`, `-User`) and `Accept-Language` are added
+     * downstream of that snapshot, so a re-issue built by copying `requestHeaders` and adding
+     * `sec-ch-ua` produces a request that is missing every one of them. Every real browser sends them
+     * on every request; nothing else does. It is a cheaper bot check than a TLS fingerprint and a
+     * server can do it in one line of PHP.
+     *
+     * Found on 2026-08-05: with the mint call finally answering, the surf reached
+     * `cimanow.cc/<slug>/watching/?token=…` — and our re-issue of that main frame came back **403**
+     * with cimanow's own Arabic block page (`<title>ستوب! المخرج`), `cloudflare=false`, on a token
+     * minted 300 ms earlier and never used. The engine then fell through to Chromium, whose request
+     * carries the right fetch metadata but the wrong `sec-ch-ua`, and that load produced two
+     * subresources — both Cloudflare-injected — i.e. the block page again.
+     *
+     * `Sec-Fetch-Site` matters most here and is worth getting right rather than hard-coding: the
+     * legitimate path into this page *is* a cross-site link from the freex countdown, so `cross-site`
+     * is both the honest value and the one the gate is looking for. It is computed from the Referer
+     * against the target, so a same-origin re-issue still says `same-origin`.
+     *
+     * `Sec-Fetch-User: ?1` goes on main-frame navigations only. Strictly it marks a navigation with
+     * user activation, and ours is script-initiated (`location.href` from the capture hook) — but the
+     * flow it stands in for is the user tapping the watch button, which is exactly the request the
+     * site expects to serve.
+     *
+     * **`Accept-Encoding` is deliberately not touched.** `HttpURLConnection` sets `gzip` itself and
+     * decompresses transparently only while it owns the header; setting it by hand to Chrome's
+     * `gzip, deflate, br, zstd` hands back a body we cannot decode.
+     *
+     * Nothing here overwrites a header the caller already set.
+     */
+    private fun applyBrowserFetchHeaders(
+        conn: java.net.HttpURLConnection,
+        requestUrl: String,
+        referer: String?,
+        isMainFrame: Boolean,
+        path: String,
+        hasOriginHeader: Boolean
+    ) {
+        fun absent(name: String) = conn.getRequestProperty(name).isNullOrBlank()
+
+        if (absent("Accept-Language")) {
+            val loc = java.util.Locale.getDefault()
+            val tag = if (loc.country.isNullOrBlank()) loc.language else "${loc.language}-${loc.country}"
+            val header = if (loc.language.equals("en", true)) "$tag,${loc.language};q=0.9"
+            else "$tag,${loc.language};q=0.9,en-US;q=0.8,en;q=0.7"
+            conn.setRequestProperty("Accept-Language", header)
+        }
+
+        // Approximate registrable domain: the last two labels. A full public-suffix list is overkill
+        // for distinguishing `cimanow.cc` from `freex2line.online`, and being wrong on a rare
+        // multi-part TLD only downgrades `same-site` to `cross-site`.
+        fun originOf(u: String): Triple<String, String, Int>? = try {
+            val x = java.net.URI(u)
+            if (x.host == null) null else Triple(x.scheme ?: "", x.host.lowercase(), x.port)
+        } catch (_: Exception) { null }
+        fun registrable(host: String) = host.split('.').takeLast(2).joinToString(".")
+
+        if (absent("Sec-Fetch-Site")) {
+            val here = originOf(requestUrl)
+            val from = referer?.takeIf { it.isNotBlank() }?.let { originOf(it) }
+            val site = when {
+                from == null || here == null -> "none"
+                from == here -> "same-origin"
+                registrable(from.second) == registrable(here.second) -> "same-site"
+                else -> "cross-site"
+            }
+            conn.setRequestProperty("Sec-Fetch-Site", site)
+        }
+
+        if (isMainFrame) {
+            if (absent("Sec-Fetch-Mode")) conn.setRequestProperty("Sec-Fetch-Mode", "navigate")
+            if (absent("Sec-Fetch-Dest")) conn.setRequestProperty("Sec-Fetch-Dest", "document")
+            if (absent("Sec-Fetch-User")) conn.setRequestProperty("Sec-Fetch-User", "?1")
+            return
+        }
+
+        // Subresources. `Dest` comes from the extension because that is what the tag that requested it
+        // implies; `Mode` follows from whether Chromium attached an `Origin`, which it does for CORS
+        // requests and not for a plain `<script src>` or `<img>`.
+        val p = path.substringBefore('?').lowercase()
+        val dest = when {
+            p.endsWith(".js") || p.endsWith(".mjs") -> "script"
+            p.endsWith(".css") -> "style"
+            p.endsWith(".png") || p.endsWith(".jpg") || p.endsWith(".jpeg") ||
+                p.endsWith(".gif") || p.endsWith(".webp") || p.endsWith(".avif") ||
+                p.endsWith(".svg") || p.endsWith(".ico") -> "image"
+            p.endsWith(".woff") || p.endsWith(".woff2") || p.endsWith(".ttf") || p.endsWith(".otf") -> "font"
+            else -> "empty"
+        }
+        if (absent("Sec-Fetch-Dest")) conn.setRequestProperty("Sec-Fetch-Dest", dest)
+        if (absent("Sec-Fetch-Mode")) {
+            conn.setRequestProperty(
+                "Sec-Fetch-Mode",
+                if (hasOriginHeader || dest == "empty" || dest == "font") "cors" else "no-cors"
+            )
+        }
+    }
+
     private fun fetchEmbedDocument(
         url: String,
         reqHeaders: Map<String, String>,
@@ -1692,6 +1793,19 @@ class NavigationEngine(
                         if (!cookies.isNullOrBlank()) {
                             conn.setRequestProperty("Cookie", cookies)
                         }
+
+                        // Sec-Fetch-* and Accept-Language — the headers Chromium adds after the
+                        // snapshot above, so copying `requestHeaders` can never produce them. This is
+                        // what the watching page's 403 turned out to be. See applyBrowserFetchHeaders.
+                        applyBrowserFetchHeaders(
+                            conn = conn,
+                            requestUrl = reqUrl,
+                            referer = originalReferer,
+                            isMainFrame = request.isForMainFrame,
+                            path = path,
+                            hasOriginHeader = !reqHeaders["Origin"].isNullOrBlank()
+                        )
+
                         conn.connectTimeout = 15000
                         conn.readTimeout = 15000
 
