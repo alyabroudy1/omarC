@@ -1290,7 +1290,29 @@ class CimaNowProvider : BaseProvider() {
                 // re-enable if needed (handover §15, rule 28).
                 //
                 // The hook stays OFF — §0.1 rule 3 still applies.
-                rewriteDocumentWrite = false,
+                //
+                // 2026-08-06: rewrite turned ON, which is what rule 27 prescribes ("split them: rewrite
+                // on, hook off") and what the note above invites ("test and re-enable if needed").
+                //
+                // Why now. freex's new timer page loads its payload through
+                // `document.write('<script src="data:text/javascript,…">')`, and on-device that payload
+                // never runs: over a full 120 s the probe reported `btn=javascript:void(0);` throughout,
+                // which is the *static* markup value. A real browser on the identical page (same 624,597
+                // bytes, same six assets, same TV UA, same `document.referrer`) walks
+                // `javascript:void(0)` → the movie URL → `…/watching/?token=…` and mints at ~10-11 s.
+                // So the page is inert in the WebView and live in a browser, and a `document.write`-
+                // injected script is the one construct WebView treats differently from Chrome.
+                //
+                // Ruled out first, by direct test, so none of it gets re-checked: the ad gate (gone
+                // since SURF_AS_TV_UA), a missing asset (identical set, all 200 with correct MIME),
+                // `document.referrer` (a direct load with only a Referer header still mints), the UA and
+                // `sec-ch-ua` (both identities mint), and body corruption (the main frame is streamed,
+                // so the page's two leading BOMs survive).
+                //
+                // **Revert if a blank page returns on a second server click** — that is §13/§15's
+                // failure mode (a runtime `document.write` after load implicitly `document.open()`s and
+                // wipes the document), and it is the risk this trades against.
+                rewriteDocumentWrite = true,
                 injectDocumentWriteHook = false,
                 // Keeps the WebView jar and the HTTP session in step for responses the engine answers
                 // itself — see CimaNowNavigationPolicy. Default policy is a no-op, so this is the only
