@@ -147,8 +147,39 @@ class CimaNowProvider : BaseProvider() {
      * returns null, the flow falls back to the existing WebView-timer path untouched.
      *
      * Flip to false to restore today's behaviour exactly.
+     *
+     * ## Off since 2026-08-06: the markers it mints from no longer exist
+     *
+     * freex rotated the timer page overnight — 453,231 bytes to **624,597** — and every plaintext hook
+     * this path depends on went with it. Verified against a page fetched independently of the app, over
+     * the same three-hop chain with the same `Referer=redirectingfree` this path uses, so it is not a
+     * session or header problem:
+     *
+     * | marker | occurrences in the new page |
+     * |---|---|
+     * | `ptr_` | 0 |
+     * | `ctx_` | 0 |
+     * | `get-link` | 0 |
+     * | `watching` | 0 |
+     * | `countdown` / `download` / `btn` | 0 |
+     *
+     * The whole document is now a BOM, an inert `<!-- document.write(…) -->` comment, a hidden `<div>`
+     * and `<textarea>` with per-deploy random ids (`g_b8da3e`, `t_29XcX7`), and one obfuscated array
+     * (`_v8521e`) that assembles itself at runtime. There is nothing left to grep.
+     *
+     * So this path cannot work, and its failure is not free: it re-runs the loadon → redirectingfree →
+     * blog-post chain (a second `loadon` hit per play), costs ~1.3 s, and aborts blaming the Referer gate
+     * for markers that are simply gone — a wrong diagnosis pointing at the wrong subsystem.
+     *
+     * More to the point, it is the anti-pattern: minting from strings the site hands us means re-learning
+     * the format every time cimanow rotates it, which is hourly. Handover rule 1 says the same thing
+     * about the cipher. The durable route is the one that behaves like a browser — let the page run
+     * itself in the WebView and watch for the navigation to `/watching/?token=…` — which is what the
+     * fallback does, and which needs no knowledge of the page's internals at all.
+     *
+     * Do not flip this back on without re-checking those markers first.
      */
-    private val USE_HTTP_GETLINK = true
+    private val USE_HTTP_GETLINK = false
 
     /** base64("Mozilla/5.20"). Sent as the `fp` param; not validated server-side, so hardcoded. */
     private val FREEX_FP = "TW96aWxsYS81LjIw"
@@ -523,9 +554,35 @@ class CimaNowProvider : BaseProvider() {
      *    directly.
      *  - The HTTP half of the chain (`navigateToTimerPageViaHttp`) keeps the session UA regardless, so
      *    the two halves would disagree about what device this is.
-     * The flow also worked end to end with the phone UA hours earlier, so the regression is elsewhere.
+     *
+     * ## On since 2026-08-06: the gate is now demonstrably what consumes the run
+     *
+     * The line that used to close this comment — "the flow also worked end to end with the phone UA hours
+     * earlier, so the regression is elsewhere" — stopped being true when freex rotated the timer page
+     * (453,231 → 624,597 bytes). In the 16:26 run, over 24 s on the timer page:
+     *  - the ad gate ran in full: popunders to `viiukuhe.com/dc/`, `luugy.com`, `career-mesh`,
+     *    `trendingcult`, two sinks honoured and closed at 5,000 ms, and
+     *    `dipPageVisibility: Page hidden for 900ms so the popunder dwell check passes`;
+     *  - `get-link.php` was **never requested** — no `LINK MINT CALL`, and `CSHOOK` reported zero XHR;
+     *  - so there was nothing to intercept and nothing to navigate to.
+     * Everything in that list is behind `if (isTv()) return` per §14. A TV identity skips all of it, and
+     * it is a path the page offers itself — no decryption, no marker parsing, no injection.
+     *
+     * The three objections above are still real; two are currently moot, one is the thing to watch:
+     *  - **`cf_clearance` binding: moot.** Every recent log reads `cimanow.cc: 0 cookie(s) — NONE`, so
+     *    there is no clearance for a UA change to invalidate.
+     *  - **Server-side disagreement: moot.** `isTv()` is a client-side test of `navigator.userAgent`;
+     *    verified 2026-08-06 that freex serves a byte-identical page to both identities (624,602 bytes
+     *    each, differing only in 338 chars of per-request nonce), so the server is not being asked to
+     *    agree about anything.
+     *  - **`sec-ch-ua-mobile: ?1` alongside a TV UA: live.** Still a mismatch a fingerprint check could
+     *    read. Tolerated because freex is not the host gating us on client hints, and because the
+     *    alternative is a flow that mints nothing at all.
+     *
+     * **Revert first if Cloudflare starts challenging cimanow**, which is the failure mode objection 1
+     * describes and the one this trades against.
      */
-    private val SURF_AS_TV_UA = false
+    private val SURF_AS_TV_UA = true
 
     /**
      * Rewrites a UA so the page's `isTv()` regex matches, changing as little else as possible.
@@ -2563,7 +2620,12 @@ class CimaNowProvider : BaseProvider() {
             val hasCountdown = blogBody.contains("countdown") || blogBody.contains("setInterval") || blogBody.contains("setTimeout")
             val hasGetLink = blogBody.contains("get-link.php")
             val hasDownloadBtn = blogBody.contains("downloadbtn") || blogBody.contains("download-btn") || blogBody.contains("download_btn")
-            Log.i(TAG_HT, "Validation: hasCountdown=$hasCountdown, hasGetLink=$hasGetLink, hasDownloadBtn=$hasDownloadBtn")
+            // Log-only, and worth saying so: nothing branches on these. As of 2026-08-06 all three read
+            // false on a perfectly good timer page, because freex moved the countdown, the mint call and
+            // the button behind one obfuscated array. Three `false`s here are not a failure and not a
+            // reason to retry — they only mean the page no longer says what it does in plain text.
+            Log.i(TAG_HT, "Validation (informational only — these markers rotate): " +
+                "hasCountdown=$hasCountdown, hasGetLink=$hasGetLink, hasDownloadBtn=$hasDownloadBtn")
 
             if (blogBody.length < 5000) {
                 Log.e(TAG_HT, "❌ Timer page body too short (${blogBody.length}), likely blocked by CF")
@@ -2740,7 +2802,15 @@ class CimaNowProvider : BaseProvider() {
             // ---- Step 5: parse the ctx_* mint block + compute the HMAC token ----
             val ctx = parseFreexMintContext(timerHtml)
             if (ctx == null) {
-                Log.e(TAG_GL, "Step 5: ctx_* mint block absent — the Referer gate likely omitted it. Aborting.")
+                // Deliberately does NOT blame the Referer any more. It said that on 2026-08-06 while the
+                // Referer was correct, and cost a round of debugging aimed at the session instead of the
+                // page: freex had rotated the format and `ptr_*`/`ctx_*` no longer appear at all (nor do
+                // `get-link`, `countdown` or `download`). A missing marker means the format moved; the
+                // page size is the cheapest evidence of that, so it is logged.
+                Log.e(TAG_GL, "Step 5: no ctx_* mint block in ${timerHtml.length} bytes of timer page — " +
+                    "assume freex rotated the format rather than that the session was wrong (checked " +
+                    "2026-08-06: correct Referer, markers simply gone). This path mints from plaintext " +
+                    "markers, so a rotation retires it; the WebView path does not care. Aborting.")
                 return null
             }
             Log.i(TAG_GL, "Step 5/8: parsed roles — ch=${ctx.ch.length}chars ri=${ctx.requestId.length}chars " +
