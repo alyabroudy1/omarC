@@ -512,7 +512,54 @@ class CimaNowProvider : BaseProvider() {
             // is the answer — the button is handler-driven and the DOM is not where the link goes.
             // The label cannot match PLAYER_PAGE_PATTERN, so this is diagnosis, never an arrival.
             var raw = a ? (a.getAttribute('href') || '<no href attr>') : '<no button>';
-            return 'no-token | btn=' + raw + ' | sink=' + (sv ? 'present' : 'empty');
+
+            // ── Why is it stuck? 2026-08-06 ──────────────────────────────────────────────────────
+            //
+            // `btn=javascript:void(0);` for a full 120 s says the page never moved off its *static*
+            // markup, while a real browser on the identical page (same 624,597 bytes, same six assets,
+            // same TV UA, same document.referrer) walks that href to the movie URL and then to
+            // `…/watching/?token=…`, minting at ~11 s every time. Eliminated by direct test, so none of
+            // it needs re-checking: the ad gate, the referrer, the UA and client hints, the asset set,
+            // body/BOM corruption, our own native-wrapping hook, the consent CMP, and
+            // `visibilityState:'hidden'`. All still mint in a browser.
+            //
+            // What is left is the WebView environment itself, which cannot be reproduced off-device — so
+            // the page has to say it. Everything below is a read, on freex only: `probeOnlyOnHosts`
+            // gates this probe to `freex2line`, and §0.1's no-touch rules are scoped to cimanow, whose
+            // decryptor is the thing that inspects stacks and natives. freex runs no such check.
+            //
+            // `tick` is the one write, and it is the important field: an interval that increments a
+            // counter. If it stops advancing between probes, the page's timers are throttled or frozen
+            // and a countdown can never finish — which would explain the whole failure. If it keeps
+            // advancing, timers are healthy and the page's own logic bailed, which points somewhere
+            // completely different. Nothing else distinguishes those two.
+            //
+            // Note this makes the probe log every second instead of only on change (the engine
+            // de-duplicates identical results and `tick` always differs). That is deliberate for a
+            // diagnostic build: a continuous liveness trace is the point.
+            var W = window;
+            if (!W.__csTick) {
+              W.__csTick = { n: 0, t0: Date.now() };
+              try { setInterval(function(){ W.__csTick.n++; }, 500); } catch (e) {}
+            }
+            var tick = W.__csTick.n + '@' + (Date.now() - W.__csTick.t0) + 'ms';
+
+            var cd = null;
+            try {
+              cd = document.querySelector('[id*="count"],[class*="count"],[id*="timer"],[class*="timer"],#seconds,.seconds');
+            } catch (e) {}
+            var cdTxt = cd
+              ? ((cd.id || cd.className || '?') + '="' + (cd.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 24) + '"')
+              : '<none>';
+
+            return 'no-token | btn=' + raw + ' | sink=' + (sv ? 'present' : 'empty')
+                 + ' | tick=' + tick
+                 + ' | ready=' + document.readyState
+                 + ' | jq=' + (typeof W.jQuery === 'function')
+                 + ' | cd360=' + !!(W.jQuery && W.jQuery.fn && W.jQuery.fn.countdown360)
+                 + ' | countdown=' + cdTxt
+                 + ' | iframes=' + document.querySelectorAll('iframe').length
+                 + ' | anchors=' + document.querySelectorAll('a').length;
           } catch (e) { return 'probe-error: ' + e; }
         })();
     """.trimIndent()
