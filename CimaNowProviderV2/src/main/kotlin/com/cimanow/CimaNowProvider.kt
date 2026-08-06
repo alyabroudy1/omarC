@@ -135,6 +135,25 @@ class CimaNowProvider : BaseProvider() {
     private val USE_REAL_TIMER_NAVIGATION = true
 
     /**
+     * Resolve the `/watching/?token=…` URL over plain HTTP *before* the surf, by minting the
+     * `get-link.php` token ourselves — instead of loading the countdown page in a WebView and waiting
+     * for it to mint and reveal the URL (which fails: the WebView renders a copy of the timer page that
+     * lacks the `ctx_*` mint block, so `get-link.php` is never called and the run hangs in
+     * "waiting to reach /watching/").
+     *
+     * When true and [resolveWatchingUrlViaHttp] returns a real tokenised URL, the fullscreen surf is
+     * pointed straight at that URL (a real `LoadUrl` navigation, re-issued with real-Chrome headers by
+     * the NavigationEngine interceptor — handover rule 16), skipping the timer page entirely. When it
+     * returns null, the flow falls back to the existing WebView-timer path untouched.
+     *
+     * Flip to false to restore today's behaviour exactly.
+     */
+    private val USE_HTTP_GETLINK = true
+
+    /** base64("Mozilla/5.20"). Sent as the `fp` param; not validated server-side, so hardcoded. */
+    private val FREEX_FP = "TW96aWxsYS81LjIw"
+
+    /**
      * Captures `get-link.php`'s answer on the freex page, by wrapping the two ways it can be sent.
      *
      * **Why this rather than building the request ourselves.** The HAR shows the call carries four
@@ -983,7 +1002,43 @@ class CimaNowProvider : BaseProvider() {
                 httpService.userAgent
             }
 
-            // ---------- PHASE 1: token chain over HTTP, up to the timer page ----------
+            // ---------- PHASE 1: obtain the /watching/ URL ----------
+            //
+            // Preferred route (USE_HTTP_GETLINK): mint the get-link.php token in Kotlin over plain HTTP
+            // and get the concrete `/watching/?token=…` URL up front, so the WebView is navigated
+            // straight there — the timer countdown page never has to run (it renders a copy without the
+            // ctx_* mint block, so its own get-link.php call never fires; that is what hung the surf).
+            val directWatchUrl = if (USE_HTTP_GETLINK) {
+                Log.i(TAG_SURF, "USE_HTTP_GETLINK=true — resolving /watching/ URL over HTTP before the surf")
+                resolveWatchingUrlViaHttp(movieUrl)
+            } else null
+
+            val steps: List<NavigationStep>
+            if (directWatchUrl != null) {
+                // Rule 16: the watch page still loads in THIS NavigationEngine WebView, re-issued with
+                // real-Chrome headers by the interceptor; we only replaced how its URL was obtained.
+                // Nothing is injected into the watch page. Referer = the freex timer page (rule 5).
+                Log.i(TAG_SURF, "✅ HTTP get-link resolved the watch URL — navigating straight to it, " +
+                    "skipping the timer countdown page: ${directWatchUrl.take(90)}")
+                logCookieState(TAG_SURF, "before nav", "https://rm.freex2line.online/", "https://cimanow.cc/")
+                steps = listOf(
+                    NavigationStep.LoadUrl(
+                        url = directWatchUrl,
+                        referer = TIMER_PAGE_URL
+                    ),
+                    // Already on the watch page: pick a server, press play. Ends a beat after the first
+                    // stream request so the HLS variants land too.
+                    NavigationStep.WaitForCapturedVideo(
+                        timeoutMs = SURF_TIMEOUT_MS,
+                        graceMs = STRAGGLER_GRACE_MS,
+                        abortOnFailure = false
+                    )
+                )
+            } else {
+            if (USE_HTTP_GETLINK) {
+                Log.w(TAG_SURF, "HTTP get-link did not yield a tokenised URL — falling back to the " +
+                    "WebView timer-page path")
+            }
             val timerHtml = navigateToTimerPageViaHttp(movieUrl)
             if (timerHtml == null) {
                 Log.e(TAG_SURF, "❌ Could not reach the timer page — no token chain, nothing to surf")
@@ -1032,7 +1087,7 @@ class CimaNowProvider : BaseProvider() {
                     referer = REDIRECTING_PAGE_URL
                 )
             }
-            val steps = listOf(
+            steps = listOf(
                 firstStep,
                 // The countdown finishes, the page fills in the watch button's href — and stops. It
                 // does not navigate on its own, so the user presses the button, exactly as they would
@@ -1097,6 +1152,7 @@ class CimaNowProvider : BaseProvider() {
                     abortOnFailure = false
                 )
             )
+            }
 
             val movieHost = try { java.net.URI(movieUrl).host } catch (_: Exception) { null }
             val allowedDomains = mutableSetOf(
@@ -2522,6 +2578,224 @@ class CimaNowProvider : BaseProvider() {
             Log.e(TAG_HT, "Stack: ${e.stackTrace?.joinToString("\n") { "  at $it" }}")
         }
         Log.i(TAG_HT, "======== [END] HTTP redirect chain FAILED ========")
+        return null
+    }
+
+    // ==================== HTTP get-link.php resolver (freex token minted in Kotlin) ====================
+
+    /** The three secrets + channel id the timer page's `ctx_*` block carries, resolved through the
+     *  randomised `map_*`/`ptr_*` indirection. All are ASCII strings exactly as they appear in the HTML. */
+    private data class FreexMintContext(
+        val requestId: String,   // ri — 32 hex
+        val ch: String,          // ch — 16 hex
+        val keB64: String,       // ke — base64, 64 bytes decoded
+        val se: String           // se — XOR key, ~8 ASCII chars
+    )
+
+    /**
+     * Recovers the mint parameters from the timer page.
+     *
+     * Every object and property name is randomised per load, so nothing can be matched by a literal
+     * name. The page publishes two indices for exactly this reason:
+     *   - `window.ptr_XXXX = 'ctx_YYYY'` names the object that holds the values.
+     *   - `window.map_XXXX = { ch:'v_..', ri:'v_..', ke:'v_..', se:'v_..' }` maps each role to the
+     *     property inside that object.
+     * We read `ptr_*` to find the ctx object, `map_*` to learn which property is which role, then pull
+     * the values out of the ctx object. The `window._0x_cfg = {…}` block (keys c/r/k/s) is a decoy and
+     * is never touched — its single-letter keys cannot match the two-letter roles below.
+     */
+    private fun parseFreexMintContext(html: String): FreexMintContext? {
+        val TAG_GL = "CimaNowHttpNav"
+        val ctxName = Regex("""window\.ptr_[0-9a-fA-F]+\s*=\s*'([^']+)'""")
+            .find(html)?.groupValues?.get(1)
+        if (ctxName == null) { Log.w(TAG_GL, "parse: no ptr_* pointer found"); return null }
+
+        val mapBody = Regex("""window\.map_[0-9a-fA-F]+\s*=\s*\{([^}]*)\}""")
+            .find(html)?.groupValues?.get(1)
+        if (mapBody == null) { Log.w(TAG_GL, "parse: no map_* block found"); return null }
+        fun role(name: String) = Regex("""\b$name\s*:\s*'([^']+)'""").find(mapBody)?.groupValues?.get(1)
+        val chProp = role("ch"); val riProp = role("ri"); val keProp = role("ke"); val seProp = role("se")
+        if (chProp == null || riProp == null || keProp == null || seProp == null) {
+            Log.w(TAG_GL, "parse: map_* incomplete (ch=$chProp ri=$riProp ke=$keProp se=$seProp)"); return null
+        }
+
+        val ctxBody = Regex(Regex.escape("window['$ctxName']") + """\s*=\s*\{([^}]*)\}""")
+            .find(html)?.groupValues?.get(1)
+        if (ctxBody == null) { Log.w(TAG_GL, "parse: ctx object '$ctxName' not found"); return null }
+        val props = HashMap<String, String>()
+        Regex("""'(v_[0-9a-fA-F]+)'\s*:\s*'([^']*)'""").findAll(ctxBody)
+            .forEach { props[it.groupValues[1]] = it.groupValues[2] }
+
+        val ch = props[chProp]; val ri = props[riProp]; val ke = props[keProp]; val se = props[seProp]
+        if (ch == null || ri == null || ke == null || se == null) {
+            Log.w(TAG_GL, "parse: ctx missing a mapped value"); return null
+        }
+        return FreexMintContext(requestId = ri, ch = ch, keB64 = ke, se = se)
+    }
+
+    /**
+     * hmac_token = base64( HMAC_SHA256(key, request_id + ch + fp) ), where
+     *   key = XOR( base64decode(ke), se repeated ) — a 64-char ASCII **hex string**, used as the raw
+     *   HMAC key (the 64 ASCII bytes, NOT the 32 bytes it would hex-decode to).
+     */
+    private fun computeFreexHmacToken(ctx: FreexMintContext): String {
+        val keBytes = Base64.decode(ctx.keB64, Base64.DEFAULT)
+        val seBytes = ctx.se.toByteArray(Charsets.US_ASCII)
+        val keyBytes = ByteArray(keBytes.size) { i ->
+            (keBytes[i].toInt() xor seBytes[i % seBytes.size].toInt()).toByte()
+        }
+        val message = (ctx.requestId + ctx.ch + FREEX_FP).toByteArray(Charsets.US_ASCII)
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(keyBytes, "HmacSHA256"))
+        return Base64.encodeToString(mac.doFinal(message), Base64.NO_WRAP)
+    }
+
+    /**
+     * Walks the freex chain over HTTP, mints the `get-link.php` token in Kotlin, and returns the real
+     * cimanow `/watching/?token=…` URL — or null if the chain fails, the mint block is absent, or the
+     * server answers with the `/pig/watching/` honeypot.
+     *
+     * Self-contained (its own cookie jar) so the existing [navigateToTimerPageViaHttp] path is left
+     * untouched. Steps mirror the reverse-engineered browser sequence:
+     *   1. movie page → freex `loadon` URL   2. loadon (sets PHPSESSID)   3. redirectingfree
+     *   4. blog-post.html timer page **with Referer=redirectingfree** (required for the ctx_* block)
+     *   5. parse ctx_* + compute HMAC   6. wait ≥10 s (server-enforced)   7. POST get-link.php   8. validate
+     */
+    private suspend fun resolveWatchingUrlViaHttp(movieUrl: String): String? {
+        val TAG_GL = "CimaNowHttpNav"
+        Log.i(TAG_GL, "======== [START] HTTP get-link resolve ========")
+        try {
+            // ---- Step 1: movie page → freex URL (session path: cookies + client hints + CF fallback) ----
+            val cacheBuster = "_ts=${System.currentTimeMillis()}"
+            val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl?$cacheBuster"
+            val fetched = withSessionGuard(httpService, TAG_GL) {
+                var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
+                var html = doc?.outerHtml() ?: ""
+                var freex = extractFreexUrl(html)
+                if (freex == null) {
+                    doc = httpService.getDocument(movieUrl, rewriteDomain = true)
+                    html = doc?.outerHtml() ?: ""
+                    freex = extractFreexUrl(html)
+                }
+                Triple(doc, html, freex)
+            }
+            var freexUrl = fetched.third
+            if (freexUrl == null && fetched.first != null) {
+                val decoded = decodeHtml(fetched.first!!).outerHtml()
+                if (decoded.length != fetched.second.length) freexUrl = extractFreexUrl(decoded)
+            }
+            val resolvedFreexUrl = freexUrl
+            if (resolvedFreexUrl == null) {
+                Log.e(TAG_GL, "Step 1: no freex2line href in movie page (${fetched.second.length} chars) — cannot resolve")
+                return null
+            }
+            Log.i(TAG_GL, "Step 1/8: freex URL = $resolvedFreexUrl")
+
+            // Shared cookie jar for the freex hosts (PHPSESSID must carry across steps 2-7).
+            val cookies = LinkedHashMap<String, String>()
+            fun harvest(resp: okhttp3.Response) {
+                for (h in resp.headers("Set-Cookie")) {
+                    val eq = h.indexOf('='); if (eq <= 0) continue
+                    val semi = h.indexOf(';')
+                    val v = if (semi > 0) h.substring(eq + 1, semi) else h.substring(eq + 1)
+                    cookies[h.substring(0, eq)] = v
+                }
+            }
+            fun cookieHeader() = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+            val headers = linkedMapOf(
+                "User-Agent" to httpService.userAgent,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+
+            // ---- Step 2: loadon (sets PHPSESSID, stores the target link server-side) ----
+            Log.i(TAG_GL, "Step 2/8: loadon")
+            val loadon = httpService.getRaw(resolvedFreexUrl, headers = headers)
+            harvest(loadon); loadon.close()
+            if (cookies.isNotEmpty()) headers["Cookie"] = cookieHeader()
+            Log.i(TAG_GL, "loadon: ${cookies.size} cookie(s), PHPSESSID present=${cookies.containsKey("PHPSESSID")}")
+
+            // ---- Step 3: redirectingfree (Referer=loadon) ----
+            Log.i(TAG_GL, "Step 3/8: redirectingfree")
+            headers["Referer"] = resolvedFreexUrl
+            val redir = httpService.getRaw(REDIRECTING_PAGE_URL, headers = headers)
+            harvest(redir); redir.close()
+            if (cookies.isNotEmpty()) headers["Cookie"] = cookieHeader()
+
+            // ---- Step 4: blog-post.html timer page WITH Referer=redirectingfree (required for ctx_*) ----
+            Log.i(TAG_GL, "Step 4/8: blog-post timer page (Referer=redirectingfree — required for the mint block)")
+            headers["Referer"] = REDIRECTING_PAGE_URL
+            headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            val blog = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = headers)
+            harvest(blog)
+            val timerHtml = blog.body?.string() ?: ""
+            blog.close()
+            if (cookies.isNotEmpty()) headers["Cookie"] = cookieHeader()
+            Log.i(TAG_GL, "timer page: ${timerHtml.length} bytes")
+            if (timerHtml.length < 5000) {
+                Log.e(TAG_GL, "Step 4: timer page too small (${timerHtml.length} bytes) — blocked or wrong page")
+                return null
+            }
+
+            // ---- Step 5: parse the ctx_* mint block + compute the HMAC token ----
+            val ctx = parseFreexMintContext(timerHtml)
+            if (ctx == null) {
+                Log.e(TAG_GL, "Step 5: ctx_* mint block absent — the Referer gate likely omitted it. Aborting.")
+                return null
+            }
+            Log.i(TAG_GL, "Step 5/8: parsed roles — ch=${ctx.ch.length}chars ri=${ctx.requestId.length}chars " +
+                "ke(b64)=${ctx.keB64.length}chars se=${ctx.se.length}chars")
+            val token = computeFreexHmacToken(ctx)
+            Log.i(TAG_GL, "Computed hmac_token[:12]=${token.take(12)}…")
+
+            // ---- Step 6: wait ≥10 s — POSTing earlier returns the honeypot ----
+            Log.i(TAG_GL, "Step 6/8: waiting 10.5 s (server-enforced dwell) before POSTing get-link.php")
+            delay(10_500L)
+
+            // ---- Step 7: POST get-link.php (form-urlencoded, Referer=timer page, freex cookie jar) ----
+            Log.i(TAG_GL, "Step 7/8: POST get-link.php")
+            val postHeaders = linkedMapOf(
+                "User-Agent" to httpService.userAgent,
+                "Accept" to "*/*",
+                "Origin" to "https://rm.freex2line.online"
+            )
+            if (cookies.isNotEmpty()) postHeaders["Cookie"] = cookieHeader()
+            // No X-Requested-With; FormBody sets Content-Type: application/x-www-form-urlencoded and
+            // url-encodes the values (so hmac_token's +/=/ travel safely).
+            val rawResp = httpService.postText(
+                url = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php",
+                data = linkedMapOf(
+                    "request_id" to ctx.requestId,
+                    "hmac_token" to token,
+                    "ch" to ctx.ch,
+                    "fp" to FREEX_FP
+                ),
+                referer = TIMER_PAGE_URL,
+                headers = postHeaders,
+                rewriteDomain = false
+            )
+
+            // ---- Step 8: validate ----
+            if (rawResp.isNullOrBlank()) {
+                Log.e(TAG_GL, "Step 8: get-link.php returned an empty body")
+                return null
+            }
+            // Strip a leading UTF-8 BOM (EF BB BF / U+FEFF) then trim.
+            val watchUrl = rawResp.removePrefix("﻿").trim()
+            Log.i(TAG_GL, "Step 8/8: get-link.php answered ${watchUrl.length} chars: ${watchUrl.take(80)}")
+            if (watchUrl.contains("/pig/watching/") || !watchUrl.contains("?token=") || !watchUrl.startsWith("http")) {
+                Log.w(TAG_GL, "❌ Honeypot/failure response (no ?token= or /pig/watching/) — treating as failure")
+                return null
+            }
+            Log.i(TAG_GL, "✅ Resolved watching URL: $watchUrl")
+            Log.i(TAG_GL, "======== [END] HTTP get-link resolve SUCCESS ========")
+            return watchUrl
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG_GL, "EXCEPTION in HTTP get-link resolve: ${e.message}")
+        }
+        Log.i(TAG_GL, "======== [END] HTTP get-link resolve FAILED ========")
         return null
     }
 
