@@ -226,6 +226,128 @@ class CimaNowNavigationPolicy(
 }
 
 /**
+ * Remembers the `/watching/?token=…` URL per title, so freex is walked **once per title, not once per
+ * play**.
+ *
+ * ## What makes this sound
+ *
+ * Measured 2026-08-06, from a completely fresh browser context — no cimanow cookies, no freex
+ * `PHPSESSID`, nothing carried over:
+ *
+ * | `Referer` sent with the tokenised URL | outcome |
+ * |---|---|
+ * | none | 302 to `/home/` — 381,830 bytes, 0 links |
+ * | the movie page | 302 to `/home/` |
+ * | `https://cimanow.cc/` | 302 to `/home/` |
+ * | **the freex blog-post page** | **the watch page: 942,467 bytes, 20 download links, 6 servers** |
+ *
+ * So reaching the watch page needs exactly two things — the token, and a `Referer` of the freex
+ * blog-post page (handover rule 5's gate, `document.referrer.indexOf('rm.freex2line.online')`). The
+ * second is a constant we already hold as `TIMER_PAGE_URL`. **No session, no cookie, no countdown, no ad
+ * gate.** And the token for a given title was byte-identical across every observation over 32+ hours,
+ * different sessions, different `request_id`/`hmac_token`, and both phone and TV identities — so it is
+ * a per-title value, not a per-session secret.
+ *
+ * That is what makes caching worth having: the fragile part of the flow (a countdown page that must run
+ * its own obfuscated payload) moves off the common path entirely. A title that ever played once keeps
+ * playing instantly, and only a title never seen before pays the freex cost.
+ *
+ * ## What it deliberately does not do
+ *
+ * It does not compute, derive or decode anything. The token is 64 hex characters and is *not* a hash of
+ * any public value — checked md5/sha1/sha256/sha512 over the slug, the movie URL, the watching URL and
+ * the base64 `link=` payload, raw/lowercased/trailing-slash-stripped: no match. It is server-keyed or
+ * simply stored, so this treats it as opaque: whatever freex handed us, verbatim, and nothing else.
+ *
+ * Cache misses and stale entries are both safe — see [invalidate]. A dead token lands on `/home/`, which
+ * cannot match `PLAYER_PAGE_PATTERN`, so the surf reports no arrival and the entry is dropped.
+ */
+object CimaNowWatchTokenCache {
+    private const val TAG = "CimaNowToken"
+
+    private val memory = java.util.Collections.synchronizedMap(HashMap<String, String>())
+
+    /** The cached `/watching/?token=…` URL for [movieUrl], or null. */
+    fun get(movieUrl: String): String? {
+        val key = keyOf(movieUrl)
+        memory[key]?.let { return it }
+        val file = fileFor(key) ?: return null
+        if (!file.isFile || file.length() == 0L) return null
+        return try {
+            val url = file.readText().trim()
+            if (url.isEmpty() || !isTokenisedWatchUrl(url)) {
+                null
+            } else {
+                memory[key] = url
+                Log.i(TAG, "🎟 Cached watch URL for ${movieUrl.takeLast(40)} → ${url.takeLast(45)}")
+                url
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Read failed for ${movieUrl.takeLast(40)}: ${e.message}")
+            null
+        }
+    }
+
+    /** Stores [watchUrl] for [movieUrl]. Ignores anything without a query — see [isTokenisedWatchUrl]. */
+    fun put(movieUrl: String, watchUrl: String) {
+        if (!isTokenisedWatchUrl(watchUrl)) {
+            Log.w(TAG, "Refusing to cache a tokenless watch URL: ${watchUrl.take(90)}")
+            return
+        }
+        val key = keyOf(movieUrl)
+        if (memory[key] == watchUrl) return
+        memory[key] = watchUrl
+        val file = fileFor(key) ?: return
+        try {
+            file.parentFile?.mkdirs()
+            file.writeText(watchUrl)
+            Log.i(TAG, "💾 Stored watch URL for ${movieUrl.takeLast(40)} — freex will be skipped next time")
+        } catch (e: Exception) {
+            Log.w(TAG, "Write failed for ${movieUrl.takeLast(40)}: ${e.message}")
+        }
+    }
+
+    /**
+     * Drops the entry for [movieUrl]. Called when a direct navigation with a cached token failed to
+     * arrive, which is what an expired or revoked token looks like from our side.
+     */
+    fun invalidate(movieUrl: String) {
+        val key = keyOf(movieUrl)
+        memory.remove(key)
+        try { fileFor(key)?.delete() } catch (_: Exception) {}
+        Log.w(TAG, "🗑 Dropped the cached watch URL for ${movieUrl.takeLast(40)} — will re-mint via freex")
+    }
+
+    /**
+     * External cache first, matching the timer/watch-page dumps.
+     *
+     * Not arbitrary: `externalCacheDir` is reachable with a file manager, so an entry can be **seeded by
+     * hand** to exercise the direct-navigation path without first getting a mint to succeed. That matters
+     * while the countdown is the thing under investigation — it separates "can we play from a known
+     * token" from "can we obtain a token", which are otherwise only testable together.
+     */
+    private fun fileFor(key: String): java.io.File? {
+        val ctx = com.cloudstream.shared.android.PluginContext.context ?: return null
+        return try {
+            val dir = ctx.externalCacheDir ?: ctx.cacheDir
+            java.io.File(dir, "cimanow_token_$key.txt")
+        } catch (_: Exception) { null }
+    }
+
+    /** Keyed on the movie URL, trailing slash normalised, so `/x` and `/x/` are one title. */
+    private fun keyOf(movieUrl: String): String {
+        val normalised = movieUrl.trim().trimEnd('/')
+        return try {
+            java.security.MessageDigest.getInstance("SHA-1")
+                .digest(normalised.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            normalised.hashCode().toUInt().toString(16)
+        }
+    }
+}
+
+/**
  * Is this a watch URL worth navigating to, or the bare fallback `get-link.php` hands out when it was
  * asked without its form data?
  *

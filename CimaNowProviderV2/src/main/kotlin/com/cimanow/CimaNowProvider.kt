@@ -340,6 +340,16 @@ class CimaNowProvider : BaseProvider() {
                       LAST_URL = abs(w, u);
                       try { x.setRequestHeader(XRW, SAFE); say('xhr ' + XRW + ' forced'); } catch(e){ say('xhr header set failed ' + e); }
                       park(b);
+                      // Hand the body to Kotlin. The page's own copy of this POST carries
+                      // X-Requested-With: <package> (WebView adds it below the API surface and neither
+                      // androidx.webkit nor reflection can stop it), and freex answers 403 to that —
+                      // measured 2026-08-06: absent/empty header => 200 + token, package name => 403.
+                      // shouldInterceptRequest cannot re-issue a POST because the API hides the body,
+                      // so the body travels this way instead and NavigationEngine replays it clean.
+                      try {
+                        var pb = (typeof b === 'string') ? b : '';
+                        if (pb) say('mint-post ' + LAST_URL + ' :: ' + pb);
+                      } catch(e){ say('mint-post emit failed ' + e); }
                       try { x.addEventListener('load', function(){ try { land('xhr@' + where, x.responseText, b); } catch(e){} }); } catch(e){}
                     }
                     return S2.apply(this, arguments);
@@ -403,6 +413,26 @@ class CimaNowProvider : BaseProvider() {
             // by the time the borrower has them — including for an iframe appended and removed in the
             // same breath, which is exactly the shape in gate.js:3844.
             try {
+              // `contentDocument.defaultView` reaches the same realm without ever touching
+              // `contentWindow`, so a hook on that getter alone can be walked straight past. Proven
+              // relevant 2026-08-06: a wrapper installed at document-start on
+              // `XMLHttpRequest.prototype.send` counted ZERO sends for a get-link POST that the network
+              // layer recorded as a main-frame xhr, on a page holding four `about:blank` frames.
+              try {
+                var dd = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentDocument');
+                if (dd && dd.get) {
+                  var origCD = dd.get;
+                  Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', {
+                    get: function(){
+                      var doc = origCD.call(this);
+                      try { if (doc && doc.defaultView) wrapRealm(doc.defaultView, 'iframe:contentDocument'); } catch(e){}
+                      return doc;
+                    },
+                    configurable: true
+                  });
+                  say('contentDocument getter instrumented');
+                }
+              } catch(e){ say('contentDocument instrument failed ' + e); }
               var d = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
               if (d && d.get) {
                 Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
@@ -1112,10 +1142,22 @@ class CimaNowProvider : BaseProvider() {
             // and get the concrete `/watching/?token=…` URL up front, so the WebView is navigated
             // straight there — the timer countdown page never has to run (it renders a copy without the
             // ctx_* mint block, so its own get-link.php call never fires; that is what hung the surf).
-            val directWatchUrl = if (USE_HTTP_GETLINK) {
-                Log.i(TAG_SURF, "USE_HTTP_GETLINK=true — resolving /watching/ URL over HTTP before the surf")
-                resolveWatchingUrlViaHttp(movieUrl)
-            } else null
+            //
+            // Cheapest source first: a token this title already minted. Verified 2026-08-06 that the
+            // tokenised URL plus a freex `Referer` is *sufficient* — a fresh context with no cimanow
+            // cookie and no freex session gets the full watch page (942,467 bytes, 20 download links,
+            // 6 servers), while the same URL with no/movie/home Referer lands on `/home/`. So a cached
+            // token turns the whole freex countdown into a once-per-title cost. See
+            // [CimaNowWatchTokenCache].
+            val cachedWatchUrl = CimaNowWatchTokenCache.get(movieUrl)
+            val directWatchUrl = cachedWatchUrl
+                ?: if (USE_HTTP_GETLINK) {
+                    Log.i(TAG_SURF, "USE_HTTP_GETLINK=true — resolving /watching/ URL over HTTP before the surf")
+                    resolveWatchingUrlViaHttp(movieUrl)
+                } else null
+            if (cachedWatchUrl != null) {
+                Log.i(TAG_SURF, "🎟 Using the cached watch URL — freex countdown skipped entirely")
+            }
 
             val steps: List<NavigationStep>
             if (directWatchUrl != null) {
@@ -1462,6 +1504,18 @@ class CimaNowProvider : BaseProvider() {
             //
             // Nothing in the app can fix this: no header, cookie, transport or cache gets that file from
             // this address. It needs a different egress IP, not more code.
+            // Remember the token if this surf actually landed on a tokenised watch page, and forget it if
+            // a cached one failed to get us there. `PLAYER_PAGE_PATTERN` requires the query, so `/home/`
+            // — which is where a dead token sends us — can never be mistaken for an arrival.
+            val reachedTokenisedWatchPage = PLAYER_PAGE_PATTERN.containsMatchIn(navResult.finalUrl)
+            if (reachedTokenisedWatchPage) {
+                CimaNowWatchTokenCache.put(movieUrl, navResult.finalUrl)
+            } else if (cachedWatchUrl != null) {
+                Log.w(TAG_SURF, "The cached watch URL did not land on a tokenised page " +
+                    "(at ${navResult.finalUrl.take(70)}) — treating the token as expired")
+                CimaNowWatchTokenCache.invalidate(movieUrl)
+            }
+
             Log.i(TAG_SURF, "Nav result: success=${navResult.success} error=${navResult.error}")
             Log.i(TAG_SURF, "Final URL: ${navResult.finalUrl}")
             Log.i(TAG_SURF, "Captured: ${navResult.capturedEmbedRequests.size} embed(s), " +

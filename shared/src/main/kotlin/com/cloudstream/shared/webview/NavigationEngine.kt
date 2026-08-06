@@ -340,6 +340,7 @@ class NavigationEngine(
             siteRejectedNavigationUrl = null
             offDestinationNavigationUrl = null
             lastPageFinishedAt = 0L
+            mintRelayDone = false
             rendererGone = false
             capturedMainFrameHtml = null
             subresourceRequestsSinceMainFrame = 0
@@ -1802,6 +1803,15 @@ class NavigationEngine(
                 }
 
                 // Identify requests that will leak the package name or are blocked AJAX endpoints
+                // Always false, and that is the point — do not trust it.
+                //
+                // 2026-08-06: WebView injects `X-Requested-With: <package>` *below* the API surface, so
+                // it never appears in `getRequestHeaders()`. Across a whole device log the only values
+                // present are the empty ones we set ourselves (`x-requested-with=`, 4 occurrences, all
+                // blank). So this test can never fire, and the interception it was meant to trigger —
+                // the documented fallback for `hideXRequestedWithHeader` failing — has never run once.
+                // The leak is real and invisible at the same time; see `isFreeDomain` in the condition
+                // below for what replaces it.
                 val hasLeakedHeader = reqHeaders["X-Requested-With"]?.isNotBlank() == true
                 val isGetLink = path.contains("get-link.php") && !isCfChallenge
                 val isAjaxEndpoint = path.contains("core.php") && !isCfChallenge
@@ -1861,7 +1871,31 @@ class NavigationEngine(
                 // Also intercept CDN scripts (cdnjs.cloudflare.com, cdn.jsdelivr.net) that are
                 // loaded via document.write — Chrome blocks cross-origin document.write in
                 // WebView, breaking the server list extraction.
-                if ((isProtectedDomain || requiresInterventionBypass) && (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || request.isForMainFrame)) {
+                // `isFreeDomain`: re-issue **every** freex GET, not a chosen few.
+                //
+                // This is the fix for the countdown never minting, and it is measured rather than
+                // reasoned. Walking the real freex chain in a browser three ways, changing only this one
+                // header:
+                //
+                // | `X-Requested-With` | get-link.php | requests | download button |
+                // |---|---|---|---|
+                // | absent            | fires at 11,773 ms | 29 | filled with the token |
+                // | `com.lagradost.cloudstream3` | **never** | **4** | **stays empty** |
+                // | `""` (empty)      | fires at 11,570 ms | 33 | filled with the token |
+                //
+                // Four requests and then silence, no console error, button untouched — the device's
+                // signature exactly. WebView adds that header to everything **Chromium** issues (the
+                // page's own XHRs included), `hideXRequestedWithHeader` cannot strip it (androidx.webkit
+                // is absent and the reflection paths fail), and `hasLeakedHeader` cannot even see it.
+                //
+                // What *can* be relied on: a request we re-issue ourselves never carries it. So the
+                // selection stops trying to guess which requests leak — on freex, all of them do — and
+                // simply takes them all. Only GETs reach here (the POST guard is above), and only freex
+                // is widened: cimanow keeps its existing, narrower rules.
+                if ((isProtectedDomain || requiresInterventionBypass) &&
+                    (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
+                        request.isForMainFrame)
+                ) {
                     // Explicit confirmation of the Referer the WebView sent for the watching page
                     // request. A wrong/blank Referer (e.g. about:blank) causes cimanow.cc to
                     // redirect /watching/ -> /home.
@@ -2549,6 +2583,7 @@ class NavigationEngine(
                         else -> "D"
                     }
                     android.util.Log.println(android.util.Log.INFO, "NavEngineJS", "[$level] ${it.message()} [${it.sourceId()}:${it.lineNumber()}]")
+                    maybeRelayMintPost(webView, it.message(), userAgent)
                 }
                 return true
             }
@@ -2735,6 +2770,121 @@ class NavigationEngine(
                 } catch (e: Exception) {
                     ProviderLogger.w(TAG, "onCreateWindow", "Sink creation failed: ${e.message}")
                     false
+                }
+            }
+        }
+    }
+
+    /** One relay per navigation — reset alongside the other per-run state. */
+    @Volatile
+    private var mintRelayDone = false
+
+    /**
+     * Re-issues the page's own mint POST from our side, so it goes out without the package name.
+     *
+     * ## Why this exists
+     *
+     * WebView stamps `X-Requested-With: <package>` onto everything **Chromium** issues, and there is no
+     * way to stop it here: `androidx.webkit` is absent (`hideXRequestedWithHeader`'s supported path) and
+     * the reflection fallbacks fail on modern WebView. It is also invisible —
+     * `WebResourceRequest.getRequestHeaders()` never contains it, which is why `hasLeakedHeader` could
+     * never fire.
+     *
+     * Measured 2026-08-06 against the real freex chain, changing only that header:
+     *
+     * | `X-Requested-With` | `get-link.php` | requests | download button |
+     * |---|---|---|---|
+     * | absent | 200 at 11,773 ms | 29 | filled with the token |
+     * | `com.lagradost.cloudstream3` | **never even sent** | **4** | stays empty |
+     * | `""` | 200 at 11,570 ms | 33 | filled with the token |
+     *
+     * Widening interception to every freex GET fixes the first failure — the countdown then runs and the
+     * mint fires at ~11.3 s. But the mint is a **POST**, and `shouldInterceptRequest` cannot re-issue a
+     * POST because the API never exposes a request body, so that one request still leaks and comes back
+     * **403** with a Cloudflare block page.
+     *
+     * The way out is that the body is not out of reach: the freex-only capture hook already wraps
+     * `XMLHttpRequest.send(b)`, so it *has* the body, and reports it over the console channel this
+     * method listens on. Verified before any of this was written — the page's own POST answered 403
+     * while the identical body replayed over a plain HTTP client answered 200 with `…/watching/?token=…`.
+     *
+     * Nothing is decrypted or computed: `request_id`, `hmac_token`, `ch` and `fp` are produced by the
+     * page and passed through byte-for-byte. Only *who sends them* changes.
+     *
+     * One shot per navigation, off the main thread apart from the final `loadUrl`.
+     */
+    private fun maybeRelayMintPost(webView: WebView?, message: String?, userAgent: String) {
+        if (webView == null || message == null || mintRelayDone) return
+        if (!message.startsWith(MINT_RELAY_MARKER)) return
+        val payload = message.removePrefix(MINT_RELAY_MARKER)
+        val url = payload.substringBefore(MINT_RELAY_SEPARATOR, "").trim()
+        val body = payload.substringAfter(MINT_RELAY_SEPARATOR, "").trim()
+        if (url.isBlank() || body.isBlank()) {
+            ProviderLogger.w(TAG, "mintRelay", "Marker seen but the payload was unusable",
+                "url" to url.take(80), "bodyLen" to body.length.toString())
+            return
+        }
+        mintRelayDone = true
+        ProviderLogger.w(TAG, "mintRelay",
+            "\uD83D\uDD01 Replaying the page's mint POST from our side — the page's own copy carries the " +
+                "package name and is refused",
+            "url" to url.take(100), "bodyLen" to body.length.toString())
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val referer = try { withContext(Dispatchers.Main) { webView.url } } catch (_: Exception) { null }
+            val answer = try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.instanceFollowRedirects = true
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                conn.setRequestProperty("User-Agent", userAgent)
+                conn.setRequestProperty("Accept", "*/*")
+                referer?.let { conn.setRequestProperty("Referer", it) }
+                // The mint is session-bound, and that session lives in the WebView's jar.
+                try {
+                    android.webkit.CookieManager.getInstance().getCookie(url)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { conn.setRequestProperty("Cookie", it) }
+                } catch (_: Exception) {}
+                // Deliberately never sets X-Requested-With: HttpURLConnection does not add it, and that
+                // absence is the entire point of this method.
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                val text = try {
+                    (if (code in 200..299) conn.inputStream else conn.errorStream)
+                        ?.bufferedReader()?.use { r -> r.readText() } ?: ""
+                } catch (_: Exception) { "" }
+                ProviderLogger.i(TAG, "mintRelay", "Replay answered",
+                    "code" to code.toString(), "bytes" to text.length.toString(),
+                    "preview" to text.take(90).replace(Regex("\\s+"), " "))
+                // The answer is the bare URL. A leading BOM is normal — freex sends one.
+                text.trim().removePrefix("\uFEFF").trim().takeIf {
+                    it.startsWith("http", ignoreCase = true) && it.length < 600 && !it.contains('<')
+                }
+            } catch (e: Exception) {
+                ProviderLogger.w(TAG, "mintRelay", "Replay failed: ${e.message}")
+                null
+            }
+
+            if (answer == null) {
+                ProviderLogger.w(TAG, "mintRelay",
+                    "No usable URL from the replay — leaving the page to its own devices")
+                return@launch
+            }
+            ProviderLogger.w(TAG, "mintRelay", "\u2705 Minted from our side — navigating there",
+                "url" to answer.take(140))
+            withContext(Dispatchers.Main) {
+                try {
+                    val headers = buildMap {
+                        put("X-Requested-With", "")
+                        referer?.let { put("Referer", it) }
+                    }
+                    webView.loadUrl(answer, headers)
+                } catch (e: Exception) {
+                    ProviderLogger.w(TAG, "mintRelay", "loadUrl failed: ${e.message}")
                 }
             }
         }
@@ -3878,6 +4028,19 @@ class NavigationEngine(
          * outcomes is not subtle: 2 for the stub cimanow served, 17 and 54 for pages that worked.
          */
         private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
+
+        /**
+         * Console prefix a provider's capture hook uses to hand us a POST it wants replayed.
+         *
+         * The console is the channel because the alternatives are worse: `addJavascriptInterface` and
+         * anything parked on `window` are both sniffed (§0.1 rules 6/7), and this already exists — the
+         * engine reads every console message anyway. Format:
+         * `CSHOOK mint-post <url> :: <urlencoded body>`.
+         */
+        const val MINT_RELAY_MARKER = "CSHOOK mint-post "
+
+        /** Separates URL from body in [MINT_RELAY_MARKER]; not valid in either half. */
+        const val MINT_RELAY_SEPARATOR = " :: "
 
         /**
          * How long to keep waiting for a stream after a substantive embed has been captured.
