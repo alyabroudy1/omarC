@@ -1931,9 +1931,49 @@ class NavigationEngine(
                 // selection stops trying to guess which requests leak — on freex, all of them do — and
                 // simply takes them all. Only GETs reach here (the POST guard is above), and only freex
                 // is widened: cimanow keeps its existing, narrower rules.
-                if ((isProtectedDomain || requiresInterventionBypass) &&
-                    (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
-                        request.isForMainFrame)
+                // The ad stack, while we are on the freex countdown page.
+                //
+                // 2026-08-07, from a HAR of Chrome doing this exact flow on an Android device. In the
+                // 10.8 s between the timer page loading and `get-link.php` firing, a real browser runs
+                // the whole Google ad stack; our WebView runs almost none of it:
+                //
+                // | host | Chrome | us |
+                // |---|---|---|
+                // | `googleads.g.doubleclick.net` (the ad fetch) | 8 | **0** |
+                // | `tpc.googlesyndication.com` (ad frames) | 8 | **0** |
+                // | `securepubads.g.doubleclick.net` (GPT) | 1 | **0** |
+                // | `ep1/ep2.adtrafficquality.google` (verification) | 4 | **0** |
+                // | `pagead2.googlesyndication.com` | 14 | 2 |
+                //
+                // We load the AdSense bootstrap (`adsbygoogle.js`, `show_ads_impl_fy2021.js` — static
+                // files served to anyone) and then stop dead, exactly where Chrome goes on to
+                // `gen_204?id=ach_evt…` and `pagead/ads?gdpr=1&…`. Google does not serve AdSense inside a
+                // WebView, and `X-Requested-With: <package>` is how it recognises one — the same header
+                // that was breaking freex itself. Every ad request goes out through Chromium, so every
+                // one is stamped; the HAR contains that header exactly **once** in 360 entries, and only
+                // as jQuery's ordinary `XMLHttpRequest` on cimanow's `core.php`.
+                //
+                // No ad means no impression, and a countdown ad-gate has no reason to hand over a link it
+                // was not paid for. That is why the page builds perfectly, runs its countdown to
+                // completion, and then never mints.
+                //
+                // Re-issuing these ourselves strips the header, exactly as it did for freex's own GETs.
+                // Scoped hard: ad hosts only, and only while the referring page is freex, so this cannot
+                // touch cimanow or any other provider. GETs only — the POST guard is above.
+                val isAdStackHost = host.endsWith("googlesyndication.com") ||
+                    host.endsWith("doubleclick.net") ||
+                    host.endsWith("adtrafficquality.google") ||
+                    host == "fundingchoicesmessages.google.com"
+                val refererHeader = reqHeaders.entries
+                    .firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value ?: ""
+                val isAdStackForFreex = isAdStackHost &&
+                    (refererHeader.contains("freex2line", ignoreCase = true) ||
+                        lastPageUrl.contains("freex2line", ignoreCase = true))
+
+                if (((isProtectedDomain || requiresInterventionBypass) &&
+                        (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
+                            request.isForMainFrame)) ||
+                    isAdStackForFreex
                 ) {
                     // Explicit confirmation of the Referer the WebView sent for the watching page
                     // request. A wrong/blank Referer (e.g. about:blank) causes cimanow.cc to
