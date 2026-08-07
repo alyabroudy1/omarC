@@ -79,6 +79,17 @@ interface WebkitToCompatConverterBoundaryInterface {
  * and catches per call.
  */
 interface WebSettingsBoundaryInterface {
+    /**
+     * Sets the client hints (`sec-ch-ua`) this WebView reports.
+     *
+     * Keys and value shapes per androidx's `UserAgentMetadataInternal`: `BRAND_VERSION_LIST` is a
+     * `String[][]` of `[brand, majorVersion, fullVersion]`, `MOBILE` a `Boolean`, `BITNESS` an `Int`.
+     * WebView 150 advertises `USER_AGENT_METADATA`, which is what makes this usable where the
+     * `RequestedWith` APIs are not.
+     */
+    fun setUserAgentMetadataFromMap(uaMetadata: Map<String, Any>)
+    fun getUserAgentMetadataMap(): Map<String, Any>
+
     fun setRequestedWithHeaderMode(mode: Int)
     fun getRequestedWithHeaderMode(): Int
     fun setRequestedWithHeaderOriginAllowList(allowList: Set<String>)

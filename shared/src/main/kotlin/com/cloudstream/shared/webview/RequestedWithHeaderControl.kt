@@ -120,9 +120,51 @@ object RequestedWithHeaderControl {
     @Volatile
     private var featuresLogged = false
 
+    /**
+     * True once **both** offending headers are controlled at the WebView level for every request.
+     *
+     * This is what lets [NavigationEngine] stop re-issuing subresources. That re-fetching only ever
+     * existed to strip `X-Requested-With` and to replace `sec-ch-ua: "Android WebView"`; it cannot cover
+     * POSTs, and it breaks CORS-fetched scripts. When both are fixed globally it is pure cost — but the
+     * flag matters because on an old WebView, or if the boundary is unreachable, the old behaviour must
+     * stay exactly as it is rather than silently losing its only mitigation.
+     */
+    @Volatile
+    var headersControlledGlobally = false
+        private set
+
     // The boundary interfaces themselves live in `org.chromium.support_lib_boundary` — that exact
     // package is required, see BoundaryInterfaces.kt for the `dupeMethod` reason and the on-device
     // failure that proved it.
+
+    /**
+     * Real-Chrome client hints, matching the shape androidx uses.
+     *
+     * Brands mirror what desktop/mobile Chrome 150 reports, with the `"Android WebView"` entry replaced by
+     * `"Google Chrome"`. Versions are taken from the running WebView so the hints cannot drift out of step
+     * with the User-Agent string, which would be its own fingerprint.
+     */
+    private fun chromeBrandMetadata(): Map<String, Any> {
+        val full = Regex("""Chrome/([0-9.]+)""")
+            .find(WebSettings.getDefaultUserAgent(com.cloudstream.shared.android.PluginContext.context))
+            ?.groupValues?.getOrNull(1) ?: "150.0.0.0"
+        val major = full.substringBefore('.')
+        return mapOf(
+            "BRAND_VERSION_LIST" to arrayOf(
+                arrayOf("Not;A=Brand", "8", "8.0.0.0"),
+                arrayOf("Chromium", major, full),
+                arrayOf("Google Chrome", major, full)
+            ),
+            "FULL_VERSION" to full,
+            "PLATFORM" to "Android",
+            "PLATFORM_VERSION" to "${android.os.Build.VERSION.RELEASE}.0.0",
+            "ARCHITECTURE" to "",
+            "MODEL" to (android.os.Build.MODEL ?: ""),
+            "MOBILE" to true,
+            "BITNESS" to 0,
+            "WOW64" to false
+        )
+    }
 
     private inline fun <reified T> cast(handler: InvocationHandler): T =
         Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java), handler) as T
@@ -205,10 +247,17 @@ object RequestedWithHeaderControl {
         }
         if (!featuresLogged) {
             featuresLogged = true
-            val relevant = features.filter { it.contains("REQUESTED_WITH", ignoreCase = true) }
+            // The full list, not a filtered slice. Picking levers by grepping the WebView's dex for
+            // strings found `SET_ORIGIN_MATCHED_HEADER` — which turned out **not** to be advertised, so
+            // the call was accepted into a stub. The advertised list is the authority; log all of it.
             ProviderLogger.i(TAG, "suppress", "WebView support-library features",
                 "count" to features.size.toString(),
-                "requestedWith" to (relevant.joinToString(",").ifEmpty { "NONE ADVERTISED" }))
+                "headerRelated" to (features.filter {
+                    it.contains("HEADER", true) || it.contains("REQUESTED", true) ||
+                        it.contains("USER_AGENT", true) || it.contains("ORIGIN", true)
+                }.joinToString(",").ifEmpty { "NONE" }))
+            ProviderLogger.i(TAG, "suppress", "All advertised features",
+                "list" to features.sorted().joinToString(","))
         }
         val hasAllowList = features.any { it.startsWith(FEATURE_ALLOW_LIST) }
         val hasMode = features.any { it.startsWith(FEATURE_MODE) }
@@ -225,6 +274,24 @@ object RequestedWithHeaderControl {
             return false
         }
 
+        // sec-ch-ua, globally.
+        //
+        // The CDP capture showed `sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Android WebView";
+        // v="150"` on every request — the WebView brand, which handover rule 16 says cimanow bounces. The
+        // interceptor has been rewriting it per request; `setUserAgentMetadataFromMap` sets it once for
+        // every request this WebView makes, POSTs included.
+        val uaOk = try {
+            settings.setUserAgentMetadataFromMap(chromeBrandMetadata())
+            ProviderLogger.i(TAG, "suppress", "✅ sec-ch-ua brands set to real Chrome for this WebView",
+                "advertised" to features.any { it.startsWith("USER_AGENT_METADATA") }.toString())
+            true
+        } catch (e: Throwable) {
+            ProviderLogger.w(TAG, "suppress",
+                "setUserAgentMetadataFromMap failed — sec-ch-ua still says Android WebView",
+                "error" to (e.message?.take(160) ?: e.javaClass.simpleName))
+            false
+        }
+
         // Preferred on any modern WebView: override the header's value per origin.
         //
         // WebView 150's dex contains no `RequestedWith` method at all — that API was removed — but it does
@@ -235,10 +302,13 @@ object RequestedWithHeaderControl {
             val store = cast<ProfileStoreBoundaryInterface>(factory.getProfileStore())
             val profile = cast<ProfileBoundaryInterface>(store.getOrCreateProfile("Default"))
             profile.setOriginMatchedHeader(HEADER, SAFE_VALUE, ALL_ORIGINS)
+            val advertised = features.any { it.startsWith(FEATURE_SET_ORIGIN_HEADER) }
+            headersControlledGlobally = uaOk && advertised
             ProviderLogger.i(TAG, "suppress",
                 "✅ $HEADER overridden for all origins",
                 "value" to SAFE_VALUE,
-                "advertised" to features.any { it.startsWith(FEATURE_SET_ORIGIN_HEADER) }.toString())
+                "advertised" to advertised.toString(),
+                "subresourceReissueStillNeeded" to (!headersControlledGlobally).toString())
             return true
         } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress",

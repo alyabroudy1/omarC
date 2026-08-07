@@ -1990,9 +1990,25 @@ class NavigationEngine(
                 // expect Google to refuse our HTTP client anyway. The header can only really be removed
                 // where WebView adds it, i.e. `WebSettingsCompat.setRequestedWithHeaderMode`, which needs
                 // androidx.webkit on the device (see this provider's build.gradle.kts on why it is not).
+                // Subresource re-issuing stops once the headers are fixed globally.
+                //
+                // Re-fetching every asset only ever existed to strip `X-Requested-With` and to replace
+                // `sec-ch-ua: "Android WebView"`. Both are now set at the WebView level by
+                // [RequestedWithHeaderControl], which covers what this never could: POSTs (the API hides
+                // the body, so `get-link.php` was always out of reach) and CORS-fetched scripts (serving
+                // them without `Access-Control-Allow-Origin` broke the page outright — 644 anchors to 2).
+                //
+                // Gated on [RequestedWithHeaderControl.headersControlledGlobally] rather than deleted: on
+                // an old WebView, or if the boundary cannot be reached, the re-issuing is still the only
+                // mitigation there is and must keep working exactly as before. Main-frame interception is
+                // never skipped — that is architectural, not a header workaround (handover rule 4: the
+                // document must be a real navigation served from our own bytes), and it is also what
+                // populates `capturedMainFrameHtml` and `interceptChallenges`.
+                val reissueSubresources = !RequestedWithHeaderControl.headersControlledGlobally
                 if ((isProtectedDomain || requiresInterventionBypass) &&
-                    (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
-                        request.isForMainFrame)
+                    (request.isForMainFrame ||
+                        (reissueSubresources &&
+                            (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain)))
                 ) {
                     // Explicit confirmation of the Referer the WebView sent for the watching page
                     // request. A wrong/blank Referer (e.g. about:blank) causes cimanow.cc to
