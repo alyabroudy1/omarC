@@ -2005,6 +2005,33 @@ class NavigationEngine(
                 // document must be a real navigation served from our own bytes), and it is also what
                 // populates `capturedMainFrameHtml` and `interceptChallenges`.
                 val reissueSubresources = !RequestedWithHeaderControl.headersControlledGlobally
+
+                // freex's main frame: let Chromium fetch it once the headers are clean.
+                //
+                // Handover rule 16 requires re-issuing the main frame ourselves, and gives the reason
+                // outright: "a hand-built WebView sends `sec-ch-ua: "…Android WebView";v="150"` and
+                // cimanow bounces it. The page only renders because NavigationEngine's interceptor
+                // re-issues the main frame through HttpURLConnection with real-Chrome `sec-ch-ua`."
+                //
+                // That reason is now handled at the source — `setUserAgentMetadataFromMap` sets real-Chrome
+                // brands for every request this WebView makes — so re-issuing buys nothing here and costs
+                // real fidelity: our synthesised response carries **no headers at all**, so the document
+                // arrives with no `Set-Cookie`, no CSP, nothing. Letting Chromium fetch it makes this a
+                // genuine navigation, which is what freex's payload is looking at.
+                //
+                // freex only. cimanow keeps its interception: rule 4 wants that document served from our
+                // own bytes, and it is what populates `capturedMainFrameHtml` for the decoy detection that
+                // replaced the forbidden `evaluateJavascript` reads (rule 28).
+                if (request.isForMainFrame && isFreeDomain &&
+                    RequestedWithHeaderControl.headersControlledGlobally
+                ) {
+                    ProviderLogger.i(TAG, "shouldInterceptRequest",
+                        "↪️ Letting Chromium fetch freex's main frame itself — headers are clean " +
+                            "globally, so rule 16's reason for re-issuing no longer applies",
+                        "url" to reqUrl.take(90))
+                    return null
+                }
+
                 if ((isProtectedDomain || requiresInterventionBypass) &&
                     (request.isForMainFrame ||
                         (reissueSubresources &&
