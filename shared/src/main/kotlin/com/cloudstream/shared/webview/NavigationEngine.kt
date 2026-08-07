@@ -1125,6 +1125,12 @@ class NavigationEngine(
     }
 
     private fun hideXRequestedWithHeader(webView: WebView) {
+        // Approach −1, and the only one that addresses the cause: talk to the WebView APK's own
+        // support-library boundary directly, which is all androidx.webkit ever did. See
+        // [RequestedWithHeaderControl] for why the dependency itself cannot reach the device, and for the
+        // measurements that make this header the most damaging thing we put on the wire.
+        if (RequestedWithHeaderControl.suppress(webView)) return
+
         // Approach 0: the supported API — androidx.webkit's origin allow-list.
         //
         // The four reflection approaches below target WebView internals that moved years ago; on
@@ -1931,49 +1937,33 @@ class NavigationEngine(
                 // selection stops trying to guess which requests leak — on freex, all of them do — and
                 // simply takes them all. Only GETs reach here (the POST guard is above), and only freex
                 // is widened: cimanow keeps its existing, narrower rules.
-                // The ad stack, while we are on the freex countdown page.
+                // NOT extended to the ad stack — tried 2026-08-07 and it was strictly worse.
                 //
-                // 2026-08-07, from a HAR of Chrome doing this exact flow on an Android device. In the
-                // 10.8 s between the timer page loading and `get-link.php` firing, a real browser runs
-                // the whole Google ad stack; our WebView runs almost none of it:
+                // The theory was sound and the evidence for it still stands: in the 10.8 s before the mint
+                // a real browser (HAR, Chrome on-device) runs the whole Google ad stack, while we run
+                // almost none of it — `googleads.g.doubleclick.net` 8 requests vs **0**,
+                // `tpc.googlesyndication.com` 8 vs **0**, `securepubads` 1 vs **0**. We load the AdSense
+                // bootstrap and stop exactly where Chrome goes on to `pagead/ads?gdpr=1&…`. Google does
+                // not serve AdSense to a WebView and `X-Requested-With: <package>` is how it knows, so no
+                // ad, no impression, and an ad-gate with no reason to release the link.
                 //
-                // | host | Chrome | us |
-                // |---|---|---|
-                // | `googleads.g.doubleclick.net` (the ad fetch) | 8 | **0** |
-                // | `tpc.googlesyndication.com` (ad frames) | 8 | **0** |
-                // | `securepubads.g.doubleclick.net` (GPT) | 1 | **0** |
-                // | `ep1/ep2.adtrafficquality.google` (verification) | 4 | **0** |
-                // | `pagead2.googlesyndication.com` | 14 | 2 |
+                // Re-issuing those requests to strip the header cannot work, because this interceptor
+                // does not forward response headers. Ad scripts are fetched with an `Origin`, so the
+                // reply needs `Access-Control-Allow-Origin`; without it Chromium blocks the script:
                 //
-                // We load the AdSense bootstrap (`adsbygoogle.js`, `show_ads_impl_fy2021.js` — static
-                // files served to anyone) and then stop dead, exactly where Chrome goes on to
-                // `gen_204?id=ach_evt…` and `pagead/ads?gdpr=1&…`. Google does not serve AdSense inside a
-                // WebView, and `X-Requested-With: <package>` is how it recognises one — the same header
-                // that was breaking freex itself. Every ad request goes out through Chromium, so every
-                // one is stamped; the HAR contains that header exactly **once** in 360 entries, and only
-                // as jQuery's ordinary `XMLHttpRequest` on cimanow's `core.php`.
+                //   [E] Access to script at 'pagead2.googlesyndication.com/pagead/js/adsbygoogle.js…'
+                //       from origin 'https://rm.freex2line…' — blocked by CORS
                 //
-                // No ad means no impression, and a countdown ad-gate has no reason to hand over a link it
-                // was not paid for. That is why the page builds perfectly, runs its countdown to
-                // completion, and then never mints.
+                // That killed the ad chain *earlier* than leaving it alone, and took the page with it:
+                // `anchors=2, iframes=0` where the untouched run reaches 644 and 4. Measured, reverted.
                 //
-                // Re-issuing these ourselves strips the header, exactly as it did for freex's own GETs.
-                // Scoped hard: ad hosts only, and only while the referring page is freex, so this cannot
-                // touch cimanow or any other provider. GETs only — the POST guard is above.
-                val isAdStackHost = host.endsWith("googlesyndication.com") ||
-                    host.endsWith("doubleclick.net") ||
-                    host.endsWith("adtrafficquality.google") ||
-                    host == "fundingchoicesmessages.google.com"
-                val refererHeader = reqHeaders.entries
-                    .firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value ?: ""
-                val isAdStackForFreex = isAdStackHost &&
-                    (refererHeader.contains("freex2line", ignoreCase = true) ||
-                        lastPageUrl.contains("freex2line", ignoreCase = true))
-
-                if (((isProtectedDomain || requiresInterventionBypass) &&
-                        (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
-                            request.isForMainFrame)) ||
-                    isAdStackForFreex
+                // Anyone retrying this needs CORS-relevant response headers forwarded first — and should
+                // expect Google to refuse our HTTP client anyway. The header can only really be removed
+                // where WebView adds it, i.e. `WebSettingsCompat.setRequestedWithHeaderMode`, which needs
+                // androidx.webkit on the device (see this provider's build.gradle.kts on why it is not).
+                if ((isProtectedDomain || requiresInterventionBypass) &&
+                    (isGetLink || isAsset || isAjaxEndpoint || hasLeakedHeader || isFreeDomain ||
+                        request.isForMainFrame)
                 ) {
                     // Explicit confirmation of the Referer the WebView sent for the watching page
                     // request. A wrong/blank Referer (e.g. about:blank) causes cimanow.cc to
