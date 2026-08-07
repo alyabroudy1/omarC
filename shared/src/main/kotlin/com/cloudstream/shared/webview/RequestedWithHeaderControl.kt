@@ -4,6 +4,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import com.cloudstream.shared.logging.ProviderLogger
 import java.lang.reflect.InvocationHandler
+import org.chromium.support_lib_boundary.ProfileBoundaryInterface
+import org.chromium.support_lib_boundary.ProfileStoreBoundaryInterface
 import org.chromium.support_lib_boundary.WebSettingsBoundaryInterface
 import org.chromium.support_lib_boundary.WebViewProviderFactoryBoundaryInterface
 import org.chromium.support_lib_boundary.WebkitToCompatConverterBoundaryInterface
@@ -15,25 +17,23 @@ import java.lang.reflect.Proxy
  *
  * ## Why this file exists at all
  *
- * That header is the single most damaging thing this app puts on the wire. Measured 2026-08-06 against
- * freex's countdown page, changing nothing else:
+ * This header is what breaks the freex countdown, and it is our package name specifically — not the
+ * header's presence. Measured against the real chain, changing only the value (see [SAFE_VALUE] for the
+ * full table): `com.android.chrome` mints at 11,710 ms, `XMLHttpRequest` at 10,653 ms, absent at
+ * 11,508 ms, and `com.lagradost.cloudstream3` **never mints at all** — 4 requests and then a dead page.
  *
- * | `X-Requested-With` | `get-link.php` | requests | download button |
- * |---|---|---|---|
- * | absent | 200 at 11,773 ms | 29 | filled with the token |
- * | `com.lagradost.cloudstream3` | **never sent** | **4** | stays empty |
- * | `""` | 200 at 11,570 ms | 33 | filled with the token |
+ * Confirmed on the wire, not inferred: a CDP capture of this app's own WebView (2026-08-07) showed
+ * **15 of 15 requests carrying `X-Requested-With: com.lagradost.cloudstream3`**, plus
+ * `sec-ch-ua: "Android WebView";v="150"`. `WebResourceRequest.getRequestHeaders()` never shows it, which
+ * is why this went unnoticed for so long, and why two earlier theories about it were wrong in both
+ * directions before the wire settled it.
  *
- * And from a HAR of Chrome doing the same flow on-device: the header appears **once in 360 requests**,
- * as jQuery's ordinary `XMLHttpRequest`. Real browsers never send it. Google also refuses to serve
- * AdSense to a client that does — which is why our ad slots never fill, and an ad-gate that is never
- * paid has no reason to release a link.
+ * `shouldInterceptRequest` can only dodge it by re-issuing a request ourselves, which covers GETs, cannot
+ * cover POSTs (the API hides the body) and breaks CORS-fetched scripts — that attempt took the freex page
+ * from 644 anchors down to 2 and was reverted. The fix has to happen where WebView adds the header.
  *
- * WebView adds it *below* the API surface: it is absent from `WebResourceRequest.getRequestHeaders()`,
- * so it cannot be seen, and `shouldInterceptRequest` can only avoid it by re-issuing a request
- * ourselves — which works for GETs, cannot work for POSTs (no body available) and breaks CORS-fetched
- * scripts (we forward no response headers; tried 2026-08-07, it took the freex page from 644 anchors
- * down to 2). The only place to remove it properly is where it is added.
+ * Not a factor, for the record: AdSense. Ad slots do stay empty for us, but a plain browser mints with
+ * **zero** requests to `googleads.g.doubleclick.net`, so the ad impression is not part of the gate.
  *
  * ## Why not just depend on androidx.webkit
  *
@@ -49,11 +49,15 @@ import java.lang.reflect.Proxy
  * chain it walks — and this file reproduces — is:
  *
  *  1. `org.chromium.support_lib_glue.SupportLibReflectionUtil.createWebViewProviderFactory()`, loaded
- *     from `WebView.getWebViewClassLoader()`, returns an [InvocationHandler].
- *  2. Proxy it as a factory, ask for `getSupportedFeatures()` and `getWebkitToCompatConverter()`.
- *  3. `convertSettings(WebSettings)` gives an [InvocationHandler] for that settings object.
- *  4. Proxy that and call `setRequestedWithHeaderOriginAllowList(emptySet())` — or, on older WebViews,
- *     `setRequestedWithHeaderMode(NO_HEADER)`.
+ *     from the WebView's class loader, returns an [InvocationHandler].
+ *  2. Proxy it as a factory and ask for `getSupportedFeatures()`.
+ *  3. **Preferred:** `getProfileStore()` → `getOrCreateProfile("Default")` →
+ *     `setOriginMatchedHeader("X-Requested-With", "com.android.chrome", setOf("*"))`. WebView 150's dex
+ *     contains no `RequestedWith` method of any kind — that API was removed — but it advertises
+ *     `SET_ORIGIN_MATCHED_HEADER`, so overriding the value is the lever that exists. It is also
+ *     sufficient, because the block is on our package name.
+ *  4. **Older WebViews:** `getWebkitToCompatConverter()` → `convertSettings(WebSettings)` →
+ *     `setRequestedWithHeaderOriginAllowList(emptySet())`, or `setRequestedWithHeaderMode(NO_HEADER)`.
  *
  * The interfaces we proxy **must be named `org.chromium.support_lib_boundary.*`** — see
  * `BoundaryInterfaces.kt`. Declaring them in this package was tried first, on the assumption that the
@@ -86,6 +90,31 @@ object RequestedWithHeaderControl {
     /** Feature names the WebView APK advertises for the two generations of this API. */
     private const val FEATURE_ALLOW_LIST = "REQUESTED_WITH_HEADER_ALLOW_LIST"
     private const val FEATURE_MODE = "REQUESTED_WITH_HEADER_CONTROL"
+    private const val FEATURE_SET_ORIGIN_HEADER = "SET_ORIGIN_MATCHED_HEADER"
+
+    private const val HEADER = "X-Requested-With"
+
+    /**
+     * What we send instead of our own package name.
+     *
+     * Not `""`. An empty value is a header no real Chrome ever emits, so the mask becomes the signature —
+     * the handover records that exact mistake being made and reverted. Measured 2026-08-07 against the
+     * real freex chain, changing only this value:
+     *
+     * | value | mint | requests | anchors |
+     * |---|---|---|---|
+     * | absent | 11,508 ms | 29 | 644 |
+     * | `com.android.chrome` | **11,710 ms** | 33 | 644 |
+     * | `XMLHttpRequest` | 10,653 ms | 34 | 644 |
+     * | `com.lagradost.cloudstream3` | **never** | **4** | **1** |
+     *
+     * So the block is on *our package*, not on the header existing. `com.android.chrome` is a real
+     * browser package, is plausible for a WebView-hosted page to send, and passes.
+     */
+    private const val SAFE_VALUE = "com.android.chrome"
+
+    /** Every origin. Same wildcard grammar as `addWebMessageListener`'s allowed-origin rules. */
+    private val ALL_ORIGINS = setOf("*")
 
     /** Logged once — the feature list is a property of the WebView build, not of a call. */
     @Volatile
@@ -194,6 +223,27 @@ object RequestedWithHeaderControl {
         val settings = try { cast<WebSettingsBoundaryInterface>(settingsHandler) } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "Settings proxy failed: ${e.message}")
             return false
+        }
+
+        // Preferred on any modern WebView: override the header's value per origin.
+        //
+        // WebView 150's dex contains no `RequestedWith` method at all — that API was removed — but it does
+        // advertise `SET_ORIGIN_MATCHED_HEADER`, and the CDP capture proves the header is still being sent
+        // on every request (15 of 15, all `com.lagradost.cloudstream3`). So the value is what we can
+        // change, and per [SAFE_VALUE] that is sufficient: the block is on our package name.
+        try {
+            val store = cast<ProfileStoreBoundaryInterface>(factory.getProfileStore())
+            val profile = cast<ProfileBoundaryInterface>(store.getOrCreateProfile("Default"))
+            profile.setOriginMatchedHeader(HEADER, SAFE_VALUE, ALL_ORIGINS)
+            ProviderLogger.i(TAG, "suppress",
+                "✅ $HEADER overridden for all origins",
+                "value" to SAFE_VALUE,
+                "advertised" to features.any { it.startsWith(FEATURE_SET_ORIGIN_HEADER) }.toString())
+            return true
+        } catch (e: Throwable) {
+            ProviderLogger.w(TAG, "suppress",
+                "Origin-matched header override failed — falling back to the older APIs",
+                "error" to (e.message?.take(180) ?: e.javaClass.simpleName))
         }
 
         // Allow-list first: it is the current API, and an empty list means "send it to nobody", which is
