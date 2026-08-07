@@ -42,6 +42,27 @@ import java.lang.reflect.InvocationHandler
 interface WebViewProviderFactoryBoundaryInterface {
     fun getSupportedFeatures(): Array<String>
     fun getWebkitToCompatConverter(): InvocationHandler
+    /** `ProfileStoreBoundaryInterface` — the route to the origin-matched header API. */
+    fun getProfileStore(): InvocationHandler
+}
+
+/** Profiles own the origin-matched headers, so the store is how we reach them. */
+interface ProfileStoreBoundaryInterface {
+    fun getOrCreateProfile(name: String): InvocationHandler
+    fun getProfile(name: String): InvocationHandler?
+}
+
+/**
+ * Only the origin-matched header members are declared.
+ *
+ * `setOriginMatchedHeader(name, value, originRules)` is what WebView 150 actually offers — it advertises
+ * `SET_ORIGIN_MATCHED_HEADER` and its dex contains no `RequestedWith` method of any kind, the older API
+ * having been removed. Overriding the header's *value* is therefore the available lever, and it happens
+ * to be the right one: the block is on our package name, not on the header existing.
+ */
+interface ProfileBoundaryInterface {
+    fun setOriginMatchedHeader(headerName: String, headerValue: String, originRules: Set<String>)
+    fun clearAllOriginMatchedHeaders()
 }
 
 /** Converts framework objects into their boundary handlers. */
