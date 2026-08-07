@@ -1119,6 +1119,35 @@ class NavigationEngine(
                 javaScriptCanOpenWindowsAutomatically = true
                 setSupportMultipleWindows(true)
             }
+            // ── DIAGNOSTIC: remote-inspect this WebView from a desktop ─────────────────────────
+            //
+            // Turn on and the app exposes `@webview_devtools_remote_<pid>`, which `adb forward` plus
+            // Chrome DevTools attaches to. That is the only way left to see what this WebView actually
+            // puts on the wire: `WebResourceRequest.getRequestHeaders()` hides the headers WebView adds
+            // itself, so every question about them has so far been answered by inference instead of
+            // observation — and inference has been wrong more than once here (see
+            // [RequestedWithHeaderControl], whose whole premise the WebView 150 boundary contradicts).
+            //
+            // With it on, the live page's real requests, console and JS state are all readable, which
+            // settles why freex's countdown completes and then never calls `get-link.php`.
+            //
+            // **Off for release.** While enabled, any process on the device that can reach the abstract
+            // socket can inspect this app's WebViews, including their cookies. It is a debugging tool,
+            // not a feature, and it is a single flag so it can be turned off without hunting for call
+            // sites. CloudStream itself never enables this — the only sockets on the test device belonged
+            // to another app entirely.
+            if (ENABLE_WEBVIEW_REMOTE_DEBUGGING) {
+                try {
+                    WebView.setWebContentsDebuggingEnabled(true)
+                    ProviderLogger.w(TAG, "createWebView",
+                        "🔍 WebView remote debugging ENABLED — this app is now inspectable over adb. " +
+                            "Diagnostic only; set ENABLE_WEBVIEW_REMOTE_DEBUGGING=false for release.")
+                } catch (e: Throwable) {
+                    ProviderLogger.w(TAG, "createWebView",
+                        "Could not enable remote debugging: ${e.message}")
+                }
+            }
+
             // THE NUCLEAR SOLUTION: Hide the package name from ALL WebView requests natively.
             hideXRequestedWithHeader(this)
         }
@@ -4096,6 +4125,12 @@ class NavigationEngine(
          * Subresource count below which a finished page is considered a stub. The gap between the two
          * outcomes is not subtle: 2 for the stub cimanow served, 17 and 54 for pages that worked.
          */
+        /**
+         * Expose this app's WebViews to Chrome DevTools over adb. **Diagnostic; false for release.**
+         * See the call site in `createWebView` for what it costs and why it is currently worth it.
+         */
+        private const val ENABLE_WEBVIEW_REMOTE_DEBUGGING = true
+
         private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
 
         /** Probes to wait before dumping the rendered page — past the point a browser has minted. */
