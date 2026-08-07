@@ -90,7 +90,20 @@ object RequestedWithHeaderControl {
     /** Feature names the WebView APK advertises for the two generations of this API. */
     private const val FEATURE_ALLOW_LIST = "REQUESTED_WITH_HEADER_ALLOW_LIST"
     private const val FEATURE_MODE = "REQUESTED_WITH_HEADER_CONTROL"
-    private const val FEATURE_SET_ORIGIN_HEADER = "SET_ORIGIN_MATCHED_HEADER"
+    /**
+     * Feature names for the origin-matched header API — which are **not** named after its methods.
+     *
+     * WebView 150's dex contains `setOriginMatchedHeader`/`addOriginMatchedHeader`/`clearOriginMatched…`,
+     * but advertises them as `CUSTOM_REQUEST_HEADERS` (current) and `EXTRA_HEADER_FOR_ORIGINS`
+     * (deprecated). Chromium's `Features.java` spells this out: the constants sit above comments naming
+     * `Profile.clearCustomHeader` and `Profile.clearExtraHeaderForOrigins`. The methods were renamed; the
+     * feature names were kept for compatibility.
+     *
+     * Checking for a literal `SET_ORIGIN_MATCHED_HEADER` — which is a method name, not a feature name, and
+     * appears in no feature list anywhere — is why the 10:39 run logged `advertised=false` and kept the
+     * subresource re-fetching switched on despite the call itself succeeding.
+     */
+    private val FEATURES_ORIGIN_HEADER = listOf("CUSTOM_REQUEST_HEADERS", "EXTRA_HEADER_FOR_ORIGINS")
 
     private const val HEADER = "X-Requested-With"
 
@@ -302,7 +315,7 @@ object RequestedWithHeaderControl {
             val store = cast<ProfileStoreBoundaryInterface>(factory.getProfileStore())
             val profile = cast<ProfileBoundaryInterface>(store.getOrCreateProfile("Default"))
             profile.setOriginMatchedHeader(HEADER, SAFE_VALUE, ALL_ORIGINS)
-            val advertised = features.any { it.startsWith(FEATURE_SET_ORIGIN_HEADER) }
+            val advertised = features.any { f -> FEATURES_ORIGIN_HEADER.any { f.startsWith(it) } }
             headersControlledGlobally = uaOk && advertised
             ProviderLogger.i(TAG, "suppress",
                 "✅ $HEADER overridden for all origins",
