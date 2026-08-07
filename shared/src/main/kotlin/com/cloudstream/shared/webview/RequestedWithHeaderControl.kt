@@ -4,6 +4,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import com.cloudstream.shared.logging.ProviderLogger
 import java.lang.reflect.InvocationHandler
+import org.chromium.support_lib_boundary.WebSettingsBoundaryInterface
+import org.chromium.support_lib_boundary.WebViewProviderFactoryBoundaryInterface
+import org.chromium.support_lib_boundary.WebkitToCompatConverterBoundaryInterface
 import java.lang.reflect.Proxy
 
 /**
@@ -52,11 +55,20 @@ import java.lang.reflect.Proxy
  *  4. Proxy that and call `setRequestedWithHeaderOriginAllowList(emptySet())` — or, on older WebViews,
  *     `setRequestedWithHeaderMode(NO_HEADER)`.
  *
- * The boundary is matched by **method name and parameter types**, not by package: the glue side wraps
- * its implementation in an `InvocationHandler` that does
- * `delegate.getClass().getMethod(method.getName(), method.getParameterTypes())`. That is precisely why
- * declaring the interfaces here, in our own package, is enough — they never have to be the same classes
- * androidx would have used.
+ * The interfaces we proxy **must be named `org.chromium.support_lib_boundary.*`** — see
+ * `BoundaryInterfaces.kt`. Declaring them in this package was tried first, on the assumption that the
+ * glue matched on method name and parameter types alone. It does not: `dupeMethod` re-loads the
+ * *declaring class of the method* by name from the WebView's class loader, so an interface the WebView
+ * APK has never heard of fails at `Class.forName` before the delegate is ever reached. On-device
+ * 2026-08-07:
+ *
+ * ```
+ * Reflection failed for method public abstract java.lang.String[]
+ *   com.cloudstream.shared.webview.RequestedWithHeaderControl$FactoryBoundary.getSupportedFeatures()
+ * ```
+ *
+ * Names and parameter types still have to match exactly; the package is an additional requirement, not
+ * an alternative to them.
  *
  * Everything is best-effort and heavily logged. A WebView that does not expose the feature leaves the
  * header exactly as it is today, which is the current behaviour, so this cannot regress anything.
@@ -79,23 +91,9 @@ object RequestedWithHeaderControl {
     @Volatile
     private var featuresLogged = false
 
-    // ── The boundary, redeclared. Names and parameter types must match the WebView APK exactly. ──
-
-    private interface FactoryBoundary {
-        fun getSupportedFeatures(): Array<String>
-        fun getWebkitToCompatConverter(): InvocationHandler
-    }
-
-    private interface ConverterBoundary {
-        fun convertSettings(webSettings: WebSettings): InvocationHandler
-    }
-
-    private interface SettingsBoundary {
-        fun setRequestedWithHeaderMode(mode: Int)
-        fun getRequestedWithHeaderMode(): Int
-        fun setRequestedWithHeaderOriginAllowList(allowList: Set<String>)
-        fun getRequestedWithHeaderOriginAllowList(): Set<String>
-    }
+    // The boundary interfaces themselves live in `org.chromium.support_lib_boundary` — that exact
+    // package is required, see BoundaryInterfaces.kt for the `dupeMethod` reason and the on-device
+    // failure that proved it.
 
     private inline fun <reified T> cast(handler: InvocationHandler): T =
         Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java), handler) as T
@@ -167,7 +165,7 @@ object RequestedWithHeaderControl {
             null
         } ?: return false
 
-        val factory = try { cast<FactoryBoundary>(factoryHandler) } catch (e: Throwable) {
+        val factory = try { cast<WebViewProviderFactoryBoundaryInterface>(factoryHandler) } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "Factory proxy failed: ${e.message}")
             return false
         }
@@ -187,13 +185,13 @@ object RequestedWithHeaderControl {
         val hasMode = features.any { it.startsWith(FEATURE_MODE) }
 
         val settingsHandler = try {
-            cast<ConverterBoundary>(factory.getWebkitToCompatConverter())
+            cast<WebkitToCompatConverterBoundaryInterface>(factory.getWebkitToCompatConverter())
                 .convertSettings(webView.settings)
         } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "convertSettings failed: ${e.message}")
             return false
         }
-        val settings = try { cast<SettingsBoundary>(settingsHandler) } catch (e: Throwable) {
+        val settings = try { cast<WebSettingsBoundaryInterface>(settingsHandler) } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "Settings proxy failed: ${e.message}")
             return false
         }
