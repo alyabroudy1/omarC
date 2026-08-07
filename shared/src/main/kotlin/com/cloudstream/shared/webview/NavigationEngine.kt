@@ -730,6 +730,7 @@ class NavigationEngine(
                                 var lastProbe = 0L
                                 var lastProbeValue: String? = null
                                 var probeSkipLogged = false
+                                var probeCount = 0
                                 while (System.currentTimeMillis() < deadline &&
                                     !dialogDismissedByUser && !rendererGone
                                 ) {
@@ -783,6 +784,44 @@ class NavigationEngine(
                                             }
                                         } else {
                                             probeSkipLogged = false
+                                            // One-shot dump of the *rendered* page, ~15 probes in.
+                                            //
+                                            // 2026-08-07: the probe showed the freex page carrying
+                                            // `anchors=2` for a full 120 s where a working browser on the
+                                            // same page reaches `anchors=645`. The raw HTML we serve has
+                                            // **zero** anchors, so the payload does start — it builds the
+                                            // skeleton (`#downloadbtn`, the countdown) — and then stops
+                                            // silently, with no console error of any kind. Every
+                                            // difference testable off-device has been eliminated (UA,
+                                            // client hints, `userAgentData`, referrer, visibility, assets,
+                                            // the served bytes, our own hook and its realm getters, the ad
+                                            // gate, X-Requested-With). What is left is only visible from
+                                            // the device: *where* in its own construction the payload
+                                            // gives up. Diffing this against the same page rendered in a
+                                            // browser shows that directly.
+                                            //
+                                            // Freex only — `probeOnlyOnHosts` already gates this block,
+                                            // and §0.1's no-read rules are scoped to cimanow's decryptor.
+                                            probeCount++
+                                            if (probeCount == RENDERED_DUMP_AFTER_PROBES) {
+                                                try {
+                                                    val html = executeJsInWebView(
+                                                        webView,
+                                                        "(function(){try{return document.documentElement.outerHTML;}catch(e){return 'dump-error: '+e;}})();"
+                                                    ) ?: ""
+                                                    val ctx = com.cloudstream.shared.android.PluginContext.context
+                                                    val dir = ctx?.externalCacheDir ?: ctx?.cacheDir
+                                                    if (dir != null && html.isNotBlank()) {
+                                                        val f = java.io.File(dir, "freex_rendered_dump.html")
+                                                        f.writeText(html)
+                                                        ProviderLogger.w(TAG, "execute",
+                                                            "\uD83D\uDCC4 RENDERED FREEX DUMP: ${f.absolutePath} (${html.length} chars) — " +
+                                                                "diff this against the same page in a browser to see where the payload stops")
+                                                    }
+                                                } catch (e: Exception) {
+                                                    ProviderLogger.w(TAG, "execute", "Rendered dump failed: ${e.message}")
+                                                }
+                                            }
                                             val probed = try {
                                                 executeJsInWebView(webView, step.probeJs)
                                             } catch (e: Exception) {
@@ -4028,6 +4067,9 @@ class NavigationEngine(
          * outcomes is not subtle: 2 for the stub cimanow served, 17 and 54 for pages that worked.
          */
         private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
+
+        /** Probes to wait before dumping the rendered page — past the point a browser has minted. */
+        private const val RENDERED_DUMP_AFTER_PROBES = 15
 
         /**
          * Console prefix a provider's capture hook uses to hand us a POST it wants replayed.
