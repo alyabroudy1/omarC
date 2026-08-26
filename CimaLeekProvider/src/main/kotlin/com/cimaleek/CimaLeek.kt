@@ -7,6 +7,7 @@ import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
+import com.cloudstream.shared.extractors.SnifferSelector
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
@@ -120,55 +121,175 @@ class CimaLeek : BaseProvider() {
             .joinToString("")
     }
 
-    private fun jsSlice(str: String, start: Int, end: Int?): String {
-        val len = str.length
-        var actualStart = if (start < 0) len + start else start
-        if (actualStart < 0) actualStart = 0
-        if (actualStart > len) actualStart = len
+    // ====================================================================
+    // DECRYPTION STRATEGIES ARCHITECTURE
+    // ====================================================================
 
-        val actualEnd = if (end == null) {
-            len
-        } else {
-            var e = if (end < 0) len + end else end
-            if (e < 0) e = 0
-            if (e > len) e = len
-            e
+    /**
+     * Contextual metadata extracted from the watch page needed for server decryption.
+     */
+    data class DecryptionMetadata(
+        val watchUrl: String,
+        val postLink: String,
+        val postId: String,
+        val ver: String
+    ) {
+        val postLinkPathLength: Int by lazy {
+            val link = postLink.ifBlank { watchUrl }
+            val path = try { java.net.URI(link).path?.trim('/') ?: "" } catch (_: Exception) { "" }
+            val trimmed = if (path.endsWith("watch")) path.substringBeforeLast("watch").trim('/') else path
+            trimmed.length
         }
 
-        if (actualStart >= actualEnd) return ""
-        return str.substring(actualStart, actualEnd)
+        val watchPathLength: Int by lazy {
+            val path = try { java.net.URI(watchUrl).path?.trim('/') ?: "" } catch (_: Exception) { "" }
+            val trimmed = if (path.endsWith("watch")) path.substringBeforeLast("watch").trim('/') else path
+            trimmed.length
+        }
     }
 
-    private fun mdTq(a: String, b: List<List<Int>>, pathLength: Int): String {
-        var kwDr = a
-        for (i in b.indices.reversed()) {
-            val range = b[i]
-            if (range.size < 2) continue
-            val startVal = range[0]
-            val cqrr = range[1]
-            val start = startVal - pathLength
-            
-            val sliced1 = jsSlice(kwDr, 0, start)
-            val sliced2 = jsSlice(kwDr, cqrr, null)
-            kwDr = sliced1 + sliced2
-        }
-        return kwDr
+    /**
+     * Interface defining a server payload decryption strategy.
+     * Encapsulates key derivation, XOR sequence, and slicing offset logic.
+     * Allows clean fallback chains and future scalability when the site rotates keys/algorithms.
+     */
+    interface DecryptionStrategy {
+        val name: String
+        fun decrypt(
+            payloadA: String,
+            slicesB: List<List<Int>>,
+            keyC: String,
+            metadata: DecryptionMetadata
+        ): String?
     }
 
-    private fun decryptIOns(quzs: String, kQqs: String): String {
-        val decodedBytes = android.util.Base64.decode(quzs, android.util.Base64.DEFAULT)
-        val kopp = String(decodedBytes, java.nio.charset.StandardCharsets.ISO_8859_1)
-        
-        val gNks = "9b09102b216d23cbb6cf75b47c82961c"
-        val result = java.lang.StringBuilder()
-        for (i in 0 until kopp.length) {
-            val gljp = kopp[i].code
-            val immp = gNks[i % 32].code
-            val cidp = kQqs[i % kQqs.length].code
-            val decryptedChar = gljp xor immp xor cidp
-            result.append(decryptedChar.toChar())
+    /**
+     * Primary Strategy (V2 - 2026 update):
+     * Uses the updated XOR key derived from ajax-5.js and post_link pathLength slicing.
+     */
+    private class V2DecryptionStrategy : DecryptionStrategy {
+        override val name = "V2_CURRENT"
+        private val xorKey = "121af524a017cb96675243aa34cde44e"
+
+        override fun decrypt(
+            payloadA: String,
+            slicesB: List<List<Int>>,
+            keyC: String,
+            metadata: DecryptionMetadata
+        ): String? {
+            val candidateLengths = listOf(metadata.postLinkPathLength, metadata.watchPathLength).distinct()
+            for (len in candidateLengths) {
+                try {
+                    val cleaned = mdTq(payloadA, slicesB, len)
+                    val result = xorDecrypt(cleaned, keyC, xorKey)
+                    if (result.startsWith("http")) return result
+                } catch (_: Exception) {}
+            }
+            return null
         }
-        return result.toString()
+    }
+
+    /**
+     * Fallback Strategy (V1 - Legacy):
+     * Retains the original XOR key for movies/posts cached under the previous site bundle.
+     */
+    private class V1LegacyDecryptionStrategy : DecryptionStrategy {
+        override val name = "V1_LEGACY"
+        private val xorKey = "9b09102b216d23cbb6cf75b47c82961c"
+
+        override fun decrypt(
+            payloadA: String,
+            slicesB: List<List<Int>>,
+            keyC: String,
+            metadata: DecryptionMetadata
+        ): String? {
+            val candidateLengths = listOf(metadata.watchPathLength, metadata.postLinkPathLength, 0).distinct()
+            for (len in candidateLengths) {
+                try {
+                    val cleaned = mdTq(payloadA, slicesB, len)
+                    val result = xorDecrypt(cleaned, keyC, xorKey)
+                    if (result.startsWith("http")) return result
+                } catch (_: Exception) {}
+            }
+            return null
+        }
+    }
+
+    companion object {
+        private val decryptionStrategies: List<DecryptionStrategy> = listOf(
+            V2DecryptionStrategy(),
+            V1LegacyDecryptionStrategy()
+        )
+
+        private fun jsSlice(str: String, start: Int, end: Int?): String {
+            val len = str.length
+            var actualStart = if (start < 0) len + start else start
+            if (actualStart < 0) actualStart = 0
+            if (actualStart > len) actualStart = len
+
+            val actualEnd = if (end == null) {
+                len
+            } else {
+                var e = if (end < 0) len + end else end
+                if (e < 0) e = 0
+                if (e > len) e = len
+                e
+            }
+
+            if (actualStart >= actualEnd) return ""
+            return str.substring(actualStart, actualEnd)
+        }
+
+        private fun mdTq(a: String, b: List<List<Int>>, pathLength: Int): String {
+            var kwDr = a
+            for (i in b.indices.reversed()) {
+                val range = b[i]
+                if (range.size < 2) continue
+                val startVal = range[0]
+                val cqrr = range[1]
+                val start = startVal - pathLength
+
+                val sliced1 = jsSlice(kwDr, 0, start)
+                val sliced2 = jsSlice(kwDr, cqrr, null)
+                kwDr = sliced1 + sliced2
+            }
+            return kwDr
+        }
+
+        private fun xorDecrypt(quzs: String, kQqs: String, key: String): String {
+            val decodedBytes = android.util.Base64.decode(quzs, android.util.Base64.DEFAULT)
+            val kopp = String(decodedBytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+
+            val result = java.lang.StringBuilder()
+            for (i in 0 until kopp.length) {
+                val gljp = kopp[i].code
+                val immp = key[i % key.length].code
+                val cidp = kQqs[i % kQqs.length].code
+                val decryptedChar = gljp xor immp xor cidp
+                result.append(decryptedChar.toChar())
+            }
+            return result.toString()
+        }
+
+        /**
+         * Iterates through available decryption strategies in order (primary -> fallback).
+         */
+        fun decryptServerPayload(
+            payloadA: String,
+            slicesB: List<List<Int>>,
+            keyC: String,
+            metadata: DecryptionMetadata,
+            serverTag: String
+        ): String? {
+            for (strategy in decryptionStrategies) {
+                val decrypted = strategy.decrypt(payloadA, slicesB, keyC, metadata)
+                if (!decrypted.isNullOrBlank() && decrypted.startsWith("http")) {
+                    Log.d("[CimaLeek] [loadLinks]", "$serverTag resolved using strategy '${strategy.name}'")
+                    return decrypted
+                }
+            }
+            return null
+        }
     }
 
     /**
@@ -412,16 +533,21 @@ class CimaLeek : BaseProvider() {
         val ver = Regex(""""ver"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
         val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)
             ?: Regex(""""post_id"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
-        Log.d(methodTag, "PHASE 0: ver='$ver', postId='$postId'")
+        val postLink = Regex(""""post_link"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1)
+            ?.replace("\\/", "/") ?: ""
+        Log.d(methodTag, "PHASE 0: ver='$ver', postId='$postId', postLink='$postLink'")
 
         val serverElements = doc.select(".lalaplay_player_option")
         Log.d(methodTag, "PHASE 0: Found ${serverElements.size} server options")
         if (serverElements.isEmpty()) return false
 
-        val path = java.net.URL(watchUrl).path.trim('/')
-        val trimmedPath = if (path.endsWith("watch")) path.substringBeforeLast("watch").trim('/') else path
-        val pathLength = trimmedPath.length
-        Log.d(methodTag, "PHASE 0: path='$trimmedPath' length=$pathLength")
+        val metadata = DecryptionMetadata(
+            watchUrl = watchUrl,
+            postLink = postLink,
+            postId = postId,
+            ver = ver
+        )
+        Log.d(methodTag, "PHASE 0: postLinkPathLength=${metadata.postLinkPathLength}, watchPathLength=${metadata.watchPathLength}")
 
         // ====================================================================
         // PHASE 1 – Call API + decrypt for every server (all in parallel)
@@ -471,10 +597,16 @@ class CimaLeek : BaseProvider() {
                             }
                         }
 
-                        val cleaned = mdTq(a, bList, pathLength)
-                        val decrypted = decryptIOns(cleaned, c)
-                        if (!decrypted.startsWith("http")) {
-                            Log.w(methodTag, "PHASE 1: [$idx] $serverName — decrypt did not produce http URL: $decrypted")
+                        val decrypted = decryptServerPayload(
+                            payloadA = a,
+                            slicesB = bList,
+                            keyC = c,
+                            metadata = metadata,
+                            serverTag = "[$idx] $serverName"
+                        )
+
+                        if (decrypted == null || !decrypted.startsWith("http")) {
+                            Log.w(methodTag, "PHASE 1: [$idx] $serverName — all decryption strategies failed")
                             return@async null
                         }
 
@@ -489,7 +621,10 @@ class CimaLeek : BaseProvider() {
         }
 
         Log.i(methodTag, "PHASE 1 done: ${resolved.size}/${serverElements.size} resolved")
-        if (resolved.isEmpty()) return false
+        if (resolved.isEmpty()) {
+            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} resolved via native strategies — falling back to WebView sniffing on watch page")
+            return sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)
+        }
 
         // ====================================================================
         // PHASE 2 – Try standard extractors on ALL resolved URLs IN PARALLEL
@@ -565,7 +700,61 @@ class CimaLeek : BaseProvider() {
             Log.w(methodTag, "PHASE 4: FAILED [${result.idx}] ${result.name}")
         }
 
-        Log.w(methodTag, "END — all ${resolved.size} URLs exhausted, no video found")
+        Log.w(methodTag, "PHASE 4: Resolved URL sniffing exhausted. Attempting ultimate watch page WebView fallback...")
+        if (sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)) {
+            return true
+        }
+
+        Log.w(methodTag, "END — all ${resolved.size} URLs and WebView fallbacks exhausted, no video found")
+        return false
+    }
+
+    /**
+     * Ultimate fallback: Uses Android WebView (via SnifferExtractor) to load the watch page
+     * and click server option buttons directly in DOM, allowing the website's real JavaScript bundle
+     * to resolve and mount the video player.
+     */
+    private suspend fun sniffWatchPageServers(
+        watchUrl: String,
+        serverElements: org.jsoup.select.Elements,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[CimaLeek] [loadLinks]"
+        Log.i(methodTag, "WebView Fallback: Sniffing ${serverElements.size} server(s) on watch page...")
+        for ((idx, server) in serverElements.withIndex()) {
+            val dataType = server.attr("data-type")
+            val dataNume = server.attr("data-nume")
+            val serverName = server.text().trim().ifBlank { "Server $idx" }
+
+            val selectorQuery = when {
+                dataType.isNotBlank() && dataNume.isNotBlank() ->
+                    ".lalaplay_player_option[data-type='$dataType'][data-nume='$dataNume']"
+                dataNume.isNotBlank() ->
+                    ".lalaplay_player_option[data-nume='$dataNume']"
+                else ->
+                    ".lalaplay_player_option:nth-of-type(${idx + 1})"
+            }
+            val selector = SnifferSelector(
+                query = selectorQuery,
+                waitAfterClick = 3500L
+            )
+
+            Log.d(methodTag, "WebView Fallback: Sniffing [$idx] $serverName with selector '$selectorQuery' on $watchUrl")
+            val ok = awaitSnifferResult(
+                targetUrl = watchUrl,
+                referer = watchUrl,
+                subtitleCallback = subtitleCallback,
+                callback = callback,
+                timeoutMs = 15000L,
+                selector = selector
+            )
+            if (ok) {
+                Log.i(methodTag, "WebView Fallback: SUCCESS [$idx] $serverName")
+                return true
+            }
+            Log.w(methodTag, "WebView Fallback: FAILED [$idx] $serverName")
+        }
         return false
     }
 }

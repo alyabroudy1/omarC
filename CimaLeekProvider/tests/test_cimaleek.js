@@ -39,7 +39,7 @@ function fetch(url, options = {}) {
     });
 }
 
-// ==================== CimaLeek Decryption (Kotlin → JS) ====================
+// ==================== CimaLeek Decryption Multi-Strategy (Kotlin → JS) ====================
 
 function jsSlice(str, start, end) {
     const len = str.length;
@@ -68,19 +68,49 @@ function mdTq(a, b, pathLength) {
     return kwDr;
 }
 
-function decryptIOns(quzs, kQqs) {
+function xorDecrypt(quzs, kQqs, key) {
     const decodedBytes = Buffer.from(quzs, 'base64');
     const kopp = decodedBytes.toString('latin1');
-    const gNks = '9b09102b216d23cbb6cf75b47c82961c';
+    const gNks = key;
     let result = '';
     for (let i = 0; i < kopp.length; i++) {
         const gljp = kopp.charCodeAt(i);
-        const immp = gNks.charCodeAt(i % 32);
+        const immp = gNks.charCodeAt(i % gNks.length);
         const cidp = kQqs.charCodeAt(i % kQqs.length);
         const decryptedChar = gljp ^ immp ^ cidp;
         result += String.fromCharCode(decryptedChar);
     }
     return result;
+}
+
+const DECRYPTION_STRATEGIES = [
+    {
+        name: 'V2_CURRENT',
+        key: '121af524a017cb96675243aa34cde44e',
+        getLengths: (meta) => [meta.postLinkPathLength, meta.watchPathLength]
+    },
+    {
+        name: 'V1_LEGACY',
+        key: '9b09102b216d23cbb6cf75b47c82961c',
+        getLengths: (meta) => [meta.watchPathLength, meta.postLinkPathLength, 0]
+    }
+];
+
+function decryptServerPayload(payloadA, slicesB, keyC, meta, serverTag = '') {
+    for (const strategy of DECRYPTION_STRATEGIES) {
+        const candidateLengths = [...new Set(strategy.getLengths(meta))];
+        for (const len of candidateLengths) {
+            try {
+                const cleaned = mdTq(payloadA, slicesB, len);
+                const decrypted = xorDecrypt(cleaned, keyC, strategy.key);
+                if (decrypted.startsWith('http')) {
+                    console.log(`    [Strategy ${strategy.name}] (offset=${len}) SUCCESS -> ${decrypted.substring(0, 80)}...`);
+                    return { success: true, strategy: strategy.name, url: decrypted };
+                }
+            } catch (e) {}
+        }
+    }
+    return { success: false };
 }
 
 function generateRandomString(length) {
@@ -108,69 +138,62 @@ async function testCimaLeek(watchUrl) {
     fs.writeFileSync('/tmp/cimaleek_watch.html', html);
     console.log('  Saved to /tmp/cimaleek_watch.html');
 
-    // Step 2: Parse ver and post_id
-    console.log('\n[2/5] Parsing ver and post_id...');
-    const verMatch = html.match(/"""ver"\s*:\s*"([^"]+)"""/);
-    const ver = verMatch ? verMatch[1] : null;
-    const postIdMatch = html.match(/"""post_id"\s*:\s*(\d+)""/) || html.match(/"""post_id"\s*:\s*"([^"]+)"""/);
-    const postId = postIdMatch ? postIdMatch[1] : null;
+    // Step 2: Parse ver, post_id, and post_link
+    console.log('\n[2/5] Parsing ver, post_id, and post_link...');
+    const verMatch = html.match(/"ver":\s*"([^"]+)"/) || html.match(/'ver':\s*'([^']+)'/);
+    const ver = verMatch ? verMatch[1] : '';
+    const postIdMatch = html.match(/"post_id":\s*(\d+)/) || html.match(/"post_id":\s*"([^"]+)"/);
+    const postId = postIdMatch ? postIdMatch[1] : '';
+    const postLinkMatch = html.match(/"post_link":\s*"([^"]+)"/);
+    const postLink = postLinkMatch ? postLinkMatch[1].replace(/\\\//g, '/') : watchUrl;
     console.log('  ver:', ver);
     console.log('  postId:', postId);
+    console.log('  postLink:', postLink);
 
     // Step 3: Find server elements
     console.log('\n[3/5] Finding server elements (.lalaplay_player_option)...');
-    // Use a simple regex to count occurrences since we can't use Jsoup easily
-    const serverCount = (html.match(/class="[^"]*lalaplay_player_option[^"]*"/g) || []).length;
-    console.log('  Found', serverCount, 'server option elements');
-
-    // Also extract individual server data
-    const serverRegex = /<div[^>]*class="[^"]*lalaplay_player_option[^"]*"[^>]*data-type="([^"]*)"[^>]*data-post="([^"]*)"[^>]*data-nume="([^"]*)"[^>]*>/g;
+    const attrRegex = /class="[^"]*lalaplay_player_option[^"]*"[^>]*data-type="([^"]*)"[^>]*data-post="([^"]*)"[^>]*data-nume="([^"]*)"/g;
     let sMatch;
     const servers = [];
-    while ((sMatch = serverRegex.exec(html)) !== null) {
+    while ((sMatch = attrRegex.exec(html)) !== null) {
         servers.push({ type: sMatch[1], post: sMatch[2] || postId, nume: sMatch[3] });
     }
 
-    // Alternative: maybe the structure is different. Let's search for data-type/data-post/data-nume
     if (servers.length === 0) {
-        console.log('  No servers found with standard regex. Searching for data attributes (single/double quotes)...');
-        const attrRegex = /data-type=['"]([^'"]*)['"][^>]*data-post=['"]([^'"]*)['"][^>]*data-nume=['"]([^'"]*)['"]/g;
-        while ((sMatch = attrRegex.exec(html)) !== null) {
+        console.log('  Searching data-type/data-post/data-nume without strict class order...');
+        const altRegex = /data-type=['"]([^'"]*)['"][^>]*data-post=['"]([^'"]*)['"][^>]*data-nume=['"]([^'"]*)['"]/g;
+        while ((sMatch = altRegex.exec(html)) !== null) {
             servers.push({ type: sMatch[1], post: sMatch[2] || postId, nume: sMatch[3] });
         }
-        console.log('  Found', servers.length, 'servers via data attributes');
     }
 
     servers.forEach((s, i) => console.log(`  Server ${i}: type=${s.type}, post=${s.post}, nume=${s.nume}`));
 
     if (servers.length === 0) {
         console.log('\n  FAIL: No server elements found!');
-        console.log('  Dumping context around "lalaplay"...');
-        const idx = html.indexOf('lalaplay');
-        if (idx >= 0) console.log(html.substring(Math.max(0, idx - 200), idx + 500));
-        else {
-            console.log('  "lalaplay" not found in HTML');
-            // Search for any player/server related content
-            const playerIdx = html.indexOf('player');
-            if (playerIdx >= 0) console.log('  Context around "player":', html.substring(Math.max(0, playerIdx - 100), playerIdx + 300));
-        }
         return;
     }
 
-    // Step 4: Calculate pathLength
-    console.log('\n[4/5] Calculating pathLength...');
-    const urlObj = new URL(watchUrl);
-    let path = urlObj.pathname.replace(/^\/+|\/+$/g, '');
-    let trimmedPath = path.endsWith('watch') ? path.replace(/\/?watch\/?$/, '').replace(/^\/+|\/+$/g, '') : path;
-    const pathLength = trimmedPath.length;
-    console.log('  Path:', path);
-    console.log('  Trimmed path:', trimmedPath);
-    console.log('  pathLength:', pathLength);
+    // Step 4: Prepare DecryptionMetadata
+    console.log('\n[4/5] Preparing DecryptionMetadata...');
+    const postLinkPath = new URL(postLink).pathname.replace(/^\/+|\/+$/g, '');
+    const watchPath = new URL(watchUrl).pathname.replace(/^\/+|\/+$/g, '');
+    const trimmedWatchPath = watchPath.endsWith('watch') ? watchPath.replace(/\/?watch\/?$/, '').replace(/^\/+|\/+$/g, '') : watchPath;
+    const meta = {
+        watchUrl,
+        postLink,
+        postId,
+        ver,
+        postLinkPathLength: postLinkPath.length,
+        watchPathLength: trimmedWatchPath.length
+    };
+    console.log('  postLinkPathLength:', meta.postLinkPathLength);
+    console.log('  watchPathLength:', meta.watchPathLength);
 
     // Step 5: Process each server
     console.log('\n[5/5] Processing servers...');
     for (const [idx, server] of servers.entries()) {
-        console.log(`\n  --- Server ${idx}: ${server.nume || 'unknown'} ---`);
+        console.log(`\n  --- Server ${idx}: ${server.type} (nume=${server.nume}) ---`);
         const rand = generateRandomString(16);
         const apiUrl = `${MAIN_URL}/wp-json/lalaplayer/v2/?p=${server.post}&t=${server.type}&n=${server.nume}&ver=${ver}&rand=${rand}`;
         console.log('  API URL:', apiUrl);
@@ -185,7 +208,6 @@ async function testCimaLeek(watchUrl) {
             });
             console.log('  API status:', apiRes.status);
             const apiData = apiRes.text.trim();
-            console.log('  API response:', apiData.substring(0, 200));
 
             try {
                 const json = JSON.parse(apiData);
@@ -193,30 +215,22 @@ async function testCimaLeek(watchUrl) {
                 const b = json.b || [];
                 const c = json.c || '';
 
-                console.log('  a (encrypted):', a.substring(0, 50) + '...');
-                console.log('  b (ranges):', JSON.stringify(b));
+                console.log('  a (encrypted):', a.substring(0, 40) + '...');
+                console.log('  b (ranges count):', b.length);
                 console.log('  c (key):', c);
 
-                // Decrypt
-                const cleaned = mdTq(a, b, pathLength);
-                console.log('  After mdTq:', cleaned.substring(0, 80));
-
-                const decryptedUrl = decryptIOns(cleaned, c);
-                console.log('  Decrypted URL:', decryptedUrl);
-
-                if (decryptedUrl.startsWith('http')) {
-                    console.log('  ✓ VALID URL!');
-                } else if (decryptedUrl.length > 0) {
-                    console.log('  ✗ NOT a URL (length=' + decryptedUrl.length + ')');
-                    console.log('  Raw hex:', Buffer.from(decryptedUrl, 'latin1').toString('hex').substring(0, 100));
+                const result = decryptServerPayload(a, b, c, meta, `[${idx}] ${server.type}`);
+                if (result.success) {
+                    console.log('  ✓ SUCCESS with Strategy:', result.strategy);
+                    console.log('  ✓ Resolved URL:', result.url);
                 } else {
-                    console.log('  ✗ Empty decryption result');
+                    console.log('  ✗ All decryption strategies failed');
                 }
             } catch (e) {
-                console.log('  ✗ JSON parse error:', e.message);
+                console.log('  JSON parse error:', e.message);
             }
         } catch (e) {
-            console.log('  ✗ API request error:', e.message);
+            console.log('  API request error:', e.message);
         }
     }
 }
