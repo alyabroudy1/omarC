@@ -17,6 +17,8 @@ class CswruExtractor(
 
     companion object {
         private const val TAG = "CswruExtractor"
+        /** Hosts known to serve direct HLS player pages (no iframe wrapper). */
+        private val DIRECT_PLAYER_HOSTS = listOf("erwru.vid872.top")
     }
 
     override suspend fun getUrl(
@@ -29,6 +31,16 @@ class CswruExtractor(
         ProviderLogger.d(TAG, "getUrl", "Processing Cswru wrapper URL", "url" to url, "referer" to actualReferer)
 
         try {
+            // Fast path: if the URL is on a known direct-player host, skip the
+            // iframe/redirect search entirely and go straight to WebView sniffer.
+            val urlHost = try { java.net.URI(url).host ?: "" } catch (_: Exception) { "" }
+            if (DIRECT_PLAYER_HOSTS.any { urlHost.contains(it) }) {
+                ProviderLogger.d(TAG, "getUrl", "Direct player host detected, delegating to sniffer", "host" to urlHost)
+                val snifferUrl = SnifferExtractor.createSnifferUrl(url, referer = actualReferer)
+                loadExtractor(snifferUrl, actualReferer, subtitleCallback, callback)
+                return
+            }
+
             val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             val headers = mapOf(
                 "User-Agent" to userAgent,

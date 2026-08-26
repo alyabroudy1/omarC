@@ -677,10 +677,19 @@ class CimaLeek : BaseProvider() {
         //           but tries ALL servers to maximize sources/qualities.
         // ====================================================================
         val failedUrls = phase2.filter { it.links.isEmpty() }
-        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${failedUrls.size} server(s) with no extractor links...")
+        // Deduplicate: servers often resolve to the same embed URL (same CDN content).
+        // Extract the path portion (before query) to identify duplicates.
+        val seenPaths = mutableSetOf<String>()
+        val uniqueFailedUrls = failedUrls.filter { result ->
+            val path = try { java.net.URI(result.url).path ?: result.url } catch (_: Exception) { result.url }
+            seenPaths.add(path)
+        }
+        val skipped = failedUrls.size - uniqueFailedUrls.size
+        if (skipped > 0) Log.d(methodTag, "PHASE 4: Deduplicated $skipped server(s) with identical embed paths")
+        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${uniqueFailedUrls.size} unique server(s) with no extractor links...")
 
         var phase4Successes = 0
-        for (result in failedUrls) {
+        for (result in uniqueFailedUrls) {
             Log.d(methodTag, "PHASE 4: Sniffing [${result.idx}] ${result.name} — ${result.url.take(80)}")
             val ok = awaitSnifferResult(result.url, watchUrl, subtitleCallback, callback, 15000L)
             if (ok) {

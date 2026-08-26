@@ -465,8 +465,13 @@ class SnifferExtractor : ExtractorApi() {
                         isFinished = true
                         android.util.Log.i("SnifferExtractor", "[getUrl] Master M3U8 successfully resolved. Stopping main loop.")
                         break
+                    } else if (linkType == ExtractorLinkType.M3U8) {
+                        // M3U8 quality extraction failed (CDN down / invalid response).
+                        // Do NOT deliver a broken M3U8 URL — skip this source.
+                        android.util.Log.w("SnifferExtractor", "[getUrl] M3U8 quality extraction failed (CDN error?), skipping broken URL: ${source.url.take(100)}")
+                        ProviderLogger.w(TAG, "getUrl", "Skipping broken M3U8 URL (quality extraction failed)", "url" to source.url.take(100))
                     } else {
-                        // Fallback: Return original link
+                        // Fallback: Return original link (non-M3U8)
                         android.util.Log.i("SnifferExtractor", "[getUrl] PREPARING CALLBACK - URL: ${source.url.take(100)}")
                         android.util.Log.i("SnifferExtractor", "[getUrl] Headers: ${finalHeaders.keys.joinToString()}")
                         
