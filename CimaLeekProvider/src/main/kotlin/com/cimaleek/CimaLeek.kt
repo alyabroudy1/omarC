@@ -627,16 +627,17 @@ class CimaLeek : BaseProvider() {
         }
 
         // ====================================================================
-        // PHASE 2 – Try standard extractors on ALL resolved URLs IN PARALLEL
+        // PHASE 2 – Pipe ALL resolved embed URLs through loadExtractor in
+        //           parallel (standard CloudStream extractor system).
+        //           Collect links AND track which URLs failed extraction.
         // ====================================================================
-        Log.i(methodTag, "PHASE 2: Processing ${resolved.size} URLs via extractors...")
+        Log.i(methodTag, "PHASE 2: Piping ${resolved.size} embed URLs through extractors in parallel...")
 
         data class Phase2Result(
             val name: String,
             val idx: Int,
-            val links: List<ExtractorLink>,
-            /** Resolved iframe/redirect URL for Phase 4 sniffer fallback, or null. */
-            val resolvedUrl: String? = null
+            val url: String,
+            val links: List<ExtractorLink>
         )
 
         val phase2: List<Phase2Result> = coroutineScope {
@@ -646,15 +647,10 @@ class CimaLeek : BaseProvider() {
                     val collectCb: (ExtractorLink) -> Unit = { collected.add(it) }
 
                     Log.d(methodTag, "PHASE 2: [$idx] $serverName — ${decryptedUrl.take(80)}")
+                    loadExtractor(decryptedUrl, watchUrl, subtitleCallback, collectCb)
 
-                    val resolvedUrl = if (decryptedUrl.contains("cswru") || decryptedUrl.contains("vid872")) {
-                        handleCswruWrapper(decryptedUrl, watchUrl, subtitleCallback, collectCb)
-                    } else {
-                        loadExtractor(decryptedUrl, watchUrl, subtitleCallback, collectCb)
-                        null
-                    }
-
-                    Phase2Result(serverName, idx, collected.toList(), resolvedUrl)
+                    Log.d(methodTag, "PHASE 2: [$idx] $serverName — extractor produced ${collected.size} link(s)")
+                    Phase2Result(serverName, idx, decryptedUrl, collected.toList())
                 }
             }.awaitAll()
         }
@@ -663,44 +659,49 @@ class CimaLeek : BaseProvider() {
         // PHASE 3 – Deliver ALL links found in Phase 2
         // ====================================================================
         val allLinks = phase2.flatMap { it.links }
-        val successServers = phase2.filter { it.links.isNotEmpty() }
-
-        if (successServers.isNotEmpty()) {
-            Log.i(methodTag, "PHASE 3: ${successServers.size} servers produced ${allLinks.size} link(s)")
+        if (allLinks.isNotEmpty()) {
             val unique = allLinks.distinctBy { it.url }
+            Log.i(methodTag, "PHASE 3: Extractors produced ${allLinks.size} link(s) from ${phase2.count { it.links.isNotEmpty() }} server(s), delivering ${unique.size} unique")
             unique.forEach { link ->
                 Log.d(methodTag, "PHASE 3: → ${link.name} | ${link.url.take(80)}")
                 callback(link)
             }
-            Log.i(methodTag, "PHASE 3 done: delivered ${unique.size} unique link(s)")
             return true
         }
 
-        Log.w(methodTag, "PHASE 2-3: no extractor matched any URL")
+        Log.w(methodTag, "PHASE 2-3: no extractor matched any of ${resolved.size} embed URL(s)")
 
         // ====================================================================
-        // PHASE 4 – Sniffer fallback: ONE server at a time (sequential).
-        //           Uses the resolved (iframe/redirect) URL when available,
-        //           otherwise falls back to the original decrypted URL.
+        // PHASE 4 – Sniffer fallback: try each unresolved embed URL one-by-one
+        //           via WebView sniffing. Stops after first success per server
+        //           but tries ALL servers to maximize sources/qualities.
         // ====================================================================
-        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${phase2.size} server(s) sequentially...")
+        val failedUrls = phase2.filter { it.links.isEmpty() }
+        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${failedUrls.size} server(s) with no extractor links...")
 
-        for (result in phase2) {
-            val sniffTarget = result.resolvedUrl ?: resolved.firstOrNull { it.idx == result.idx }?.url
-            if (sniffTarget == null) {
-                Log.w(methodTag, "PHASE 4: [${result.idx}] ${result.name} — no URL to sniffer")
-                continue
-            }
-            Log.d(methodTag, "PHASE 4: Sniffing [${result.idx}] ${result.name} — ${sniffTarget.take(80)}")
-            val ok = awaitSnifferResult(sniffTarget, watchUrl, subtitleCallback, callback, 15000L)
+        var phase4Successes = 0
+        for (result in failedUrls) {
+            Log.d(methodTag, "PHASE 4: Sniffing [${result.idx}] ${result.name} — ${result.url.take(80)}")
+            val ok = awaitSnifferResult(result.url, watchUrl, subtitleCallback, callback, 15000L)
             if (ok) {
+                phase4Successes++
                 Log.i(methodTag, "PHASE 4: SUCCESS [${result.idx}] ${result.name}")
-                return true
+            } else {
+                Log.w(methodTag, "PHASE 4: FAILED [${result.idx}] ${result.name}")
             }
-            Log.w(methodTag, "PHASE 4: FAILED [${result.idx}] ${result.name}")
         }
 
-        Log.w(methodTag, "PHASE 4: Resolved URL sniffing exhausted. Attempting ultimate watch page WebView fallback...")
+        if (phase4Successes > 0) {
+            Log.i(methodTag, "PHASE 4 done: $phase4Successes/${failedUrls.size} server(s) produced links via sniffer")
+            return true
+        }
+
+        // ====================================================================
+        // PHASE 5 – Ultimate WebView fallback: load the watch page itself in
+        //           WebView and click each server tab to let the site's own JS
+        //           resolve and mount the player.
+        // ====================================================================
+        Log.w(methodTag, "PHASE 5: All sniffer attempts failed. Attempting watch page WebView fallback...")
         if (sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)) {
             return true
         }
@@ -722,6 +723,7 @@ class CimaLeek : BaseProvider() {
     ): Boolean {
         val methodTag = "[CimaLeek] [loadLinks]"
         Log.i(methodTag, "WebView Fallback: Sniffing ${serverElements.size} server(s) on watch page...")
+        var successes = 0
         for ((idx, server) in serverElements.withIndex()) {
             val dataType = server.attr("data-type")
             val dataNume = server.attr("data-nume")
@@ -750,11 +752,13 @@ class CimaLeek : BaseProvider() {
                 selector = selector
             )
             if (ok) {
-                Log.i(methodTag, "WebView Fallback: SUCCESS [$idx] $serverName")
-                return true
+                successes++
+                Log.i(methodTag, "WebView Fallback: SUCCESS [$idx] $serverName (total=$successes)")
+            } else {
+                Log.w(methodTag, "WebView Fallback: FAILED [$idx] $serverName")
             }
-            Log.w(methodTag, "WebView Fallback: FAILED [$idx] $serverName")
         }
-        return false
+        Log.i(methodTag, "WebView Fallback done: $successes/${serverElements.size} server(s) produced links")
+        return successes > 0
     }
 }
