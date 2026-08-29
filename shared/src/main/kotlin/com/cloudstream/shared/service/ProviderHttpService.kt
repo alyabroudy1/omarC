@@ -693,10 +693,17 @@ class ProviderHttpService private constructor(
                                   result.error?.message?.contains("CF Bypass failed") == true
         
         if (isDirectCfBlock && !isQueueLevelFailure) {
-            
+            val cfBreakerDomain = extractDomain(url)
+
+            // Circuit open: this domain has failed CF-solve repeatedly and recently — don't
+            // launch another 30-120s WebView session that's almost certainly going to fail too.
+            if (DomainCircuitBreaker.isOpen(cfBreakerDomain)) {
+                return doc
+            }
+
             if (config.webViewEnabled) {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "CF blocked - WebView fallback queueing", "url" to url.take(80))
-                
+
                 // CRITICAL FIX: Run the fallback solver through the RequestQueue to respect the domain mutex
                 // This prevents parallel search threads from launching simultaneous WebView sessions
                 val cfResult = requestQueue.enqueueAction(url) {
@@ -704,8 +711,13 @@ class ProviderHttpService private constructor(
                         extractDomain(url).let { d -> d.split(".").takeLast(2).joinToString(".") }
                     ))
                 }
-                
+
+                if (!cfResult.success) {
+                    DomainCircuitBreaker.recordFailure(cfBreakerDomain)
+                }
+
                 if (cfResult.success && cfResult.html != null) {
+                    DomainCircuitBreaker.recordSuccess(cfBreakerDomain)
                     // Cache it, same as the clean path below.
                     //
                     // This used to return without writing `recentPages`, so a CF-solved page was
@@ -748,18 +760,29 @@ class ProviderHttpService private constructor(
     suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false, rewriteDomain: Boolean = false): Document? {
         // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
         val result = executeDirectRequest(url, headers, rewriteDomain)
-        
-        // Detect domain redirects from ALL responses (including CF-blocked ones).
-        // Previously, redirects from CF-blocked responses were discarded, losing
-        // the redirect info (e.g., faselhdx.xyz → fasel-hd.cam) before the bypass search.
-        if (checkDomainChange) {
-            checkAndUpdateDomain(url, result.finalUrl)
+
+        val isCfBlocked = result.isCloudflareBlocked || result.responseCode == 403 ||
+            result.html?.contains("403 Forbidden") == true
+
+        // Detect domain redirects, but — mirroring the guard in solveCloudflareThenRequest —
+        // never from a CF-blocked response or a resolved host that fails domain validation.
+        // A CF challenge can redirect through cloudflare.com / challenges.cloudflare.com on
+        // its way to (or instead of) the real site; recording that as the provider domain
+        // poisons it permanently (every later request then targets cloudflare.com and 403s).
+        if (checkDomainChange && !isCfBlocked) {
+            val finalHost = result.finalUrl?.let { extractDomain(it) }
+            if (finalHost == null || DomainManager.isValidProviderDomain(finalHost)) {
+                checkAndUpdateDomain(url, result.finalUrl)
+            } else {
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocumentNoFallback",
+                    "Skipped domain update — resolved host failed validation",
+                    "host" to finalHost, "url" to url.take(80))
+            }
         }
-        
+
         // If CF blocked, throw instead of falling back to WebView
-        if (result.isCloudflareBlocked || result.responseCode == 403 || 
-            result.html?.contains("403 Forbidden") == true) {
-            ProviderLogger.i(TAG_PROVIDER_HTTP, "getDocumentNoFallback", 
+        if (isCfBlocked) {
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "getDocumentNoFallback",
                 "CF detected — throwing for lazy search", "url" to url.take(80))
             throw CloudflareBlockedSearchException(config.name, sessionState.domain)
         }
@@ -905,6 +928,18 @@ class ProviderHttpService private constructor(
                 .build()
             
             val result = executeRequestHelper(directClient, okRequest)
+            val breakerDomain = urlDomain ?: sessionState.domain
+
+            if (!result.isCloudflareBlocked) {
+                DomainCircuitBreaker.recordSuccess(breakerDomain)
+                return result
+            }
+
+            // Circuit open: this domain has failed the WebView fallback chain repeatedly and
+            // recently — don't spend another Tier-3 fetch (or later, a full CF solve) on it.
+            if (DomainCircuitBreaker.isOpen(breakerDomain)) {
+                return result
+            }
 
             // ── Tier 3 TLS Fallback ──
             //
@@ -959,6 +994,7 @@ class ProviderHttpService private constructor(
                         "code" to chromiumResponse.statusCode,
                         "stillBlocked" to stillBlocked.toString(),
                         "error" to (chromiumResponse.error ?: ""))
+                    DomainCircuitBreaker.recordFailure(breakerDomain)
                 }
             }
 
@@ -1286,7 +1322,56 @@ class ProviderHttpService private constructor(
          * that on every 403 to answer a yes/no question would be waste.
          */
         private const val CF_PEEK_BYTES = 32L * 1024L
-        
+
+        /**
+         * Per-domain circuit breaker for the WebView/CF-solve fallback chain (ChromiumFetcher
+         * Tier 3 + [solveCloudflareThenRequest]). A domain that is genuinely down or
+         * definitively blocking us doesn't get better on the 4th, 5th, or 50th retry — each one
+         * is a costly WebView session (an invisible Tier-3 fetch, or a full 30-120s CF solve).
+         * After a few consecutive hard failures we stop trying for a cooldown window and fail
+         * fast instead. Keyed by host, shared across all provider instances in the process.
+         */
+        internal object DomainCircuitBreaker {
+            private const val FAILURE_THRESHOLD = 3
+            private const val COOLDOWN_MS = 10 * 60 * 1000L
+
+            private val failureCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+            private val openUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+            /** True if [domain]'s circuit is open — callers should fail fast, no WebView fallback. */
+            fun isOpen(domain: String): Boolean {
+                if (domain.isBlank()) return false
+                val until = openUntil[domain] ?: return false
+                if (System.currentTimeMillis() >= until) {
+                    // Cooldown elapsed — close the circuit and let the next attempt retry normally.
+                    openUntil.remove(domain)
+                    failureCounts.remove(domain)
+                    return false
+                }
+                return true
+            }
+
+            /** Record a hard 403/CF-solve failure for [domain]; opens the circuit past the threshold. */
+            fun recordFailure(domain: String) {
+                if (domain.isBlank()) return
+                val count = (failureCounts[domain] ?: 0) + 1
+                failureCounts[domain] = count
+                if (count >= FAILURE_THRESHOLD && openUntil[domain] == null) {
+                    openUntil[domain] = System.currentTimeMillis() + COOLDOWN_MS
+                    ProviderLogger.w(TAG_PROVIDER_HTTP, "DomainCircuitBreaker",
+                        "Circuit opened — failing fast for ${COOLDOWN_MS / 60_000}m",
+                        "domain" to domain, "consecutiveFailures" to count)
+                }
+            }
+
+            /** Reset failure tracking for [domain] after any successful request. */
+            fun recordSuccess(domain: String) {
+                if (domain.isBlank()) return
+                failureCounts.remove(domain)
+                openUntil.remove(domain)
+            }
+        }
+
         fun create(
             context: Context,
             config: ProviderConfig,

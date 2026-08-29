@@ -35,20 +35,29 @@ class DomainManager(
     private var isInitialized = false
     private var lastSyncedDomain: String? = null
     private val mutex = Mutex()
-    
+
     suspend fun ensureInitialized() {
         if (isInitialized) return
-        
+
         mutex.withLock {
             if (isInitialized) return@withLock
-            
+
             val persisted = prefs.getString("domain", null)
-            if (persisted != null) {
+            if (persisted != null && isValidProviderDomain(persisted)) {
                  currentDomain = persisted
             } else {
+                 // Self-heal: a previously-persisted domain that no longer passes validation
+                 // (e.g. it was poisoned with cloudflare.com by an old bug) must not survive
+                 // across app restarts. Clear it and fall back as if nothing were persisted.
+                 if (persisted != null) {
+                     ProviderLogger.w(TAG_DOMAIN, "ensureInitialized",
+                         "Persisted domain failed validation — clearing and reverting to fallback",
+                         "domain" to persisted)
+                     prefs.edit().remove("domain").apply()
+                 }
                  currentDomain = fallbackDomain
             }
-            
+
             if (githubConfigUrl != null) {
                 try {
                     withTimeout(5000L) {
@@ -85,7 +94,13 @@ class DomainManager(
             .removePrefix("http://")
             .removePrefix("https://")
             .trimEnd('/')
-        
+
+        if (!isValidProviderDomain(normalized)) {
+            ProviderLogger.w(TAG_DOMAIN, "updateDomain", "Rejected invalid/denylisted domain",
+                "domain" to normalized)
+            return
+        }
+
         if (normalized != currentDomain) {
             currentDomain = normalized
             prefs.edit().putString("domain", normalized).apply()
@@ -95,6 +110,11 @@ class DomainManager(
 
     fun syncToRemote() {
         if (syncWorkerUrl == null) return
+        if (!isValidProviderDomain(currentDomain)) {
+            ProviderLogger.w(TAG_DOMAIN, "syncToRemote", "Skipping sync — current domain invalid/denylisted",
+                "domain" to currentDomain)
+            return
+        }
         if (currentDomain == lastSyncedDomain) return
         lastSyncedDomain = currentDomain
         
@@ -124,5 +144,36 @@ class DomainManager(
     fun buildUrl(path: String): String {
         val normalizedPath = if (path.startsWith("/")) path else "/$path"
         return "https://$currentDomain$normalizedPath"
+    }
+
+    companion object {
+        /**
+         * Hosts that must never be persisted as a provider's domain. Seen in practice: a
+         * Cloudflare challenge mid-solve redirects to one of these, and an unconditional
+         * domain-change detector (pre-fix) recorded it as the "new" provider domain — every
+         * subsequent request then targeted cloudflare.com and 403'd forever.
+         */
+        private val DENYLISTED_HOSTS = setOf(
+            "cloudflare.com",
+            "www.cloudflare.com",
+            "challenges.cloudflare.com"
+        )
+
+        /**
+         * Centralized validity check for a candidate provider domain/host. Rejects the known
+         * Cloudflare denylist plus anything that plainly isn't a plausible domain (blank,
+         * whitespace/non-ASCII, or missing a dot).
+         */
+        fun isValidProviderDomain(host: String): Boolean {
+            if (host.isBlank()) return false
+            if (host.any { it.isWhitespace() || it.code > 127 }) return false
+            if (!host.contains('.')) return false
+
+            val lower = host.lowercase()
+            if (lower in DENYLISTED_HOSTS) return false
+            if (lower.endsWith(".cloudflare.com")) return false
+
+            return true
+        }
     }
 }

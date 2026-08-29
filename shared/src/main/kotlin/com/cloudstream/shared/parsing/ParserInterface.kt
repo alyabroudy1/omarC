@@ -52,7 +52,28 @@ interface ParserInterface {
     fun parseMainPage(doc: Document): List<ParsedItem>
     fun parseSearch(doc: Document): List<ParsedItem>
     fun getSearchUrl(domain: String, query: String): String = "$domain/?s=$query"
-    
+
+    /** Pagination URL format for search results (same pattern as [com.cloudstream.shared.provider.BaseProvider.paginationFormat]). */
+    val searchPaginationFormat: String? get() = null
+
+    /**
+     * Paged search URL. Default: page 1 reuses [getSearchUrl]; page>1 appends
+     * [searchPaginationFormat] (e.g. "&page=%d") if the parser opted in, else
+     * falls back to the page-1 URL (effectively single-page).
+     */
+    fun getSearchUrl(domain: String, query: String, page: Int): String {
+        val base = getSearchUrl(domain, query)
+        if (page <= 1) return base
+        val fmt = searchPaginationFormat ?: return base
+        return "$base${fmt.format(page)}"
+    }
+
+    /**
+     * Whether a next search-results page exists, based on the fetched document.
+     * Default false — providers must opt in to expose pagination past page 1.
+     */
+    fun hasNextSearchPage(document: Document?): Boolean = false
+
     /** @deprecated Use parseLoadPageData instead */
     fun parseLoadPage(doc: Document, url: String): ParsedLoadData?
     

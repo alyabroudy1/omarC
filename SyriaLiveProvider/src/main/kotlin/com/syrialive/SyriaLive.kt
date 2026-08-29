@@ -72,7 +72,10 @@ class SyriaLive : BaseProvider() {
         }
     }
     
-    override val supportedTypes = setOf(TvType.Live, TvType.Movie)
+    override val supportedTypes = setOf(TvType.Live)
+
+    // Live football fixtures aren't meaningfully searchable — disable search entirely.
+    override val supportsSearch = false
 
     override fun getParser(): NewBaseParser {
         return SyriaLiveParser()

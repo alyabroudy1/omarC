@@ -19,7 +19,10 @@ class YallaShoot : BaseProvider() {
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/yallashoot.json"
     
     // We can rely on a fallback domain or provide a raw URL
-    override val supportedTypes = setOf(TvType.Live, TvType.Movie)
+    override val supportedTypes = setOf(TvType.Live)
+
+    // Live football fixtures aren't meaningfully searchable — disable search entirely.
+    override val supportsSearch = false
 
     override fun getParser(): NewBaseParser {
         return YallaShootParser()
@@ -165,22 +168,6 @@ class YallaShoot : BaseProvider() {
         }
         
         return newHomePageResponse(homePageList, false)
-    }
-
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        httpService.ensureInitialized()
-        val url = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val html = httpService.getText(url, rewriteDomain = false) ?: return emptyList()
-        val doc = org.jsoup.Jsoup.parse(html, url)
-        
-        val allMatches = parseMatchesFromDocument(doc)
-        return allMatches.filter { match ->
-            match.name.contains(query, ignoreCase = true)
-        }
-    }
-
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
     }
 
     override suspend fun load(url: String): LoadResponse? {

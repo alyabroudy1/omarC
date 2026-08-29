@@ -72,19 +72,11 @@ class ChromiumFetcher(
 
             val deferred = CompletableDeferred<ChromiumResponse>()
             var delivered = false
-
-            // Timeout guard
-            val timeoutJob = CoroutineScope(Dispatchers.Main).launch {
-                delay(timeout)
-                if (!delivered) {
-                    delivered = true
-                    ProviderLogger.w(TAG, "fetch", "Timeout after ${timeout}ms", "url" to url.take(80))
-                    deferred.complete(ChromiumResponse.timeout(url))
-                }
-            }
+            var webViewRef: WebView? = null
 
             try {
                 val webView = getOrCreateWebView(activity, headers)
+                webViewRef = webView
 
                 ProviderLogger.d(TAG, "fetch", "Starting Chrome-TLS fetch",
                     "url" to url.take(80), "headerCount" to headers.size)
@@ -115,7 +107,6 @@ class ChromiumFetcher(
                                 val cookies = extractCookies(currentUrl)
 
                                 delivered = true
-                                timeoutJob.cancel()
                                 lastFetchTime = System.currentTimeMillis()
 
                                 ProviderLogger.i(TAG, "fetch", "Chrome-TLS fetch complete",
@@ -134,7 +125,6 @@ class ChromiumFetcher(
                             } catch (e: Exception) {
                                 if (!delivered) {
                                     delivered = true
-                                    timeoutJob.cancel()
                                     deferred.complete(ChromiumResponse.error(e.message ?: "HTML extraction failed"))
                                 }
                             }
@@ -152,7 +142,6 @@ class ChromiumFetcher(
                             } else error?.toString()
 
                             delivered = true
-                            timeoutJob.cancel()
                             ProviderLogger.w(TAG, "fetch.onReceivedError", "Network error",
                                 "description" to desc, "url" to url.take(80))
                             deferred.complete(ChromiumResponse.error("Network error: $desc"))
@@ -185,15 +174,33 @@ class ChromiumFetcher(
 
                 webView.loadUrl(url, extraHeaders)
 
+                // Structured timeout: cancelling this suspension (on timeout, or because the
+                // caller itself was cancelled) no longer leaves a detached delay() coroutine
+                // running independent of the fetch — it was previously a bare
+                // `CoroutineScope(Dispatchers.Main).launch { delay(timeout) }` that outlived
+                // caller cancellation and kept completing the (already-abandoned) deferred.
+                val response = withTimeoutOrNull(timeout) { deferred.await() }
+                if (response != null) {
+                    response
+                } else {
+                    delivered = true
+                    ProviderLogger.w(TAG, "fetch", "Timeout after ${timeout}ms", "url" to url.take(80))
+                    ChromiumResponse.timeout(url)
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (!delivered) {
                     delivered = true
-                    timeoutJob.cancel()
-                    deferred.complete(ChromiumResponse.error(e.message ?: "Unknown error"))
+                }
+                ChromiumResponse.error(e.message ?: "Unknown error")
+            } finally {
+                // Timed out or cancelled before delivery — stop the in-flight load so the
+                // WebView doesn't keep running detached from the (now-gone) caller.
+                if (!deferred.isCompleted) {
+                    try { webViewRef?.stopLoading() } catch (_: Exception) {}
                 }
             }
-
-            deferred.await()
         }
     }
 

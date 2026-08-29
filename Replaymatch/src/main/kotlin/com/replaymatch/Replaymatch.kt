@@ -162,12 +162,12 @@ class FullMatchShowsProvider : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        return searchWithPage(query, 1)?.items ?: emptyList()
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        return searchWithPage(query, page) ?: newSearchResponseList(emptyList(), false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     private suspend fun searchWithPage(query: String, page: Int): SearchResponseList? = coroutineScope {

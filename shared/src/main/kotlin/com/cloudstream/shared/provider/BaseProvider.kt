@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
 
 abstract class BaseProvider : MainAPI() {
     abstract val providerName: String
@@ -42,6 +43,14 @@ abstract class BaseProvider : MainAPI() {
      * placeholder if CF is detected, instead of opening a WebView immediately.
      */
     open val supportsLazySearch: Boolean = true
+
+    /**
+     * Gate on search participation entirely. Providers that only make sense to browse
+     * (e.g. live football streams keyed to today's fixtures) should set this to false —
+     * both search entry points below return empty results immediately, before any network
+     * call or lazy placeholder is considered.
+     */
+    open val supportsSearch: Boolean = true
 
     /** Custom User-Agent override (null = use system mobile UA) */
     open val userAgent: String? = null
@@ -153,60 +162,77 @@ abstract class BaseProvider : MainAPI() {
         }
     }
 
-    open suspend fun searchNormal(query: String): List<SearchResponse> {
+    /** Legacy pageless entry point — delegates to the paged overload at page 1. */
+    open suspend fun searchNormal(query: String): List<SearchResponse> = searchNormal(query, 1).items
+
+    open suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchNormal"
         try {
             httpService.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = getParser().getSearchUrl(mainUrl, encoded)
-            Log.d(methodTag, "Fetching search URL: $url")
-            
+            val url = getParser().getSearchUrl(mainUrl, encoded, page)
+            Log.d(methodTag, "Fetching search URL (page=$page): $url")
+
             val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch search document")
-                return emptyList()
+                return newSearchResponseList(emptyList(), false)
             }
-            
+
             val items = getParser().parseSearch(doc)
             Log.d(methodTag, "Parsed ${items.size} search items")
-            
-            return items.map { item ->
+            val hasNext = getParser().hasNextSearchPage(doc)
+
+            val results = items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                 }
             }
+            return newSearchResponseList(results, hasNext)
         } catch (e: Exception) {
             Log.e(methodTag, "Error in searchNormal: ${e.message}")
             e.printStackTrace()
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    /** Legacy pageless entry point — delegates to the paged overload at page 1. */
+    override suspend fun search(query: String): List<SearchResponse> = search(query, 1).items
+
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        if (!supportsSearch) return newSearchResponseList(emptyList(), false)
+
         val bypassLazy = query.startsWith("LAZY_BYPASS:")
         val realQuery = if (bypassLazy) query.removePrefix("LAZY_BYPASS:") else query
 
         val methodTag = "$providerName.search"
-        Log.i(methodTag, "START query='$realQuery', bypassLazy=$bypassLazy")
+        Log.i(methodTag, "START query='$realQuery', page=$page, bypassLazy=$bypassLazy")
 
-        // ── Lazy search path: if the app supports it AND this provider opts in ──
-        if (!bypassLazy && supportsLazySearch && LazySearchConfig.appSupportsLazySearch) {
+        // ── Lazy search path: only for page 1 — if the app supports it AND this provider opts in ──
+        if (!bypassLazy && page <= 1 && supportsLazySearch && LazySearchConfig.appSupportsLazySearch) {
             try {
-                val results = searchLazy(realQuery)
-                Log.d(methodTag, "Lazy search succeeded with ${results.size} items")
+                val results = searchLazy(realQuery, page)
+                Log.d(methodTag, "Lazy search succeeded with ${results.items.size} items")
                 return results
             } catch (e: CloudflareBlockedSearchException) {
-                // App supports lazy search → return a placeholder instead of opening WebView
+                // App supports lazy search → return a placeholder instead of opening WebView.
+                // Interim stagger: real, non-blocked providers' results arrive first in the app's
+                // arrival-ordered row list (app-side partitioning is the durable fix — see plan).
                 Log.i(methodTag, "CF blocked — returning lazy placeholder for '$name'")
-                return listOf(
-                    newMovieSearchResponse(
-                        "\uD83D\uDD0D $name",  // 🔍 ProviderName
-                        "${LAZY_SEARCH_PREFIX}$name",
-                        TvType.Movie
-                    ) {
-                        this.posterUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/assets/lazy_search_poster.png"
-                    }
+                delay(LazySearchConfig.PLACEHOLDER_DELAY_MS)
+                val placeholderType = supportedTypes.firstOrNull() ?: TvType.Movie
+                return newSearchResponseList(
+                    listOf(
+                        newMovieSearchResponse(
+                            "🔍 $name",  // 🔍 ProviderName
+                            "${LAZY_SEARCH_PREFIX}$name",
+                            placeholderType
+                        ) {
+                            this.posterUrl = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/assets/lazy_search_poster.png"
+                        }
+                    ),
+                    false
                 )
             } catch (e: Exception) {
                 Log.e(methodTag, "Lazy search failed (non-CF): ${e.message}")
@@ -214,42 +240,46 @@ abstract class BaseProvider : MainAPI() {
             }
         }
 
-        // ── Normal search path: full CF WebView fallback (old app or lazy failed) ──
-        return searchNormal(realQuery)
+        // ── Normal search path: full CF WebView fallback (old app, lazy failed, or page > 1) ──
+        return searchNormal(realQuery, page)
     }
 
     /**
      * Lazy search: attempts HTTP search WITHOUT Cloudflare WebView fallback.
      * If CF blocks the request, throws [CloudflareBlockedSearchException]
      * so the caller (SearchViewModel) can show a placeholder instead.
-     * 
+     *
      * The full [search] method (with CF solve) is called later if the user taps the placeholder.
      */
-    open suspend fun searchLazy(query: String): List<SearchResponse> {
+    open suspend fun searchLazy(query: String): List<SearchResponse> = searchLazy(query, 1).items
+
+    open suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchLazy"
-        Log.i(methodTag, "START query='$query'")
+        Log.i(methodTag, "START query='$query', page=$page")
 
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = getParser().getSearchUrl(mainUrl, encoded)
+        val url = getParser().getSearchUrl(mainUrl, encoded, page)
         Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
 
         // This throws CloudflareBlockedSearchException if CF is detected
         val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
         if (doc == null) {
             Log.e(methodTag, "Failed to fetch search document (no CF)")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
 
         val items = getParser().parseSearch(doc)
         Log.d(methodTag, "Parsed ${items.size} search items")
+        val hasNext = getParser().hasNextSearchPage(doc)
 
-        return items.map { item ->
+        val results = items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
                 this.posterHeaders = httpService.getImageHeaders()
             }
         }
+        return newSearchResponseList(results, hasNext)
     }
 
     /**

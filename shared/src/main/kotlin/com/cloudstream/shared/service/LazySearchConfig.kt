@@ -14,6 +14,14 @@ object LazySearchConfig {
     const val LAZY_SEARCH_PREFIX = "lazy://"
 
     /**
+     * Interim stagger before returning a lazy-search placeholder: gives faster,
+     * non-blocked providers time to land their real results first in the app's
+     * arrival-ordered row list. Durable fix is app-side partitioning (see plan);
+     * this is just a cheap heuristic until that ships.
+     */
+    const val PLACEHOLDER_DELAY_MS = 5000L
+
+    /**
      * Set to true if the app's SearchViewModel supports intercepting lazy search
      * placeholders and resolving them on-demand. Evaluated via reflection so this
      * module doesn't force a dependency on newer app versions.
