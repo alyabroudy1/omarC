@@ -92,8 +92,13 @@ class ChromiumFetcher(
                     ) {
                         if (request?.isForMainFrame == true) {
                             responseCode = errorResponse?.statusCode ?: -1
+                            // Carries the URL/host so a bare "code=403" in logcat can be tied back
+                            // to a caller and a domain — without it, a burst of these lines is
+                            // indistinguishable from an unguarded call site vs. several legitimate,
+                            // breaker-guarded fetches for different domains.
                             ProviderLogger.d(TAG, "fetch.onReceivedHttpError",
-                                "HTTP error on main frame", "code" to responseCode)
+                                "HTTP error on main frame", "code" to responseCode,
+                                "url" to url.take(80), "requestUrl" to request?.url?.toString()?.take(80))
                         }
                     }
 

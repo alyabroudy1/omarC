@@ -928,7 +928,10 @@ class ProviderHttpService private constructor(
                 .build()
             
             val result = executeRequestHelper(directClient, okRequest)
-            val breakerDomain = urlDomain ?: sessionState.domain
+            // www-normalized so this shares failure/success counts with the cfBreakerDomain key
+            // used by getDocument()'s CF-solve fallback (extractDomain() below) — otherwise
+            // "www.example.com" and "example.com" track two independent circuits for one domain.
+            val breakerDomain = (urlDomain ?: sessionState.domain).removePrefix("www.")
 
             if (!result.isCloudflareBlocked) {
                 DomainCircuitBreaker.recordSuccess(breakerDomain)

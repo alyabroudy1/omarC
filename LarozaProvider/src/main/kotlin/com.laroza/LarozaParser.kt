@@ -11,7 +11,20 @@ class LarozaParser : NewBaseParser() {
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/search.php?keywords=$query"
     }
-    
+
+    // Confirmed via live HTML (laaroza.mom/search.php?keywords=...): page links are
+    // "search.php?keywords=<q>&page=N", rendered in "ul.pagination.pagination-arrows".
+    override val searchPaginationFormat: String get() = "&page=%d"
+
+    override fun hasNextSearchPage(document: Document?): Boolean {
+        val pagination = document?.selectFirst("ul.pagination") ?: return false
+        // The active page's <li> is immediately followed by the next numbered page's <li>
+        // when more pages exist; on the last page that sibling is the disabled "»" arrow.
+        val active = pagination.selectFirst("li.active") ?: return false
+        val next = active.nextElementSibling() ?: return false
+        return !next.hasClass("disabled")
+    }
+
     override val mainPageConfig = MainPageConfig(
         container = "div.col-md-3 div.thumbnail, div.col-sm-4 div.thumbnail, div.thumbnail",
         // Container IS the item in this loop structure

@@ -179,6 +179,31 @@ class CimaNowProvider : BaseProvider() {
      *
      * Do not flip this back on without re-checking those markers first.
      */
+    /**
+     * Inject [FREEX_LINK_CAPTURE_JS] into the freex countdown page.
+     *
+     * **Off as an experiment, 2026-08-07.** It is the last remaining thing we do to that page that a real
+     * browser does not, and it has never actually been tested. Everything else has been eliminated: the
+     * headers are clean globally (`X-Requested-With` overridden, `sec-ch-ua` real Chrome), the document is
+     * a genuine Chromium navigation, no subresource is re-issued, and the page builds byte-identically to
+     * a browser's — 644 anchors, 4 iframes, jQuery and countdown360 both live, countdown running to
+     * completion. And still `get-link.php` is never requested.
+     *
+     * The hook wraps `XMLHttpRequest`, `fetch`, `sendBeacon` and both iframe realm getters. A simplified
+     * mimic of it was tested in a browser and minted fine, but the real thing never was — the test harness
+     * could not load it. Handover rule 3 is about exactly this class of tampering being detectable, and
+     * although it is scoped to cimanow's decryptor, freex's payload has been rotating fast enough that the
+     * same check appearing there is entirely plausible.
+     *
+     * Turning it off costs the response-capture path — `land()` will not see the mint or navigate. That is
+     * acceptable for the experiment because the probe already reads `#downloadbtn` from outside the page
+     * and navigates on its own, which is the mechanism that worked on 2026-08-05.
+     *
+     * If the mint fires with this false, the hook is the cause and the capture path has to be rebuilt
+     * without touching page natives. If it still does not fire, nothing we control is responsible.
+     */
+    private val INJECT_FREEX_HOOK = false
+
     private val USE_HTTP_GETLINK = false
 
     /** base64("Mozilla/5.20"). Sent as the `fp` param; not validated server-side, so hardcoded. */
@@ -1475,7 +1500,7 @@ class CimaNowProvider : BaseProvider() {
                 //
                 // Still freex-only, enforced by the host guard. Never cimanow: wrapping a native there
                 // is what rule 3 is about.
-                earlyInjectJs = FREEX_LINK_CAPTURE_JS,
+                earlyInjectJs = if (INJECT_FREEX_HOOK) FREEX_LINK_CAPTURE_JS else null,
                 earlyInjectOnHosts = Regex("""freex2line\.online""")
             )
             val challenges = navResult.interceptChallenges
