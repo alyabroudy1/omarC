@@ -98,6 +98,9 @@ class BristegeParser : NewBaseParser() {
         return "$mainUrl/search.php?keywords=$query"
     }
 
+    // Same site engine as Laroza (search.php?keywords=): page links follow "&page=N".
+    override val searchPaginationFormat: String get() = "&page=%d"
+
     override fun getPlayerPageUrl(doc: Document): String? {
         return doc.selectFirst("a.xtgo")?.attr("href")
     }

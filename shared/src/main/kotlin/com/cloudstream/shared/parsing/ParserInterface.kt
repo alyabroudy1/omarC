@@ -57,6 +57,14 @@ interface ParserInterface {
     val searchPaginationFormat: String? get() = null
 
     /**
+     * Whether this parser supports paging search results past page 1. Defaults to true when
+     * [searchPaginationFormat] is set. A parser that instead overrides the 3-arg [getSearchUrl]
+     * directly (e.g. WordPress-style "/page/N/?s=" where the page segment precedes the query,
+     * so a simple suffix format can't express it) must override this to force it true.
+     */
+    val supportsSearchPagination: Boolean get() = searchPaginationFormat != null
+
+    /**
      * Paged search URL. Default: page 1 reuses [getSearchUrl]; page>1 appends
      * [searchPaginationFormat] (e.g. "&page=%d") if the parser opted in, else
      * falls back to the page-1 URL (effectively single-page).
@@ -70,9 +78,11 @@ interface ParserInterface {
 
     /**
      * Whether a next search-results page exists, based on the fetched document.
-     * Default false — providers must opt in to expose pagination past page 1.
+     * Default null ("no opinion") — [com.cloudstream.shared.provider.BaseProvider] falls back to
+     * paging until an empty page is returned (mirroring getMainPage's behavior) when a parser
+     * opts into [supportsSearchPagination] but doesn't provide a precise selector here.
      */
-    fun hasNextSearchPage(document: Document?): Boolean = false
+    fun hasNextSearchPage(document: Document?): Boolean? = null
 
     /** @deprecated Use parseLoadPageData instead */
     fun parseLoadPage(doc: Document, url: String): ParsedLoadData?

@@ -21,6 +21,17 @@ class GessehParser : NewBaseParser() {
         return "$domain/?s=$query"
     }
 
+    // WordPress-style paged search: the page segment precedes the query string
+    // ("<domain>/page/<N>/?s=<query>"), so a plain suffix searchPaginationFormat can't express
+    // it — override the 3-arg URL builder instead. Page<=1 is unchanged (delegates to the 2-arg
+    // getSearchUrl above via the default implementation logic).
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/page/$page/?s=$query"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override val mainPageConfig = MainPageConfig(
         container = "article.post, article.postEp",
         title = CssSelector(query = "div.title", attr = "text"),

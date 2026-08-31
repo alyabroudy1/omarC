@@ -122,3 +122,58 @@ Note: the app's build variants are `prerelease`/`stable`, so the compile task is
 1. Does `newMovieSearchResponse` fixUrl the `lazy://` url (explains the `https://<domain>/lazy://` shape)? Check MainAPI in the jar.
 2. Exact contract of app-side `resolveLazySearch` (does it expect `lazy://<name>` verbatim?) — needed before changing the placeholder URL shape.
 3. Whether the app repo is available to edit for Phase 2's partitioning (it's not in this plugin repo).
+
+---
+
+## Provider search-pagination opt-in status (2026-08-31)
+
+Search pagination is **opt-in per parser**. Infra: `ParserInterface.searchPaginationFormat`,
+`supportsSearchPagination`, and tri-state `hasNextSearchPage(doc): Boolean?` (`null` = "no opinion").
+`BaseProvider` resolves it as:
+
+```kotlin
+val hasNext = getParser().hasNextSearchPage(doc) ?: (getParser().supportsSearchPagination && items.isNotEmpty())
+```
+
+The `?:` fires only on `null`, so a parser's explicit `false` (a precise selector) is never overridden.
+The fallback mirrors `getMainPage()`, which pages until a page comes back empty.
+
+### How to opt in a new provider
+- **Suffix case** (page is a query param): `override val searchPaginationFormat: String get() = "&page=%d"`. Done.
+- **Path case** (page segment precedes the query string, e.g. WordPress): override the 3-arg
+  `getSearchUrl(domain, query, page)` (delegate to the 2-arg version when `page <= 1`) **and**
+  `supportsSearchPagination = true`.
+- Add a precise `hasNextSearchPage` only if the site has a usable pagination element (see Laroza).
+
+| Provider | Tier | Search URL | Paging | hasNext | Verified |
+|---|---|---|---|---|---|
+| Laroza | reference | `search.php?keywords=` | `&page=%d` | precise selector (`li.active` sibling) | ✅ live HTML + on device |
+| Cimawbas | A | `search.php?keywords=…&video-id=` | `&page=%d` | fallback | ⚠️ engine-inferred |
+| CimaLight | A | `search.php?keywords=` | `&page=%d` | fallback | ⚠️ engine-inferred |
+| Bristege | A | `search.php?keywords=` | `&page=%d` | fallback | ⚠️ engine-inferred |
+| Krmzy | B | `?s=` | `/page/N/?s=` (3-arg override) | fallback | ❌ WP convention guess |
+| Gesseh (eseek) | B | `?s=` | `/page/N/?s=` (3-arg override) | fallback | ❌ WP convention guess |
+
+**Tier A** = same site engine as Laroza (identical `search.php?keywords=` search URL) — strong evidence.
+**Tier B** = WordPress-style (`/page/%d/` main-page `paginationFormat` + `?s=` search) — canonical WP
+convention, but unverified.
+
+**Why unverified:** all provider domains except `laaroza.mom` are DNS-sinkholed on the dev machine
+(they resolve to `203.0.113.250`, a block page), so live HTML could not be fetched. Re-check the ⚠️/❌
+rows against real HTML when on a network that reaches them.
+
+**Failure mode is benign**, not corrupting: a wrong paging URL returns an empty or duplicate page →
+the app dedupes via `distinctBy { it.url }` → the scroll listener's `expandCount != count` guard stops
+re-firing. Symptom is "pagination silently doesn't work", never wrong or duplicated results.
+
+### Deliberately not opted in
+- **ArabSeedV4** — search URL is `/find/?word=`, not `?s=`, so the WP shape doesn't apply. More
+  importantly `ArabseedV4.kt` overrides the **pageless** `searchNormal(query)`/`searchLazy(query)` with
+  custom parallel movies+series logic that never reaches the paged path — a parser-level change would
+  be inert. Needs a provider-level rewrite to support pagination.
+- All others (dima-toon, TukTukcima, Tuniflix, CimaLeek, Shahid4u, Anime4up, Wecima, FaselHDV2,
+  CimaClub, EgyDead, …) — no custom `paginationFormat`, not the `search.php?keywords=` engine, and no
+  reusable pagination selector, i.e. no in-repo evidence of a paging shape. Left at defaults
+  (behavior identical to before).
+- SyriaLive / KooraLive / YallaShoot — football providers, search disabled entirely
+  (`supportsSearch = false`).

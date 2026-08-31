@@ -13,6 +13,9 @@ class CimaLightParser : NewBaseParser() {
         return "$domain/search.php?keywords=$query"
     }
 
+    // Same site engine as Laroza (search.php?keywords=): page links follow "&page=N".
+    override val searchPaginationFormat: String get() = "&page=%d"
+
     override val mainPageConfig = MainPageConfig(
         container = "div.pm-section",
         title = CssSelector(query = "h3 a, div.title", attr = "text"),

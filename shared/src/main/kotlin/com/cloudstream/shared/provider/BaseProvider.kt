@@ -181,7 +181,10 @@ abstract class BaseProvider : MainAPI() {
 
             val items = getParser().parseSearch(doc)
             Log.d(methodTag, "Parsed ${items.size} search items")
-            val hasNext = getParser().hasNextSearchPage(doc)
+            // hasNextSearchPage may return null ("no opinion"); fall back to paging until an
+            // empty page (mirrors getMainPage's behavior). Only applies when the parser returned
+            // null — an explicit false from the parser is never overridden by the fallback.
+            val hasNext = getParser().hasNextSearchPage(doc) ?: (getParser().supportsSearchPagination && items.isNotEmpty())
 
             val results = items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -271,7 +274,10 @@ abstract class BaseProvider : MainAPI() {
 
         val items = getParser().parseSearch(doc)
         Log.d(methodTag, "Parsed ${items.size} search items")
-        val hasNext = getParser().hasNextSearchPage(doc)
+        // hasNextSearchPage may return null ("no opinion"); fall back to paging until an
+        // empty page (mirrors getMainPage's behavior). Only applies when the parser returned
+        // null — an explicit false from the parser is never overridden by the fallback.
+        val hasNext = getParser().hasNextSearchPage(doc) ?: (getParser().supportsSearchPagination && items.isNotEmpty())
 
         val results = items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {

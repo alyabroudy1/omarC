@@ -75,4 +75,7 @@ class CimawbasParser : NewBaseParser() {
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/search.php?keywords=$query&video-id="
     }
+
+    // Same site engine as Laroza (search.php?keywords=): page links follow "&page=N".
+    override val searchPaginationFormat: String get() = "&page=%d"
 }
