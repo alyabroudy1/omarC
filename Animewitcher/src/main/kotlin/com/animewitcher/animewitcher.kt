@@ -145,7 +145,7 @@ class AnimeWitcherProvider : BaseProvider() {
             "[\"objectID\",\"name\",\"poster_uri\",\"type\",\"details\",\"tags\",\"story\",\"english_title\",\"_highlightResult\"]",
             "utf-8"
         )
-        val params = "attributesToRetrieve=$attributes&hitsPerPage=50&page=${page - 1}&query=$encodedQuery"
+        val params = "attributesToRetrieve=$attributes&hitsPerPage=50&page=${(page - 1).coerceAtLeast(0)}&query=$encodedQuery"
         val payload = JSONObject().put("params", params)
         val body = payload.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())
 

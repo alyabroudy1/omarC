@@ -53,6 +53,8 @@ export default {
         // Optional shared secret. Enforced only when SYNC_SECRET is configured on the
         // Worker; the open-source client cannot hold a real secret, so this is a
         // server-side opt-in, not an authentication guarantee.
+        // Do NOT set SYNC_SECRET until the client (DomainManager.syncToRemote) sends the
+        // header; today it does not, so setting it would break sync for every install.
         if (env.SYNC_SECRET && request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
             return new Response(JSON.stringify({ error: 'Unauthorized' }), {
                 status: 401,
@@ -72,8 +74,8 @@ export default {
             }
 
             // Provider file-name check (NOT a domain check): the config file must be one
-            // of the known names. Also closes path traversal via `configs/${configFile}`.
-            if (configFile.includes('/') || configFile.includes('..') || !KNOWN_CONFIG_FILES.has(configFile)) {
+            // of the known names. Set membership also closes path traversal via `configs/${configFile}`.
+            if (typeof configFile !== 'string' || !KNOWN_CONFIG_FILES.has(configFile)) {
                 return new Response(JSON.stringify({ error: 'Unknown configFile' }), {
                     status: 400,
                     headers: { 'Content-Type': 'application/json' },

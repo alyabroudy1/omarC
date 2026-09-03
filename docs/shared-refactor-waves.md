@@ -126,7 +126,7 @@ until Wave 6.
 2. `grep -rn "postman-echo\|ENABLE_WEBVIEW_REMOTE_DEBUGGING = true" shared/` returns nothing.
 3. `grep -rn "open fun searchNormal(query: String)\b" shared/` returns nothing, and all 41 modules compile.
 4. Searching a provider that has a custom search path returns its results, and page 2 differs from page 1.
-5. A POST to the worker with an unknown `configFile` or a missing secret returns 4xx and commits nothing.
+5. A POST to the worker with an unknown `configFile` returns 400 and commits nothing; when `SYNC_SECRET` is set on the Worker, a missing or wrong `X-Sync-Secret` returns 401.
 
 **Unit tests.**
 
