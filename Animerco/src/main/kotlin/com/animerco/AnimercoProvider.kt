@@ -58,12 +58,14 @@ class AnimercoProvider : BaseProvider() {
         return newHomePageResponse(items)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = false)
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
+        return newSearchResponseList(searchImpl(query, useNoFallback = false), false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = true)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
+        return newSearchResponseList(searchImpl(query, useNoFallback = true), false)
     }
 
     private suspend fun searchImpl(query: String, useNoFallback: Boolean): List<SearchResponse> {

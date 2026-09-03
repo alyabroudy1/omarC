@@ -65,16 +65,17 @@ class Tuniflix : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/?s=$query"
         val document = app.get(url).document
-        return document.select("article.TPost.B").mapNotNull {
+        return newSearchResponseList(document.select("article.TPost.B").mapNotNull {
             it.toSearchResponse()
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

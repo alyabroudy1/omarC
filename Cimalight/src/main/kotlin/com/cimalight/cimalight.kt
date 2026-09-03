@@ -171,16 +171,18 @@ class CimaLightProvider : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search.php?keywords=$query"
-        val document = getDocOrSolve(url) ?: return emptyList()
-        return document.select("ul#pm-grid li").mapNotNull {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        val url = if (page <= 1) "$mainUrl/search.php?keywords=$query"
+            else "$mainUrl/search.php?keywords=$query&page=$page"
+        val document = getDocOrSolve(url) ?: return newSearchResponseList(emptyList(), false)
+        val items = document.select("ul#pm-grid li").mapNotNull {
             it.toSearchResult()
         }
+        return newSearchResponseList(items, items.isNotEmpty())
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse? {

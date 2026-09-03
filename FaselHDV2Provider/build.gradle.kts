@@ -18,6 +18,17 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
+// The cloudstream gradle plugin adds its stub jar as a compileOnly *file* dependency
+// (CloudstreamConfigurationProvider: dependencies.add("compileOnly", files(jarFile))), so
+// MainAPI — BaseProvider's supertype — is absent from the unit-test runtime classpath and any
+// test that reflects over BaseProvider dies with NoClassDefFoundError. Mirror the same files
+// onto testRuntimeOnly; nothing about the shipped plugin changes.
+afterEvaluate {
+    configurations.getByName("compileOnly").dependencies
+        .filterIsInstance<org.gradle.api.artifacts.FileCollectionDependency>()
+        .forEach { dependencies.add("testRuntimeOnly", it.files) }
+}
+
 cloudstream {
     authors = listOf("omarflex")
     language = "ar"

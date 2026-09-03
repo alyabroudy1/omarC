@@ -127,16 +127,17 @@ class TopCinemaProvider : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/search/?query=$query&type=all"
         val document = httpGet(url)
-        return document.select(".Posts--List .Small--Box").mapNotNull {
+        return newSearchResponseList(document.select(".Posts--List .Small--Box").mapNotNull {
             toSearchResponse(it)
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

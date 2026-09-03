@@ -42,18 +42,19 @@ class eishk : BaseProvider() {
         return newHomePageResponse(all)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
         val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
             ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
         val items = getParser().parseSearch(doc)
-        return items.map { item ->
+        return newSearchResponseList(items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
             }
-        }
+        }, false)
     }
 
     override suspend fun loadLinks(

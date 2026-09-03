@@ -23,12 +23,13 @@ class FamelackProvider : BaseProvider() {
     private val allChannelsUrl = "https://raw.githubusercontent.com/famelack/famelack-data/refs/heads/main/tv/raw/categories/all.json"
     private val countriesMetadataUrl = "https://raw.githubusercontent.com/famelack/famelack-data/refs/heads/main/tv/raw/countries_metadata.json"
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         return try {
             val response = app.get(allChannelsUrl).text
             val channels = parseJson<List<RawChannel>>(response)
 
-            channels.filter { ch ->
+            newSearchResponseList(channels.filter { ch ->
 
                 (ch.stream_urls?.isNotEmpty() == true || ch.youtube_urls?.isNotEmpty() == true) &&
                         (ch.name?.contains(query, ignoreCase = true) == true)
@@ -46,14 +47,14 @@ class FamelackProvider : BaseProvider() {
                     posterUrl = "https://famelack.com/assets/favicons/favicon-512.png"
                     lang = "en"
                 }
-            }
+            }, false)
         } catch (e: Exception) {
-            emptyList()
+            newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {

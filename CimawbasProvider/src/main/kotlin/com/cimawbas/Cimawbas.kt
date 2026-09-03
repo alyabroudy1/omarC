@@ -58,44 +58,46 @@ class Cimawbas : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<com.lagradost.cloudstream3.SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         val methodTag = "[$name] [searchNormal]"
         try {
             httpService.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = getParser().getSearchUrl(mainUrl, encoded)
-            val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true) ?: return emptyList()
+            val url = getParser().getSearchUrl(mainUrl, encoded, page)
+            val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
+                ?: return newSearchResponseList(emptyList(), false)
             val items = getParser().parseSearch(doc)
             Log.i(methodTag, "Parsed ${items.size} search items")
             items.forEachIndexed { i, item ->
                 Log.i(methodTag, "  [$i] title='${item.title}', url='${item.url}', posterUrl='${item.posterUrl}'")
             }
-            return items.map { item ->
+            return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeadersFull()
                 }
-            }
+            }, items.isNotEmpty())
         } catch (e: Exception) {
             Log.e(methodTag, "Error: ${e.message}")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<com.lagradost.cloudstream3.SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         val methodTag = "[$name] [searchLazy]"
         Log.i(methodTag, "START query='$query'")
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = getParser().getSearchUrl(mainUrl, encoded)
-        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true) ?: return emptyList()
+        val url = getParser().getSearchUrl(mainUrl, encoded, page)
+        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
+            ?: return newSearchResponseList(emptyList(), false)
         val items = getParser().parseSearch(doc)
-        return items.map { item ->
+        return newSearchResponseList(items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
                 this.posterHeaders = httpService.getImageHeadersFull()
             }
-        }
+        }, items.isNotEmpty())
     }
 
     override suspend fun load(url: String): com.lagradost.cloudstream3.LoadResponse? {

@@ -819,27 +819,32 @@ class CimaNowProvider : BaseProvider() {
 
     // ==================== search ====================
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         if (query.trim().equals("test", ignoreCase = true)) {
-            return listOf(
-                newMovieSearchResponse("Test WebView Fallback", "https://cimanow.cc/test-webview-fallback/", TvType.Movie) {
-                    this.posterUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/Assets/imgs/logo.svg"
-                }
+            return newSearchResponseList(
+                listOf(
+                    newMovieSearchResponse("Test WebView Fallback", "https://cimanow.cc/test-webview-fallback/", TvType.Movie) {
+                        this.posterUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/Assets/imgs/logo.svg"
+                    }
+                ),
+                false
             )
         }
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val doc = httpService.getDocument("$mainUrl/?s=$encoded", rewriteDomain = true) ?: return emptyList()
+        val doc = httpService.getDocument("$mainUrl/?s=$encoded", rewriteDomain = true)
+            ?: return newSearchResponseList(emptyList(), false)
         val items = getParser().parseSearch(doc)
-        return items.map { item ->
+        return newSearchResponseList(items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
                 this.posterHeaders = httpService.getImageHeaders()
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     // ==================== getMainPage ====================

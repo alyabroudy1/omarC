@@ -198,7 +198,8 @@ class Shahid4u : BaseProvider() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val encoded = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "${mainUrl}search?s=$encoded"
 
@@ -208,10 +209,10 @@ class Shahid4u : BaseProvider() {
 
             if (resultItems.isEmpty()) {
 
-                return emptyList()
+                return newSearchResponseList(emptyList(), false)
             }
 
-            resultItems.mapIndexedNotNull { index, element ->
+            newSearchResponseList(resultItems.mapIndexedNotNull { index, element ->
 
                 try {
                     parseCard(element)
@@ -219,15 +220,15 @@ class Shahid4u : BaseProvider() {
 
                     null
                 }
-            }
+            }, false)
         } catch (e: Exception) {
 
-            emptyList()
+            newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
 

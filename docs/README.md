@@ -23,6 +23,9 @@ Durable notes for work that is expensive to re-derive. Written 2026-08-31.
 |---|---|
 | [search-architecture.md](search-architecture.md) | Search subsystem: lazy/Cloudflare placeholder flow, domain poisoning root cause, ChromiumFetcher 403 investigation, search pagination design, football-provider search gating. Includes the original task list and all fix phases. |
 | [upstream-upgrade-assessment.md](upstream-upgrade-assessment.md) | Whether/how to adopt the latest upstream pre-release without breaking fork customizations. Commit gap, collision set, dry-run conflict probe, plugin-ABI verdict, recommended strategy. |
+| [shared-architecture-review.md](shared-architecture-review.md) | Full review of `shared/`: how it reaches plugins, component map, request lifecycle, WebView layer, state ownership, dead code and duplication tables, 18 live bugs. Section 10 now points at the waves doc. |
+| [shared-architecture-review-third-eye.md](shared-architecture-review-third-eye.md) | Independent second review with corrections: fingerprint inventory (14 construction sites), domain handling under R3, corrected target architecture and `ProviderRuntime`, 16 plan corrections, underestimated risks. |
+| [shared-refactor-waves.md](shared-refactor-waves.md) | The corrected roadmap as 7 independently mergeable waves, each with scope, fingerprint invariant, acceptance criteria, named unit tests, manual verification, risk and size. Includes the Wave 1 `Fingerprint` design note. |
 
 ## Load-bearing facts worth not re-deriving
 1. **Plugin ABI is stable v4.6.0 → upstream pre-release (2026-08-28).** All plugin-facing `MainAPI`
@@ -38,6 +41,13 @@ Durable notes for work that is expensive to re-derive. Written 2026-08-31.
 4. **A poisoned provider domain persists across restarts** and can be pushed to the remote config
    worker. `DomainManager.isValidProviderDomain()` now denylists `*.cloudflare.com` and self-heals on
    init; keep that guard in place through any refactor.
+   - **2026-09-03: reversed.** Owner decision D2 drops the denylist and all name-based domain logic.
+     The replacement is behavioural: adopt a host only from a provider-initiated document request that
+     ended 2xx and was not CF-flagged, rewrite a URL host only if it is in the provider's persisted
+     success-host history, and sync to the worker only after a second success on a new host. The
+     poisoning case stays covered because a challenge response is CF-flagged and so can never be
+     adopted. See [shared-refactor-waves.md](shared-refactor-waves.md) Wave 6. The guard stays in place
+     until that wave lands.
 5. Recommended upstream strategy: **cherry-pick, not merge**. The 14 real conflicts are not the cost —
    validating 642 non-conflicting commits (including a live KMP/kotlinx.serialization migration)
    against a heavily customized player/result layer is.

@@ -67,22 +67,23 @@ class GessehProvider : BaseProvider() {
         return newHomePageResponse(request.name, items)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
         val doc = httpService.getDocumentNoFallback(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true)
             ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
-        return getParser().parseSearch(doc).map { item ->
+        return newSearchResponseList(getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
                 this.posterHeaders = httpService.getImageHeaders()
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     private fun resolveRealUrl(url: String): String {

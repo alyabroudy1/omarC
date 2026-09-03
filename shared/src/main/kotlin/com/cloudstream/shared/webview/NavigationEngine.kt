@@ -129,10 +129,6 @@ class NavigationEngine(
     @Volatile
     private var linkMintCallCount: Int = 0
 
-    /** The header echo runs once per session, on the first refusal — see HEADER_ECHO_URL. */
-    @Volatile
-    private var echoDiagnosticDone = false
-
     /**
      * Main-frame navigations refused by [mainFrameNavigationGuard], counted per URL.
      *
@@ -352,7 +348,6 @@ class NavigationEngine(
             mainFrameNavigationGuard = null
             mainFramePageStartedAtMs = 0L
             linkMintCallCount = 0
-            echoDiagnosticDone = false
             refusedMainFrameNavigations.clear()
             promotedPopupUrl = null
             dialogDismissedByUser = false
@@ -513,7 +508,7 @@ class NavigationEngine(
                                 extractedHtml[key] = html ?: ""
                                 val len = html?.length ?: 0
                                 ProviderLogger.i(TAG, "execute", "Step $index: ExtractHtml ${key.take(40)} -> $len chars")
-                                activityProvider()?.let { ctx ->
+                                if (com.cloudstream.shared.util.DebugFlags.DUMPS) activityProvider()?.let { ctx ->
                                     try {
                                         val file = java.io.File(ctx.cacheDir, "cimanow_html_${key}.html")
                                         file.writeText(html.orEmpty())
@@ -803,7 +798,7 @@ class NavigationEngine(
                                             // Freex only — `probeOnlyOnHosts` already gates this block,
                                             // and §0.1's no-read rules are scoped to cimanow's decryptor.
                                             probeCount++
-                                            if (probeCount == RENDERED_DUMP_AFTER_PROBES) {
+                                            if (com.cloudstream.shared.util.DebugFlags.DUMPS && probeCount == RENDERED_DUMP_AFTER_PROBES) {
                                                 try {
                                                     val html = executeJsInWebView(
                                                         webView,
@@ -1020,7 +1015,7 @@ class NavigationEngine(
                             val html = capturedMainFrameHtml
                             val len = html?.length ?: 0
                             val dumpKey = "failure_step_${failedStep ?: completedSteps}"
-                            activityProvider()?.let { ctx ->
+                            if (com.cloudstream.shared.util.DebugFlags.DUMPS) activityProvider()?.let { ctx ->
                                 val file = java.io.File(ctx.cacheDir, "cimanow_html_${dumpKey}.html")
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "FAILURE DUMP: HTML written to ${file.absolutePath} ($len bytes)")
@@ -1064,7 +1059,7 @@ class NavigationEngine(
                             // Served bytes, not a DOM read — see the failure dump above.
                             val html = capturedMainFrameHtml
                             val len = html?.length ?: 0
-                            activityProvider()?.let { ctx ->
+                            if (com.cloudstream.shared.util.DebugFlags.DUMPS) activityProvider()?.let { ctx ->
                                 val file = java.io.File(ctx.cacheDir, "cimanow_html_failure_exception.html")
                                 file.writeText(html.orEmpty())
                                 ProviderLogger.e(TAG, "execute", "EXCEPTION DUMP: HTML written to ${file.absolutePath} ($len bytes)")
@@ -2235,7 +2230,7 @@ class NavigationEngine(
                                 // makes the site run `$("main article ul.btns li").remove()` and empty
                                 // its own UI) and whether the rewrite had anything to match.
                                 try {
-                                    activityProvider()?.let { ctx ->
+                                    if (com.cloudstream.shared.util.DebugFlags.DUMPS) activityProvider()?.let { ctx ->
                                         val dir = ctx.externalCacheDir ?: ctx.cacheDir
                                         dir.mkdirs()
                                         val f = java.io.File(dir, "watchpage_served.html")
@@ -2349,7 +2344,7 @@ class NavigationEngine(
                                 // clearance, so the copy is taken here instead.
                                 val js = conn.inputStream.bufferedReader(charset).readText()
                                 try {
-                                    activityProvider()?.let { ctx ->
+                                    if (com.cloudstream.shared.util.DebugFlags.DUMPS) activityProvider()?.let { ctx ->
                                         val name = path.substringAfterLast('/').ifBlank { "script.js" }
                                         val dir = ctx.externalCacheDir ?: ctx.cacheDir
                                         dir.mkdirs()
@@ -2396,31 +2391,6 @@ class NavigationEngine(
                             // MIME checking refuses it. That is how jQuery went missing, which left the
                             // watch page unstyled and its lazy-loaded player needing a manual scroll.
                             if (code == 403 && isProtectedDomain && !isMain) {
-                                // One-shot: ask an echo service what our client actually puts on the
-                                // wire. Every theory about this 403 has been about headers we cannot
-                                // see — WebView adding a package name below the API surface, an empty
-                                // value we set ourselves, client hints. Guessing has cost days; the
-                                // echo answers it in one request, built by this same code so the answer
-                                // describes the real client and not a test harness.
-                                if (!echoDiagnosticDone) {
-                                    echoDiagnosticDone = true
-                                    try {
-                                        val echo = java.net.URL(HEADER_ECHO_URL)
-                                            .openConnection() as java.net.HttpURLConnection
-                                        echo.setRequestProperty("User-Agent", userAgent)
-                                        echo.setRequestProperty("Accept", "*/*")
-                                        echo.connectTimeout = 8000
-                                        echo.readTimeout = 8000
-                                        val seen = echo.inputStream.bufferedReader().use { it.readText() }
-                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                            "🪞 ECHO — every header this app's HttpURLConnection " +
-                                                "actually emits, as the server receives them: " +
-                                                seen.replace(Regex("\\s+"), " ").take(900))
-                                    } catch (e: Exception) {
-                                        ProviderLogger.w(TAG, "shouldInterceptRequest",
-                                            "Header echo failed: ${e.message}")
-                                    }
-                                }
                                 try {
                                     Thread.sleep(ASSET_RETRY_DELAY_MS)
                                     val retry = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
@@ -4172,7 +4142,8 @@ class NavigationEngine(
          * Expose this app's WebViews to Chrome DevTools over adb. **Diagnostic; false for release.**
          * See the call site in `createWebView` for what it costs and why it is currently worth it.
          */
-        private const val ENABLE_WEBVIEW_REMOTE_DEBUGGING = true
+        private const val ENABLE_WEBVIEW_REMOTE_DEBUGGING =
+            com.cloudstream.shared.util.DebugFlags.WEBVIEW_REMOTE_DEBUGGING
 
         private const val INERT_PAGE_SUBRESOURCE_FLOOR = 5
 
@@ -4217,21 +4188,6 @@ class NavigationEngine(
          */
         private const val ASSET_RETRY_DELAY_MS = 300L
 
-        /**
-         * Endpoint for the one-shot self-identification diagnostic, run on the first refusal.
-         *
-         * Cloudflare's trace returns plain text with `ip=`, `uag=`, `tls=` and `http=` as the *server*
-         * sees them. That is the one thing left unmeasured: headers, cookies, timing and three separate
-         * HTTP stacks have all been eliminated, and the app's own block pages have quoted IPs that do
-         * not match what `adb shell curl` exits from on the same handset (`2001:16b8:…` and
-         * `93.88.156.23` against the shell's `194.213.108.5`). If the app leaves by a different route
-         * than the shell, that explains a 403 no header change can fix.
-         *
-         * `httpbin.org/headers` was tried first and refused the request outright; `postman-echo.com`
-         * answers 200 from this handset and reports the full header set, including anything the stack
-         * appends below our own code.
-         */
-        private const val HEADER_ECHO_URL = "https://postman-echo.com/get"
 
         // ── Sandbox exfiltration protocol (renderHtmlInSandbox) ──────────────────────────────
         // The in-page reader streams its payload back as console.log lines:

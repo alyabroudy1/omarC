@@ -40,7 +40,8 @@ class ArabseedV4 : BaseProvider() {
 
     // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         
@@ -62,11 +63,12 @@ class ArabseedV4 : BaseProvider() {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                 }
-            }
+            }.let { newSearchResponseList(it, false) }
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         android.util.Log.d("ArabseedV4", "searchNormal: Executing parallel search for movies and series")
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
@@ -83,7 +85,7 @@ class ArabseedV4 : BaseProvider() {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                 }
-            }
+            }.let { newSearchResponseList(it, false) }
         }
     }
 

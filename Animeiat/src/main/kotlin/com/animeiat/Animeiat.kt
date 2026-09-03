@@ -74,17 +74,19 @@ class AnimeiatProvider : BaseProvider() {
         return newHomePageResponse(lists)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        val response = app.get("$mainUrl/anime?q=$query").parsed<AnimeListResponse>()
-        return response.data.map {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        val url = if (page <= 1) "$mainUrl/anime?q=$query" else "$mainUrl/anime?q=$query&page=$page"
+        val response = app.get(url).parsed<AnimeListResponse>()
+        val items = response.data.map {
             newAnimeSearchResponse(it.anime_name, "$mainUrl/anime/${it.slug}") {
                 posterUrl = it.poster_path.toImgUrl()
             }
         }
+        return newSearchResponseList(items, items.isNotEmpty())
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

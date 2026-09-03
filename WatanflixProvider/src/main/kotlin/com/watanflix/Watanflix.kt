@@ -57,12 +57,13 @@ class Watanflix : BaseProvider() {
         @JsonProperty("url") val url: String? = null
     )
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/ar/search?q=$query"
         val response = app.get(url).parsedSafe<WatanflixSearchResponse>()
-        val items = response?.data ?: return emptyList()
+        val items = response?.data ?: return newSearchResponseList(emptyList(), false)
 
-        return items.mapNotNull { item ->
+        return newSearchResponseList(items.mapNotNull { item ->
             val title = item.title?.trim() ?: return@mapNotNull null
             val itemUrl = item.url ?: return@mapNotNull null
 
@@ -88,11 +89,11 @@ class Watanflix : BaseProvider() {
                     this.posterUrl = fetchedPoster
                 }
             }
-        }.filterNotNull()
+        }.filterNotNull(), false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun loadLinks(

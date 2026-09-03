@@ -111,7 +111,8 @@ class FaselHDV2 : BaseProvider() {
         return currentEpisodes
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val methodTag = "[$name] [searchNormal override]"
         try {
             httpService.ensureInitialized()
@@ -150,20 +151,21 @@ class FaselHDV2 : BaseProvider() {
                 Log.d(methodTag, "Normal search returned ${items.size} items")
             }
 
-            return items.map { item ->
+            return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                 }
-            }
+            }, false)
         } catch (e: Exception) {
             Log.e(methodTag, "Error in searchNormal: ${e.message}")
             e.printStackTrace()
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val methodTag = "[$name] [searchLazy override]"
         try {
             httpService.ensureInitialized()
@@ -202,18 +204,18 @@ class FaselHDV2 : BaseProvider() {
                 Log.d(methodTag, "Lazy search returned ${items.size} items")
             }
 
-            return items.map { item ->
+            return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
                     this.posterHeaders = httpService.getImageHeaders()
                 }
-            }
+            }, false)
         } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
             throw e
         } catch (e: Exception) {
             Log.e(methodTag, "Error in searchLazy: ${e.message}")
             e.printStackTrace()
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 

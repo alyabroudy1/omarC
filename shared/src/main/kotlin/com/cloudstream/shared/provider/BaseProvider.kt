@@ -162,9 +162,6 @@ abstract class BaseProvider : MainAPI() {
         }
     }
 
-    /** Legacy pageless entry point — delegates to the paged overload at page 1. */
-    open suspend fun searchNormal(query: String): List<SearchResponse> = searchNormal(query, 1).items
-
     open suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchNormal"
         try {
@@ -254,8 +251,6 @@ abstract class BaseProvider : MainAPI() {
      *
      * The full [search] method (with CF solve) is called later if the user taps the placeholder.
      */
-    open suspend fun searchLazy(query: String): List<SearchResponse> = searchLazy(query, 1).items
-
     open suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchLazy"
         Log.i(methodTag, "START query='$query', page=$page")
@@ -480,7 +475,7 @@ abstract class BaseProvider : MainAPI() {
                 try {
                     val html = targetDoc.html()
                     val ctx = ActivityProvider.currentActivity
-                    if (ctx != null) {
+                    if (ctx != null && com.cloudstream.shared.util.DebugFlags.DUMPS) {
                         val dir = ctx.externalCacheDir ?: ctx.cacheDir
                         dir.mkdirs()
                         val file = java.io.File(dir, "noservers_${providerName}.html")

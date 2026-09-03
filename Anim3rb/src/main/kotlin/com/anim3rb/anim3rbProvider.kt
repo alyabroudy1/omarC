@@ -124,20 +124,22 @@ class Anim3rbProvider : BaseProvider() {
 
     // ==================== SEARCH ====================
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         Log.i(TAG, "searchNormal: START query='$query'")
         val standard = standardSearch(query, useNoFallback = false)
         if (standard.isNotEmpty()) {
             Log.i(TAG, "searchNormal: standard returned ${standard.size} results")
-            return standard
+            return newSearchResponseList(standard, false)
         }
         Log.w(TAG, "searchNormal: standard empty, falling back to Livewire")
-        return livewireSearch(query, useNoFallback = false)
+        return newSearchResponseList(livewireSearch(query, useNoFallback = false), false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         Log.i(TAG, "searchLazy: START query='$query'")
-        return standardSearch(query, useNoFallback = true)
+        return newSearchResponseList(standardSearch(query, useNoFallback = true), false)
     }
 
     private suspend fun standardSearch(query: String, useNoFallback: Boolean): List<SearchResponse> {

@@ -97,12 +97,13 @@ class WitAnime : BaseProvider() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/?search_param=animes&s=$query"
 
         val document = app.get(url, headers = mapOf("User-Agent" to userAgent)).document
 
-        return document.select("div.anime-list-content div.anime-card-container").mapNotNull {
+        return newSearchResponseList(document.select("div.anime-list-content div.anime-card-container").mapNotNull {
             val a = it.selectFirst("div.anime-card-poster a")
             val href = a?.attr("href") ?: return@mapNotNull null
 
@@ -113,11 +114,11 @@ class WitAnime : BaseProvider() {
             newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

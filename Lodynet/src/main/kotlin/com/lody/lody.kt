@@ -68,20 +68,21 @@ class LodyNet : BaseProvider() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$searchApi?value=$query"
         val response = app.get(url).text
 
         return try {
             val jsonList = tryParseJson<List<Any>>(response)
-            if (jsonList == null || jsonList.size < 2) return emptyList()
+            if (jsonList == null || jsonList.size < 2) return newSearchResponseList(emptyList(), false)
 
             val rawResults = jsonList[1]
             val mapper = com.fasterxml.jackson.databind.ObjectMapper()
             val jsonString = mapper.writeValueAsString(rawResults)
             val results = parseJson<List<SearchResultJson>>(jsonString)
 
-            results.amap { item ->
+            newSearchResponseList(results.amap { item ->
                 val fullLink = if(item.url.startsWith("http")) item.url else "$mainUrl/${item.url}"
 
                 val doc = app.get(fullLink).document
@@ -99,15 +100,15 @@ class LodyNet : BaseProvider() {
                 newMovieSearchResponse(item.title ?: "", fullLink, TvType.TvSeries) {
                     this.posterUrl = realPoster
                 }
-            }
+            }, false)
         } catch (e: Exception) {
             e.printStackTrace()
-            emptyList()
+            newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

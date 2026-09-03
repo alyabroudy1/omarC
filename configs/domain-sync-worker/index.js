@@ -1,6 +1,37 @@
 /**
- * Cloudflare Worker for Domain Config Sync (with Debug)
+ * Cloudflare Worker for Domain Config Sync
  */
+
+/**
+ * Allowlist of provider config file names that may be written.
+ *
+ * MUST be updated whenever a file is added to / removed from `configs/*.json`
+ * in the repository, otherwise the new provider's domain sync will 400.
+ */
+const KNOWN_CONFIG_FILES = new Set([
+    'akwam.json',
+    'anim3rb.json',
+    'arabseedv4.json',
+    'bristege.json',
+    'cimaleek.json',
+    'cimanow.json',
+    'cimatn.json',
+    'cimawbas.json',
+    'dima-toon.json',
+    'egydead.json',
+    'eishk.json',
+    'eseek.json',
+    'faselhd.json',
+    'kooralive.json',
+    'krmzy.json',
+    'laroza.json',
+    'mycima.json',
+    'mycimaclone.json',
+    'syrialive.json',
+    'tuktukhd.json',
+    'wecima.json',
+    'yallashoot.json',
+]);
 
 export default {
     async fetch(request, env) {
@@ -9,25 +40,8 @@ export default {
             return new Response(null, {
                 headers: {
                     'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type',
-                },
-            });
-        }
-
-        // DEBUG: GET request shows environment variable status
-        if (request.method === 'GET') {
-            return new Response(JSON.stringify({
-                debug: true,
-                hasToken: !!env.GITHUB_TOKEN,
-                tokenLength: env.GITHUB_TOKEN ? env.GITHUB_TOKEN.length : 0,
-                tokenPrefix: env.GITHUB_TOKEN ? env.GITHUB_TOKEN.substring(0, 4) : 'MISSING',
-                owner: env.GITHUB_OWNER || 'MISSING',
-                repo: env.GITHUB_REPO || 'MISSING',
-            }, null, 2), {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, X-Sync-Secret',
                 },
             });
         }
@@ -36,12 +50,31 @@ export default {
             return new Response('Method not allowed', { status: 405 });
         }
 
+        // Optional shared secret. Enforced only when SYNC_SECRET is configured on the
+        // Worker; the open-source client cannot hold a real secret, so this is a
+        // server-side opt-in, not an authentication guarantee.
+        if (env.SYNC_SECRET && request.headers.get('X-Sync-Secret') !== env.SYNC_SECRET) {
+            return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+
         try {
             const body = await request.json();
             const { provider, configFile, newDomain, currentVersion } = body;
 
             if (!provider || !configFile || !newDomain) {
                 return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+                    status: 400,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+
+            // Provider file-name check (NOT a domain check): the config file must be one
+            // of the known names. Also closes path traversal via `configs/${configFile}`.
+            if (configFile.includes('/') || configFile.includes('..') || !KNOWN_CONFIG_FILES.has(configFile)) {
+                return new Response(JSON.stringify({ error: 'Unknown configFile' }), {
                     status: 400,
                     headers: { 'Content-Type': 'application/json' },
                 });

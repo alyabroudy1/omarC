@@ -60,19 +60,21 @@ class Wecima : BaseProvider() {
         return items
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         try {
             httpService.ensureInitialized()
-            return searchPost(query)
+            return newSearchResponseList(searchPost(query), false)
         } catch (e: Exception) {
             Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         httpService.ensureInitialized()
-        return searchPost(query)
+        return newSearchResponseList(searchPost(query), false)
     }
 
     override suspend fun fetchExtraEpisodes(
