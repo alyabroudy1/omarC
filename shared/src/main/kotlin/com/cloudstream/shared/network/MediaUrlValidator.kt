@@ -1,9 +1,9 @@
 package com.cloudstream.shared.network
 
 import com.cloudstream.shared.logging.ProviderLogger
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.session.SessionState
-import com.cloudstream.shared.util.WebConfig
-import com.cloudstream.shared.webview.VideoUrlClassifier
+import com.lagradost.cloudstream3.app
 
 /**
  * Pre-validates media URLs to detect TLS-fingerprint-based CDN blocks
@@ -109,9 +109,13 @@ class MediaUrlValidator {
         sessionState: SessionState
     ): ValidationResult {
         // Build headers matching what ExoPlayer would send
-        val headers = buildExoPlayerHeaders(sourceHeaders, sessionState)
+        val headers = buildExoPlayerHeaders(
+            sourceHeaders = sourceHeaders,
+            fingerprint = Fingerprint.current(),
+            sessionCookies = sessionState.cookies
+        )
 
-        val client = okhttp3.OkHttpClient.Builder()
+        val client = app.baseClient.newBuilder()
             .connectTimeout(VALIDATION_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             .readTimeout(VALIDATION_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             .followRedirects(true)
@@ -158,15 +162,21 @@ class MediaUrlValidator {
      * Build headers that match what ExoPlayer's DefaultHttpDataSource would send.
      * This ensures the validation accurately predicts ExoPlayer's outcome.
      */
-    private fun buildExoPlayerHeaders(
+    /**
+     * Pure, so the shape is JVM-testable: no [SessionState], no Android, no
+     * `Fingerprint.current()`. `Accept-Encoding: identity` is what ExoPlayer's
+     * `DefaultHttpDataSource` sends for media, and the validation only predicts playback if it
+     * sends the same.
+     */
+    internal fun buildExoPlayerHeaders(
         sourceHeaders: Map<String, String>,
-        sessionState: SessionState
+        fingerprint: Fingerprint,
+        sessionCookies: Map<String, String>
     ): Map<String, String> {
         val headers = mutableMapOf<String, String>()
 
         // ExoPlayer sends these by default
-        headers["User-Agent"] = sourceHeaders["User-Agent"]
-            ?: sessionState.userAgent
+        headers["User-Agent"] = sourceHeaders["User-Agent"] ?: fingerprint.userAgent
         headers["Accept-Encoding"] = "identity" // ExoPlayer default for media
         headers["Accept"] = "*/*"
 
@@ -176,8 +186,8 @@ class MediaUrlValidator {
         }
 
         // If no cookie in source headers, inject session cookies
-        if (!headers.containsKey("Cookie") && sessionState.cookies.isNotEmpty()) {
-            headers["Cookie"] = sessionState.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        if (!headers.containsKey("Cookie") && sessionCookies.isNotEmpty()) {
+            headers["Cookie"] = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         }
 
         return headers

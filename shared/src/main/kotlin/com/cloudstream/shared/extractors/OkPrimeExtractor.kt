@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.JsUnpacker
@@ -23,7 +24,7 @@ open class OkPrimeExtractor : ExtractorApi() {
             ?: throw IllegalStateException("ProviderHttpService not initialized")
 
         val customHeaders = mutableMapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent" to Fingerprint.current().userAgent
         )
         if (referer != null) {
             customHeaders["Referer"] = referer

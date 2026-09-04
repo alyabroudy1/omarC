@@ -2,23 +2,20 @@ package com.cloudstream.shared.session
 
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_SESSION
-import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
-import com.cloudstream.shared.util.WebConfig
 
 /**
  * SINGLE SOURCE OF TRUTH for all session-related data.
  * 
- * Cloudflare binds cookies to User-Agent. This class ensures:
- * 1. UA is NEVER mixed between sources
- * 2. When domain changes, cookies are invalidated
- * 3. All components read from the same immutable state
+ * Cloudflare binds cookies to User-Agent, and there is now exactly one User-Agent in the process:
+ * [com.cloudstream.shared.core.Fingerprint.current]. A session therefore no longer carries a UA of
+ * its own — there is nothing for it to disagree with.
+ * 
+ * 1. When domain changes, cookies are invalidated
+ * 2. All components read from the same immutable state
  * 
  * Immutable by design - create new instances via `copy()` or helper methods.
  */
 data class SessionState(
-    /** The User-Agent used to acquire the current session */
-    val userAgent: String,
-    
     /** Cookies for the current domain (keyed by name) */
     val cookies: Map<String, String>,
     
@@ -36,9 +33,8 @@ data class SessionState(
         const val COOKIE_TTL_MS = 30 * 60 * 1000L
         
         /** Create initial state for a domain */
-        fun initial(domain: String, userAgent: String = UNIFIED_USER_AGENT): SessionState {
+        fun initial(domain: String): SessionState {
             return SessionState(
-                userAgent = userAgent,
                 cookies = emptyMap(),
                 domain = domain,
                 cookieTimestamp = 0L,
@@ -63,38 +59,6 @@ data class SessionState(
     fun buildCookieHeader(): String? {
         if (cookies.isEmpty()) return null
         return cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-    }
-    
-    /** Build all headers for HTTP requests */
-    fun buildHeaders(): Map<String, String> {
-        ProviderLogger.d(TAG_SESSION, "buildHeaders", "Building request headers",
-            "domain" to domain,
-            "cookieCount" to cookies.size,
-            "hasClearance" to hasClearance(),
-            "isValid" to isValid(),
-            "uaHash" to userAgent.hashCode()
-        )
-        
-        return buildMap {
-            put("User-Agent", userAgent)
-            put("Referer", "https://$domain/")
-            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            put("Accept-Language", "en-US,en;q=0.9")
-            // Client Hints — dynamically matches the real Chrome version
-            put("Sec-Ch-Ua", WebConfig.buildSecChUa(userAgent))
-            put("Sec-Ch-Ua-Mobile", "?1")
-            put("Sec-Ch-Ua-Platform", "\"Android\"")
-            put("Upgrade-Insecure-Requests", "1")
-            put("Sec-Fetch-Dest", "document")
-            put("Sec-Fetch-Mode", "navigate")
-            put("Sec-Fetch-Site", "none")
-            put("Sec-Fetch-User", "?1")
-            
-            buildCookieHeader()?.let { 
-                put("Cookie", it) 
-                ProviderLogger.d(TAG_SESSION, "buildHeaders", "Cookie header set", "keys" to cookies.keys.toString())
-            }
-        }
     }
     
     /** Create new state with updated cookies (keeps same UA - critical for CF) */

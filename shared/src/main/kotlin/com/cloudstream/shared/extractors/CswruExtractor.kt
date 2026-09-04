@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -41,7 +42,7 @@ class CswruExtractor(
                 return
             }
 
-            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            val userAgent = Fingerprint.current().userAgent
             val headers = mapOf(
                 "User-Agent" to userAgent,
                 "Referer" to actualReferer

@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -262,7 +263,7 @@ class Tuniflix : BaseProvider() {
                     val headers = mapOf(
                         "Referer" to "https://watch.strp2p.site/",
                         "Origin" to "https://watch.strp2p.site",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to Fingerprint.current().userAgent
                     )
 
                     val encryptedResponse = app.get(apiUrl, headers = headers).text

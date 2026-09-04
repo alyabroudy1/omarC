@@ -7,6 +7,7 @@ import android.os.Message
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.webkit.*
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -188,6 +189,24 @@ class NavigationEngine(
     @Volatile
     private var dismissingForCleanup = false
 
+    /**
+     * The `userAgent` argument of the currently running [execute]. Honoured as a per-session UA
+     * override (Fingerprint deviation, logged by WebViewFactory); null/blank or equal to the
+     * fingerprint means the device fingerprint.
+     */
+    private var sessionUserAgentOverride: String? = null
+
+    /**
+     * The UA this session actually presents: the per-session override when there is one, else the
+     * device fingerprint. Used by every Kotlin-side re-issue so one session speaks with one UA
+     * everywhere (WebView, popup sink, sandbox, mint relay, re-issued requests).
+     *
+     * Only User-Agent follows the override: sec-ch-ua and the other client hints stay the
+     * fingerprint's (matching brand hints to an arbitrary override UA — a TV UA, say — is out of scope).
+     */
+    private fun sessionUserAgent(): String =
+        sessionUserAgentOverride?.takeIf { it.isNotBlank() } ?: Fingerprint.current().userAgent
+
     /** Set by `onRenderProcessGone`: the page is blank because the renderer died. Terminal. */
     @Volatile
     var rendererGone = false
@@ -196,6 +215,8 @@ class NavigationEngine(
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(
         steps: List<NavigationStep>,
+        // Honoured as a per-session UA override (Fingerprint deviation, logged by WebViewFactory);
+        // null/blank or equal to the fingerprint means the device fingerprint.
         userAgent: String,
         mode: Mode = Mode.HEADLESS,
         overallTimeoutMs: Long = 120_000L,
@@ -328,6 +349,7 @@ class NavigationEngine(
     ): NavigationResult = withContext(Dispatchers.Main) {
         sessionMutex.withLock {
             // Reset intercepted state for this session
+            sessionUserAgentOverride = userAgent
             interceptedWatchingUrl = null
             pendingRedirectUrl = null
             autoApproveAllRedirects = false
@@ -396,7 +418,7 @@ class NavigationEngine(
             }
 
             try {
-                webView = createWebView(activity, userAgent)
+                webView = createWebView(activity)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
                     rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy,
@@ -1092,8 +1114,11 @@ class NavigationEngine(
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(activity: android.app.Activity, userAgent: String): WebView {
-        return WebView(activity).apply {
+    private fun createWebView(
+        activity: android.app.Activity,
+        userAgentOverride: String? = sessionUserAgentOverride
+    ): WebView {
+        return WebViewFactory.create(activity, userAgentOverride = userAgentOverride).apply {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -1101,7 +1126,6 @@ class NavigationEngine(
                 useWideViewPort = true
                 loadWithOverviewMode = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-                userAgentString = userAgent
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 mediaPlaybackRequiresUserGesture = true
                 blockNetworkImage = false
@@ -1142,145 +1166,13 @@ class NavigationEngine(
                         "Could not enable remote debugging: ${e.message}")
                 }
             }
-
-            // THE NUCLEAR SOLUTION: Hide the package name from ALL WebView requests natively.
-            hideXRequestedWithHeader(this)
         }
     }
 
-    private fun hideXRequestedWithHeader(webView: WebView) {
-        // Approach −1, and the only one that addresses the cause: talk to the WebView APK's own
-        // support-library boundary directly, which is all androidx.webkit ever did. See
-        // [RequestedWithHeaderControl] for why the dependency itself cannot reach the device, and for the
-        // measurements that make this header the most damaging thing we put on the wire.
-        if (RequestedWithHeaderControl.suppress(webView)) return
-
-        // Approach 0: the supported API — androidx.webkit's origin allow-list.
-        //
-        // The four reflection approaches below target WebView internals that moved years ago; on
-        // WebView 150 they all fail, and the engine has been logging "X-Requested-With may leak" ever
-        // since without anyone reading it. That leak is not cosmetic: verified on-device with curl,
-        // `X-Requested-With: <package>` turns freex2line's 35-byte answer into a 4.5 KB Cloudflare
-        // block page. Intercepted GETs escape it because they are re-issued through
-        // HttpURLConnection; a POST cannot be intercepted, so it goes out wearing the app's name.
-        //
-        // `setRequestedWithHeaderOriginAllowList(emptySet())` means "send it to no origin at all",
-        // which is the only setting that reaches requests the interceptor never sees.
-        //
-        // Reached by reflection on purpose: androidx.webkit may or may not be on the host app's
-        // classpath, and a missing class must degrade to the old behaviour rather than crash the
-        // plugin. Nothing here throws outward.
-        try {
-            val featureCls = Class.forName("androidx.webkit.WebViewFeature")
-            val supported = featureCls
-                .getMethod("isFeatureSupported", String::class.java)
-                .invoke(null, "REQUESTED_WITH_HEADER_ALLOW_LIST") as? Boolean ?: false
-            if (supported) {
-                Class.forName("androidx.webkit.WebSettingsCompat")
-                    .getMethod(
-                        "setRequestedWithHeaderOriginAllowList",
-                        android.webkit.WebSettings::class.java,
-                        Set::class.java
-                    )
-                    .invoke(null, webView.settings, emptySet<String>())
-                ProviderLogger.w(TAG, "hideXRequestedWithHeader",
-                    "✅ X-Requested-With disabled for ALL origins via androidx.webkit " +
-                        "(setRequestedWithHeaderOriginAllowList) — this covers requests the " +
-                        "interceptor cannot touch, POSTs included")
-                return
-            }
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
-                "androidx.webkit present but REQUESTED_WITH_HEADER_ALLOW_LIST unsupported by this " +
-                    "WebView — falling through to reflection")
-        } catch (e: ClassNotFoundException) {
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
-                "androidx.webkit not on the classpath — cannot use the supported API, falling " +
-                    "through to reflection (which fails on modern WebView; see the leak warning below)")
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader",
-                "androidx.webkit attempt failed: ${e.javaClass.simpleName}: ${e.message}")
-        }
-
-        try {
-            // Approach 1: Direct method on WebView itself (newer Chrome WebViews)
-            try {
-                val method = WebView::class.java.getMethod("setXRequestedWithHeader", String::class.java)
-                method.invoke(webView, "")
-                ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via WebView.setXRequestedWithHeader method")
-                return
-            } catch (_: NoSuchMethodException) {}
-
-            // Approach 2: Method on mProvider
-            try {
-                val providerField = WebView::class.java.getDeclaredField("mProvider")
-                providerField.isAccessible = true
-                val provider = providerField.get(webView)
-                try {
-                    val method = provider.javaClass.getMethod("setXRequestedWithHeader", String::class.java)
-                    method.invoke(provider, "")
-                    ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via provider.setXRequestedWithHeader method")
-                    return
-                } catch (_: NoSuchMethodException) {}
-
-                // Approach 3: Field mXRequestedWithHeader on provider hierarchy
-                var cls: Class<*>? = provider.javaClass
-                while (cls != null) {
-                    try {
-                        val f = cls.getDeclaredField("mXRequestedWithHeader")
-                        f.isAccessible = true
-                        f.set(provider, "")
-                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via field mXRequestedWithHeader on provider")
-                        return
-                    } catch (_: NoSuchFieldException) {
-                        cls = cls.superclass
-                    }
-                }
-
-                // Approach 4: Field xRequestedWithHeader (camelCase, no m-prefix)
-                cls = provider.javaClass
-                while (cls != null) {
-                    try {
-                        val f = cls.getDeclaredField("xRequestedWithHeader")
-                        f.isAccessible = true
-                        f.set(provider, "")
-                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via field xRequestedWithHeader on provider")
-                        return
-                    } catch (_: NoSuchFieldException) {
-                        cls = cls.superclass
-                    }
-                }
-            } catch (e: Exception) {
-                ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Provider access failed: ${e.message}")
-            }
-
-            // Approach 5: Try AwContents fields through WebViewChromium
-            try {
-                val providerField = WebView::class.java.getDeclaredField("mProvider")
-                providerField.isAccessible = true
-                val provider = providerField.get(webView)
-                val awContentsField = provider.javaClass.getDeclaredField("mAwContents")
-                awContentsField.isAccessible = true
-                val awContents = awContentsField.get(provider)
-                var cls2: Class<*>? = awContents.javaClass
-                while (cls2 != null) {
-                    try {
-                        val f = cls2.getDeclaredField("mXRequestedWithHeader")
-                        f.isAccessible = true
-                        f.set(awContents, "")
-                        ProviderLogger.i(TAG, "hideXRequestedWithHeader", "Cleared via AwContents.mXRequestedWithHeader")
-                        return
-                    } catch (_: NoSuchFieldException) {
-                        cls2 = cls2.superclass
-                    }
-                }
-            } catch (e: Exception) {
-                ProviderLogger.w(TAG, "hideXRequestedWithHeader", "AwContents approach failed: ${e.message}")
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG, "hideXRequestedWithHeader", "Reflection failed: ${e.message}")
-        }
-        ProviderLogger.w(TAG, "hideXRequestedWithHeader", "All reflection approaches failed — X-Requested-With may leak — using interceptor as fallback")
-    }
+    // X-Requested-With suppression used to live here (RequestedWithHeaderControl.suppress plus five
+    // legacy reflection fallbacks). WebViewFactory.create now calls suppress for every WebView it
+    // makes, and suppress itself owns the allow-list / header-mode fallbacks, so the duplicate —
+    // and its duplicate log line — is gone.
 
     /**
      * Fetches an iframe's document so its HTML can be kept, and returns both the text and a response
@@ -1380,11 +1272,7 @@ class NavigationEngine(
         fun absent(name: String) = conn.getRequestProperty(name).isNullOrBlank()
 
         if (absent("Accept-Language")) {
-            val loc = java.util.Locale.getDefault()
-            val tag = if (loc.country.isNullOrBlank()) loc.language else "${loc.language}-${loc.country}"
-            val header = if (loc.language.equals("en", true)) "$tag,${loc.language};q=0.9"
-            else "$tag,${loc.language};q=0.9,en-US;q=0.8,en;q=0.7"
-            conn.setRequestProperty("Accept-Language", header)
+            conn.setRequestProperty("Accept-Language", Fingerprint.current().acceptLanguage)
         }
 
         // Approximate registrable domain: the last two labels. A full public-suffix list is overkill
@@ -1439,8 +1327,7 @@ class NavigationEngine(
 
     private fun fetchEmbedDocument(
         url: String,
-        reqHeaders: Map<String, String>,
-        userAgent: String
+        reqHeaders: Map<String, String>
     ): Pair<String, WebResourceResponse>? {
         return try {
             val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -1457,12 +1344,9 @@ class NavigationEngine(
                     conn.setRequestProperty(key, value)
                 }
             }
-            conn.setRequestProperty("User-Agent", userAgent)
-            val chromeVersion = Regex("""Chrome/(\d+)""").find(userAgent)?.groupValues?.getOrNull(1) ?: "131"
-            conn.setRequestProperty(
-                "sec-ch-ua",
-                "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$chromeVersion\", \"Chromium\";v=\"$chromeVersion\""
-            )
+            val fp = Fingerprint.current()
+            conn.setRequestProperty("User-Agent", sessionUserAgent())
+            conn.setRequestProperty("sec-ch-ua", fp.secChUa)
             conn.setRequestProperty("sec-ch-ua-mobile", "?1")
             conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
             // The whole reason this works: it really is an iframe request.
@@ -1736,7 +1620,7 @@ class NavigationEngine(
                             // Serve the iframe ourselves so we can keep a copy of its HTML. The player
                             // params live in these bytes, and this is the only context in which the
                             // embed host will hand them over — see CapturedEmbedRequest.html.
-                            val fetched = fetchEmbedDocument(reqUrl, reqHeaders, userAgent)
+                            val fetched = fetchEmbedDocument(reqUrl, reqHeaders)
                             capturedEmbedRequests.add(
                                 CapturedEmbedRequest(
                                     url = reqUrl,
@@ -2072,13 +1956,13 @@ class NavigationEngine(
                         // watching request.)
 
                         // CRITICAL: Set a proper browser User-Agent — HttpURLConnection defaults to "Java/1.x"
-                        conn.setRequestProperty("User-Agent", userAgent)
+                        val fp = Fingerprint.current()
+                        conn.setRequestProperty("User-Agent", sessionUserAgent())
 
-                        // SPOOF sec-ch-ua headers to look like a real Chrome browser, not a WebView.
-                        // Cloudflare fingerprints "Android WebView" in sec-ch-ua and blocks it.
-                        // Use the actual Chrome version from the User-Agent to keep headers consistent.
-                        val chromeVersion = Regex("""Chrome/(\d+)""").find(userAgent)?.groupValues?.getOrNull(1) ?: "131"
-                        conn.setRequestProperty("sec-ch-ua", "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$chromeVersion\", \"Chromium\";v=\"$chromeVersion\"")
+                        // sec-ch-ua from the one Fingerprint spelling, so this re-issued request and
+                        // the WebView's own requests present the same brand list. Cloudflare
+                        // fingerprints "Android WebView" here and blocks it.
+                        conn.setRequestProperty("sec-ch-ua", fp.secChUa)
                         conn.setRequestProperty("sec-ch-ua-mobile", "?1")
                         conn.setRequestProperty("sec-ch-ua-platform", "\"Android\"")
 
@@ -2395,7 +2279,7 @@ class NavigationEngine(
                                     Thread.sleep(ASSET_RETRY_DELAY_MS)
                                     val retry = java.net.URL(reqUrl).openConnection() as java.net.HttpURLConnection
                                     retry.instanceFollowRedirects = true
-                                    retry.setRequestProperty("User-Agent", userAgent)
+                                    retry.setRequestProperty("User-Agent", sessionUserAgent())
                                     reqHeaders["Referer"]?.let { retry.setRequestProperty("Referer", it) }
                                     retry.setRequestProperty("Accept", "*/*")
                                     retry.connectTimeout = 15000
@@ -2735,9 +2619,11 @@ class NavigationEngine(
 
                 return try {
                     @SuppressLint("SetJavaScriptEnabled")
-                    val sink = WebView(activity).apply {
+                    val sink = WebViewFactory.create(
+                        activity,
+                        userAgentOverride = sessionUserAgentOverride
+                    ).apply {
                         settings.javaScriptEnabled = true
-                        settings.userAgentString = userAgent
                         settings.domStorageEnabled = true
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(
@@ -3405,7 +3291,9 @@ class NavigationEngine(
      *
      * @param html      the captured (still-encrypted) watch-page HTML
      * @param baseUrl   the real https://…/watching/ URL (served to the WebView as a real navigation)
-     * @param userAgent session UA; the WebView tells ("Version/4.0","wv") are stripped for hygiene
+     * @param userAgent Honoured as a per-session UA override (Fingerprint deviation, logged by
+     *                  WebViewFactory); null/blank or equal to the fingerprint means the device
+     *                  fingerprint.
      * @param referrer  Referer for the navigation — sets document.referrer. REQUIRED for CimaNow:
      *                  the decrypted page runs `if(document.referrer.indexOf('rm.freex2line.online')
      *                  ===-1) location.replace('/home')`, which aborts the parse before the server
@@ -3416,6 +3304,8 @@ class NavigationEngine(
     suspend fun renderHtmlInSandbox(
         html: String,
         baseUrl: String,
+        // Honoured as a per-session UA override (Fingerprint deviation, logged by WebViewFactory);
+        // null/blank or equal to the fingerprint means the device fingerprint.
         userAgent: String,
         referrer: String = "",
         timeoutMs: Long = 25_000L
@@ -3432,14 +3322,10 @@ class NavigationEngine(
             return@withContext null
         }
 
-        // Strip the WebView giveaways from the UA: "Version/4.0" and the "; wv" token do not appear
-        // in a real Chrome-mobile UA. (This site's isBot() is stack-based, not UA-based, so this is
-        // just hygiene for Cloudflare / other layers.)
-        val browserUa = userAgent
-            .replace(Regex("\\s*Version/\\S+"), "")
-            .replace("; wv", "")
-            .replace(Regex("\\s{2,}"), " ")
-            .trim()
+        // The WebView giveaways ("Version/4.0", "; wv") used to be stripped from the caller's UA
+        // here. Fingerprint already hands out a UA with them removed, and WebViewFactory installs
+        // it, so there is nothing left to strip.
+        val browserUa = userAgent.takeIf { it.isNotBlank() } ?: Fingerprint.current().userAgent
 
         // ── In-page reader ──────────────────────────────────────────────────────────────────
         // Runs as the first inline <script> of the served document, so its call stack is the real
@@ -3656,7 +3542,7 @@ class NavigationEngine(
         var lastTitleStatus: String? = null
         var titleMsgCount = 0
 
-        val webView = createWebView(activity, browserUa)
+        val webView = createWebView(activity, userAgentOverride = userAgent)
         val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
         val mainServed = java.util.concurrent.atomic.AtomicBoolean(false)
         try {

@@ -8,6 +8,7 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.extractors.SnifferSelector
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
@@ -302,7 +303,7 @@ class CimaLeek : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val tag = "[CimaLeek] [DirectEmbed]"
-        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        val ua = Fingerprint.current().userAgent
         val baseHeaders = mapOf("User-Agent" to ua, "Referer" to referer)
 
         // ── MixDrop ──
@@ -412,7 +413,7 @@ class CimaLeek : BaseProvider() {
         val methodTag = "[CimaLeek] [CswruWrapper]"
         try {
             val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent" to Fingerprint.current().userAgent,
                 "Referer" to referer
             )
 

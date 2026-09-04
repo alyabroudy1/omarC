@@ -1,5 +1,6 @@
 package com.cloudstream.shared.webview
 
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import org.json.JSONObject
 import org.json.JSONArray
@@ -11,7 +12,7 @@ class WebViewFlowHelper(
     private val TAG = "WebViewFlowHelper"
 
     data class Config(
-        val userAgent: String = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        val userAgent: String = Fingerprint.current().userAgent,
         val overallTimeoutMs: Long = 120_000L,
         val allowedDomains: List<String> = emptyList(),
         val destinationLockPatterns: List<String> = emptyList(),

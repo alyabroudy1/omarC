@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -51,7 +52,7 @@ class Shahid4u : BaseProvider() {
     private fun buildBrowserHeaders(referer: String? = null): Map<String, String> {
         val ref = referer ?: mainUrl
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
             "Referer" to ref,

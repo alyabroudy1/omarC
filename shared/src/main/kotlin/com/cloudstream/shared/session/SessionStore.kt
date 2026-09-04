@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_SESSION
-import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
 import org.json.JSONObject
 
 /**
@@ -23,7 +22,6 @@ class SessionStore(
     )
     
     companion object {
-        private const val KEY_USER_AGENT = "user_agent"
         private const val KEY_COOKIES = "cookies_json"
         private const val KEY_DOMAIN = "domain"
         private const val KEY_COOKIE_TIMESTAMP = "cookie_timestamp"
@@ -42,7 +40,6 @@ class SessionStore(
             }.toString()
             
             prefs.edit()
-                .putString(KEY_USER_AGENT, state.userAgent)
                 .putString(KEY_COOKIES, cookiesJson)
                 .putString(KEY_DOMAIN, state.domain)
                 .putLong(KEY_COOKIE_TIMESTAMP, state.cookieTimestamp)
@@ -62,7 +59,6 @@ class SessionStore(
      */
     fun load(fallbackDomain: String): SessionState? {
         return try {
-            val userAgent = prefs.getString(KEY_USER_AGENT, null) ?: UNIFIED_USER_AGENT
             val cookiesJson = prefs.getString(KEY_COOKIES, null) ?: "{}"
             val domain = prefs.getString(KEY_DOMAIN, fallbackDomain) ?: fallbackDomain
             val cookieTimestamp = prefs.getLong(KEY_COOKIE_TIMESTAMP, 0L)
@@ -81,7 +77,6 @@ class SessionStore(
             }
             
             val state = SessionState(
-                userAgent = userAgent,
                 cookies = cookies,
                 domain = domain,
                 cookieTimestamp = cookieTimestamp,
@@ -109,6 +104,6 @@ class SessionStore(
      * Check if a session is persisted.
      */
     fun hasSession(): Boolean {
-        return prefs.contains(KEY_USER_AGENT) && prefs.contains(KEY_DOMAIN)
+        return prefs.contains(KEY_COOKIES) && prefs.contains(KEY_DOMAIN)
     }
 }

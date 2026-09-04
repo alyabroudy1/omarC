@@ -1,5 +1,6 @@
 package com.cloudstream.shared.ui
 
+import com.cloudstream.shared.webview.WebViewFactory
 import android.app.Activity
 import android.app.Dialog
 import android.os.Bundle
@@ -204,7 +205,7 @@ class DrmPlayerDialog(
 
     private fun initializeWebView() {
         Log.d(TAG, "initializeWebView: Setting up WebView")
-        webView = WebView(context).apply {
+        webView = WebViewFactory.create(context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -215,7 +216,6 @@ class DrmPlayerDialog(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                userAgentString = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
                 // Enable viewport meta tag support
                 useWideViewPort = true
                 loadWithOverviewMode = true

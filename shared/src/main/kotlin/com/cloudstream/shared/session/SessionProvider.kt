@@ -27,8 +27,7 @@ object SessionProvider {
     fun initialize(session: SessionState) {
         ProviderLogger.d(TAG, "initialize", "Session initialized",
             "domain" to session.domain,
-            "hasCookies" to session.cookies.isNotEmpty(),
-            "uaHash" to session.userAgent.hashCode())
+            "hasCookies" to session.cookies.isNotEmpty())
         currentSession = session
     }
     
@@ -193,17 +192,6 @@ object SessionProvider {
      * Returns null if not initialized.
      */
     fun getSession(): SessionState? = currentSession
-    
-    /**
-     * Get the current User-Agent.
-     * Falls back to unified UA if no session.
-     */
-    fun getUserAgent(): String {
-        return currentSession?.userAgent ?: run {
-            ProviderLogger.w(TAG, "getUserAgent", "No session, using default UA")
-            com.cloudstream.shared.provider.UNIFIED_USER_AGENT
-        }
-    }
     
     /**
      * Get the current cookies map.

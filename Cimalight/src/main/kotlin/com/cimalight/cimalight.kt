@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -22,7 +23,6 @@ class CimaLightProvider : BaseProvider() {
 
     private val TAG = "CimaLightLog"
 
-    override val userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36"
 
     override val mainPage = mainPageOf(
         "$mainUrl/main16" to "الرئيسية",
@@ -34,11 +34,11 @@ class CimaLightProvider : BaseProvider() {
     private val customHeaders = mapOf(
         "Host" to "r.cimalight.co",
         "Cache-Control" to "no-cache, no-store, must-revalidate",
-        "Sec-Ch-Ua" to "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+        "Sec-Ch-Ua" to Fingerprint.current().secChUa,
         "Sec-Ch-Ua-Mobile" to "?1",
         "Sec-Ch-Ua-Platform" to "\"Android\"",
         "Upgrade-Insecure-Requests" to "1",
-        "User-Agent" to userAgent,
+        "User-Agent" to Fingerprint.current().userAgent,
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Sec-Fetch-Site" to "none",
         "Sec-Fetch-Mode" to "navigate",
@@ -70,7 +70,7 @@ class CimaLightProvider : BaseProvider() {
             val result = CloudflareSolver.solve(
                 activity,
                 url,
-                userAgent
+                Fingerprint.current().userAgent
             )
 
             val cookies = CookieManager.getInstance().getCookie(url)

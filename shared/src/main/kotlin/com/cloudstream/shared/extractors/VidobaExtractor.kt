@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.lagradost.cloudstream3.SubtitleFile
@@ -11,7 +12,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 
-import com.cloudstream.shared.util.WebConfig
 
 class VidobaExtractor : ExtractorApi() {
     override val name = "Vidoba"
@@ -71,7 +71,7 @@ class VidobaExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing Vidoba URL", "url" to url)
 
         try {
-            val userAgent = WebConfig.getCachedUserAgent()
+            val userAgent = Fingerprint.current().userAgent
             val headerReferer = referer ?: "https://larozza.casa/"
 
             // ── Phase 1: Fetch embed page ──
@@ -101,15 +101,9 @@ class VidobaExtractor : ExtractorApi() {
 
             // ── Phase 3: Emit M3U8 links ──
             val baseReferer = "https://vidoba.org/"
-            val requestHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Referer" to baseReferer,
-                "Origin" to "https://vidoba.org",
-                "Accept" to "*/*",
+            val requestHeaders = Fingerprint.current()
+                .playbackHeaders(baseReferer, "https://vidoba.org", null) + mapOf(
                 "Accept-Language" to "en-GB,en;q=0.7",
-                "sec-ch-ua" to WebConfig.buildSecChUa(userAgent),
-                "sec-ch-ua-mobile" to "?1",
-                "sec-ch-ua-platform" to "\"Android\"",
                 "Sec-Fetch-Dest" to "empty",
                 "Sec-Fetch-Mode" to "cors",
                 "Sec-Fetch-Site" to "cross-site"

@@ -13,6 +13,7 @@ import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -258,7 +259,7 @@ class Anim3rbProvider : BaseProvider() {
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("X-Requested-With", "XMLHttpRequest")
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .header("User-Agent", Fingerprint.current().userAgent)
                 .header("Referer", "$mainUrl/")
                 .apply { if (cookieStr.isNotBlank()) header("Cookie", cookieStr) }
                 .post(body)

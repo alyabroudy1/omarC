@@ -18,6 +18,7 @@ import kotlinx.coroutines.coroutineScope
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 
 class GessehProvider : BaseProvider() {
     override val baseDomain get() = "qeseh.net"
@@ -37,7 +38,7 @@ class GessehProvider : BaseProvider() {
     )
 
     private val defaultHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36"
+        "User-Agent" to Fingerprint.current().userAgent
     )
 
     override val mainPage = mainPageOf(
@@ -219,7 +220,7 @@ class GessehProvider : BaseProvider() {
         }
 
         val customHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Referer" to playerReferer
         )
 

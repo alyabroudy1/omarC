@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -157,7 +158,7 @@ class EarnVidsExtractor(
             }
             
             val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+                "User-Agent" to Fingerprint.current().userAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language" to "en-US,en;q=0.5",
                 "Connection" to "keep-alive"
@@ -190,16 +191,14 @@ class EarnVidsExtractor(
             val finalCookieHeader = mergedCookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
 
             
-            val customHeaders = mutableMapOf<String, String>()
             if (finalCookieHeader.isNotEmpty()) {
                 Log.d("EarnVidsExtractor", "🍪 Assembled Master Cookies! Attaching to headers: $finalCookieHeader")
-                customHeaders["Cookie"] = finalCookieHeader
             } else {
                 Log.w("EarnVidsExtractor", "⚠️ No cookies intercepted from WebView or HTML.")
             }
-            
-            customHeaders["Accept"] = "*/*"
-            customHeaders["User-Agent"] = headers["User-Agent"]!!
+
+            val customHeaders = Fingerprint.current()
+                .playbackHeaders(activeReferer, null, finalCookieHeader)
             
             for (strategy in strategies) {
                 var videoUrl = strategy.decode(response)

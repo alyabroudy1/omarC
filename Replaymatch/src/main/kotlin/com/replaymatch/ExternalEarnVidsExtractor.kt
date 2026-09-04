@@ -2,6 +2,7 @@ package com.replaymatch
 
 import android.util.Log
 import com.lagradost.cloudstream3.app
+import com.cloudstream.shared.core.Fingerprint
 import org.json.JSONObject
 import java.net.URI
 import kotlin.text.RegexOption
@@ -14,8 +15,7 @@ object ExternalEarnVidsExtractor {
         try {
 
             val headers = mutableMapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+                "User-Agent" to Fingerprint.current().userAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language" to "en-US,en;q=0.5",
                 "Connection" to "keep-alive"

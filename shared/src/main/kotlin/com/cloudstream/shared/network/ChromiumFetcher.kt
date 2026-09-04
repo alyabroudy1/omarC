@@ -5,7 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.*
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.util.WebConfig
+import com.cloudstream.shared.webview.WebViewFactory
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -29,6 +29,48 @@ import java.util.concurrent.ConcurrentHashMap
  * - Not suitable for streaming media (use CroNet DataSource for ExoPlayer)
  * - One request at a time per instance (serialized via mutex)
  */
+/**
+ * Header names the WebView owns for itself. Each is dropped from the `loadUrl` extra headers:
+ * the WebView sets them from the Fingerprint UA that `WebViewFactory` installed, and a
+ * Kotlin-supplied copy would either be ignored or fight the real one. `Cookie` is dropped here
+ * because it goes via `CookieManager` instead. `X-Requested-With` is dropped because
+ * `RequestedWithHeaderControl.suppress` owns that policy (an empty value is the detectable
+ * mistake documented in `RequestedWithHeaderControl.kt:110-126`).
+ *
+ * The set covers every identity and fetch-metadata header the browser generates for itself:
+ * `Accept`, `Accept-Language`, `Accept-Encoding`, the `sec-ch-ua*` client hints, the whole
+ * `Sec-Fetch-*` family and `Upgrade-Insecure-Requests` are all dropped, even when the caller set
+ * them deliberately — a `Sec-Fetch-Dest: iframe` supplied here would contradict the value Chromium
+ * derives from the actual navigation. What survives is `Referer` plus any header outside this list
+ * (caller-specific ones such as `Authorization` or an `X-` API header).
+ *
+ * Matching is by exact (case-insensitive) name, not by prefix.
+ */
+private val LOAD_URL_DROPPED_HEADERS = setOf(
+    "user-agent",
+    "cookie",
+    "x-requested-with",
+    "accept",
+    "accept-language",
+    "accept-encoding",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+    "sec-fetch-site",
+    "sec-fetch-mode",
+    "sec-fetch-dest",
+    "sec-fetch-user",
+    "upgrade-insecure-requests"
+)
+
+/**
+ * Narrows a request header map to what may be passed as `WebView.loadUrl` extra headers.
+ * `Referer` and caller-specific headers survive; the identity headers in
+ * [LOAD_URL_DROPPED_HEADERS] are dropped. Pure — no Android classes touched.
+ */
+internal fun filterLoadUrlHeaders(headers: Map<String, String>): Map<String, String> =
+    headers.filterKeys { it.lowercase() !in LOAD_URL_DROPPED_HEADERS }
+
 class ChromiumFetcher(
     private val activityProvider: () -> android.app.Activity?
 ) {
@@ -75,7 +117,7 @@ class ChromiumFetcher(
             var webViewRef: WebView? = null
 
             try {
-                val webView = getOrCreateWebView(activity, headers)
+                val webView = getOrCreateWebView(activity)
                 webViewRef = webView
 
                 ProviderLogger.d(TAG, "fetch", "Starting Chrome-TLS fetch",
@@ -154,16 +196,10 @@ class ChromiumFetcher(
                     }
                 }
 
-                // Build extra headers map (WebView.loadUrl headers)
-                val extraHeaders = mutableMapOf<String, String>()
-                // Strip X-Requested-With to avoid WebView detection
-                extraHeaders["X-Requested-With"] = ""
-                // Forward user-provided headers (except Cookie which goes via CookieManager)
-                for ((k, v) in headers) {
-                    if (!k.equals("Cookie", ignoreCase = true)) {
-                        extraHeaders[k] = v
-                    }
-                }
+                // Build extra headers map (WebView.loadUrl headers): Referer and
+                // caller-specific headers only. See LOAD_URL_DROPPED_HEADERS for what is dropped
+                // and why. Cookie goes via CookieManager below.
+                val extraHeaders = filterLoadUrlHeaders(headers)
 
                 // Inject cookies via CookieManager (WebView ignores Cookie header in loadUrl)
                 headers["Cookie"]?.let { cookieHeader ->
@@ -227,16 +263,14 @@ class ChromiumFetcher(
      */
     @SuppressLint("SetJavaScriptEnabled")
     private fun getOrCreateWebView(
-        activity: android.app.Activity,
-        headers: Map<String, String>
+        activity: android.app.Activity
     ): WebView {
         val now = System.currentTimeMillis()
         val existing = cachedWebView
 
         if (existing != null && (now - lastFetchTime) < WEBVIEW_REUSE_WINDOW_MS) {
-            // Reuse — just update UA if needed
-            val ua = headers["User-Agent"] ?: WebConfig.getCachedUserAgent()
-            existing.settings.userAgentString = ua
+            // Reuse as-is. The UA is the one WebViewFactory installed from the Fingerprint; there
+            // is no per-request UA to re-apply any more.
             return existing
         }
 
@@ -249,14 +283,13 @@ class ChromiumFetcher(
             } catch (_: Exception) {}
         }
 
-        val webView = WebView(activity).apply {
+        val webView = WebViewFactory.create(activity).apply {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 @Suppress("DEPRECATION")
                 databaseEnabled = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-                userAgentString = headers["User-Agent"] ?: WebConfig.getCachedUserAgent()
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 // Block media to speed up page loads (we only want HTML)
                 mediaPlaybackRequiresUserGesture = true

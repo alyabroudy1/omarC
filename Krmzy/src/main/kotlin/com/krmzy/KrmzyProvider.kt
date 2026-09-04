@@ -16,13 +16,11 @@ import org.json.JSONObject
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import com.cloudstream.shared.util.WebConfig
-import com.cloudstream.shared.android.PluginContext
+import com.cloudstream.shared.core.Fingerprint
 
 class KrmzyProvider : BaseProvider() {
     private fun getBrowserHeaders(referer: String? = null): Map<String, String> {
-        val context = PluginContext.context
-        val ua = context?.let { WebConfig.getUserAgent(it) } ?: WebConfig.getCachedUserAgent()
+        val ua = Fingerprint.current().userAgent
         val headers = mutableMapOf(
             "User-Agent" to ua
         )
@@ -193,7 +191,7 @@ class KrmzyProvider : BaseProvider() {
                 val reqHeaders = mutableMapOf("Referer" to ref)
                 if (cookieHeader != null) {
                     reqHeaders["Cookie"] = cookieHeader
-                    reqHeaders["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    reqHeaders["User-Agent"] = Fingerprint.current().userAgent
                 }
                 val resp = httpService.getRaw(streamUrl, headers = reqHeaders)
                 val code = resp.code

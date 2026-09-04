@@ -39,6 +39,7 @@ class Viu : BaseProvider() {
     private val deviceId = UUID.randomUUID().toString()
 
     private val baseHeaders = mapOf(
+        // API client, not a browser request (Wave 1, R1 exemption)
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12)",
         "Accept" to "application/json",
         "Referer" to "https://www.viu.com/",

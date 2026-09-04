@@ -37,7 +37,8 @@ class CfBypassEngine(
      *
      * @param url The URL to load
      * @param mode HEADLESS or FULLSCREEN (FULLSCREEN shows a dialog for manual CAPTCHA)
-     * @param userAgent The user agent string to use
+     * @param userAgent Unused. UA comes from WebViewFactory (Fingerprint); parameter kept for
+     *                  signature stability until Wave 4
      * @param exitCondition When to stop: [ExitCondition.PageLoaded] or [ExitCondition.CookiesPresent]
      * @param timeout Maximum time to wait in milliseconds
      * @param delayMs Optional delay after page load before checking exit condition
@@ -46,6 +47,8 @@ class CfBypassEngine(
     suspend fun runSession(
         url: String,
         mode: Mode,
+        @Suppress("UNUSED_PARAMETER")
+        // UA comes from WebViewFactory (Fingerprint); parameter kept for signature stability until Wave 4
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
@@ -84,7 +87,7 @@ class CfBypassEngine(
             ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.runSession", "Creating WebView", "url" to url.take(80))
 
             // Create WebView
-            webView = WebView(activity).apply {
+            webView = WebViewFactory.create(activity).apply {
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -92,7 +95,6 @@ class CfBypassEngine(
                     useWideViewPort = true
                     loadWithOverviewMode = true
                     cacheMode = WebSettings.LOAD_DEFAULT
-                    userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
                     javaScriptCanOpenWindowsAutomatically = false
@@ -365,10 +367,7 @@ class CfBypassEngine(
             // Load URL
             ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.runSession", "Loading URL", "url" to url.take(80))
 
-            val extraHeaders = mutableMapOf<String, String>()
-            extraHeaders["X-Requested-With"] = ""
-
-            webView.loadUrl(url, extraHeaders)
+            webView.loadUrl(url)
 
         } catch (e: Exception) {
             resultDelivered = true

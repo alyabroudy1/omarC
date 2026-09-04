@@ -30,32 +30,7 @@ data class StrategyRequest(
     val cookies: Map<String, String>,
     val referer: String,
     val headers: Map<String, String> = emptyMap()
-) {
-    fun buildHeaders(): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        
-        // Standard browser headers
-        result["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-        result["Accept-Language"] = "en-US,en;q=0.9"
-        result["Upgrade-Insecure-Requests"] = "1"
-        result["Sec-Fetch-Dest"] = "document"
-        result["Sec-Fetch-Mode"] = "navigate"
-        result["Sec-Fetch-Site"] = "none"
-        result["Sec-Fetch-User"] = "?1"
-        
-        // Request-specific headers
-        result.putAll(headers)
-        result["User-Agent"] = userAgent
-        if (referer.isNotBlank()) result["Referer"] = referer
-        
-        // Cookies
-        if (cookies.isNotEmpty()) {
-            result["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-        }
-        
-        return result
-    }
-}
+)
 
 /**
  * Strategy execution response.

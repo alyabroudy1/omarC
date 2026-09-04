@@ -52,9 +52,6 @@ abstract class BaseProvider : MainAPI() {
      */
     open val supportsSearch: Boolean = true
 
-    /** Custom User-Agent override (null = use system mobile UA) */
-    open val userAgent: String? = null
-
     /**
      * Prefer IPv6 DNS resolution to bypass cgNAT blocks.
      * Only safe if the provider's STREAM CDN has AAAA records — see [ProviderConfig.preferIpv6].
@@ -93,7 +90,6 @@ abstract class BaseProvider : MainAPI() {
                 githubConfigUrl = githubConfigUrl,
                 syncWorkerUrl = getSyncWorkerUrl(),
                 skipHeadless = true,
-                userAgent = userAgent,
                 preferIpv6 = preferIpv6,
                 preferIpv4 = preferIpv4,
                 requestTimeoutMs = requestTimeoutMs,

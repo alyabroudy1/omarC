@@ -196,7 +196,8 @@ class VideoSnifferEngine(
      *
      * @param url The URL to load
      * @param mode HEADLESS or FULLSCREEN
-     * @param userAgent The user agent string to use
+     * @param userAgent Unused. UA comes from WebViewFactory (Fingerprint); parameter kept for
+     *                  signature stability until Wave 4
      * @param exitCondition Must be [ExitCondition.VideoFound]
      * @param timeout Maximum time to wait in milliseconds
      * @param delayMs Optional delay after page load before checking exit condition
@@ -208,6 +209,8 @@ class VideoSnifferEngine(
     suspend fun runSession(
         url: String,
         mode: Mode,
+        @Suppress("UNUSED_PARAMETER")
+        // UA comes from WebViewFactory (Fingerprint); parameter kept for signature stability until Wave 4
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
@@ -406,7 +409,7 @@ class VideoSnifferEngine(
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Creating WebView", "url" to url.take(80))
 
             // Create WebView
-            webView = WebView(activity).apply {
+            webView = WebViewFactory.create(activity).apply {
                 // CRITICAL FOR TV MOUSE: Prevent WebView from stealing D-Pad focus.
                 // If focusable, Cloudflare checkboxes and HTML inputs will trap the D-pad
                 // and freeze the TvMouseController.
@@ -421,7 +424,6 @@ class VideoSnifferEngine(
                     useWideViewPort = true
                     loadWithOverviewMode = true
                     cacheMode = WebSettings.LOAD_DEFAULT
-                    userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
                     javaScriptCanOpenWindowsAutomatically = false // Block JS popups (ad windows)
@@ -1068,7 +1070,6 @@ class VideoSnifferEngine(
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Loading URL", "url" to url.take(80))
 
             val extraHeaders = mutableMapOf<String, String>()
-            extraHeaders["X-Requested-With"] = ""
 
             // Add referer if provided (critical for embed servers like qq.okprime.site)
             if (!referer.isNullOrBlank()) {

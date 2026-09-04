@@ -7,7 +7,9 @@ import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
-import com.cloudstream.shared.provider.UNIFIED_USER_AGENT
+import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.core.FingerprintInterceptor
+import com.cloudstream.shared.core.RequestKind
 import com.cloudstream.shared.network.ChromiumFetcher
 import com.cloudstream.shared.network.MediaUrlValidator
 import com.cloudstream.shared.network.ValidatedSource
@@ -19,7 +21,6 @@ import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionStore
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
-import com.cloudstream.shared.util.WebConfig
 import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
@@ -81,7 +82,7 @@ class ProviderHttpService private constructor(
         get() = "https://$currentDomain"
     
     val userAgent: String
-        get() = sessionState.userAgent
+        get() = Fingerprint.current().userAgent
 
     val cookies: Map<String, String>
         get() = sessionState.cookies
@@ -99,7 +100,7 @@ class ProviderHttpService private constructor(
             // This prevents repetitive disk reads and "Session initialized" logging
             if (!SessionProvider.hasValidSession()) {
                 val persisted = sessionStore.load(config.fallbackDomain)
-                sessionState = persisted ?: SessionState.initial(config.fallbackDomain, config.userAgent ?: UNIFIED_USER_AGENT)
+                sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
                 SessionProvider.initialize(sessionState)
             }
             
@@ -368,34 +369,20 @@ class ProviderHttpService private constructor(
                     cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" }
             }
 
-            // Identity only — deliberately NOT Accept / Accept-Language.
-            //
-            // Content negotiation belongs to the caller: several existing callers probe media URLs
-            // (`KrmzyProvider` checks an m3u8, `TukTukcima` fetches an Inertia JSON endpoint) without
-            // setting `Accept`, and defaulting them to an HTML `Accept` invites a 406 or a different
-            // response body for a request that used to work.
-            //
-            // And the client hints go with the UA or not at all: a caller that supplies its own UA
-            // (Krmzy sends a *desktop* Chrome 120) must not be given mobile Android hints derived from
-            // the session UA — that mismatch is precisely the fingerprint inconsistency a bot check
-            // reads. Either the whole identity is ours, or none of it is.
-            val callerSetUserAgent = headers.keys.any { it.equals("User-Agent", ignoreCase = true) }
-            if (!callerSetUserAgent) {
-                effectiveHeaders["User-Agent"] = sessionState.userAgent
-                effectiveHeaders["Sec-Ch-Ua"] = WebConfig.buildSecChUa(sessionState.userAgent)
-                effectiveHeaders["Sec-Ch-Ua-Mobile"] = "?1"
-                effectiveHeaders["Sec-Ch-Ua-Platform"] = "\"Android\""
-            }
+            // Identity is FingerprintInterceptor's job now, including the rule that a
+            // caller-supplied User-Agent suppresses the client hints.
         }
         // The caller asked for these explicitly; they replace the defaults, never stack with them.
         for ((k, v) in headers) effectiveHeaders[k] = v
 
         val request = okhttp3.Request.Builder()
             .url(fullUrl)
+            .tag(RequestKind::class.java, RequestKind.Subresource)
             .apply { for ((k, v) in effectiveHeaders) { header(k, v) } }
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .addInterceptor(FingerprintInterceptor)
             .applyDnsPolicy()
                 .applyProviderTimeout()
             .build()
@@ -448,7 +435,7 @@ class ProviderHttpService private constructor(
         val result = cfBypassEngine.runSession(
             url = url,
             mode = Mode.HEADLESS,
-            userAgent = sessionState.userAgent,
+            userAgent = Fingerprint.current().userAgent,
             exitCondition = ExitCondition.PageLoaded,
             timeout = 30_000L
         )
@@ -460,7 +447,7 @@ class ProviderHttpService private constructor(
                      val retry = cfBypassEngine.runSession(
                          url = url,
                          mode = Mode.FULLSCREEN,
-                         userAgent = sessionState.userAgent,
+                         userAgent = Fingerprint.current().userAgent,
                          exitCondition = ExitCondition.PageLoaded, // Still PageLoaded for CF bypass
                          timeout = 120_000L
                      )
@@ -479,7 +466,7 @@ class ProviderHttpService private constructor(
         val result = videoSnifferEngine.runSession(
             url = url,
             mode = Mode.FULLSCREEN,
-            userAgent = sessionState.userAgent,
+            userAgent = Fingerprint.current().userAgent,
             exitCondition = ExitCondition.VideoFound(minCount = 1),
             timeout = 60_000L,
             referer = headers["Referer"]
@@ -529,7 +516,7 @@ class ProviderHttpService private constructor(
     ): NavigationResult {
         return navigationEngine.execute(
             steps = steps,
-            userAgent = sessionState.userAgent,
+            userAgent = Fingerprint.current().userAgent,
             mode = mode,
             overallTimeoutMs = overallTimeoutMs,
             requestInterceptor = requestInterceptor,
@@ -586,7 +573,8 @@ class ProviderHttpService private constructor(
      * Use when OkHttp is TLS-blocked but you need the content programmatically.
      */
     suspend fun fetchViaChromeTls(url: String, headers: Map<String, String> = emptyMap()): String? {
-        val allHeaders = sessionState.buildHeaders().toMutableMap()
+        val allHeaders = mutableMapOf<String, String>("Referer" to "https://${sessionState.domain}/")
+        sessionState.buildCookieHeader()?.let { allHeaders["Cookie"] = it }
         allHeaders.putAll(headers)
         val response = chromiumFetcher.fetch(url, allHeaders)
         if (response.success && response.cookies.isNotEmpty()) {
@@ -798,62 +786,29 @@ class ProviderHttpService private constructor(
         return doc
     }
 
+    /**
+     * One shape for images, on every tier: the device UA, the page as `Referer`, an image `Accept`,
+     * and whatever cookies that host has. [getImageHeadersFull] is the same map — the two used to
+     * differ by nine headers for no reason anyone recorded.
+     */
     fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
         val domain = targetDomain ?: sessionState.domain
-        
-        // Get cookies for the specific domain (handles aliases)
+
+        // Cookies for the specific domain (handles aliases)
         val cookies = if (targetDomain != null && targetDomain != sessionState.domain) {
             com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(targetDomain)
         } else {
             sessionState.cookies
         }
-        
-        val headers = mutableMapOf<String, String>()
-        headers["User-Agent"] = sessionState.userAgent
-        
-        // Add cookies if available
-        if (cookies.isNotEmpty()) {
-            headers["Cookie"] = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-        }
-        
-        headers["Referer"] = "https://$domain/"
-        
-//        ProviderLogger.d(TAG_PROVIDER_HTTP, "getImageHeaders", "Building image headers",
-//            "targetDomain" to domain,
-//            "sessionDomain" to sessionState.domain,
-//            "isAlias" to (targetDomain != null && targetDomain != sessionState.domain),
-//            "hasCookies" to (headers["Cookie"] != null),
-//            "cookieCount" to cookies.size
-//        )
-        return headers
+
+        return Fingerprint.current().imageHeaders(
+            referer = "https://$domain/",
+            cookieHeader = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        )
     }
 
-    fun getImageHeadersFull(targetDomain: String? = null): Map<String, String> {
-        val domain = targetDomain ?: sessionState.domain
-        
-        val cookies = if (targetDomain != null && targetDomain != sessionState.domain) {
-            com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(targetDomain)
-        } else {
-            sessionState.cookies
-        }
-        
-        return buildMap {
-            put("User-Agent", sessionState.userAgent)
-            put("Referer", "https://$domain/")
-            put("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            put("Accept-Language", "en-US,en;q=0.9")
-            put("Sec-Ch-Ua", WebConfig.buildSecChUa(sessionState.userAgent))
-            put("Sec-Ch-Ua-Mobile", "?1")
-            put("Sec-Ch-Ua-Platform", "\"Android\"")
-            put("Sec-Fetch-Dest", "image")
-            put("Sec-Fetch-Mode", "no-cors")
-            put("Sec-Fetch-Site", "same-site")
-            
-            if (cookies.isNotEmpty()) {
-                put("Cookie", cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
-            }
-        }
-    }
+    fun getImageHeadersFull(targetDomain: String? = null): Map<String, String> =
+        getImageHeaders(targetDomain)
 
     // ==================== INTERNAL ====================
 
@@ -875,22 +830,9 @@ class ProviderHttpService private constructor(
                 sessionState.cookies
             }
             
-            // Build headers with correct cookies
+            // Caller-specific headers only — identity comes from FingerprintInterceptor.
             val headers = buildMap {
-                put("User-Agent", sessionState.userAgent)
                 put("Referer", "https://${urlDomain ?: sessionState.domain}/")
-                put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                put("Accept-Language", "en-US,en;q=0.9")
-                put("Sec-Ch-Ua", WebConfig.buildSecChUa(sessionState.userAgent))
-                put("Sec-Ch-Ua-Mobile", "?1")
-                put("Sec-Ch-Ua-Platform", "\"Android\"")
-                put("Upgrade-Insecure-Requests", "1")
-                put("Sec-Fetch-Dest", "document")
-                put("Sec-Fetch-Mode", "navigate")
-                put("Sec-Fetch-Site", "none")
-                put("Sec-Fetch-User", "?1")
-                
-                // Add cookies if available
                 if (cookiesForDomain.isNotEmpty()) {
                     put("Cookie", cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" })
                 }
@@ -912,6 +854,7 @@ class ProviderHttpService private constructor(
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .addInterceptor(FingerprintInterceptor)
                 .applyDnsPolicy()
                 .applyProviderTimeout()
                 .build()
@@ -923,6 +866,7 @@ class ProviderHttpService private constructor(
 
             val okRequest = okhttp3.Request.Builder()
                 .url(targetUrl)
+                .tag(RequestKind::class.java, RequestKind.Document)
                 .headers(headerBuilder.build())
                 .get()
                 .build()
@@ -1011,8 +955,10 @@ class ProviderHttpService private constructor(
     internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
         return try {
             val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
-            val headers = sessionState.buildHeaders().toMutableMap()
-            if (referer != null) headers["Referer"] = referer
+            // Caller-specific headers only — identity comes from FingerprintInterceptor.
+            val headers = mutableMapOf<String, String>()
+            headers["Referer"] = referer ?: "https://${sessionState.domain}/"
+            sessionState.buildCookieHeader()?.let { headers["Cookie"] = it }
             for ((k, v) in customHeaders) {
                 headers[k] = v
             }
@@ -1031,6 +977,7 @@ class ProviderHttpService private constructor(
 
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .addInterceptor(FingerprintInterceptor)
                 .applyDnsPolicy()
                 .applyProviderTimeout()
                 .build()
@@ -1042,6 +989,7 @@ class ProviderHttpService private constructor(
 
             val okRequest = okhttp3.Request.Builder()
                 .url(targetUrl)
+                .tag(RequestKind::class.java, RequestKind.Document)
                 .headers(headerBuilder.build())
                 .post(formBody)
                 .build()
@@ -1113,7 +1061,7 @@ class ProviderHttpService private constructor(
         val result = cfBypassEngine.runSession(
             url = targetUrl,
             mode = mode,
-            userAgent = sessionState.userAgent,
+            userAgent = Fingerprint.current().userAgent,
             exitCondition = ExitCondition.PageLoaded,
             timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L,
             allowedDomains = allowedDomains
@@ -1381,8 +1329,8 @@ class ProviderHttpService private constructor(
             parser: ParserInterface,
             activityProvider: () -> android.app.Activity?
         ): ProviderHttpService {
-            // Initialize dynamic User-Agent from the real system WebView
-            WebConfig.getUserAgent(context)
+            // Build the one process-wide fingerprint from the real system WebView.
+            Fingerprint.current()
             
             return instances.getOrPut(config.name) {
                 val sessionStore = SessionStore(context, config.name)

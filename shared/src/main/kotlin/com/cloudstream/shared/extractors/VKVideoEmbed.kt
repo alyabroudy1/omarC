@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
@@ -32,10 +33,7 @@ class VKVideoEmbed : ExtractorApi() {
 
         val http = ProviderHttpServiceHolder.getInstance()
 
-        val ua = try {
-            val ctx = ActivityProvider.currentActivity
-            if (ctx != null) android.webkit.WebSettings.getDefaultUserAgent(ctx) else SessionProvider.getUserAgent()
-        } catch (e: Exception) { SessionProvider.getUserAgent() }
+        val ua = Fingerprint.current().userAgent
 
         // ── Fast path: video_ext.php returns the player params inline ────────────────────────
         // vk serves this endpoint ONLY to requests that look like an embedded iframe. Without
@@ -47,7 +45,7 @@ class VKVideoEmbed : ExtractorApi() {
             url,
             headers = mapOf(
                 "Referer" to (referer ?: "https://vk.com/"),
-                "User-Agent" to (ua ?: "Mozilla/5.0"),
+                "User-Agent" to ua,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language" to "en-US,en;q=0.9",
                 "Sec-Fetch-Dest" to "iframe",
@@ -71,11 +69,7 @@ class VKVideoEmbed : ExtractorApi() {
         }
 
         val engine = videoSnifferEngine ?: VideoSnifferEngine { ActivityProvider.currentActivity }
-        val snifferUa = try {
-            val ctx = ActivityProvider.currentActivity
-            if (ctx != null) android.webkit.WebSettings.getDefaultUserAgent(ctx)
-                .replace("; wv)", ")") else (ua ?: "Mozilla/5.0")
-        } catch (e: Exception) { ua ?: "Mozilla/5.0" }
+        val snifferUa = ua
 
         ProviderLogger.i(TAG, "getUrl", "Starting WebView sniff for VK URL: ${url.take(80)}")
         val result = engine.runSession(

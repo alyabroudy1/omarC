@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -30,7 +31,7 @@ class SavefilesExtractor : ExtractorApi() {
         try {
             // Use User-Agent and Cookies from SessionProvider if available
             val headers = mapOf(
-                "User-Agent" to (com.cloudstream.shared.session.SessionProvider.getUserAgent() ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+                "User-Agent" to Fingerprint.current().userAgent,
                 "Referer" to "https://savefiles.com/",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
             )

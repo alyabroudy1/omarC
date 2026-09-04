@@ -77,9 +77,10 @@ class DirectHttpStrategy(
         val protocols = listOf(okhttp3.Protocol.HTTP_1_1)
         val directClient = app.baseClient.newBuilder()
             .protocols(protocols)
+            .addInterceptor(com.cloudstream.shared.core.FingerprintInterceptor)
             .build()
         
-        val headersMap = request.buildHeaders()
+        val headersMap = callerHeaders(request)
         val headerBuilder = okhttp3.Headers.Builder()
         for ((k, v) in headersMap) {
             headerBuilder.add(k, v)
@@ -121,7 +122,7 @@ class DirectHttpStrategy(
         request: StrategyRequest,
         fetcher: ChromiumFetcher
     ): StrategyResponse {
-        val headers = request.buildHeaders()
+        val headers = callerHeaders(request)
         val response = fetcher.fetch(request.url, headers)
 
         return if (response.success) {
@@ -158,5 +159,18 @@ class DirectHttpStrategy(
             ProviderLogger.e(TAG_DIRECT_HTTP, "extractCookies", "Failed to parse cookies", e)
         }
         return cookies
+    }
+
+    /**
+     * Caller-specific headers only. Identity (`User-Agent`, client hints, `Accept*`, `Sec-Fetch-*`)
+     * comes from [com.cloudstream.shared.core.FingerprintInterceptor] on the OkHttp path and from
+     * the WebView's own fingerprint on the Chromium path.
+     */
+    private fun callerHeaders(request: StrategyRequest): Map<String, String> = buildMap {
+        putAll(request.headers)
+        if (request.referer.isNotBlank()) put("Referer", request.referer)
+        if (request.cookies.isNotEmpty()) {
+            put("Cookie", request.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" })
+        }
     }
 }

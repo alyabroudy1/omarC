@@ -157,22 +157,22 @@ object RequestedWithHeaderControl {
      * `"Google Chrome"`. Versions are taken from the running WebView so the hints cannot drift out of step
      * with the User-Agent string, which would be its own fingerprint.
      */
-    private fun chromeBrandMetadata(): Map<String, Any> {
-        val full = Regex("""Chrome/([0-9.]+)""")
-            .find(WebSettings.getDefaultUserAgent(com.cloudstream.shared.android.PluginContext.context))
-            ?.groupValues?.getOrNull(1) ?: "150.0.0.0"
-        val major = full.substringBefore('.')
+    private fun chromeBrandMetadata(fp: com.cloudstream.shared.core.Fingerprint): Map<String, Any> {
+        val full = fp.chromeFullVersion
+        val major = fp.chromeMajor
         return mapOf(
+            // Same three brands, same order, as Fingerprint.brandListFor(major) — they are one
+            // spelling now because both come from this one object, not from two UA parses.
             "BRAND_VERSION_LIST" to arrayOf(
                 arrayOf("Not;A=Brand", "8", "8.0.0.0"),
                 arrayOf("Chromium", major, full),
                 arrayOf("Google Chrome", major, full)
             ),
             "FULL_VERSION" to full,
-            "PLATFORM" to "Android",
-            "PLATFORM_VERSION" to "${android.os.Build.VERSION.RELEASE}.0.0",
+            "PLATFORM" to fp.platform,
+            "PLATFORM_VERSION" to fp.platformVersion,
             "ARCHITECTURE" to "",
-            "MODEL" to (android.os.Build.MODEL ?: ""),
+            "MODEL" to fp.model,
             "MOBILE" to true,
             "BITNESS" to 0,
             "WOW64" to false
@@ -235,7 +235,11 @@ object RequestedWithHeaderControl {
      * Every failure mode is logged with what was attempted, because the cost of not knowing which step
      * failed is another day of guessing at 403s.
      */
-    fun suppress(webView: WebView): Boolean {
+    fun suppress(
+        webView: WebView,
+        fingerprint: com.cloudstream.shared.core.Fingerprint =
+            com.cloudstream.shared.core.Fingerprint.current()
+    ): Boolean {
         val factoryHandler = try {
             val loader = webViewClassLoader() ?: return false
             val glue = Class.forName(GLUE_CLASS, false, loader)
@@ -294,7 +298,7 @@ object RequestedWithHeaderControl {
         // interceptor has been rewriting it per request; `setUserAgentMetadataFromMap` sets it once for
         // every request this WebView makes, POSTs included.
         val uaOk = try {
-            settings.setUserAgentMetadataFromMap(chromeBrandMetadata())
+            settings.setUserAgentMetadataFromMap(chromeBrandMetadata(fingerprint))
             ProviderLogger.i(TAG, "suppress", "✅ sec-ch-ua brands set to real Chrome for this WebView",
                 "advertised" to features.any { it.startsWith("USER_AGENT_METADATA") }.toString())
             true

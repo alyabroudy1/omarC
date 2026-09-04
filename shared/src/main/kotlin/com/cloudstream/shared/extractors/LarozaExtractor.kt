@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -36,7 +37,7 @@ open class LarozaExtractor(
         }
 
         val customHeaders = mutableMapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent" to Fingerprint.current().userAgent
         )
         if (referer != null) {
             customHeaders["Referer"] = referer
@@ -74,11 +75,8 @@ open class LarozaExtractor(
                 newExtractorLink(source = name, name = name, url = videoUrl, type = linkType) {
                     this.referer = url
                     this.quality = quality
-                    this.headers = mapOf(
-                        "Referer" to url,
-                        "Origin" to mainUrl.trimEnd('/'),
-                        "User-Agent" to customHeaders["User-Agent"]!!
-                    )
+                    this.headers = Fingerprint.current()
+                        .playbackHeaders(url, mainUrl.trimEnd('/'), null)
                 }
             )
         } else {

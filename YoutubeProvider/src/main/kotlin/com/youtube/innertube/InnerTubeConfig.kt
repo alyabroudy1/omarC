@@ -29,6 +29,7 @@ object InnerTubeConfig {
     const val VR_CLIENT_NAME = "ANDROID_VR"
     
     /** User agent matching the client version */
+    // API client, not a browser request (Wave 1, R1 exemption)
     const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     
     /** Consent cookie to bypass YouTube consent screen in EU */

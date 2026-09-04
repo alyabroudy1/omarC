@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.graphics.Bitmap
@@ -25,7 +26,7 @@ import android.widget.FrameLayout
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.network.pinToIpv4
-import com.cloudstream.shared.util.WebConfig
+import com.cloudstream.shared.webview.WebViewFactory
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -47,9 +48,6 @@ class FaselHDExtractor : ExtractorApi() {
     override val mainUrl = "https://faselhdx.xyz"
     override val requiresReferer = true
 
-    private var lastValidUserAgent =
-        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -59,7 +57,7 @@ class FaselHDExtractor : ExtractorApi() {
         val methodName = "getUrl"
         val effectiveReferer = referer ?: "$mainUrl/"
         val activity = ActivityProvider.currentActivity
-        val userAgent = if (activity != null) WebConfig.getUserAgent(activity) else WebConfig.getCachedUserAgent()
+        val userAgent = Fingerprint.current().userAgent
 
         ProviderLogger.i(TAG, methodName, "Starting WebView extraction for: ${url.take(100)}")
 
@@ -71,10 +69,7 @@ class FaselHDExtractor : ExtractorApi() {
                 source = name,
                 streamUrl = m3u8,
                 referer = url,
-                headers = mapOf(
-                    "Referer" to url,
-                    "User-Agent" to userAgent
-                )
+                headers = Fingerprint.current().playbackHeaders(url, null, null)
             ).forEach(callback)
         } else {
             ProviderLogger.w(TAG, methodName, "WebView extraction returned no m3u8")
@@ -122,7 +117,7 @@ class FaselHDExtractor : ExtractorApi() {
                 }
             }
 
-            val webView = WebView(activity).apply {
+            val webView = WebViewFactory.create(activity).apply {
                 layoutParams = ViewGroup.LayoutParams(1, 1)
                 visibility = View.INVISIBLE
                 isHorizontalScrollBarEnabled = false
@@ -156,7 +151,6 @@ class FaselHDExtractor : ExtractorApi() {
                 displayZoomControls = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
-                this.userAgentString = userAgent
                 blockNetworkImage = true
             }
 
@@ -513,14 +507,13 @@ class FaselHDExtractor : ExtractorApi() {
                 override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
                     try {
                         val transport = resultMsg?.obj as? WebView.WebViewTransport
-                        val adWebView = WebView(activity).apply {
+                        val adWebView = WebViewFactory.create(activity).apply {
                             layoutParams = FrameLayout.LayoutParams(1, 1, Gravity.START or Gravity.TOP)
                             visibility = View.INVISIBLE
                         }
                         adWebView.settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
-                            this.userAgentString = userAgent
                         }
                         try { (activity.window?.decorView as? ViewGroup)?.addView(adWebView) } catch (_: Exception) {}
                         adWebView.webViewClient = sharedWebViewClient

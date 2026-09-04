@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 import android.util.Base64
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.network.WebViewResolver
@@ -53,8 +54,6 @@ class WitAnime : BaseProvider() {
     override var lang = "ar"
 
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-    override val userAgent =
-        "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36"
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -101,7 +100,7 @@ class WitAnime : BaseProvider() {
         if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/?search_param=animes&s=$query"
 
-        val document = app.get(url, headers = mapOf("User-Agent" to userAgent)).document
+        val document = app.get(url, headers = mapOf("User-Agent" to Fingerprint.current().userAgent)).document
 
         return newSearchResponseList(document.select("div.anime-list-content div.anime-card-container").mapNotNull {
             val a = it.selectFirst("div.anime-card-poster a")
@@ -713,8 +712,7 @@ class WitAnime : BaseProvider() {
                 yonaplayUrl,
                 referer = "https://witanime.red/",
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5993.90 Safari/537.36"
+                    "User-Agent" to Fingerprint.current().userAgent
                 )
             ).text
 

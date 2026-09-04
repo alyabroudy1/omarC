@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.core.Fingerprint
 import okhttp3.Interceptor
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
@@ -35,7 +36,7 @@ class TopCinemaProvider : BaseProvider() {
     private val cfInterceptor: Interceptor get() = cloudflareKiller
 
     private val standardHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+        "User-Agent" to Fingerprint.current().userAgent,
         "Accept-Language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer" to "$mainUrl/"
     )
@@ -292,7 +293,7 @@ class TopCinemaProvider : BaseProvider() {
 
     private fun getDynamicHeaders(referer: String): Map<String, String> {
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Accept-Language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer" to referer
         )

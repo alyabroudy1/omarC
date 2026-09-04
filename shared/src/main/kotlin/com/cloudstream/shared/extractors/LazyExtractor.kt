@@ -1,8 +1,8 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
-import com.cloudstream.shared.util.WebConfig
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
@@ -53,7 +53,7 @@ abstract class LazyExtractor : ExtractorApi() {
     ) {
         // CRITICAL FIX: Always use SessionProvider for consistent UA/cookies
         // Ignore the userAgent property - it's not reliably set
-        val effectiveUserAgent = SessionProvider.getUserAgent()
+        val effectiveUserAgent = Fingerprint.current().userAgent
         val hasSession = SessionProvider.hasValidSession()
         
         ProviderLogger.i(TAG, "getUrl", "=== START ===", 
@@ -336,7 +336,7 @@ abstract class LazyExtractor : ExtractorApi() {
                 put("Accept-Encoding", "gzip, deflate, br")
                 
                 // Add User-Agent from SessionProvider (critical for Cloudflare)
-                val ua = SessionProvider.getUserAgent()
+                val ua = Fingerprint.current().userAgent
                 put("User-Agent", ua)
                 ProviderLogger.d(TAG, "fetchEmbedUrl", "Using UA from SessionProvider", "uaHash" to ua.hashCode())
                 
@@ -358,8 +358,7 @@ abstract class LazyExtractor : ExtractorApi() {
                 
                 // Cloudflare security headers
                 // Dynamic sec-ch-ua matching the real WebView Chrome version
-                val secChUa = WebConfig.buildSecChUa(get("User-Agent") ?: "")
-                put("sec-ch-ua", secChUa)
+                put("sec-ch-ua", Fingerprint.current().secChUa)
                 put("sec-ch-ua-mobile", "?1")
                 put("sec-ch-ua-platform", "\"Android\"")
                 put("Sec-Fetch-Dest", "empty")
