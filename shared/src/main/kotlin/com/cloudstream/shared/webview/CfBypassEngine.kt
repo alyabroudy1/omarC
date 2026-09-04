@@ -145,29 +145,7 @@ class CfBypassEngine(
                             } catch(e) {}
                             
                             // DisableDevtool Anti-Bot Bypass
-                            try {
-                                var originalDisableDevtool;
-                                Object.defineProperty(window, 'DisableDevtool', {
-                                    get: function() {
-                                        return function(options) {
-                                            options = options || {};
-                                            options.ignore = function() { return true; };
-                                            options.url = "";
-                                            options.timeOutUrl = "";
-                                            options.ondevtoolopen = function() {};
-                                            if (originalDisableDevtool) {
-                                                try {
-                                                    return originalDisableDevtool(options);
-                                                } catch(err) {}
-                                            }
-                                        };
-                                    },
-                                    set: function(val) {
-                                        originalDisableDevtool = val;
-                                    },
-                                    configurable: true
-                                });
-                            } catch(e) {}
+                            $DISABLE_DEVTOOL_BYPASS_JS
                         })();
                         """.trimIndent(), null
                     )
@@ -553,13 +531,6 @@ class CfBypassEngine(
             ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.extractCookies", "Extraction failed", e)
             if (cont.isActive) cont.resume(emptyMap()) {}
         }
-    }
-
-    private fun parseCookieString(cookie: String): Map<String, String> {
-        return cookie.split(";").associate {
-            val parts = it.split("=", limit = 2)
-            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-        }.filter { it.key.isNotBlank() }
     }
 
     private fun cleanup(webView: WebView?, dialog: android.app.Dialog?) {

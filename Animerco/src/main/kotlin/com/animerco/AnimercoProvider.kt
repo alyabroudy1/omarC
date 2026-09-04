@@ -2,6 +2,7 @@ package com.animerco
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.extractors.EarnVidsExtractor
 import com.cloudstream.shared.extractors.MegaboxResolver
 import com.cloudstream.shared.extractors.MailruExtractor
 import com.cloudstream.shared.extractors.VideaExtractor
@@ -292,7 +293,7 @@ class AnimercoProvider : BaseProvider() {
                                     loadExtractor(direct, data, subtitleCallback) { l -> runBlocking { sendLinkSafe(l) } }
                                 }
                                 abs.contains("streamhg", true) || abs.contains("earnvids", true) -> {
-                                    val extracted = try { ExternalEarnVidsExtractor.extract(abs, data) } catch (_: Throwable) { null }
+                                    val extracted = try { EarnVidsExtractor.extractDirect(abs, data) } catch (_: Throwable) { null }
                                     if (extracted != null) {
                                         sendLinkSafe(newExtractorLink("EarnVids", "ExternalEarnVids", ensureHttpsRaw(extracted, data) ?: extracted, ExtractorLinkType.VIDEO) {
                                             referer = data; quality = Qualities.Unknown.value
@@ -313,7 +314,7 @@ class AnimercoProvider : BaseProvider() {
                                     for (mb in extras) {
                                         val mbUrl = ensureHttpsRaw(mb, abs) ?: continue
                                         if (mbUrl.contains("streamhg", true) || mbUrl.contains("earnvids", true)) {
-                                            val extracted = try { ExternalEarnVidsExtractor.extract(mbUrl, data) } catch (_: Throwable) { null }
+                                            val extracted = try { EarnVidsExtractor.extractDirect(mbUrl, data) } catch (_: Throwable) { null }
                                             if (extracted != null) {
                                                 sendLinkSafe(newExtractorLink("EarnVids", "ExternalEarnVids", ensureHttpsRaw(extracted, data) ?: extracted, ExtractorLinkType.VIDEO) {
                                                     referer = data; quality = Qualities.Unknown.value

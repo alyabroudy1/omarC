@@ -3,6 +3,7 @@ package com.shahid4u
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.extractors.EarnVidsExtractor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.core.Fingerprint
@@ -300,7 +301,7 @@ class Shahid4u : BaseProvider() {
 
                     if (server.name.equals("EarnVids", true) || server.name.equals("StreamHG", true)) {
                         try {
-                            val customLink = ExternalEarnVidsExtractor.extract(server.url, mainUrl)
+                            val customLink = EarnVidsExtractor.extractDirect(server.url, mainUrl)
                             if (!customLink.isNullOrBlank()) {
                                 val finalLink = customLink.toString()
 

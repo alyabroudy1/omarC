@@ -309,8 +309,6 @@ Other ownership gaps: `SessionProvider.domainAliases` is a plain `mutableSetOf` 
 | File | LOC |
 |---|---:|
 | `webview/WebViewFlowHelper.kt` | 683 |
-| `webview/WebViewTypes.kt` (types only used by WebViewFlowHelper and NavigationEngine) | 348 |
-| `ui/TvMouseComponents.kt` | 342 |
 | `session/ProviderStateStore.kt` | 187 |
 | `strategy/DirectHttpStrategy.kt` | 162 |
 | `extractors/JWPlayerExtractor.kt` | 128 |
@@ -321,9 +319,13 @@ Other ownership gaps: `SessionProvider.domainAliases` is a plain `mutableSetOf` 
 | `extractors/LinkResolvers.kt` | 45 |
 | `extractors/RefererRotator.kt` | 43 |
 | `com/lagradost/cloudstream3/utils/LazyExtractorLink.kt` | 16 |
-| **Total** | **~2,378, dexed 41 times** |
+| **Total** | **~1,688, dexed 41 times** |
 
-Also dead: `parsing/GenericParser.kt` + `ParserSpec.kt` (467 LOC, reference only each other); `extractors/LazyExtractor.kt` (542 LOC abstract base, zero subclasses). Dead members: `ProviderHttpService.getMainPage/search/getPlayerUrls` (`:245-267`, the only users of the injected `parser`), `sniffVideosVisible`, `navigateWithSteps`, `validateMediaUrls`, `isMediaAccessible`, `storeCdnCookies`; all of `CookieLifecycleManager`'s read side; `CloudflareDetector.isSuccessfulLoad`; `ProviderLogger.logSessionState/logRequestStart/logRequestComplete`; `SessionSnapshot`; `SessionState.withDomain`; `ProviderConfig.cookieMaxAgeMs/validateWithContent/videoSniffTimeoutMs`; `ProviderHttpService.kt:735` `if (false /* disabled */)`; `ByseExtractor.tryWebViewExtraction` (`:448`, body is one log line); `SnifferSelector.waitAfterClick` (serialised, never read). Registered but named by no provider: `GameHub`, `Vidoba`, `Liiivideo`, `Luluvid`, `ArabHd`, `Estream`, `Laroza` extractors, 7 `Byse` entries, 2 `Vidmoly` entries.
+**Correction (Wave 3 review).** `webview/WebViewTypes.kt` and `ui/TvMouseComponents.kt` were listed
+in this table in error and have been removed from it: they are live — `TvMouseController` is used by
+all three WebView engines and every type in `WebViewTypes.kt` is referenced.
+
+Also dead: `parsing/GenericParser.kt` + `ParserSpec.kt` (467 LOC, reference only each other); `extractors/LazyExtractor.kt` (542 LOC abstract base, zero subclasses). Dead members: `ProviderHttpService.getMainPage/search/getPlayerUrls` (`:245-267`, the only users of the injected `parser`), `sniffVideosVisible`, `navigateWithSteps`, `validateMediaUrls`, `isMediaAccessible`, `storeCdnCookies` (already removed in Wave 2); all of `CookieLifecycleManager`'s read side; `CloudflareDetector.isSuccessfulLoad`; `ProviderLogger.logSessionState/logRequestStart/logRequestComplete`; `SessionSnapshot` (already removed in Wave 2); `SessionState.withDomain` (live, kept); `ProviderConfig.cookieMaxAgeMs/validateWithContent/videoSniffTimeoutMs`; `ProviderHttpService.kt:735` `if (false /* disabled */)`; `ByseExtractor.tryWebViewExtraction` (`:448`, body is one log line); `SnifferSelector.waitAfterClick` (live, kept — serialised into the sniffer URL). Registered but named by no provider: `GameHub`, `Vidoba`, `Liiivideo`, `Luluvid`, `ArabHd`, `Estream`, `Laroza` extractors, 7 `Byse` entries, 2 `Vidmoly` entries.
 
 ### 7b. Duplication
 

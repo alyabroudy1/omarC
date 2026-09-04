@@ -320,8 +320,6 @@ so keep this wave as one commit.
 | File | LOC |
 |---|---:|
 | `webview/WebViewFlowHelper.kt` | 683 |
-| `webview/WebViewTypes.kt` (minus what `NavigationEngine` needs) | 348 |
-| `ui/TvMouseComponents.kt` | 342 |
 | `session/ProviderStateStore.kt` | 187 |
 | `strategy/DirectHttpStrategy.kt` | 162 |
 | `extractors/JWPlayerExtractor.kt` | 128 |
@@ -334,17 +332,22 @@ so keep this wave as one commit.
 | `com/lagradost/cloudstream3/utils/LazyExtractorLink.kt` | 16 |
 | `parsing/GenericParser.kt` + `parsing/ParserSpec.kt` | 467 |
 | `extractors/LazyExtractor.kt` | 542 |
-| **Total** | **~3,387** |
+| **Total (actual deleted lines, `git diff HEAD --numstat`, excluding `log3.txt` and `docs/`)** | **4,129** |
+
+**Correction (post-review).** `webview/WebViewTypes.kt` and `ui/TvMouseComponents.kt` were listed here
+as dead and have been struck from the table: they are live — `TvMouseController` is used by all three
+WebView engines and every type in `WebViewTypes.kt` is referenced.
 
 Dead members to delete in the same wave, all listed in
 [shared-architecture-review.md](shared-architecture-review.md) section 7a:
 `ProviderHttpService.getMainPage/search/getPlayerUrls` (`:245-267`, the only users of the injected
 `parser`), `sniffVideosVisible`, `navigateWithSteps`, `validateMediaUrls`, `isMediaAccessible`,
-`storeCdnCookies`, `CloudflareDetector.isSuccessfulLoad`, `ProviderLogger.logSessionState` /
-`logRequestStart` / `logRequestComplete`, `SessionSnapshot`, `SessionState.withDomain`,
+`storeCdnCookies` (already removed in Wave 2), `CloudflareDetector.isSuccessfulLoad`,
+`ProviderLogger.logSessionState` / `logRequestStart` / `logRequestComplete`,
+`SessionSnapshot` (already removed in Wave 2), `SessionState.withDomain` (live, kept),
 `ProviderConfig.cookieMaxAgeMs` / `validateWithContent` / `videoSniffTimeoutMs`,
 `ProviderHttpService.kt:735` `if (false /* disabled */)`, `ByseExtractor.tryWebViewExtraction :448`,
-`SnifferSelector.waitAfterClick`.
+`SnifferSelector.waitAfterClick` (live, kept).
 
 Duplicates to collapse: the 4 `ExternalEarnVidsExtractor` copies (`Animerco`, `Lodynet`,
 `Replaymatch`, `Shahid4u`) onto shared's `EarnVidsExtractor`; Witanime's `Videa` and `Mailru` shadows;
@@ -364,13 +367,14 @@ must run after Wave 1 or it will re-introduce a literal during the merge.
 1. All 41 modules compile with no source change other than deletions and import fixes.
 2. `:FaselHDV2Provider:testDebugUnitTest` still passes (18 tests plus whatever Waves 0 to 2 added).
 3. A rebuilt thin plugin's `classes.dex` is measurably smaller; record `MyCimaProvider.cs3` before and after against the 1,523,388 byte baseline.
-4. `registerSharedExtractors` no longer registers the 4 external EarnVids duplicates.
+4. The four `ExternalEarnVidsExtractor` copies are deleted and their callers use shared
+   `EarnVidsExtractor.extractDirect`.
 
 **Unit tests.** Deletion needs no new tests, but the collapses do.
 
 | Class | Method | Asserts |
 |---|---|---|
-| `CookieStringParserTest` | `parsesNameValuePairs` | `"a=1; b=2; c="` yields `a=1`, `b=2`, and drops the empty value, matching the surviving implementation |
+| `CookieStringParserTest` | `parsesNameValuePairs` | `"a=1; b=2; c="` yields `a=1`, `b=2`, and **keeps** the empty value (`c=` -> key `c` with `""`), matching the surviving implementation and all four originals |
 | `CookieStringParserTest` | `handlesValueContainingEquals` | `"jwt=aa=bb"` keeps `aa=bb` as the value |
 | `FixUrlTest` | `resolvesProtocolRelative` | `//cdn.x/y` against `https://a.b` becomes `https://cdn.x/y` |
 | `FixUrlTest` | `resolvesRootRelativeAndAbsolute` | `/y` becomes `https://a.b/y`; an absolute URL is returned unchanged |
@@ -379,10 +383,19 @@ must run after Wave 1 or it will re-introduce a literal during the merge.
 **Manual verification.** Load links on Animerco, Lodynet, Replaymatch and Shahid4u; each must still
 resolve at least one server. Check plugin size on the `builds` branch.
 
-**Risk and rollback.** Low for the pure deletions, medium for the 4 EarnVids copies, which have four
-different md5s and have drifted. Diff them first and keep the union of behaviour. Rollback per file.
+**Risk and rollback.** Low for the pure deletions, medium for the 4 EarnVids copies, which are
+byte-identical apart from their package line and CRLF endings (Animerco additionally carries one
+unused import). Diff them first and keep the union of behaviour. Rollback per file.
 
 **Size: M.**
+
+### Result
+
+- `MyCimaProvider.cs3`: 657,385 -> 586,889 bytes.
+- `classes.dex`: 1,687,368 -> 1,495,100 bytes.
+- 83 unit tests passing (`:FaselHDV2Provider:testDebugUnitTest`), 78 pre-existing plus the five in
+  the new `EarnVidsStrategyOrderTest`.
+- 4,129 lines deleted, 198 added (`git diff HEAD --numstat`, excluding `log3.txt` and `docs/`).
 
 ---
 

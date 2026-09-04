@@ -74,16 +74,6 @@ object CloudflareDetector {
     }
     
     /**
-     * Check if HTML indicates successful page load (not blocked).
-     */
-    fun isSuccessfulLoad(html: String, validationStrings: List<String>): Boolean {
-        if (html.isBlank()) return false
-        
-        // Check for any validation string
-        return validationStrings.any { html.contains(it, ignoreCase = true) }
-    }
-    
-    /**
      * Check if HTML looks like real provider content vs an error/blocked page.
      * Used as secondary validation after CF challenge check passes.
      * Short pages or pages containing block indicators are considered non-real.

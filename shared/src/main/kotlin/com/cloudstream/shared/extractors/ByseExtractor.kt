@@ -324,10 +324,8 @@ class ByseExtractor(
             ProviderLogger.i(EXTRACTOR_TAG, methodName, "Successfully extracted ${apiResult.sources.size} video links via API")
             return
         }
-        
-        // Strategy 2: Fallback to WebView-based extraction
-        ProviderLogger.w(EXTRACTOR_TAG, methodName, "API extraction failed, falling back to WebView")
-        tryWebViewExtraction(host, videoId, url, callback, subtitleCallback)
+
+        ProviderLogger.w(EXTRACTOR_TAG, methodName, "API extraction failed")
     }
     
     private suspend fun tryApiExtraction(host: String, videoId: String): DecryptionResult? {
@@ -445,16 +443,6 @@ class ByseExtractor(
         }
     }
 
-    private suspend fun tryWebViewExtraction(
-        host: String,
-        videoId: String,
-        originalUrl: String,
-        callback: (ExtractorLink) -> Unit,
-        subtitleCallback: (SubtitleFile) -> Unit
-    ) {
-        ProviderLogger.w(EXTRACTOR_TAG, "tryWebViewExtraction", "WebView fallback not implemented - API extraction should work")
-    }
-    
     private fun extractVideoId(url: String): String? {
         if (!url.contains("/") && !url.contains(".")) {
             return url.takeIf { it.length > 5 }

@@ -31,6 +31,10 @@ class KooraLive : BaseProvider() {
         return KooraLiveParser()
     }
 
+    /**
+     * Deliberately *not* `shared.util.fixUrl`: this one rewrites absolute URLs on koora-live's own
+     * rotating hostnames onto the current mainUrl, which the shared helper must never do.
+     */
     private fun fixUrl(url: String): String {
         if (url.isEmpty()) return ""
         if (url.startsWith("data:") || url.startsWith("intent:")) return url

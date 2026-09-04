@@ -1,7 +1,6 @@
 package com.cloudstream.shared.service
 
 import android.content.Context
-import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.logging.ProviderLogger
@@ -13,9 +12,6 @@ import com.cloudstream.shared.core.expireCookiesFor
 import com.cloudstream.shared.core.FingerprintInterceptor
 import com.cloudstream.shared.core.RequestKind
 import com.cloudstream.shared.network.ChromiumFetcher
-import com.cloudstream.shared.network.MediaUrlValidator
-import com.cloudstream.shared.network.ValidatedSource
-import com.cloudstream.shared.network.VideoSourceCandidate
 import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
@@ -26,8 +22,6 @@ import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationEngine
-import com.cloudstream.shared.webview.NavigationResult
-import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
@@ -49,7 +43,6 @@ class ProviderHttpService private constructor(
     private val videoSnifferEngine: VideoSnifferEngine,
     val navigationEngine: NavigationEngine,
     private val domainManager: DomainManager,
-    private val parser: ParserInterface,
     /** Chrome-TLS HTTP client for Tier 3 TLS fingerprint fallback */
     val chromiumFetcher: ChromiumFetcher
 ) {
@@ -59,9 +52,6 @@ class ProviderHttpService private constructor(
     @Volatile
     private var initialized = false
     private val initMutex = Mutex()
-
-    /** Validates media URLs for TLS-based CDN blocks before ExoPlayer */
-    val mediaValidator = MediaUrlValidator()
 
     private val requestQueue = RequestQueue(
         executeRequest = { url, headers -> executeDirectRequest(url, headers, rewriteDomain = true) },
@@ -138,28 +128,10 @@ class ProviderHttpService private constructor(
     
     // ==================== PUBLIC API ====================
     
-    suspend fun getMainPage(path: String): List<ParserInterface.ParsedItem> {
-        val url = buildUrl(path)
-        val doc = getDocument(url, checkDomainChange = true, rewriteDomain = true)
-        return doc?.let { parser.parseMainPage(it) }.orEmpty()
-    }
-    
-    suspend fun search(query: String): List<ParserInterface.ParsedItem> {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = buildUrl("/?s=$encoded")
-        val doc = getDocument(url, checkDomainChange = true, rewriteDomain = true)
-        return doc?.let { parser.parseSearch(it) }.orEmpty()
-    }
-    
     suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
         val fullUrl = buildUrl(url)
         val result = executeDirectRequest(fullUrl, headers, rewriteDomain)
         return result.html
-    }
-
-    suspend fun getPlayerUrls(url: String): List<String> {
-        val doc = getDocument(url) ?: return emptyList()
-        return parser.extractWatchServersUrls(doc)
     }
 
     /**
@@ -343,112 +315,6 @@ class ProviderHttpService private constructor(
         return sources.distinctBy { it.url }
     }
 
-    suspend fun sniffVideosVisible(url: String, headers: Map<String, String> = emptyMap()): List<VideoSource> {
-        val result = videoSnifferEngine.runSession(
-            url = url,
-            mode = Mode.FULLSCREEN,
-            userAgent = Fingerprint.current().userAgent,
-            exitCondition = ExitCondition.VideoFound(minCount = 1),
-            timeout = 60_000L,
-            referer = headers["Referer"]
-        )
-
-        return when (result) {
-            is WebViewResult.Success -> {
-                 if (result.foundLinks.isNotEmpty()) {
-                     result.foundLinks.map { 
-                         VideoSource(it.url, it.qualityLabel, it.headers) 
-                     }
-                 } else {
-                     extractVideoSources(result.html)
-                 }
-            }
-            is WebViewResult.Timeout -> {
-                 // Return whatever we found so far? 
-                 // VideoSnifferEngine currently doesn't return partial found links in Timeout.
-                 // We might need to update WebViewResult.Timeout to include foundLinks too?
-                 // For now, assume empty.
-                 emptyList()
-            }
-            else -> emptyList()
-        }
-    }
-
-    /**
-     * Execute a multi-step WebView navigation flow with trusted touch simulation.
-     *
-     * Simulates real user interactions (load URL, click elements, wait for
-     * conditions, extract HTML) with isTrusted=true touch events.
-     * Ideal for sites with anti-bot protection that requires real user flow.
-     *
-     * @param steps Ordered list of navigation steps to execute
-     * @param mode HEADLESS (no UI) or FULLSCREEN (visible dialog)
-     * @param overallTimeoutMs Maximum time for the entire flow
-     * @param requestInterceptor Optional interceptor for shouldInterceptRequest
-     * @return NavigationResult with cookies, extracted HTML, and step completion info
-     */
-    suspend fun navigateWithSteps(
-        steps: List<NavigationStep>,
-        mode: Mode = Mode.HEADLESS,
-        overallTimeoutMs: Long = 120_000L,
-        requestInterceptor: ((android.webkit.WebView, android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse?)? = null,
-        allowedDomains: Set<String> = emptySet(),
-        destinationLockPatterns: List<Regex> = emptyList()
-    ): NavigationResult {
-        return navigationEngine.execute(
-            steps = steps,
-            userAgent = Fingerprint.current().userAgent,
-            mode = mode,
-            overallTimeoutMs = overallTimeoutMs,
-            requestInterceptor = requestInterceptor,
-            allowedDomains = allowedDomains,
-            destinationLockPatterns = destinationLockPatterns
-        )
-    }
-
-    /**
-     * Validate media URLs before handing them to ExoPlayer.
-     *
-     * Tests each URL with OkHttp (same TLS stack as ExoPlayer) to detect
-     * CDN 403 blocks caused by TLS fingerprint mismatch. Returns results
-     * indicating which sources are accessible and which need WebView playback.
-     *
-     * @param sources Video sources to validate (URL + headers)
-     * @return List of validated sources with accessibility status
-     */
-    suspend fun validateMediaUrls(sources: List<VideoSource>): List<ValidatedSource> {
-        if (sources.isEmpty()) return emptyList()
-
-        val candidates = sources.map { vs ->
-            VideoSourceCandidate(
-                url = vs.url,
-                quality = vs.quality,
-                headers = vs.headers
-            )
-        }
-
-        val validated = mediaValidator.validateSources(candidates)
-
-        val blocked = validated.count { it.tlsBlocked }
-        if (blocked > 0) {
-            ProviderLogger.w(TAG_PROVIDER_HTTP, "validateMediaUrls",
-                "⚠️ TLS-blocked media URLs detected",
-                "total" to sources.size,
-                "blocked" to blocked,
-                "accessible" to (sources.size - blocked))
-        }
-
-        return validated
-    }
-
-    /**
-     * Quick check: can ExoPlayer reach this media URL?
-     * Returns false if TLS fingerprint mismatch will cause 403.
-     */
-    suspend fun isMediaAccessible(url: String, headers: Map<String, String> = emptyMap()): Boolean {
-        return mediaValidator.isAccessible(url, headers)
-    }
-
     /**
      * Fetch a URL using Chrome's TLS stack (WebView-based).
      * Use when OkHttp is TLS-blocked but you need the content programmatically.
@@ -539,7 +405,7 @@ class ProviderHttpService private constructor(
             checkAndUpdateDomain(url, result.finalUrl)
         }
         
-        val doc = result.html?.let { Jsoup.parse(it, url) }
+        val doc = result.html?.let { Jsoup.parse(it, result.finalUrl ?: url) }
         
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
         if (doc != null && result.success) {
@@ -594,13 +460,6 @@ class ProviderHttpService private constructor(
                     // who does not ask for it.
                     recentPages[url] = CachedPage(
                         cfResult.html, cfResult.finalUrl ?: url, System.currentTimeMillis())
-                    // CRITICAL: Disable domain change checks for WebView CF solve strategy.
-                    // CF challenges often involve intermediate URLs or temporary subdomains.
-                    // We DO NOT want these to trigger a permanent provider domain change.
-                    // The domain manager should only update on definitive main-site redirects.
-                    if (false /* disabled for webview strategy */) {
-                        checkAndUpdateDomain(url, cfResult.finalUrl)
-                    }
                     return Jsoup.parse(cfResult.html, cfResult.finalUrl ?: url)
                 }
             }
@@ -1098,7 +957,6 @@ class ProviderHttpService private constructor(
         fun create(
             context: Context,
             config: ProviderConfig,
-            parser: ParserInterface,
             activityProvider: () -> android.app.Activity?
         ): ProviderHttpService {
             // Build the one process-wide fingerprint from the real system WebView.
@@ -1117,7 +975,7 @@ class ProviderHttpService private constructor(
                 val navigationEngine = NavigationEngine(activityProvider)
                 val chromiumFetcher = ChromiumFetcher(activityProvider)
 
-                ProviderHttpService(config, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, parser, chromiumFetcher)
+                ProviderHttpService(config, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, chromiumFetcher)
             }
         }
     }

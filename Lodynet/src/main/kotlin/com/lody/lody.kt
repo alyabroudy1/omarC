@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
-import com.lody.ExternalEarnVidsExtractor
+import com.cloudstream.shared.extractors.EarnVidsExtractor
 
 class LodyNet : BaseProvider() {
     override val providerName get() = "LodyNet"
@@ -299,7 +299,7 @@ class LodyNet : BaseProvider() {
                 }
 
                 try {
-                    val customLink = ExternalEarnVidsExtractor.extract(embedUrl, currentBaseUrl)
+                    val customLink = EarnVidsExtractor.extractDirect(embedUrl, currentBaseUrl)
                     if (!customLink.isNullOrBlank()) {
                         callback.invoke(
                             newExtractorLink(

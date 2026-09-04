@@ -175,11 +175,7 @@ class Tuniflix : BaseProvider() {
         return true
     }
 
-    private fun fixUrl(url: String): String {
-        if (url.startsWith("//")) return "https:$url"
-        if (url.startsWith("/")) return mainUrl + url
-        return url
-    }
+    private fun fixUrl(url: String): String = com.cloudstream.shared.util.fixUrl(url, mainUrl)
 
 
     object Strp2p {

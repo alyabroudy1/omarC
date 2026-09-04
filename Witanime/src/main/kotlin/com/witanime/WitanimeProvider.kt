@@ -4,6 +4,8 @@ package com.witanime
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.extractors.MailruExtractor
+import com.cloudstream.shared.extractors.VideaExtractor
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.core.Fingerprint

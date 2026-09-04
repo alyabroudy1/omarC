@@ -269,14 +269,5 @@ class FullMatchShowsProvider : BaseProvider() {
         }
     }
 
-    private fun fixUrl(url: String): String {
-        val trimmed = url.trim()
-        if (trimmed.isBlank()) return ""
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-        return when {
-            trimmed.startsWith("//") -> "https:$trimmed"
-            trimmed.startsWith("/") -> mainUrl.trimEnd('/') + trimmed
-            else -> mainUrl.trimEnd('/') + "/" + trimmed
-        }
-    }
+    private fun fixUrl(url: String): String = com.cloudstream.shared.util.fixUrl(url, mainUrl)
 }

@@ -767,29 +767,7 @@ class VideoSnifferEngine(
                             } catch(e) {}
                             
                             // 3. DisableDevtool Anti-Bot Bypass
-                            try {
-                                var originalDisableDevtool;
-                                Object.defineProperty(window, 'DisableDevtool', {
-                                    get: function() {
-                                        return function(options) {
-                                            options = options || {};
-                                            options.ignore = function() { return true; };
-                                            options.url = "";
-                                            options.timeOutUrl = "";
-                                            options.ondevtoolopen = function() {};
-                                            if (originalDisableDevtool) {
-                                                try {
-                                                    return originalDisableDevtool(options);
-                                                } catch(err) {}
-                                            }
-                                        };
-                                    },
-                                    set: function(val) {
-                                        originalDisableDevtool = val;
-                                    },
-                                    configurable: true
-                                });
-                            } catch(e) {}
+                            $DISABLE_DEVTOOL_BYPASS_JS
                         })();
                         """.trimIndent(), null
                     )
@@ -893,20 +871,7 @@ class VideoSnifferEngine(
                             var body = document.body ? document.body.innerText.toLowerCase().substring(0, 3000) : '';
                             var url = window.location.href.toLowerCase();
                             var combined = title + ' ' + body + ' ' + url;
-                            var errorPatterns = [
-                                'file was deleted', 'video not found', '404 not found',
-                                'no longer available', 'file not found',
-                                "we're sorry, this video is no longer available",
-                                'file deleted', 'video removed', 'content removed',
-                                'this video has been removed', 'page not found',
-                                'the file you requested has been deleted',
-                                'تم حذف الملف', 'الملف غير موجود', 'الصفحة غير موجودة',
-                                'هذا الفيديو غير متاح', 'تم الحذف', 'غير موجود',
-                                'الملف المطلوب غير موجود',
-                                'error 404', '404 error', '410 error',
-                                'this video does not exist',
-                                'access denied', 'blocked'
-                            ];
+                            var errorPatterns = [$DELETED_VIDEO_PHRASES_JS];
                             for (var i = 0; i < errorPatterns.length; i++) {
                                 if (combined.indexOf(errorPatterns[i]) !== -1) {
                                     return JSON.stringify({detected: true, pattern: errorPatterns[i]});
@@ -1659,22 +1624,13 @@ class VideoSnifferEngine(
                             var scanLen = scanText.length;
                             if (scanLen > 20) {
                                 var errorTexts = [
-                                    "file was deleted", "video not found", "404 not found",
-                                    "no longer available", "file not found",
-                                    "we're sorry, this video is no longer available",
-                                    "file deleted", "video removed", "content removed",
-                                    "this video has been removed", "page not found",
-                                    "the file you requested has been deleted",
-                                    "تم حذف الملف", "الملف غير موجود", "الصفحة غير موجودة",
-                                    "هذا الفيديو غير متاح", "تم الحذف", "غير موجود",
-                                    "الملف المطلوب غير موجود",
-                                    "error 404", "404 error", "410 error",
-                                    "this video does not exist",
-                                    "access denied", "blocked",
-                                    // Added 2026-07-29. Deliberately phrase-anchored rather than
-                                    // single words: the match triggers a 5s auto-skip, so a loose
-                                    // term like "unavailable" or "expired" on its own would throw
-                                    // away a working server on the strength of some ad's copy.
+                                    $DELETED_VIDEO_PHRASES_JS
+                                    // Added 2026-07-29 — this scan casts a wider net than the
+                                    // on-page-finished one above, which uses the shared base list
+                                    // only. Same phrase-anchoring rule: the match triggers a 5s
+                                    // auto-skip, so a loose term like "unavailable" or "expired"
+                                    // on its own would throw away a working server on the strength
+                                    // of some ad's copy.
                                     "video is unavailable", "video unavailable",
                                     "video is missing", "video missing",
                                     "has been removed", "has been deleted",
@@ -1991,13 +1947,6 @@ class VideoSnifferEngine(
             ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.extractCookies", "Extraction failed", e)
             if (cont.isActive) cont.resume(emptyMap()) {}
         }
-    }
-
-    private fun parseCookieString(cookie: String): Map<String, String> {
-        return cookie.split(";").associate {
-            val parts = it.split("=", limit = 2)
-            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-        }.filter { it.key.isNotBlank() }
     }
 
     private fun cleanup(webView: WebView?, dialog: Dialog?) {

@@ -6,6 +6,7 @@ import android.os.Looper
 import android.webkit.*
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.webview.WebViewFactory
+import com.cloudstream.shared.webview.parseCookieString
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Header names the WebView owns for itself. Each is dropped from the `loadUrl` extra headers:
  * the WebView sets them from the Fingerprint UA that `WebViewFactory` installed, and a
  * Kotlin-supplied copy would either be ignored or fight the real one. `Cookie` is dropped here
- * because it goes via `CookieManager` instead. `X-Requested-With` is dropped because
+ * because the WebView reads the system cookie store itself. `X-Requested-With` is dropped because
  * `RequestedWithHeaderControl.suppress` owns that policy (an empty value is the detectable
  * mistake documented in `RequestedWithHeaderControl.kt:110-126`).
  *
@@ -198,20 +199,10 @@ class ChromiumFetcher(
 
                 // Build extra headers map (WebView.loadUrl headers): Referer and
                 // caller-specific headers only. See LOAD_URL_DROPPED_HEADERS for what is dropped
-                // and why. Cookie goes via CookieManager below.
+                // and why. Cookies come from the system store the WebView already reads; nothing
+                // re-injects a Cookie header here (it used to, re-scoped to `Path=/; Secure`,
+                // which no caller needed once the jar owned cookies).
                 val extraHeaders = filterLoadUrlHeaders(headers)
-
-                // Inject cookies via CookieManager (WebView ignores Cookie header in loadUrl)
-                headers["Cookie"]?.let { cookieHeader ->
-                    val cm = CookieManager.getInstance()
-                    cookieHeader.split(";").forEach { cookie ->
-                        val trimmed = cookie.trim()
-                        if (trimmed.isNotEmpty()) {
-                            cm.setCookie(url, "$trimmed; Path=/; Secure")
-                        }
-                    }
-                    cm.flush()
-                }
 
                 webView.loadUrl(url, extraHeaders)
 
@@ -298,40 +289,6 @@ class ChromiumFetcher(
             }
         }
 
-        // Anti-bot spoofing
-        webView.evaluateJavascript("""
-            (function() {
-                try {
-                    Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
-                } catch(e) {}
-                
-                // DisableDevtool Anti-Bot Bypass
-                try {
-                    var originalDisableDevtool;
-                    Object.defineProperty(window, 'DisableDevtool', {
-                        get: function() {
-                            return function(options) {
-                                options = options || {};
-                                options.ignore = function() { return true; };
-                                options.url = "";
-                                options.timeOutUrl = "";
-                                options.ondevtoolopen = function() {};
-                                if (originalDisableDevtool) {
-                                    try {
-                                        return originalDisableDevtool(options);
-                                    } catch(err) {}
-                                }
-                            };
-                        },
-                        set: function(val) {
-                            originalDisableDevtool = val;
-                        },
-                        configurable: true
-                    });
-                } catch(e) {}
-            })();
-        """.trimIndent(), null)
-
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
@@ -358,11 +315,7 @@ class ChromiumFetcher(
 
     private fun extractCookies(url: String): Map<String, String> {
         return try {
-            val raw = CookieManager.getInstance().getCookie(url) ?: return emptyMap()
-            raw.split(";").associate { part ->
-                val kv = part.split("=", limit = 2)
-                (kv.getOrNull(0)?.trim() ?: "") to (kv.getOrNull(1)?.trim() ?: "")
-            }.filter { it.key.isNotBlank() }
+            parseCookieString(CookieManager.getInstance().getCookie(url))
         } catch (_: Exception) { emptyMap() }
     }
 

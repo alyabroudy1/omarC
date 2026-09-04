@@ -3797,13 +3797,6 @@ class NavigationEngine(
         } catch (_: Exception) { emptyMap() }
     }
 
-    private fun parseCookieString(cookie: String): Map<String, String> {
-        return cookie.split(";").associate {
-            val parts = it.split("=", limit = 2)
-            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-        }.filter { it.key.isNotBlank() }
-    }
-
     private fun createDialog(activity: android.app.Activity, webView: WebView): android.app.Dialog {
         val container = android.widget.FrameLayout(activity).apply {
             // Black, not white. This is what shows through whenever the WebView is not painting —
@@ -4235,16 +4228,7 @@ class NavigationEngine(
         private val SPOOFING_JS = """
             (function(){
                 try { Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } }); } catch(e) {}
-                try {
-                    var od;
-                    Object.defineProperty(window, 'DisableDevtool', {
-                        get: function() {
-                            return function(o) { o = o || {}; o.ignore = function() { return true; }; o.url = ""; o.timeOutUrl = ""; o.ondevtoolopen = function() {}; if (od) try { return od(o); } catch(e) {} };
-                        },
-                        set: function(v) { od = v; },
-                        configurable: true
-                    });
-                } catch(e) {}
+                $DISABLE_DEVTOOL_BYPASS_JS
                 try { Object.defineProperty(navigator, 'plugins', { get: function() { return [1,2,3,4,5]; } }); } catch(e) {}
                 try { Object.defineProperty(navigator, 'languages', { get: function() { return ['ar-SA','en-US','en']; } }); } catch(e) {}
             })();

@@ -25,12 +25,6 @@ data class ProviderConfig(
     /** Trusted domain substrings for private server detection */
     val trustedDomains: List<String> = emptyList(),
     
-    /** Content validation strings to verify correct domain */
-    val validateWithContent: List<String> = emptyList(),
-    
-    /** Cookie max age in ms (default: 30 minutes) */
-    val cookieMaxAgeMs: Long = 30 * 60 * 1000,
-    
     /**
      * HTTP timeout in ms, or null to inherit CloudStream's client defaults (~10 s).
      *
@@ -40,9 +34,6 @@ data class ProviderConfig(
      */
     val requestTimeoutMs: Long? = null,
     
-    /** Video sniff timeout in ms */
-    val videoSniffTimeoutMs: Long = 35_000,
-
     /**
      * Prefer IPv6 DNS resolution to bypass cgNAT/IPv4-reputation blocks.
      *

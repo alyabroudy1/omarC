@@ -146,7 +146,5 @@ class TukTukcima : BaseProvider() {
         return linksFound
     }
     
-    private fun fixUrlLocally(url: String): String {
-        return if (url.startsWith("http")) url else "$mainUrl/$url".replace("//", "/").replace("https:/", "https://")
-    }
+    private fun fixUrlLocally(url: String): String = com.cloudstream.shared.util.fixUrl(url, mainUrl)
 }

@@ -62,23 +62,6 @@ object ProviderLogger {
         w(TAG_COOKIE, "invalidate", "Cookies invalidated", "domain" to domain, "reason" to reason)
     }
     
-    // ========== SESSION ==========
-    
-    fun logSessionState(newState: String, previousState: String?, trigger: String) {
-        i(TAG_SESSION, "stateChange", "Session state changed",
-            "from" to (previousState ?: "INIT"), "to" to newState, "trigger" to trigger)
-    }
-    
-    fun logRequestStart(url: String, strategy: String, hasValidCookies: Boolean) {
-        d(TAG_SESSION, "request", "Request starting",
-            "url" to url.take(80), "strategy" to strategy, "hasValidCookies" to hasValidCookies)
-    }
-    
-    fun logRequestComplete(url: String, responseCode: Int, durationMs: Long, strategy: String) {
-        if (responseCode in 200..299) i(TAG_SESSION, "request", "Request complete", "code" to responseCode, "durationMs" to durationMs, "strategy" to strategy)
-        else w(TAG_SESSION, "request", "Request complete with error", "code" to responseCode, "durationMs" to durationMs, "strategy" to strategy)
-    }
-    
     private fun formatParams(params: Array<out Pair<String, Any?>>): String {
         if (params.isEmpty()) return ""
         return " | " + params.joinToString(", ") { (k, v) -> "$k=$v" }

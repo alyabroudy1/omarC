@@ -9,7 +9,6 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
-import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.CapturedEmbedRequest
 import com.cloudstream.shared.webview.CapturedVideoRequest
 import com.cloudstream.shared.webview.VideoUrlClassifier
@@ -2576,10 +2575,7 @@ class CimaNowProvider : BaseProvider() {
             val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl?$cacheBuster"
             Log.d(TAG_HT, "GET $fetchUrl (session path: cookies + client hints + CF fallback)")
 
-            // Guarded: this is the first call in the flow that can trigger a CF solve, and a solve the
-            // user cancels clears the old session without restoring it — which would break the surf
-            // below for a reason unrelated to the surf. See withSessionGuard.
-            val fetched = withSessionGuard(httpService, TAG_HT) {
+            val fetched = run {
                 var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
                 var html = doc?.outerHtml() ?: ""
                 Log.i(TAG_HT, "Movie page: ${html.length} chars")
@@ -2888,7 +2884,7 @@ class CimaNowProvider : BaseProvider() {
             // ---- Step 1: movie page → freex URL (session path: cookies + client hints + CF fallback) ----
             val cacheBuster = "_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl?$cacheBuster"
-            val fetched = withSessionGuard(httpService, TAG_GL) {
+            val fetched = run {
                 var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
                 var html = doc?.outerHtml() ?: ""
                 var freex = extractFreexUrl(html)

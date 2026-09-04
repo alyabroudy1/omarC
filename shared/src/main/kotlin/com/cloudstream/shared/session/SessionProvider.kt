@@ -5,7 +5,7 @@ import com.cloudstream.shared.logging.ProviderLogger
 /**
  * SINGLE SOURCE OF TRUTH for all session data across the provider.
  * 
- * This singleton ensures that ALL components (HttpService, LazyExtractor, SnifferExtractor)
+ * This singleton ensures that ALL components (HttpService, SnifferExtractor, the WebView engines)
  * use the EXACT same User-Agent and cookies when making requests.
  * 
  * Cloudflare binds cookies to User-Agent, so any mismatch causes 403 errors.

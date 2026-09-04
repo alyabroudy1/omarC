@@ -21,8 +21,8 @@ import java.net.URLEncoder
  * This extractor catches URLs with a special prefix pattern:
  * `sniffer://[base64_encoded_embed_url]?referer=[base64_encoded_referer]`
  * 
- * When LazyExtractor fails to find a matching extractor, it prefixes the embed URL
- * with this pattern and calls loadExtractor again. This extractor then:
+ * A provider that has an embed URL no registered extractor handles wraps it with
+ * [createSnifferUrl] and calls loadExtractor again. This extractor then:
  * 1. Decodes the embed URL
  * 2. Runs VideoSnifferEngine in FULLSCREEN mode to sniff video URLs
  * 3. Returns the found video URLs as ExtractorLinks

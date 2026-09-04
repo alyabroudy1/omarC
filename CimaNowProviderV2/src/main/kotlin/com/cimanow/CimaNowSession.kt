@@ -26,9 +26,7 @@ import com.cloudstream.shared.webview.NavigationSessionPolicy
  * next HTTP hop both see it — there is no second place to keep in step.
  */
 class CimaNowNavigationPolicy(
-    private val httpService: ProviderHttpService,
-    /** Hosts whose cookies may enter the provider session. Subdomains included. */
-    private val sessionHosts: Set<String> = setOf("cimanow.cc")
+    private val httpService: ProviderHttpService
 ) : NavigationSessionPolicy {
 
     override fun onInterceptedResponseCookies(
@@ -377,44 +375,26 @@ fun List<InterceptChallenge>.cimaCloudflareBlock(): InterceptChallenge? =
  * Cloudflare block page comes back as a perfectly valid `Document` and a failed solve reads as
  * success. Two things have to be true — the body is not itself a challenge, and the session now holds
  * a clearance (or never needed one, on a site that answers without a challenge).
- *
- * Guarded, because this is exactly the call that can wipe the session it was meant to repair.
  */
 suspend fun reestablishSession(
     httpService: ProviderHttpService,
     url: String,
     tag: String
-): Boolean = withSessionGuard(httpService, tag) {
+): Boolean {
     val doc = httpService.getDocument(url, rewriteDomain = true)
     if (doc == null) {
         Log.w(tag, "Re-establish: no response at all for ${url.take(80)}")
-        return@withSessionGuard false
+        return false
     }
     val html = doc.outerHtml()
     if (com.cloudstream.shared.cloudflare.CloudflareDetector.isCloudflareChallenge(html, 403)) {
         Log.w(tag, "Re-establish: still a Cloudflare challenge after the solve " +
             "(${html.length} chars) — the clearance was refused or the solve never ran")
-        return@withSessionGuard false
+        return false
     }
     val cookies = com.cloudstream.shared.core.AndroidCookieStorage.get(url).orEmpty()
     Log.i(tag, "Re-establish: got a clean page (${html.length} chars) | " +
         "hasClearance=" + cookies.contains("cf_clearance"))
-    true
+    return true
 }
 
-/**
- * Runs [block]. Kept as a seam, but it no longer has anything to guard.
- *
- * It used to snapshot the session and put it back when a cancelled Cloudflare solve had thrown the
- * cookies away: the solve invalidated the session and cleared the system cookies *before* opening
- * its dialog, and nothing restored them on a cancel. Since Wave 2 the solve expires cookies for the
- * solved host only, in the one store, and no session copy exists to fall out of step — so there is
- * nothing to snapshot and nothing to restore.
- */
-suspend fun <T> withSessionGuard(
-    httpService: ProviderHttpService,
-    tag: String,
-    block: suspend () -> T
-): T {
-    return block()
-}

@@ -94,7 +94,6 @@ abstract class BaseProvider : MainAPI() {
                 preferIpv4 = preferIpv4,
                 requestTimeoutMs = requestTimeoutMs,
             ),
-            parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }
         )
 

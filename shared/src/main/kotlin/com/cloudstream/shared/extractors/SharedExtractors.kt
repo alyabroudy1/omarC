@@ -44,13 +44,12 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ByseExtractor("byseztajos.com", "Byseztajos"))
     registerExtractorAPI(ByseExtractor("bysetayico.com", "Bysetayico"))
     
-    // EarnVids and its proxies
-    registerExtractorAPI(EarnVidsExtractor())
-    registerExtractorAPI(EarnVidsExtractor("dingtezuni.com"))
-    registerExtractorAPI(EarnVidsExtractor("fsdcmo.sbs", "StreamGH"))
-    registerExtractorAPI(EarnVidsExtractor("govid.live", "GoVid"))
-    registerExtractorAPI(EarnVidsExtractor("1vid1shar.space", "Vid1Shar"))
-    registerExtractorAPI(EarnVidsExtractor("mycima.page", "MyCima"))
+    // EarnVids and its proxies — one list, EARNVIDS_REGISTRATIONS (see EarnVidsExtractor.kt).
+    // `fdewsdc.sbs` came from the four deleted ExternalEarnVidsExtractor copies, which special-cased
+    // it (referer hijack to shhahid4u.cam) without ever registering it.
+    for ((host, displayName) in EARNVIDS_REGISTRATIONS) {
+        registerExtractorAPI(EarnVidsExtractor(host, displayName))
+    }
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }

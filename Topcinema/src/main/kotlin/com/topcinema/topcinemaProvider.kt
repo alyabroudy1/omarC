@@ -418,10 +418,12 @@ class TopCinemaProvider : BaseProvider() {
         for (rawUrl in data.split("||").filter { it.isNotBlank() }) {
             try {
                 if (rawUrl.contains("/watch/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl))
-                    val finalWatchUrl = response.url
+                    val watchDoc = httpService.getDocument(
+                        rawUrl,
+                        headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
+                    ) ?: continue
+                    val finalWatchUrl = watchDoc.location().ifBlank { rawUrl }
                     val finalBaseUrl = getBaseUrl(finalWatchUrl)
-                    val watchDoc = response.document
 
                     watchDoc.selectFirst(".player--iframe iframe")?.attr("src")?.let {
                         extractedLinks[it] = finalWatchUrl
@@ -442,9 +444,12 @@ class TopCinemaProvider : BaseProvider() {
                         }
                     }
                 } else if (rawUrl.contains("/download/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl))
-                    val finalDownloadUrl = response.url
-                    for (a in response.document.select("a.downloadsLink")) {
+                    val downloadDoc = httpService.getDocument(
+                        rawUrl,
+                        headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
+                    ) ?: continue
+                    val finalDownloadUrl = downloadDoc.location().ifBlank { rawUrl }
+                    for (a in downloadDoc.select("a.downloadsLink")) {
                         val href = a.attr("href")
                         if (href.isNotBlank()) {
                             extractedLinks[href] = finalDownloadUrl

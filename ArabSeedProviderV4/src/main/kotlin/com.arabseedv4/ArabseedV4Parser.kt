@@ -124,6 +124,10 @@ class ArabseedV4Parser : NewBaseParser() {
 
     // ================= HELPERS FOR ARABSEED LOGIC =================
 
+    /**
+     * Deliberately *not* `shared.util.fixUrl`: arabseed's scraped values are bare hostnames, so a
+     * non-absolute URL gets a scheme rather than being resolved against mainUrl.
+     */
     private fun fixUrl(url: String): String {
         if (url.isBlank()) return ""
         if (url.startsWith("//")) return "https:$url"
