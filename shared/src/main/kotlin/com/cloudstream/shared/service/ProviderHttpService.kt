@@ -4,10 +4,12 @@ import android.content.Context
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.domain.DomainManager
-import com.cloudstream.shared.cookie.CookieLifecycleManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
+import com.cloudstream.shared.core.AndroidCookieStorage
 import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.core.SystemCookieJar
+import com.cloudstream.shared.core.expireCookiesFor
 import com.cloudstream.shared.core.FingerprintInterceptor
 import com.cloudstream.shared.core.RequestKind
 import com.cloudstream.shared.network.ChromiumFetcher
@@ -18,7 +20,6 @@ import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.queue.RequestQueue
 import com.cloudstream.shared.queue.RequestResult
 import com.cloudstream.shared.session.SessionState
-import com.cloudstream.shared.session.SessionStore
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
 import com.cloudstream.shared.webview.CfBypassEngine
@@ -40,16 +41,14 @@ import kotlinx.coroutines.sync.withLock
  * THE GATEWAY - Single entry point for all provider HTTP operations.
  * 
  * Uses shared module components for CloudflareDetector, RequestQueue,
- * SessionState, SessionStore, CfBypassEngine, VideoSnifferEngine, DomainManager.
+ * SessionState, CfBypassEngine, VideoSnifferEngine, DomainManager.
  */
 class ProviderHttpService private constructor(
     private val config: ProviderConfig,
-    private val sessionStore: SessionStore,
     private val cfBypassEngine: CfBypassEngine,
     private val videoSnifferEngine: VideoSnifferEngine,
     val navigationEngine: NavigationEngine,
     private val domainManager: DomainManager,
-    private val cookieManager: CookieLifecycleManager,
     private val parser: ParserInterface,
     /** Chrome-TLS HTTP client for Tier 3 TLS fingerprint fallback */
     val chromiumFetcher: ChromiumFetcher
@@ -84,8 +83,13 @@ class ProviderHttpService private constructor(
     val userAgent: String
         get() = Fingerprint.current().userAgent
 
+    /**
+     * The cookies the system store currently holds for the provider's own host, as a map.
+     *
+     * Kept for providers that build a header by hand; the store, not this service, is the source.
+     */
     val cookies: Map<String, String>
-        get() = sessionState.cookies
+        get() = parseCookieHeader(AndroidCookieStorage.get(mainUrl))
         
     val snifferEngine: VideoSnifferEngine
         get() = videoSnifferEngine
@@ -96,11 +100,8 @@ class ProviderHttpService private constructor(
         initMutex.withLock {
             if (initialized) return@withLock
             
-            // Only load and initialize SessionProvider if not already valid
-            // This prevents repetitive disk reads and "Session initialized" logging
-            if (!SessionProvider.hasValidSession()) {
-                val persisted = sessionStore.load(config.fallbackDomain)
-                sessionState = persisted ?: SessionState.initial(config.fallbackDomain)
+            // A session is a domain now — cookies live in the system store, which persists itself.
+            if (SessionProvider.getDomain() == null) {
                 SessionProvider.initialize(sessionState)
             }
             
@@ -115,98 +116,6 @@ class ProviderHttpService private constructor(
     }
     
     @Synchronized
-    private fun updateCookies(cookies: Map<String, String>, fromWebView: Boolean) {
-        // CRITICAL: WebView CF solve = full replace (fresh session)
-        // HTTP response Set-Cookie = merge into existing (don't destroy CF cookies)
-        sessionState = if (fromWebView) {
-            sessionState.withCookies(cookies, fromWebView = true)
-        } else {
-            sessionState.mergeCookies(cookies, fromWebView = false)
-        }
-        sessionStore.save(sessionState)
-        
-        // CRITICAL: Update SessionProvider so SnifferExtractor gets same cookies
-        SessionProvider.update(sessionState)
-        
-        // Also update cookie manager for domain
-        if (cookies.isNotEmpty()) {
-            cookieManager.store("https://${sessionState.domain}", cookies, 
-                if (fromWebView) "webview" else "http")
-        }
-        
-        // CRITICAL: Inject cookies into Android's system CookieManager for WebView/Glide sharing.
-        // Sync to the current domain and ALL known aliases to ensure cross-domain requests
-        // (like images or old-domain links) have the required cookies.
-        if (cookies.isNotEmpty()) {
-            syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
-            for (alias in SessionProvider.getDomainAliases()) {
-                syncCookiesToSystemCookieManager(alias, sessionState.cookies)
-            }
-        }
-    }
-
-    /**
-     * The current session, for a caller that intends to put it back.
-     *
-     * Exists because a Cloudflare solve is destructive up front: [solveCloudflareThenRequest] calls
-     * `invalidateSession` and `clearSystemCookies` *before* opening the WebView, and returns a plain
-     * failure if the user backs out of the dialog. Nothing restores what it threw away, so a
-     * cancelled solve leaves the provider with fewer cookies than it had when the request started —
-     * and a flow that was only *probably* going to need a solve is now definitely broken.
-     *
-     * Snapshot before anything that can trigger a solve, restore if it came back empty-handed. See
-     * `CimaNowSession.withSessionGuard`.
-     */
-    fun snapshotSession(): SessionState = sessionState
-
-    /**
-     * Puts a [snapshotSession] result back, cookies and all.
-     *
-     * Only meaningful when the current session is *worse* than the snapshot — a solve that succeeded
-     * must not be rolled back over, so callers check first. Re-syncs the system CookieManager, since
-     * a failed solve cleared that too.
-     *
-     * @param reason logged, because a session appearing to travel backwards in time is otherwise
-     *   impossible to account for when reading a log.
-     */
-    @Synchronized
-    fun restoreSession(snapshot: SessionState, reason: String) {
-        if (snapshot.cookies.isEmpty()) return
-        sessionState = snapshot
-        sessionStore.save(sessionState)
-        SessionProvider.update(sessionState)
-        syncCookiesToSystemCookieManager(sessionState.domain, sessionState.cookies)
-        for (alias in SessionProvider.getDomainAliases()) {
-            syncCookiesToSystemCookieManager(alias, sessionState.cookies)
-        }
-        ProviderLogger.w(TAG_PROVIDER_HTTP, "restoreSession", "Session restored from snapshot",
-            "reason" to reason,
-            "cookies" to snapshot.cookies.size,
-            "hasClearance" to snapshot.cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
-    }
-
-    /**
-     * Merge cookies a provider obtained out-of-band into the session, as an HTTP response would.
-     *
-     * For cookies that arrive on a path the service did not drive itself — a WebView response the
-     * provider's own interceptor answered, say. Merging (never replacing) so a `cf_clearance` already
-     * in hand cannot be dropped by an unrelated `Set-Cookie`.
-     */
-    fun mergeSessionCookies(cookies: Map<String, String>) {
-        if (cookies.isEmpty()) return
-        updateCookies(cookies, fromWebView = false)
-    }
-
-    /**
-     * Publicly expose cookie storage for CDN domains captured during extractions.
-     */
-    fun storeCdnCookies(url: String, cookies: Map<String, String>) {
-        if (cookies.isEmpty()) return
-        cookieManager.store(url, cookies, "sniffer")
-        ProviderLogger.d(TAG_PROVIDER_HTTP, "storeCdnCookies", "Stored cookies for CDN", "url" to url.take(60), "count" to cookies.size)
-    }
-    
-    @Synchronized
     fun updateDomain(newDomain: String) {
         if (newDomain == sessionState.domain) return
         val oldDomain = sessionState.domain
@@ -214,8 +123,8 @@ class ProviderHttpService private constructor(
         // CRITICAL: Always preserve cookies on domain change.
         // Domains change unpredictably (faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics)
         // CF cookies are UA-bound, not domain-bound, so they remain valid.
-        sessionState = sessionState.withDomainKeepCookies(newDomain)
-        sessionStore.save(sessionState)
+        sessionState = sessionState.withDomain(newDomain)
+        SessionProvider.update(sessionState)
         
         // CRITICAL: Register the old domain as an alias.
         // HTML content from the new domain may still reference old-domain URLs
@@ -223,22 +132,8 @@ class ProviderHttpService private constructor(
         // Adding as alias ensures cookies are shared for requests to the old domain.
         SessionProvider.addDomainAlias(oldDomain)
         
-        // CRITICAL: Sync current cookies to BOTH the new domain and the old domain (alias).
-        // WebView/Glide sub-requests to new-domain URLs need cookies immediately.
-        if (sessionState.cookies.isNotEmpty()) {
-            syncCookiesToSystemCookieManager(newDomain, sessionState.cookies)
-            syncCookiesToSystemCookieManager(oldDomain, sessionState.cookies)
-        }
-        
         ProviderLogger.i(TAG_PROVIDER_HTTP, "updateDomain", "Domain changed, old domain added as alias",
             "old" to oldDomain, "new" to newDomain, "aliases" to SessionProvider.getDomainAliases().size)
-    }
-    
-    @Synchronized
-    fun invalidateSession(reason: String) {
-        sessionState = sessionState.invalidate()
-        sessionStore.save(sessionState)
-        ProviderLogger.i(TAG_PROVIDER_HTTP, "invalidateSession", reason)
     }
     
     // ==================== PUBLIC API ====================
@@ -354,24 +249,9 @@ class ProviderHttpService private constructor(
     ): okhttp3.Response {
         val fullUrl = buildUrl(url)
 
+        // Cookies come from the jar on the client, scoped by whatever Set-Cookie said, and
+        // identity from FingerprintInterceptor — neither is assembled here any more.
         val effectiveHeaders = linkedMapOf<String, String>()
-        if (useSession) {
-            val urlDomain = try { java.net.URL(fullUrl).host } catch (_: Exception) { null }
-            val cookiesForDomain = if (urlDomain != null && urlDomain != sessionState.domain) {
-                // Returns nothing for a host unrelated to the session, so a third-party request
-                // cannot walk off with cf_clearance.
-                SessionProvider.getCookiesForDomain(urlDomain)
-            } else {
-                sessionState.cookies
-            }
-            if (cookiesForDomain.isNotEmpty()) {
-                effectiveHeaders["Cookie"] =
-                    cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            }
-
-            // Identity is FingerprintInterceptor's job now, including the rule that a
-            // caller-supplied User-Agent suppresses the client hints.
-        }
         // The caller asked for these explicitly; they replace the defaults, never stack with them.
         for ((k, v) in headers) effectiveHeaders[k] = v
 
@@ -382,6 +262,8 @@ class ProviderHttpService private constructor(
             .build()
         val directClient = app.baseClient.newBuilder()
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            // useSession = false means the host must see an anonymous request, so it gets no jar.
+            .cookieJar(if (useSession) SystemCookieJar() else okhttp3.CookieJar.NO_COOKIES)
             .addInterceptor(FingerprintInterceptor)
             .applyDnsPolicy()
                 .applyProviderTimeout()
@@ -401,7 +283,6 @@ class ProviderHttpService private constructor(
                     null,
                     "url" to fullUrl.take(100),
                     "code" to response.code.toString(),
-                    "sentCookies" to effectiveHeaders.containsKey("Cookie").toString(),
                     "useSession" to useSession.toString())
             } else {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "getRaw", "Non-OK response",
@@ -452,7 +333,7 @@ class ProviderHttpService private constructor(
                          timeout = 120_000L
                      )
                      if (retry is WebViewResult.Success) {
-                         updateCookies(retry.cookies, fromWebView = true)
+                         // The WebView wrote its cookies to the system store itself.
                          extractVideoSources(retry.html)
                      } else emptyList()
                 } else emptyList()
@@ -546,7 +427,7 @@ class ProviderHttpService private constructor(
             )
         }
 
-        val validated = mediaValidator.validateSources(candidates, sessionState)
+        val validated = mediaValidator.validateSources(candidates)
 
         val blocked = validated.count { it.tlsBlocked }
         if (blocked > 0) {
@@ -565,7 +446,7 @@ class ProviderHttpService private constructor(
      * Returns false if TLS fingerprint mismatch will cause 403.
      */
     suspend fun isMediaAccessible(url: String, headers: Map<String, String> = emptyMap()): Boolean {
-        return mediaValidator.isAccessible(url, headers, sessionState)
+        return mediaValidator.isAccessible(url, headers)
     }
 
     /**
@@ -574,12 +455,9 @@ class ProviderHttpService private constructor(
      */
     suspend fun fetchViaChromeTls(url: String, headers: Map<String, String> = emptyMap()): String? {
         val allHeaders = mutableMapOf<String, String>("Referer" to "https://${sessionState.domain}/")
-        sessionState.buildCookieHeader()?.let { allHeaders["Cookie"] = it }
         allHeaders.putAll(headers)
+        // The fetch runs in a WebView, so its cookies are already in the system store.
         val response = chromiumFetcher.fetch(url, allHeaders)
-        if (response.success && response.cookies.isNotEmpty()) {
-            updateCookies(response.cookies, fromWebView = true)
-        }
         return if (response.success) response.body else null
     }
 
@@ -793,17 +671,11 @@ class ProviderHttpService private constructor(
      */
     fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
         val domain = targetDomain ?: sessionState.domain
-
-        // Cookies for the specific domain (handles aliases)
-        val cookies = if (targetDomain != null && targetDomain != sessionState.domain) {
-            com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(targetDomain)
-        } else {
-            sessionState.cookies
-        }
+        val referer = "https://$domain/"
 
         return Fingerprint.current().imageHeaders(
-            referer = "https://$domain/",
-            cookieHeader = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+            referer = referer,
+            cookieHeader = AndroidCookieStorage.get(referer).orEmpty()
         )
     }
 
@@ -823,20 +695,11 @@ class ProviderHttpService private constructor(
                 null
             }
             
-            // Use domain-aware cookie retrieval
-            val cookiesForDomain = if (urlDomain != null && urlDomain != sessionState.domain) {
-                com.cloudstream.shared.session.SessionProvider.getCookiesForDomain(urlDomain)
-            } else {
-                sessionState.cookies
-            }
-            
-            // Caller-specific headers only — identity comes from FingerprintInterceptor.
-            val headers = buildMap {
-                put("Referer", "https://${urlDomain ?: sessionState.domain}/")
-                if (cookiesForDomain.isNotEmpty()) {
-                    put("Cookie", cookiesForDomain.entries.joinToString("; ") { "${it.key}=${it.value}" })
-                }
-            }.toMutableMap()
+            // Caller-specific headers only — identity comes from FingerprintInterceptor and
+            // cookies from the jar on the client below.
+            val headers = mutableMapOf(
+                "Referer" to "https://${urlDomain ?: sessionState.domain}/"
+            )
             
             // Add custom headers
             for ((k, v) in customHeaders) {
@@ -847,13 +710,12 @@ class ProviderHttpService private constructor(
                 "url" to targetUrl.take(80),
                 "urlDomain" to (urlDomain ?: "same"),
                 "sessionDomain" to sessionState.domain,
-                "isAlias" to (urlDomain != null && urlDomain != sessionState.domain),
-                "hasCookie" to (headers["Cookie"] != null),
-                "cookieCount" to cookiesForDomain.size
+                "isAlias" to (urlDomain != null && urlDomain != sessionState.domain)
             )
             
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .cookieJar(SystemCookieJar())
                 .addInterceptor(FingerprintInterceptor)
                 .applyDnsPolicy()
                 .applyProviderTimeout()
@@ -911,8 +773,7 @@ class ProviderHttpService private constructor(
             if (result.isCloudflareBlocked) {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
                     "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
-                    "url" to targetUrl.take(80),
-                    "hadCookies" to cookiesForDomain.isNotEmpty().toString())
+                    "url" to targetUrl.take(80))
 
                 val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
                 // Success is a status code, which a block page also has. Check the body too, or a
@@ -924,11 +785,6 @@ class ProviderHttpService private constructor(
                         "✅ Chrome TLS fallback succeeded — no WebView solve needed",
                         "url" to targetUrl.take(80),
                         "htmlLength" to chromiumResponse.body.length)
-
-                    // Merge any new cookies from the Chrome response
-                    if (chromiumResponse.cookies.isNotEmpty()) {
-                        updateCookies(chromiumResponse.cookies, fromWebView = true)
-                    }
 
                     return RequestResult.success(
                         chromiumResponse.body,
@@ -958,15 +814,13 @@ class ProviderHttpService private constructor(
             // Caller-specific headers only — identity comes from FingerprintInterceptor.
             val headers = mutableMapOf<String, String>()
             headers["Referer"] = referer ?: "https://${sessionState.domain}/"
-            sessionState.buildCookieHeader()?.let { headers["Cookie"] = it }
             for ((k, v) in customHeaders) {
                 headers[k] = v
             }
             
             ProviderLogger.d(TAG_PROVIDER_HTTP, "executePostRequest", "Executing POST request",
                 "url" to targetUrl.take(80),
-                "domain" to sessionState.domain,
-                "hasCookie" to (headers["Cookie"] != null)
+                "domain" to sessionState.domain
             )
 
             val formBody = okhttp3.FormBody.Builder().apply {
@@ -977,6 +831,7 @@ class ProviderHttpService private constructor(
 
             val directClient = app.baseClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .cookieJar(SystemCookieJar())
                 .addInterceptor(FingerprintInterceptor)
                 .applyDnsPolicy()
                 .applyProviderTimeout()
@@ -1006,22 +861,7 @@ class ProviderHttpService private constructor(
         val html = response.body?.string() ?: ""
         val finalUrl = response.request.url.toString()
         
-        val responseDomain = extractDomain(finalUrl)
-        val isProviderDomain = responseDomain.contains(sessionState.domain) || 
-                              config.trustedDomains.any { responseDomain.contains(it) }
-                              
-        if (isProviderDomain) {
-            val newCookies = mutableMapOf<String, String>()
-            val cookieHeaders = response.headers("Set-Cookie")
-            for (setCookie in cookieHeaders) {
-                val parts = setCookie.split(";").firstOrNull()?.split("=", limit = 2)
-                if (parts != null && parts.size == 2) {
-                    newCookies[parts[0].trim()] = parts[1].trim()
-                }
-            }
-            if (newCookies.isNotEmpty()) updateCookies(newCookies, fromWebView = false)
-        }
-        
+        // Set-Cookie ingestion is SystemCookieJar's job, on every client built here.
         response.close()
         
         if (CloudflareDetector.isBlocked(code, html)) {
@@ -1036,25 +876,21 @@ class ProviderHttpService private constructor(
         
         val targetUrl = rewriteUrlIfNeeded(url)
         
-        // Guard: if valid cookies already exist from a very recent solve (< 10s),
-        // skip re-invalidation — a concurrent solve likely just succeeded.
-        val cookieAge = System.currentTimeMillis() - sessionState.cookieTimestamp
-            if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
-            ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
-                "Skipping CF solve — fresh cookies exist (${cookieAge}ms old), retrying HTTP",
-                "domain" to sessionState.domain)
-            val retryResult = executeDirectRequest(targetUrl, rewriteDomain = true)
-            if (retryResult.success) return retryResult
-            // If retry still fails (cookies expired or invalid), fall through to full CF solve
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
-                "Retry with existing cookies failed, proceeding with full CF solve")
+        // A clearance is already in the store (another queue or caller may have just solved), so
+        // spend one direct request on it before throwing it away; if it is stale the retry is CF-
+        // blocked and the solve proceeds.
+        if (shouldRetryBeforeSolve(AndroidCookieStorage.get(targetUrl))) {
+            val retry = executeDirectRequest(targetUrl, rewriteDomain = true)
+            if (retry.success && !retry.isCloudflareBlocked) {
+                ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                    "Existing clearance worked — skipping CF solve")
+                return retry
+            }
         }
-
-        // Invalidate current session before WebView attempt
-        invalidateSession("Preparing for CF solve")
         
-        // Clear system cookies too
-        clearSystemCookies(targetUrl)
+        // A stale clearance is what the challenge objects to, so expire the cookies for THIS host
+        // before solving. Only this host: another provider's session lives in the same store.
+        expireCookiesFor(targetUrl, AndroidCookieStorage)
         
         val mode = if (config.skipHeadless) Mode.FULLSCREEN else Mode.HEADLESS
         
@@ -1069,7 +905,7 @@ class ProviderHttpService private constructor(
         
         return when (result) {
             is WebViewResult.Success -> {
-                updateCookies(result.cookies, fromWebView = true)
+                // The solve ran in a WebView, which wrote its cookies to the system store itself.
                 // CRITICAL: Do NOT call checkAndUpdateDomain here.
                 // CF bypass WebView may navigate to cloudflare.com / challenges.cloudflare.com
                 // during the challenge. If we detect a domain change from the CF solve's finalUrl,
@@ -1183,80 +1019,16 @@ class ProviderHttpService private constructor(
         return match?.groupValues?.get(1)?.trim()
     }
     
-    private fun clearSystemCookies(url: String) {
-        try {
-            val cookieManager = android.webkit.CookieManager.getInstance()
-            val cookies = cookieManager.getCookie(url)
-            if (cookies != null) {
-                cookies.split(";").forEach { cookie ->
-                    val name = cookie.split("=").firstOrNull()?.trim()
-                    if (!name.isNullOrBlank()) {
-                        cookieManager.setCookie(url, "$name=; Max-Age=0; Path=/")
-                    }
-                }
-                cookieManager.flush()
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_PROVIDER_HTTP, "clearSystemCookies", "Failed to clear system cookies: ${e.message}")
-        }
+    /** Parses a `"a=1; b=2"` store header into a map, for [cookies]. */
+    private fun parseCookieHeader(header: String?): Map<String, String> {
+        if (header.isNullOrBlank()) return emptyMap()
+        return header.split(";").mapNotNull { pair ->
+            val name = pair.substringBefore("=").trim()
+            val value = pair.substringAfter("=", "").trim()
+            if (name.isEmpty()) null else name to value
+        }.toMap()
     }
-    
-    /**
-     * Sync cookies to Android's system CookieManager for a specific domain.
-     * This ensures WebView/Glide sub-requests to this domain have the cf_clearance cookie.
-     *
-     * Called for both the current domain and all alias domains (old domains that
-     * may still appear in HTML links, e.g. w312x.faselhdx.xyz after migrating to w318x).
-     */
-    /**
-     * Mirrors the session cookies into the system CookieManager, which is what any WebView reads.
-     *
-     * Each cookie is written ONCE, host-only for [domain]. A second write scoped to
-     * `Domain=.<registrable domain>` was tried and reverted: it produced two cookies with the same
-     * name, the browser sent both in one header, and Cloudflare rejected the duplicated
-     * `cf_clearance` — the challenge then repeated on every server in a run. The caller loops over
-     * known aliases, which covers the hosts that matter.
-     *
-     * A long `Max-Age` is attached because these were session cookies: they vanished whenever the
-     * cookie store was cleared and never survived a restart, so a cleared cache always meant meeting
-     * Cloudflare again from scratch.
-     */
-    private fun syncCookiesToSystemCookieManager(domain: String, cookies: Map<String, String>) {
-        try {
-            val systemCookieManager = android.webkit.CookieManager.getInstance()
-            systemCookieManager.setAcceptCookie(true)
-            val cookieUrl = "https://$domain"
-            val maxAge = 60L * 60L * 24L * 30L // 30 days; the server's own expiry still wins
 
-            for ((key, value) in cookies) {
-                // A value carrying ';' or whitespace would truncate or corrupt the attribute list.
-                val safe = value.trim()
-                if (safe.contains(';') || safe.any { it.isWhitespace() }) {
-                    ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
-                        "Skipping cookie with unsafe value", "name" to key, "domain" to domain)
-                    continue
-                }
-                // ONE cookie per name. Writing it host-only AND with Domain=.registrable created two
-                // cookies with the same name at different scopes, and the browser then sends both in
-                // a single header ("cf_clearance=X; cf_clearance=X"). Cloudflare rejects a duplicated
-                // clearance, which showed up as the challenge repeating on every server in a run
-                // (2026-07-29). The caller already loops over known aliases, so per-host writes cover
-                // the hosts that matter; a leading-dot scope is not worth breaking the clearance for.
-                systemCookieManager.setCookie(cookieUrl, "$key=$safe; path=/; secure; Max-Age=$maxAge")
-            }
-            systemCookieManager.flush()
-            // Names, not just a count: the open question on this provider is whether a Cloudflare
-            // clearance token exists at all, and a bare count can never answer it.
-            ProviderLogger.d(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
-                "Injected ${cookies.size} cookies", "domain" to domain,
-                "names" to cookies.keys.joinToString(","),
-                "hasClearance" to cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_PROVIDER_HTTP, "syncCookiesToSystemCookieManager",
-                "Failed to inject cookies", "domain" to domain, "error" to e.message)
-        }
-    }
-    
     private fun extractDomain(url: String): String {
         return try {
             URI(url).host?.removePrefix("www.") ?: ""
@@ -1333,8 +1105,6 @@ class ProviderHttpService private constructor(
             Fingerprint.current()
             
             return instances.getOrPut(config.name) {
-                val sessionStore = SessionStore(context, config.name)
-                val cookieManager = CookieLifecycleManager()
                 val domainManager = DomainManager(
                     context = context,
                     providerName = config.name,
@@ -1347,8 +1117,18 @@ class ProviderHttpService private constructor(
                 val navigationEngine = NavigationEngine(activityProvider)
                 val chromiumFetcher = ChromiumFetcher(activityProvider)
 
-                ProviderHttpService(config, sessionStore, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, cookieManager, parser, chromiumFetcher)
+                ProviderHttpService(config, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, parser, chromiumFetcher)
             }
         }
     }
+}
+
+/**
+ * True iff [cookieHeader] carries a cookie *named* `cf_clearance`: the one signal that a solve may
+ * already have happened, so a direct request is worth trying before expiring and re-solving.
+ * Top-level on purpose — no Android type is touched, so the decision is testable on the JVM.
+ */
+internal fun shouldRetryBeforeSolve(cookieHeader: String?): Boolean {
+    if (cookieHeader.isNullOrBlank()) return false
+    return cookieHeader.split(";").any { it.substringBefore("=").trim() == "cf_clearance" }
 }

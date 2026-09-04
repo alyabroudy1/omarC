@@ -26,8 +26,7 @@ object SessionProvider {
      */
     fun initialize(session: SessionState) {
         ProviderLogger.d(TAG, "initialize", "Session initialized",
-            "domain" to session.domain,
-            "hasCookies" to session.cookies.isNotEmpty())
+            "domain" to session.domain)
         currentSession = session
     }
     
@@ -129,41 +128,6 @@ object SessionProvider {
     }
     
     /**
-     * Get cookies for a specific domain.
-     * If domain is main domain or an alias, returns the session cookies.
-     */
-    fun getCookiesForDomain(domain: String): Map<String, String> {
-        val session = currentSession ?: return emptyMap()
-        val mainDomain = session.domain
-        
-        // Check if requesting domain is main domain or an alias
-        val shouldReturnCookies = when {
-            domain == mainDomain -> true
-            domain in domainAliases -> true
-            areDomainsRelated(domain, mainDomain) -> {
-                // Auto-add as alias if related but not yet tracked
-                addDomainAlias(domain)
-                true
-            }
-            else -> false
-        }
-        
-        if (shouldReturnCookies) {
-            ProviderLogger.d(TAG, "getCookiesForDomain", "Returning cookies",
-                "requestDomain" to domain,
-                "mainDomain" to mainDomain,
-                "isAlias" to (domain in domainAliases),
-                "cookieCount" to session.cookies.size)
-            return session.cookies
-        }
-        
-        ProviderLogger.w(TAG, "getCookiesForDomain", "Domain not related to session",
-            "requestDomain" to domain,
-            "mainDomain" to mainDomain)
-        return emptyMap()
-    }
-    
-    /**
      * Get all domain aliases.
      */
     fun getDomainAliases(): Set<String> = domainAliases.toSet()
@@ -182,8 +146,7 @@ object SessionProvider {
      */
     fun update(session: SessionState) {
         ProviderLogger.d(TAG, "update", "Session updated",
-            "domain" to session.domain,
-            "hasCookies" to session.cookies.isNotEmpty())
+            "domain" to session.domain)
         currentSession = session
     }
     
@@ -194,35 +157,9 @@ object SessionProvider {
     fun getSession(): SessionState? = currentSession
     
     /**
-     * Get the current cookies map.
-     * Returns empty map if no session.
-     * For specific domain cookies, use getCookiesForDomain(domain).
-     */
-    fun getCookies(): Map<String, String> {
-        return currentSession?.cookies ?: emptyMap()
-    }
-    
-    /**
-     * Build a Cookie header string from current cookies.
-     */
-    fun buildCookieHeader(): String? {
-        val cookies = currentSession?.cookies
-        if (cookies.isNullOrEmpty()) return null
-        return cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-    }
-    
-    /**
      * Get the current domain.
      */
     fun getDomain(): String? = currentSession?.domain
-    
-    /**
-     * Check if we have a valid session with cookies.
-     */
-    fun hasValidSession(): Boolean {
-        val session = currentSession
-        return session != null && session.cookies.isNotEmpty() && !session.isExpired()
-    }
     
     /**
      * Clear the current session.

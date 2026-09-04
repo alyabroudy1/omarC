@@ -4,7 +4,6 @@ import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
-import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoSnifferEngine

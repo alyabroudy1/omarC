@@ -11,9 +11,6 @@ import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.network.CloudflareKiller
-import okhttp3.Interceptor
-import okhttp3.Response
 import java.net.URLEncoder
 
 class Shahid4u : BaseProvider() {
@@ -45,9 +42,6 @@ class Shahid4u : BaseProvider() {
     override var sequentialMainPageDelay = 50L
     override var sequentialMainPageScrollDelay = 50L
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
-
 
     private fun buildBrowserHeaders(referer: String? = null): Map<String, String> {
         val ref = referer ?: mainUrl
@@ -62,22 +56,6 @@ class Shahid4u : BaseProvider() {
             "Sec-Fetch-Mode" to "navigate",
             "Sec-Fetch-Dest" to "document"
         )
-    }
-
-    private fun buildMergedHeaders(url: String, referer: String? = null): Map<String, String> {
-        val base = buildBrowserHeaders(referer).toMutableMap()
-
-        return try {
-
-            val cloudHeaders = cloudflareKiller.getCookieHeaders(url).toMultimap()
-                .mapValues { entry -> entry.value.joinToString("; ") }
-
-            base.putAll(cloudHeaders)
-            base
-        } catch (e: Exception) {
-
-            base
-        }
     }
 
     private fun makeAbsoluteUrl(url: String?): String? {
@@ -95,8 +73,9 @@ class Shahid4u : BaseProvider() {
     }
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
-        val headers = buildMergedHeaders(url, referer)
-        return app.get(url, referer = referer ?: mainUrl, headers = headers, interceptor = cfInterceptor).document
+        val headers = buildBrowserHeaders(referer).filterKeys { it != "User-Agent" }
+        return httpService.getDocument(url, headers = headers)
+            ?: throw ErrorLoadingException("Failed to fetch $url")
     }
 
     private fun parseCard(element: Element): SearchResponse? {

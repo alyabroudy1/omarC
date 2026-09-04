@@ -6,11 +6,9 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.logError
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.core.Fingerprint
-import okhttp3.Interceptor
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.component1
@@ -32,9 +30,6 @@ class TopCinemaProvider : BaseProvider() {
         TvType.TvSeries
     )
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
-
     private val standardHeaders = mapOf(
         "User-Agent" to Fingerprint.current().userAgent,
         "Accept-Language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -42,12 +37,10 @@ class TopCinemaProvider : BaseProvider() {
     )
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
-        return app.get(
+        return httpService.getDocument(
             url,
-            referer = referer ?: mainUrl,
-            headers = standardHeaders,
-            interceptor = cfInterceptor
-        ).document
+            headers = standardHeaders.filterKeys { it != "User-Agent" }
+        ) ?: throw ErrorLoadingException("Failed to fetch $url")
     }
 
     private suspend fun httpPost(
@@ -55,13 +48,12 @@ class TopCinemaProvider : BaseProvider() {
         data: Map<String, String>,
         referer: String? = null
     ): String {
-        return app.post(
+        return httpService.postText(
             url,
             data = data,
             referer = referer ?: mainUrl,
-            headers = postHeaders,
-            interceptor = cfInterceptor
-        ).text
+            headers = postHeaders.filterKeys { it != "User-Agent" }
+        ) ?: throw ErrorLoadingException("Failed to post $url")
     }
 
     override suspend fun getMainPage(
@@ -426,7 +418,7 @@ class TopCinemaProvider : BaseProvider() {
         for (rawUrl in data.split("||").filter { it.isNotBlank() }) {
             try {
                 if (rawUrl.contains("/watch/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
+                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl))
                     val finalWatchUrl = response.url
                     val finalBaseUrl = getBaseUrl(finalWatchUrl)
                     val watchDoc = response.document
@@ -437,19 +429,20 @@ class TopCinemaProvider : BaseProvider() {
 
                     for (server in watchDoc.select(".watch--servers--list li.server--item")) {
                         val ajaxUrl = "$finalBaseUrl/wp-content/themes/movies2023/Ajaxat/Single/Server.php"
-                        val res = app.post(
+                        val res = httpService.postText(
                             ajaxUrl,
                             data = mapOf("id" to server.attr("data-id"), "i" to server.attr("data-server")),
-                            headers = getDynamicPostHeaders(finalWatchUrl),
-                            interceptor = cfInterceptor
-                        ).text
+                            referer = finalWatchUrl,
+                            headers = getDynamicPostHeaders(finalWatchUrl)
+                                .filterKeys { it != "User-Agent" }
+                        ).orEmpty()
 
                         Jsoup.parse(res).selectFirst("iframe")?.attr("src")?.let {
                             extractedLinks[it] = finalWatchUrl
                         }
                     }
                 } else if (rawUrl.contains("/download/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
+                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl))
                     val finalDownloadUrl = response.url
                     for (a in response.document.select("a.downloadsLink")) {
                         val href = a.attr("href")

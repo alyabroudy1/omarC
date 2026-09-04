@@ -1,10 +1,10 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.AndroidCookieStorage
 import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.network.pinToIpv4
-import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoSnifferEngine
@@ -137,7 +137,7 @@ class SnifferExtractor : ExtractorApi() {
         // ── UA Resolution ──
         // One identity for every tier: the sniffer WebView, the CF-solve WebView and the OkHttp
         // path all read the same device fingerprint.
-        // Cookies are already in the system CookieManager (injected by ProviderHttpService.updateCookies).
+        // Cookies are already in the system CookieManager — the one store OkHttp and every WebView share.
         val snifferUserAgent = Fingerprint.current().userAgent
 
         ProviderLogger.d(TAG, "getUrl", "Sniffer UA resolved from Fingerprint",
@@ -346,24 +346,9 @@ class SnifferExtractor : ExtractorApi() {
                     }.toMutableMap()
 
                     // PREPARE HEADERS (Common logic)
-                    val webViewCookies = try {
-                        android.webkit.CookieManager.getInstance().getCookie(source.url)
-                    } catch (e: Exception) { null }
-                    
-                    val mergedCookies = mutableMapOf<String, String>()
-                    webViewCookies?.split(";")?.forEach { cookie ->
-                        val trimmed = cookie.trim()
-                        if (trimmed.isNotBlank()) {
-                             mergedCookies[trimmed.substringBefore("=")] = trimmed.substringAfter("=", "")
-                        }
-                    }
-                    for ((key, value) in SessionProvider.getCookies()) {
-                        mergedCookies[key] = value
-                    }
-                    
-                    val cookieHeader = if (mergedCookies.isNotEmpty()) {
-                        mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                    } else null
+                    // One read from the one store: the player carries exactly the cookies the
+                    // request that produced this page carried.
+                    val cookieHeader = AndroidCookieStorage.get(source.url)?.takeIf { it.isNotBlank() }
                     
                     // Preserve original Origin/Referer from the intercepted request if present.
                     // Some CDNs (e.g. Cloudflare-protected) require the exact origin from the

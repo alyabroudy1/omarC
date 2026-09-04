@@ -2,7 +2,7 @@ package com.cloudstream.shared.network
 
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.core.Fingerprint
-import com.cloudstream.shared.session.SessionState
+import com.cloudstream.shared.core.AndroidCookieStorage
 import com.lagradost.cloudstream3.app
 
 /**
@@ -46,12 +46,10 @@ class MediaUrlValidator {
      * Validate a list of video sources, marking each as accessible or blocked.
      *
      * @param sources List of video source URLs to validate
-     * @param sessionState Current session for building headers
      * @return List of [ValidatedSource] with accessibility status
      */
     suspend fun validateSources(
-        sources: List<VideoSourceCandidate>,
-        sessionState: SessionState
+        sources: List<VideoSourceCandidate>
     ): List<ValidatedSource> {
         if (sources.isEmpty()) return emptyList()
 
@@ -67,7 +65,7 @@ class MediaUrlValidator {
             }
 
             try {
-                val result = validateSingleUrl(source.url, source.headers, sessionState)
+                val result = validateSingleUrl(source.url, source.headers)
                 ValidatedSource(
                     source = source,
                     accessible = result.accessible,
@@ -89,14 +87,13 @@ class MediaUrlValidator {
      */
     suspend fun isAccessible(
         url: String,
-        headers: Map<String, String>,
-        sessionState: SessionState
+        headers: Map<String, String>
     ): Boolean {
         if (shouldSkipValidation(url)) return true
         if (url.startsWith("blob:")) return true
 
         return try {
-            val result = validateSingleUrl(url, headers, sessionState)
+            val result = validateSingleUrl(url, headers)
             result.accessible
         } catch (_: Exception) {
             true // Assume accessible on error
@@ -105,16 +102,18 @@ class MediaUrlValidator {
 
     private suspend fun validateSingleUrl(
         url: String,
-        sourceHeaders: Map<String, String>,
-        sessionState: SessionState
+        sourceHeaders: Map<String, String>
     ): ValidationResult {
-        // Build headers matching what ExoPlayer would send
+        // Build headers matching what ExoPlayer would send. The cookie is whatever the one store
+        // holds for this media URL — ExoPlayer gets the same string handed to it in the link.
         val headers = buildExoPlayerHeaders(
             sourceHeaders = sourceHeaders,
             fingerprint = Fingerprint.current(),
-            sessionCookies = sessionState.cookies
+            cookieHeader = AndroidCookieStorage.get(url)
         )
 
+        // No cookie jar here on purpose: the probe must send exactly the Cookie header the
+        // player will send (buildExoPlayerHeaders); a jar would let OkHttp replace it.
         val client = app.baseClient.newBuilder()
             .connectTimeout(VALIDATION_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
             .readTimeout(VALIDATION_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -163,7 +162,7 @@ class MediaUrlValidator {
      * This ensures the validation accurately predicts ExoPlayer's outcome.
      */
     /**
-     * Pure, so the shape is JVM-testable: no [SessionState], no Android, no
+     * Pure, so the shape is JVM-testable: no Android, no
      * `Fingerprint.current()`. `Accept-Encoding: identity` is what ExoPlayer's
      * `DefaultHttpDataSource` sends for media, and the validation only predicts playback if it
      * sends the same.
@@ -171,7 +170,7 @@ class MediaUrlValidator {
     internal fun buildExoPlayerHeaders(
         sourceHeaders: Map<String, String>,
         fingerprint: Fingerprint,
-        sessionCookies: Map<String, String>
+        cookieHeader: String?
     ): Map<String, String> {
         val headers = mutableMapOf<String, String>()
 
@@ -185,9 +184,9 @@ class MediaUrlValidator {
             headers[k] = v
         }
 
-        // If no cookie in source headers, inject session cookies
-        if (!headers.containsKey("Cookie") && sessionCookies.isNotEmpty()) {
-            headers["Cookie"] = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        // If no cookie in source headers, use what the store holds for this URL
+        if (!headers.containsKey("Cookie") && !cookieHeader.isNullOrBlank()) {
+            headers["Cookie"] = cookieHeader
         }
 
         return headers

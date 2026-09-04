@@ -1081,7 +1081,7 @@ class CimaNowProvider : BaseProvider() {
         Log.w(TAG_RETRY, "Body preview: ${block.bodyPreview.take(200).replace("\n", " ")}")
 
         // Solve through the ordinary session path: getDocument sees the 403 + CF markers and runs the
-        // WebView solve itself, then updateCookies syncs the clearance into the system CookieManager —
+        // WebView solve itself, and the WebView writes the clearance into the system CookieManager —
         // which is exactly where the surf's interceptor reads its cookies from. The home page is the
         // cheapest thing to ask for; what matters is the session it leaves behind, not the bytes.
         if (!reestablishSession(httpService, mainUrl, TAG_RETRY)) {
@@ -1910,11 +1910,16 @@ class CimaNowProvider : BaseProvider() {
         }
         headers["User-Agent"] = userAgent
 
-        // The request's own cookies win — they are the ones the CDN issued for this stream. Session
-        // cookies (cf_clearance and friends, held by ProviderHttpService) only fill the gaps, which
-        // matters when the stream is served from the provider's own domain.
+        // The request's own cookies win — they are the ones the CDN issued for this stream. What
+        // the one cookie store holds for this URL (cf_clearance and friends) only fills the gaps,
+        // which matters when the stream is served from the provider's own domain.
         val mergedCookies = linkedMapOf<String, String>()
-        for ((name, value) in SessionProvider.getCookies()) mergedCookies[name] = value
+        com.cloudstream.shared.core.AndroidCookieStorage.get(capture.url)
+            ?.split(";")?.forEach { pair ->
+                val trimmed = pair.trim()
+                val name = trimmed.substringBefore("=", "")
+                if (name.isNotBlank()) mergedCookies[name] = trimmed.substringAfter("=", "")
+            }
         cookies?.split(";")?.forEach { pair ->
             val trimmed = pair.trim()
             val name = trimmed.substringBefore("=", "")

@@ -2,7 +2,6 @@ package com.cimanow
 
 import com.lagradost.api.Log
 import com.cloudstream.shared.service.ProviderHttpService
-import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.webview.InterceptChallenge
 import com.cloudstream.shared.webview.NavigationSessionPolicy
 
@@ -10,9 +9,9 @@ import com.cloudstream.shared.webview.NavigationSessionPolicy
  * CimaNow's session policy: everything the shared engine deliberately leaves to the provider.
  *
  * This file exists so that three CimaNow-specific decisions do not become everybody's defaults. The
- * shared side gained only neutral seams — a no-op [NavigationSessionPolicy], a reported
- * [InterceptChallenge] list, and a session snapshot/restore pair — and none of them changes what any
- * other provider does. The opinions live here.
+ * shared side gained only neutral seams — a no-op [NavigationSessionPolicy] and a reported
+ * [InterceptChallenge] list — and none of them changes what any other provider does. The opinions
+ * live here.
  */
 
 /**
@@ -21,16 +20,10 @@ import com.cloudstream.shared.webview.NavigationSessionPolicy
  *
  * The engine intercepts cimanow's main frame and re-issues it over `HttpURLConnection`, which is what
  * makes the page render at all. The cost is that Chromium never sees that response, so any
- * `Set-Cookie` on it reaches nobody: not the WebView (whose next subresource goes out without it) and
- * not [ProviderHttpService] (whose next HTTP hop goes out without it either). On a site that rotates
- * a session cookie on the watch page, that is a silent split-brain.
- *
- * Two writes, deliberately different in scope:
- *  - **CookieManager, always.** Scoped to the URL that issued the cookie, exactly where a browser
- *    would have put it. This is what the engine's own interceptor reads on the next request.
- *  - **The provider session, only for cimanow's own domain.** An embed host's tracking cookie has no
- *    business in the session that carries `cf_clearance`, and merging it there would widen what every
- *    later HTTP request advertises.
+ * `Set-Cookie` on it reaches nobody. The fix is one write: the raw header into CookieManager,
+ * scoped to the URL that issued it, exactly where a browser would have put it. That store is now
+ * also what OkHttp reads (`SystemCookieJar`), so the WebView's next subresource and the provider's
+ * next HTTP hop both see it — there is no second place to keep in step.
  */
 class CimaNowNavigationPolicy(
     private val httpService: ProviderHttpService,
@@ -68,16 +61,9 @@ class CimaNowNavigationPolicy(
         val host = try {
             java.net.URI(url).host?.lowercase() ?: ""
         } catch (_: Exception) { "" }
-        val isSessionHost = sessionHosts.any { host == it || host.endsWith(".$it") }
 
-        if (isSessionHost) {
-            httpService.mergeSessionCookies(parsed)
-            Log.i(TAG, "Merged ${parsed.size} cookie(s) from an intercepted response into the " +
-                "session | host=$host mainFrame=$isMainFrame names=${parsed.keys.joinToString(",")}")
-        } else {
-            Log.d(TAG, "Kept ${parsed.size} cookie(s) in CookieManager only (third-party host " +
-                "$host) | names=${parsed.keys.joinToString(",")}")
-        }
+        Log.d(TAG, "Stored ${parsed.size} cookie(s) from an intercepted response in CookieManager " +
+            "| host=$host mainFrame=$isMainFrame names=${parsed.keys.joinToString(",")}")
     }
 
     /**
@@ -410,45 +396,25 @@ suspend fun reestablishSession(
             "(${html.length} chars) — the clearance was refused or the solve never ran")
         return@withSessionGuard false
     }
-    val cookies = httpService.snapshotSession().cookies
+    val cookies = com.cloudstream.shared.core.AndroidCookieStorage.get(url).orEmpty()
     Log.i(tag, "Re-establish: got a clean page (${html.length} chars) | " +
-        "cookies=${cookies.size} hasClearance=" +
-        cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) })
+        "hasClearance=" + cookies.contains("cf_clearance"))
     true
 }
 
 /**
- * Runs [block] without letting a cancelled Cloudflare solve leave the session worse than it started.
+ * Runs [block]. Kept as a seam, but it no longer has anything to guard.
  *
- * `solveCloudflareThenRequest` invalidates the session and clears the system cookies *before* opening
- * its dialog, and returns a plain failure when the user presses back. Nothing puts the old cookies
- * back — so a flow that merely *might* have needed a solve can end up with no `cf_clearance` at all,
- * and the surf that follows is then guaranteed to fail for a reason that has nothing to do with the
- * surf. This restores the snapshot when the session came out strictly poorer.
- *
- * Never rolls back a successful solve: a fresh clearance replaces the snapshot's, so the check is for
- * cookies having been *lost*, not merely changed.
+ * It used to snapshot the session and put it back when a cancelled Cloudflare solve had thrown the
+ * cookies away: the solve invalidated the session and cleared the system cookies *before* opening
+ * its dialog, and nothing restored them on a cancel. Since Wave 2 the solve expires cookies for the
+ * solved host only, in the one store, and no session copy exists to fall out of step — so there is
+ * nothing to snapshot and nothing to restore.
  */
 suspend fun <T> withSessionGuard(
     httpService: ProviderHttpService,
     tag: String,
     block: suspend () -> T
 ): T {
-    val before: SessionState = httpService.snapshotSession()
-    val hadClearance = before.cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) }
-    try {
-        return block()
-    } finally {
-        val after = httpService.snapshotSession()
-        val hasClearance = after.cookies.keys.any { it.equals("cf_clearance", ignoreCase = true) }
-        val lostClearance = hadClearance && !hasClearance
-        val lostEverything = before.cookies.isNotEmpty() && after.cookies.isEmpty()
-        if (lostClearance || lostEverything) {
-            Log.w(tag, "⚠️ Session came out poorer than it went in " +
-                "(cookies ${before.cookies.size}→${after.cookies.size}, " +
-                "clearance $hadClearance→$hasClearance) — a CF solve was almost certainly " +
-                "cancelled or failed after clearing the old session. Restoring it.")
-            httpService.restoreSession(before, "CF solve cleared the session without replacing it")
-        }
-    }
+    return block()
 }

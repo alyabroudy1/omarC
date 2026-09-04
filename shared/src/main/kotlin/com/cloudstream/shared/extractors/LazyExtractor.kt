@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.AndroidCookieStorage
 import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.session.SessionProvider
@@ -54,15 +55,14 @@ abstract class LazyExtractor : ExtractorApi() {
         // CRITICAL FIX: Always use SessionProvider for consistent UA/cookies
         // Ignore the userAgent property - it's not reliably set
         val effectiveUserAgent = Fingerprint.current().userAgent
-        val hasSession = SessionProvider.hasValidSession()
+        val hasSession = SessionProvider.getDomain() != null
         
         ProviderLogger.i(TAG, "getUrl", "=== START ===", 
             "url" to url.take(80),
             "referer" to (referer?.take(60) ?: "null"),
             "isVirtual" to url.contains(serverEndpoint),
             "uaHash" to effectiveUserAgent.hashCode(),
-            "hasSession" to hasSession,
-            "sessionCookieCount" to SessionProvider.getCookies().size)
+            "hasSession" to hasSession)
         
         // Check if this is a virtual URL or a direct URL
         if (url.contains(serverEndpoint)) {
@@ -112,7 +112,7 @@ abstract class LazyExtractor : ExtractorApi() {
             "server" to server,
             "baseUrl" to baseUrl,
             "pageReferer" to pageReferer.take(60),
-            "sessionAvailable" to SessionProvider.hasValidSession())
+            "sessionAvailable" to (SessionProvider.getDomain() != null))
         
         // Fetch embed URL via POST
         ProviderLogger.d(TAG, "processVirtualUrl", "Fetching embed URL from server...")
@@ -316,7 +316,7 @@ abstract class LazyExtractor : ExtractorApi() {
             "quality" to quality,
             "server" to server,
             "csrfToken" to csrfToken.take(20),
-            "hasSession" to SessionProvider.hasValidSession())
+            "hasSession" to (SessionProvider.getDomain() != null))
         
         try {
             val data = mapOf(
@@ -340,13 +340,13 @@ abstract class LazyExtractor : ExtractorApi() {
                 put("User-Agent", ua)
                 ProviderLogger.d(TAG, "fetchEmbedUrl", "Using UA from SessionProvider", "uaHash" to ua.hashCode())
                 
-                // Add cookies from SessionProvider (critical for cf_clearance)
-                val cookies = SessionProvider.buildCookieHeader()
+                // Cookies come from the one store, scoped to the host being posted to.
+                val cookies = AndroidCookieStorage.get(referer)
                 if (!cookies.isNullOrBlank()) {
                     put("Cookie", cookies)
-                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added session cookies", "cookieLen" to cookies.length, "hasCfClearance" to cookies.contains("cf_clearance"))
+                    ProviderLogger.d(TAG, "fetchEmbedUrl", "Added stored cookies", "cookieLen" to cookies.length, "hasCfClearance" to cookies.contains("cf_clearance"))
                 } else {
-                    ProviderLogger.w(TAG, "fetchEmbedUrl", "No session cookies available!")
+                    ProviderLogger.w(TAG, "fetchEmbedUrl", "No cookies stored for this host!")
                 }
                 
                 // CRITICAL: Add Origin header for Cloudflare

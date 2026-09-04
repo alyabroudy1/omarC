@@ -77,6 +77,7 @@ class DirectHttpStrategy(
         val protocols = listOf(okhttp3.Protocol.HTTP_1_1)
         val directClient = app.baseClient.newBuilder()
             .protocols(protocols)
+            .cookieJar(com.cloudstream.shared.core.SystemCookieJar())
             .addInterceptor(com.cloudstream.shared.core.FingerprintInterceptor)
             .build()
         

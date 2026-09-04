@@ -21,7 +21,7 @@ class MediaUrlValidatorHeadersTest {
         val headers = validator.buildExoPlayerHeaders(
             sourceHeaders = mapOf("Referer" to "https://example.com/"),
             fingerprint = fp,
-            sessionCookies = emptyMap()
+            cookieHeader = null
         )
         assertEquals("identity", headers["Accept-Encoding"])
         assertEquals("*/*", headers["Accept"])
@@ -30,28 +30,28 @@ class MediaUrlValidatorHeadersTest {
 
     @Test
     fun usesFingerprintUaWhenNoneSupplied() {
-        val headers = validator.buildExoPlayerHeaders(emptyMap(), fp, emptyMap())
+        val headers = validator.buildExoPlayerHeaders(emptyMap(), fp, null)
         assertEquals(fp.userAgent, headers["User-Agent"])
     }
 
     @Test
     fun sourceUaWins() {
         val headers = validator.buildExoPlayerHeaders(
-            mapOf("User-Agent" to "custom/1.0"), fp, emptyMap()
+            mapOf("User-Agent" to "custom/1.0"), fp, null
         )
         assertEquals("custom/1.0", headers["User-Agent"])
     }
 
     @Test
-    fun sessionCookiesOnlyWhenSourceHasNone() {
+    fun storeCookiesOnlyWhenSourceHasNone() {
         assertEquals(
             "a=1; b=2",
-            validator.buildExoPlayerHeaders(emptyMap(), fp, mapOf("a" to "1", "b" to "2"))["Cookie"]
+            validator.buildExoPlayerHeaders(emptyMap(), fp, "a=1; b=2")["Cookie"]
         )
         assertEquals(
             "src=1",
             validator.buildExoPlayerHeaders(
-                mapOf("Cookie" to "src=1"), fp, mapOf("a" to "1")
+                mapOf("Cookie" to "src=1"), fp, "a=1"
             )["Cookie"]
         )
     }
