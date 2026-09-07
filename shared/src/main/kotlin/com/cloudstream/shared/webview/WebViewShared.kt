@@ -81,3 +81,35 @@ internal const val DELETED_VIDEO_PHRASES_JS = """
     "this video does not exist",
     "access denied", "blocked",
 """
+
+/**
+ * The `navigator.plugins` fake, shared by every engine that spoofs the WebView environment.
+ *
+ * A plain Android WebView reports an empty `PluginArray`, which players that gate on "headless"
+ * treat as a bot tell. The fakes must be array-**like**, never real Arrays: a genuine
+ * `navigator.plugins` is a `PluginArray`, so `Array.isArray(navigator.plugins)` is false in every
+ * real browser, and sites probe exactly that to catch spoofers (CimaNow ships
+ * `Array.isArray(navigator.plugins) && navigator.plugins[0] === 1` as a bot signal). An array
+ * literal such as `[1,2,3,4,5]` — what `NavigationEngine.SPOOFING_JS` used to install — hands them
+ * the tell we are trying to hide.
+ *
+ * Only defined when the real list is empty, so a WebView that does report plugins keeps its own.
+ */
+internal const val PLUGIN_ARRAY_SPOOF_JS = """
+    try {
+        if (!navigator.plugins || navigator.plugins.length === 0) {
+            var fakePlugins = Object.create(null);
+            var pluginList = [
+                { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+            ];
+            for (var pi = 0; pi < pluginList.length; pi++) fakePlugins[pi] = pluginList[pi];
+            fakePlugins.length = pluginList.length;
+            fakePlugins.item = function(i) { return this[i] || null; };
+            fakePlugins.namedItem = function(n) { for (var i=0;i<this.length;i++) if (this[i].name===n) return this[i]; return null; };
+            fakePlugins.refresh = function() {};
+            Object.defineProperty(navigator, 'plugins', { get: function() { return fakePlugins; } });
+        }
+    } catch(e) {}
+"""

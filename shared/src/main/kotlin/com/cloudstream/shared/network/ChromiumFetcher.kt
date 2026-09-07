@@ -1,17 +1,11 @@
 package com.cloudstream.shared.network
 
 import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.Looper
 import android.webkit.*
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.webview.WebViewFactory
+import com.cloudstream.shared.webview.WebViewSession
 import com.cloudstream.shared.webview.parseCookieString
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import org.json.JSONTokener
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * HTTP client that uses Android WebView's Chromium stack for requests.
@@ -73,8 +67,8 @@ internal fun filterLoadUrlHeaders(headers: Map<String, String>): Map<String, Str
     headers.filterKeys { it.lowercase() !in LOAD_URL_DROPPED_HEADERS }
 
 class ChromiumFetcher(
-    private val activityProvider: () -> android.app.Activity?
-) {
+    activityProvider: () -> android.app.Activity?
+) : WebViewSession(activityProvider) {
     companion object {
         private const val TAG = "ChromiumFetcher"
 
@@ -84,8 +78,6 @@ class ChromiumFetcher(
         /** Reuse threshold — don't create a new WebView if we fetched within this window */
         private const val WEBVIEW_REUSE_WINDOW_MS = 30_000L
     }
-
-    private val fetchMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Cached WebView for reuse within the reuse window */
     @Volatile
@@ -105,7 +97,7 @@ class ChromiumFetcher(
         url: String,
         headers: Map<String, String> = emptyMap(),
         timeout: Long = DEFAULT_TIMEOUT_MS
-    ): ChromiumResponse = fetchMutex.withLock {
+    ): ChromiumResponse = withSession {
         withContext(Dispatchers.Main) {
             val activity = activityProvider()
             if (activity == null) {
@@ -114,7 +106,6 @@ class ChromiumFetcher(
             }
 
             val deferred = CompletableDeferred<ChromiumResponse>()
-            var delivered = false
             var webViewRef: WebView? = null
 
             try {
@@ -146,15 +137,15 @@ class ChromiumFetcher(
                     }
 
                     override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                        if (delivered) return
+                        if (resultDelivered) return
                         val currentUrl = view?.url ?: loadedUrl ?: url
 
-                        CoroutineScope(Dispatchers.Main).launch {
+                        launchInSession {
                             try {
                                 val html = extractHtml(view!!)
-                                val cookies = extractCookies(currentUrl)
+                                val cookies = cookiesFromStore(currentUrl)
 
-                                delivered = true
+                                resultDelivered = true
                                 lastFetchTime = System.currentTimeMillis()
 
                                 ProviderLogger.i(TAG, "fetch", "Chrome-TLS fetch complete",
@@ -171,8 +162,8 @@ class ChromiumFetcher(
                                     finalUrl = currentUrl
                                 ))
                             } catch (e: Exception) {
-                                if (!delivered) {
-                                    delivered = true
+                                if (!resultDelivered) {
+                                    resultDelivered = true
                                     deferred.complete(ChromiumResponse.error(e.message ?: "HTML extraction failed"))
                                 }
                             }
@@ -184,12 +175,12 @@ class ChromiumFetcher(
                         request: WebResourceRequest?,
                         error: WebResourceError?
                     ) {
-                        if (request?.isForMainFrame == true && !delivered) {
+                        if (request?.isForMainFrame == true && !resultDelivered) {
                             val desc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                                 error?.description?.toString()
                             } else error?.toString()
 
-                            delivered = true
+                            resultDelivered = true
                             ProviderLogger.w(TAG, "fetch.onReceivedError", "Network error",
                                 "description" to desc, "url" to url.take(80))
                             deferred.complete(ChromiumResponse.error("Network error: $desc"))
@@ -215,15 +206,15 @@ class ChromiumFetcher(
                 if (response != null) {
                     response
                 } else {
-                    delivered = true
+                    resultDelivered = true
                     ProviderLogger.w(TAG, "fetch", "Timeout after ${timeout}ms", "url" to url.take(80))
                     ChromiumResponse.timeout(url)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!delivered) {
-                    delivered = true
+                if (!resultDelivered) {
+                    resultDelivered = true
                 }
                 ChromiumResponse.error(e.message ?: "Unknown error")
             } finally {
@@ -232,6 +223,10 @@ class ChromiumFetcher(
                 if (!deferred.isCompleted) {
                     try { webViewRef?.stopLoading() } catch (_: Exception) {}
                 }
+                // Detach this fetch's client from the *cached* WebView: a straggler onPageFinished
+                // from the page just abandoned would otherwise set the instance-level
+                // resultDelivered against the next fetch's session and make it time out.
+                try { webViewRef?.webViewClient = WebViewClient() } catch (_: Exception) {}
             }
         }
     }
@@ -266,15 +261,9 @@ class ChromiumFetcher(
         }
 
         // Create fresh WebView
-        existing?.let { old ->
-            try {
-                old.stopLoading()
-                old.loadUrl("about:blank")
-                old.destroy()
-            } catch (_: Exception) {}
-        }
+        cleanupWebView(existing)
 
-        val webView = WebViewFactory.create(activity).apply {
+        val webView = createWebView(activity).apply {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -298,22 +287,12 @@ class ChromiumFetcher(
         return webView
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun extractHtml(webView: WebView): String = suspendCancellableCoroutine { cont ->
-        Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return document.documentElement.outerHTML; })();"
-            ) { result ->
-                val html = try {
-                    if (result == null || result == "null") ""
-                    else JSONTokener(result).nextValue().toString()
-                } catch (e: Exception) { "" }
-                if (cont.isActive) cont.resume(html) {}
-            }
-        }
-    }
-
-    private fun extractCookies(url: String): Map<String, String> {
+    /**
+     * Cookies straight from the system store. Chromium deliberately skips the `document.cookie`
+     * half of [extractCookies] — it fetches HTML, never solves JS challenges — so this is a
+     * separate, differently-named path rather than an overload of the inherited method.
+     */
+    private fun cookiesFromStore(url: String): Map<String, String> {
         return try {
             parseCookieString(CookieManager.getInstance().getCookie(url))
         } catch (_: Exception) { emptyMap() }
@@ -323,18 +302,8 @@ class ChromiumFetcher(
      * Release the cached WebView. Call when the provider is being torn down.
      */
     fun release() {
-        try {
-            cachedWebView?.let { wv ->
-                Handler(Looper.getMainLooper()).post {
-                    try {
-                        wv.stopLoading()
-                        wv.loadUrl("about:blank")
-                        wv.destroy()
-                    } catch (_: Exception) {}
-                }
-            }
-            cachedWebView = null
-        } catch (_: Exception) {}
+        cleanupWebView(cachedWebView)
+        cachedWebView = null
     }
 }
 

@@ -230,10 +230,9 @@ class NavigationEngine(
          * Inject [SPOOFING_JS] into every page. Default true (what every existing caller expects).
          *
          * Pass **false** for pages whose anti-bot inspects its own environment. The spoof is not
-         * free: it defines `window.DisableDevtool` and reports `navigator.plugins` as `[1,2,3,4,5]`,
-         * which on Android Chrome is an empty PluginArray — a fake so crude that looking for it is
-         * the first thing an automation check does. It runs at `onPageStarted`, i.e. before the
-         * page's own scripts, so the gate sees all of it.
+         * free: it defines `window.DisableDevtool` and installs [PLUGIN_ARRAY_SPOOF_JS] over an empty
+         * `navigator.plugins`. It runs at `onPageStarted`, i.e. before the page's own scripts, so
+         * the gate sees all of it.
          */
         injectSpoofingJs: Boolean = true,
         /**
@@ -4229,7 +4228,7 @@ class NavigationEngine(
             (function(){
                 try { Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } }); } catch(e) {}
                 $DISABLE_DEVTOOL_BYPASS_JS
-                try { Object.defineProperty(navigator, 'plugins', { get: function() { return [1,2,3,4,5]; } }); } catch(e) {}
+                $PLUGIN_ARRAY_SPOOF_JS
                 try { Object.defineProperty(navigator, 'languages', { get: function() { return ['ar-SA','en-US','en']; } }); } catch(e) {}
             })();
         """.trimIndent()

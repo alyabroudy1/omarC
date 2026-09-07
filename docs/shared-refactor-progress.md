@@ -270,6 +270,51 @@ called its own copy. Also: the packer regex lost `DOT_MATCHES_ALL`, so a multi-l
 p,a,c,k,e,d)` body no longer matches, and `EARNVIDS_HOSTS` and the registration block are hand-
 mirrored, so adding a host to one and not the other is silent.
 
+## 6a. Wave 4a: `WebViewSession` base
+
+Commit: see the status table (first of the three Wave 4 commits; roadmap requires them separate).
+
+**What changed.** New `shared/.../webview/WebViewSession.kt` (abstract base): a per-engine `Mutex`
+so `runSession`/`fetch` calls serialise, a per-session `CoroutineScope(SupervisorJob() + Main)`
+cancelled in `cleanup()`, `@Volatile resultDelivered`, `launchInSession`, `createWebView` via
+`WebViewFactory`, shared `extractHtml`, `extractCookies`, `cleanupWebView`. `CfBypassEngine`,
+`VideoSnifferEngine` and `ChromiumFetcher` extend it: 3 + 13 + 1 bare
+`CoroutineScope(Dispatchers.Main).launch` calls rerouted into the session scope, duplicated
+HTML/cookie/teardown code deleted, `ChromiumFetcher.fetchMutex` replaced by the base mutex (its 30 s
+WebView reuse cache kept). `NavigationEngine`'s `navigator.plugins = [1,2,3,4,5]` spoof, a documented
+bot tell, replaced by the sniffer's array-like fake, now one constant in `WebViewShared`.
+`.gitattributes` (`* text=auto eol=lf`) added; no files renormalised yet.
+
+**Why.** Wave 4 acceptance criterion 5 (concurrent sessions serialise, delivery flag volatile) and
+the review findings that engines leaked unstructured coroutines and duplicated ~45-line blocks. The
+Wave 1 fingerprint invariant becomes structural: every engine WebView is created by the base.
+
+**Decisions.**
+
+| Decision | Alternative rejected | Why |
+|---|---|---|
+| Teardown stays in the caller's `finally`, guard re-keyed on `deferred.isCompleted` | wrap each deliverer in its own `try/finally` | the caller's `finally` is the one place still alive after the session scope is cancelled; wrapping would double the teardown path |
+| `cleanup()` runs only from `withSession`'s `finally` | cancel the scope from the delivery path | delivery runs inside the scope; cancelling there would cancel `deferred.complete` |
+| `extractHtml` returns `String` ("" on failure) | `String?` | all three engines already returned "" |
+| ChromiumFetcher detaches its `WebViewClient` in `fetch`'s `finally` | leave as is | a straggler `onPageFinished` on the reused WebView could set the instance flag for the next fetch |
+| `NavigationEngine` not made a subclass yet | do it now | Wave 4c moves it into CimaNow; making it a subclass first would be churn |
+
+**Metrics.** Tests 83 to 95 for this slice (12 new: `WebViewSharedTest` 4, `EngineFlagsTest` 3,
+`WebViewSessionTest` 5 using `kotlinx-coroutines-test` 1.7.1 with `Dispatchers.setMain`). All 41
+modules compile.
+
+**Review.** `docs/reviews/wave-4a-review.md`: not ready as-is, ready after F1. F1 (P1) was a real
+regression introduced by the scope cancellation: a caller cancelled while a deliverer was suspended
+on the cookie read skipped teardown and leaked the WebView and dialog. Fixed as above. F2 straggler
+callback fixed. F3 contention log line added. F4 unused `userAgentOverride` parameter dropped. F5
+rename. F7 test comment. Deferred: F6 (`git add --renormalize` as its own commit), F8 (sniffer
+player-mode teardown), the intercept hook the roadmap listed (no engine shares one yet).
+
+**Regression watch.** Parallel server sniffs on one provider now queue behind a single 3-hour
+sniffer session instead of racing (intended by criterion 5; the new log line makes it visible).
+Device checks owed: CimaNow freex flow, one CF solve per provider under parallel search, session
+cancel lines in `log3.txt`.
+
 ## 7. Cumulative status
 
 | Wave | Commit | Runnable tests after | LOC (all files, `git show --stat`) | LOC (excluding `docs/`, `log3.txt`) | Status |
@@ -279,8 +324,9 @@ mirrored, so adding a host to one and not the other is silent.
 | 1 | `6462aa91` | 56 | 62 files, +1,454 / -665 | +1,228 / -665 | Committed; device capture owed |
 | 2 | `aae6481f` | 68 | 21 files, +651 / -847 | +501 / -847 | Committed; four device checks owed |
 | 3 | `02d55477` | 83 | 57 files, +811 / -4,143 | +560 / -4,129 | Committed; EarnVids device check owed |
-| 4a | uncommitted | - | - | - | In progress: `webview/WebViewSession.kt` (196 lines) with `CfBypassEngine`, `VideoSnifferEngine`, `ChromiumFetcher` and `WebViewShared` being moved onto it |
-| 4b | uncommitted | - | - | - | Design in progress (gateway split, `ProviderRuntime`) |
+| 4a | see git log ("Wave 4a") | 95 | see commit | see commit | Committed; device checks owed |
+| 4b-1 | uncommitted | 105 | - | - | Implemented (`FetchOutcome`, `RequestQueue.Host`), under review |
+| 4b-2, 4b-3 | not started | - | - | - | Design at `docs/wave-4b-design.md` |
 | 5 | not started | - | - | - | Discussion item: `shared-core` into the APK |
 | 6 | not started | - | - | - | Domain handling under R3, last by owner decision |
 

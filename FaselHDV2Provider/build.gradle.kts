@@ -16,6 +16,9 @@ dependencies {
     implementation("org.mozilla:rhino:1.7.14")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // Same 1.7.1 the compile classpath resolves kotlinx-coroutines-core to (strictly 1.7.1 via
+    // the cloudstream plugin), so setMain/StandardTestDispatcher match the runtime under test.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.1")
     // Same OkHttp as the compile classpath (5.0.0-alpha.12); the wire test asserts what
     // OkHttp itself puts on the request, so the versions must match.
     testImplementation("com.squareup.okhttp3:mockwebserver:5.0.0-alpha.12")
