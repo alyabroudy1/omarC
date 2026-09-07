@@ -4,7 +4,7 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.WatchServerSelector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -22,7 +22,7 @@ class SearchPagingTest {
     /** A parser that only exists to exercise the pure `getSearchUrl` logic. */
     private class PagingParser(
         override val searchPaginationFormat: String?
-    ) : NewBaseParser() {
+    ) : BaseParser() {
         private val sel = CssSelector(query = "a", attr = "href")
         override val mainPageConfig = MainPageConfig(container = "div", title = sel, url = sel, poster = sel)
         override val loadPageConfig = LoadPageConfig(title = sel, plot = sel, poster = sel)

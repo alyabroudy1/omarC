@@ -3,7 +3,7 @@ package com.lagradost.cloudstream3.plugins
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import javax.crypto.Cipher
@@ -17,7 +17,7 @@ class Tuniflix : BaseProvider() {
     override val baseDomain get() = "tuniflix.site"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return TuniflixParser()
     }
 

@@ -1,6 +1,6 @@
 package com.bristeg
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
@@ -20,7 +20,7 @@ class Bristege : BaseProvider() {
         "/cat44.php?cat=ramdan2026" to "مسلسلات رمضان 2026",
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return BristegeParser()
     }
 

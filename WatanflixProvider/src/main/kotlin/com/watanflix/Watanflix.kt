@@ -1,7 +1,7 @@
 
 package com.watanflix
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.ui.player.YouTubePlayer
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -44,7 +44,7 @@ class Watanflix : BaseProvider() {
         "/ar/category/أطفال" to "أطفال"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return WatanflixParser()
     }
 

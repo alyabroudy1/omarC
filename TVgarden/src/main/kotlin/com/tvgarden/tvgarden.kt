@@ -7,13 +7,13 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 class FamelackProvider : BaseProvider() {
     override val providerName get() = "TVgarden(Famelack)"
     override val baseDomain get() = "famelack.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return FamelackParser()
     }
 

@@ -12,14 +12,14 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 
 class Viu : BaseProvider() {
     override val providerName get() = "Viu"
     override val baseDomain get() = "www.viu.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return ViuParser()
     }
 

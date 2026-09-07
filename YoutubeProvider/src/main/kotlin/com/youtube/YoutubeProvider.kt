@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
 import com.youtube.innertube.InnerTubeParser
@@ -22,7 +22,7 @@ class YoutubeProvider : BaseProvider() {
     override val baseDomain get() = "www.youtube.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return YoutubeParser()
     }
 

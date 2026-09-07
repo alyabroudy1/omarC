@@ -3,7 +3,7 @@ package com.syrialive
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -77,7 +77,7 @@ class SyriaLive : BaseProvider() {
     // Live football fixtures aren't meaningfully searchable — disable search entirely.
     override val supportsSearch = false
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return SyriaLiveParser()
     }
 
@@ -142,7 +142,7 @@ class SyriaLive : BaseProvider() {
      * Overriding getMainPage because the root URL `https://d.syrlive.com/` returns two 
      * entirely different structural lists ("مباريات اليوم" matches and "آخر الأخبار" news).
      * If we relied on `mainPageOf`, `BaseProvider` would iterate and fetch the heavy 
-     * Cloudflare-protected page multiple times and NewBaseParser configs only support 
+     * Cloudflare-protected page multiple times and BaseParser configs only support 
      * one list per container configuration.
      */
     override suspend fun getMainPage(

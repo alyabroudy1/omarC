@@ -420,7 +420,7 @@ Order inside the wave matters: `WebViewSession` first, because tiers 2 and 3 dep
 | change | `extractors/*` (10 files incl. `LarozaExtractor.kt:32`, `VKVideoEmbed.kt:33`, `ByseExtractor.kt:344`) | take `Fingerprint` and the jar by constructor. `ExtractorApi.getUrl` has a fixed signature, so a per-call context is not possible; constructor injection is the only option |
 | change | `registerSharedExtractors` | becomes a per-plugin list of constructed instances, fixing the 40-copies-in-`extractorApis` problem and the built-in name collisions (`MailruExtractor.kt:15-16` vs the app's `MailRu`, `OdnoklassnikiApiExtractor.kt:15` on `ok.ru`) |
 | move | `webview/NavigationEngine.kt` (4,410 LOC), `webview/VideoSnifferJs.kt` cimanow parts, `extractors/CimaNowTVEmbed.kt`, `NavigateToWatchingUrl` | into `CimaNowProviderV2`. Single consumer: `CimaNowProvider.kt:1336,2435,3129` |
-| change | `parsing/` | one base; rename `NewBaseParser` to `BaseParser`; type `BaseProvider.getParser()` as `ParserInterface` (`BaseProvider.kt:81`) |
+| change | `parsing/` | one base; `BaseParser` (renamed from `NewBaseParser` in Wave 4b-3); `BaseProvider.getParser()` typed as `ParserInterface` (`BaseProvider.kt:78`) |
 | change | `queue/RequestQueue.kt` | decouple the injected callbacks (`ProviderHttpService.kt:66-75`) that create the cycle |
 
 **Explicit non-touch.** `RequestQueue.allowedDomains` (`:112-121`) and its callers keep their current

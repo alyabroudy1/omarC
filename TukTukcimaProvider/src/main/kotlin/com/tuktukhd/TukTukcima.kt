@@ -1,7 +1,7 @@
 package com.tuktukhd
 
 import android.util.Base64
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.provider.ProviderConfig
@@ -43,7 +43,7 @@ class TukTukcima : BaseProvider() {
 
 
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return TukTukcimaParser()
     }
 

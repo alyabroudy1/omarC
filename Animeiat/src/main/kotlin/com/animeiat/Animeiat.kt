@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import android.util.Base64
 import android.util.Log
 
@@ -16,7 +16,7 @@ class AnimeiatProvider : BaseProvider() {
     override val baseDomain get() = "api.animeiat.co"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return AnimeiatParser()
     }
 

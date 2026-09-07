@@ -66,9 +66,9 @@ data class WatchServerSelector(
  * Shared parsing logic and helpers.
  * Implements common pattern matching and selector utilities using CssConfig.
  */
-abstract class NewBaseParser : ParserInterface {
+abstract class BaseParser : ParserInterface {
     
-    protected val TAG = "NewBaseParser"
+    protected val TAG = "BaseParser"
 
     // Abstract configs to be provided by implementing classes
     abstract val mainPageConfig: MainPageConfig

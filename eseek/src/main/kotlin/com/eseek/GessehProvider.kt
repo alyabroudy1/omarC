@@ -17,7 +17,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 
 class GessehProvider : BaseProvider() {
@@ -53,7 +53,7 @@ class GessehProvider : BaseProvider() {
     override val hasMainPage = true
     override val supportsLazySearch = true
 
-    override fun getParser(): NewBaseParser = GessehParser()
+    override fun getParser(): BaseParser = GessehParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         httpService.ensureInitialized()

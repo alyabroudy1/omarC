@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationStep
@@ -31,7 +31,7 @@ class Anim3rbProvider : BaseProvider() {
         "$mainUrl/" to "الرئيسية"
     )
 
-    override fun getParser(): NewBaseParser = Anim3rbParser()
+    override fun getParser(): BaseParser = Anim3rbParser()
 
     companion object {
         private const val TAG = "Anim3rb"

@@ -1,7 +1,7 @@
 package com.cimaclub
 
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.mainPageOf
 
 class CimaClub : BaseProvider() {
@@ -25,7 +25,7 @@ class CimaClub : BaseProvider() {
         "$mainUrl/category/مسلسلات-مدبلجة/" to "مسلسلات مدبلجة",
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaClubParser()
     }
 }

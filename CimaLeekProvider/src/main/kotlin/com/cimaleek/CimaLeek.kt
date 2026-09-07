@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.extractors.SnifferSelector
 import com.cloudstream.shared.core.Fingerprint
@@ -32,7 +32,7 @@ class CimaLeek : BaseProvider() {
         "/category/anime-series/" to "مسلسلات أنمي"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaLeekParser()
     }
 

@@ -6,7 +6,7 @@ import com.cloudstream.shared.parsing.ParserInterface.ParsedLoadData
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class FaselHDV2Parser : NewBaseParser() {
+class FaselHDV2Parser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/?s=$query"

@@ -7,7 +7,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 
-class ArabseedV4Parser : NewBaseParser() {
+class ArabseedV4Parser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/find/?word=$query"

@@ -6,7 +6,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URI
 
-class Anim3rbParser : NewBaseParser() {
+class Anim3rbParser : BaseParser() {
     private val PARSER_TAG = "Anim3rbParser"
 
     override val mainPageConfig = MainPageConfig(

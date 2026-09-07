@@ -1,6 +1,6 @@
 package com.wecima
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface
@@ -24,7 +24,7 @@ class Wecima : BaseProvider() {
         "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/" to "مسلسلات انمي"
     )
 
-    override fun getParser(): NewBaseParser = WecimaParser()
+    override fun getParser(): BaseParser = WecimaParser()
 
     private suspend fun searchPost(query: String): List<SearchResponse> {
         val jsonText = httpService.postText(

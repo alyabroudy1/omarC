@@ -2,7 +2,7 @@ package com.eshk
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -13,7 +13,7 @@ class eishk : BaseProvider() {
     override val baseDomain get() = "3esk.onl"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/eishk.json"
 
-    override fun getParser(): NewBaseParser = EshkParser()
+    override fun getParser(): BaseParser = EshkParser()
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override var lang = "ar"

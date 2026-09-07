@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 
 import android.util.Base64
 import org.json.JSONObject
@@ -51,7 +51,7 @@ class KrmzyProvider : BaseProvider() {
     override val hasMainPage = true
     override val supportsLazySearch = true
 
-    override fun getParser(): NewBaseParser = KrmzyParser()
+    override fun getParser(): BaseParser = KrmzyParser()
 
     private fun resolveSayyarhUrl(url: String): String {
         if (!url.contains("sayyarh.com") && !url.contains("latest1501")) return url

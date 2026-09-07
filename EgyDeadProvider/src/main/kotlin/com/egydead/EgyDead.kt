@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.ui.DrmPlayerDialog
 import org.jsoup.Jsoup
@@ -36,7 +36,7 @@ class EgyDead : BaseProvider() {
         "/series-category/tv-shows/" to "برامج تلفزيونية"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return EgyDeadParser()
     }
 

@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.extractors.MegaboxResolver
 import org.jsoup.nodes.Document
@@ -21,7 +21,7 @@ class Anime4Up : BaseProvider() {
         "/anime-type/movie-3/" to "أفلام"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return Anime4UpParser()
     }
 

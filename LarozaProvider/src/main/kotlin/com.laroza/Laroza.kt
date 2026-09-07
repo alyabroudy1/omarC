@@ -6,7 +6,7 @@ import com.cloudstream.shared.provider.ProviderConfig
 import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -39,7 +39,7 @@ class Laroza : BaseProvider() {
         "/category.php?cat=tv-programs12" to "برامج تلفزيونية"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return LarozaParser()
     }
 

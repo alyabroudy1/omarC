@@ -1,6 +1,6 @@
 package com.tuktukhd
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.parsing.MainPageConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
@@ -11,7 +11,7 @@ import com.lagradost.cloudstream3.TvType
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class TukTukcimaParser : NewBaseParser() {
+class TukTukcimaParser : BaseParser() {
 
     override val mainPageConfig = MainPageConfig(
         container = "li.Small--Box, div.Block--Item",

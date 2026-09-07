@@ -3,7 +3,7 @@ package com.yallashoot
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.newMovieSearchResponse
@@ -24,7 +24,7 @@ class YallaShoot : BaseProvider() {
     // Live football fixtures aren't meaningfully searchable — disable search entirely.
     override val supportsSearch = false
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return YallaShootParser()
     }
 

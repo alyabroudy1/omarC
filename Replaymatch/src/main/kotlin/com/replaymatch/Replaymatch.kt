@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlinx.coroutines.async
@@ -26,7 +26,7 @@ class FullMatchShowsProvider : BaseProvider() {
     override val baseDomain get() = "fullmatchshows.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return ReplaymatchParser()
     }
 

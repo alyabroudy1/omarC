@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.cloudstream.shared.extractors.EarnVidsExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
@@ -19,7 +19,7 @@ class Shahid4u : BaseProvider() {
     override val baseDomain get() = "shaahed4u.net"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return Shahid4uParser()
     }
 

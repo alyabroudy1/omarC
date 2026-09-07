@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.cloudstream.shared.extractors.MailruExtractor
 import com.cloudstream.shared.extractors.VideaExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 import android.util.Base64
 import com.lagradost.cloudstream3.mvvm.logError
@@ -49,7 +49,7 @@ class WitAnime : BaseProvider() {
     override val baseDomain get() = "witanime.red"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return WitanimeParser()
     }
 

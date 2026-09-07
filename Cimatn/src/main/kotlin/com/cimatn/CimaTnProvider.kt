@@ -1,7 +1,7 @@
 package com.cimatn
 
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -24,7 +24,7 @@ class CimaTn : BaseProvider() {
 
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaTnParser()
     }
 

@@ -6,7 +6,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 
-class WatanflixParser : NewBaseParser() {
+class WatanflixParser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/ar/search?q=$query"

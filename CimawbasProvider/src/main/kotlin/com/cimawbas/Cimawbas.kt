@@ -1,7 +1,7 @@
 package com.cimawbas
 
 import com.cloudstream.shared.extractors.SnifferExtractor
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
@@ -22,7 +22,7 @@ class Cimawbas : BaseProvider() {
         "/all-series.php" to "مسلسلات",
     )
 
-    override fun getParser(): NewBaseParser = CimawbasParser()
+    override fun getParser(): BaseParser = CimawbasParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val methodTag = "[$name] [getMainPage]"

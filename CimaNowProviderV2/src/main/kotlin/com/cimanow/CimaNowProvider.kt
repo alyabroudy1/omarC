@@ -6,7 +6,7 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.CapturedEmbedRequest
@@ -32,7 +32,7 @@ class CimaNowProvider : BaseProvider() {
     override val baseDomain get() = "cimanow.cc"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaNowParser()
     }
 

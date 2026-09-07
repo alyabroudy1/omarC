@@ -6,7 +6,7 @@ Date: 2026-09-03. Scope: `shared/src/main/kotlin/com/cloudstream/shared/**`, its
 
 - `shared/` is 25.7k lines of Kotlin that every provider plugin compiles in via `kotlin.srcDir("../shared/src/main/kotlin")`. It is not a Gradle module and has no version.
 - Because the CloudStream gradle plugin dexes project classes only, each of the 41 `.cs3` files carries a private copy of all of `shared`. A 225-line provider ships a 1.5 MB dex.
-- All 41 providers extend `BaseProvider`; all parsers extend `NewBaseParser`. The thin declarative model works (MyCima is 225 lines). The heavy end has left the framework (CimaNow is 4,036 lines and drives `NavigationEngine` directly).
+- All 41 providers extend `BaseProvider`; all parsers extend `BaseParser` (renamed from `NewBaseParser` in Wave 4b-3). The thin declarative model works (MyCima is 225 lines). The heavy end has left the framework (CimaNow is 4,036 lines and drives `NavigationEngine` directly).
 - Verdict: the *intent* (one HTTP gateway, one session, declarative parsers, self-healing domains) is right. The *implementation* is a copy-paste library grown by accretion around two or three sites, with two abandoned design generations still compiled in, undefined state ownership, ad hoc concurrency, and debug code shipping to users.
 - Top problems, ranked:
   1. **Live regression**: 22 providers' custom search paths are unreachable since the pagination refactor (`BaseProvider.kt:166,206-247,257`).

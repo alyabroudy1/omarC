@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.logError
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
@@ -19,7 +19,7 @@ class TopCinemaProvider : BaseProvider() {
     override val baseDomain get() = "web8.topcinema.cam"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return TopCinemaParser()
     }
 

@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import org.jsoup.nodes.Element
 import com.cloudstream.shared.extractors.EarnVidsExtractor
 
@@ -15,7 +15,7 @@ class LodyNet : BaseProvider() {
     override val baseDomain get() = "lodynet.watch"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return LodyParser()
     }
 

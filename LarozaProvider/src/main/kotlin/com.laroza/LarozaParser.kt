@@ -6,7 +6,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 
-class LarozaParser : NewBaseParser() {
+class LarozaParser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/search.php?keywords=$query"

@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import org.jsoup.Jsoup
 import org.json.JSONObject
 
@@ -18,7 +18,7 @@ class Asia2TvProvider : BaseProvider() {
         "$mainUrl/series?page=1" to "الرئيسية"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return Asia2TvParser()
     }
 

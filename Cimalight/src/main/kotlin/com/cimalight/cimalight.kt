@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -17,7 +17,7 @@ class CimaLightProvider : BaseProvider() {
     override val githubConfigUrl get() = ""
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaLightParser()
     }
 

@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 
 class IPTVProvider : BaseProvider() {
 
@@ -19,7 +19,7 @@ class IPTVProvider : BaseProvider() {
         "/arach" to "All Channels"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return IPTVParser()
     }
 

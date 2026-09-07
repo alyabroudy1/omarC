@@ -2,7 +2,6 @@ package com.cloudstream.shared.provider
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import org.jsoup.nodes.Document
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
@@ -75,7 +74,7 @@ abstract class BaseProvider : MainAPI() {
      */
     open val requestTimeoutMs: Long? = null
 
-    protected abstract fun getParser(): NewBaseParser
+    protected abstract fun getParser(): ParserInterface
 
 
     protected val httpService by lazy {

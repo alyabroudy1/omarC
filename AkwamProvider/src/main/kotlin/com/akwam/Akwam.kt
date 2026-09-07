@@ -1,6 +1,6 @@
 package com.akwam
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.api.Log
@@ -38,7 +38,7 @@ class Akwam : BaseProvider() {
         "/movies?section=31&category=0&rating=0&year=0&language=0&formats=0&quality=0" to "أفلام هندي"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         Log.d("Akwam", "getParser called")
         return AkwamParser()
     }

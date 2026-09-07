@@ -3,7 +3,7 @@ package com.faselHDV2
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.extractors.FaselHDExtractor
 import org.jsoup.nodes.Document
@@ -61,7 +61,7 @@ class FaselHDV2 : BaseProvider() {
         "/anime" to "الأنمي",
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return FaselHDV2Parser()
     }
 
