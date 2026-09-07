@@ -315,6 +315,42 @@ sniffer session instead of racing (intended by criterion 5; the new log line mak
 Device checks owed: CimaNow freex flow, one CF solve per provider under parallel search, session
 cancel lines in `log3.txt`.
 
+## 6b. Wave 4b-1: `FetchOutcome` and `RequestQueue.Host`
+
+Design: `docs/wave-4b-design.md` sections 3, 4, 9. Review: `docs/reviews/wave-4b-1-review.md`.
+
+**What changed.** New `core/FetchOutcome.kt`: a sealed type (`Success`, `CloudflareBlocked` with
+`solveAttempted`, `HttpError`, `Transport`, `Cancelled`), a pure `classify(code, body, finalUrl,
+serverHeader)` reusing `CloudflareDetector`, `needsCfSolve()` and `bodyOrNull()`. `RequestResult`
+deleted. `RequestQueue` now takes one `Host` interface (`execute`, `solveCloudflare`,
+`onDomainRedirect`, `currentDomain`) instead of four constructor lambdas closing over a
+half-constructed service, which removes the constructor cycle. `ProviderHttpService` implements
+`Host`; every decision that matched an error message string now switches on the sealed type.
+
+**Why.** Wave 4 acceptance criterion 4: no error decision may match a message string. Renaming a log
+message used to be able to re-enable a thundering-herd CF path silently.
+
+**Decisions and behaviour changes.**
+
+| Item | Detail |
+|---|---|
+| Old CF fallback gate was dead code | The review established that `HEAD`'s string-matched gate could never fire (`hasCfMarkers` needed a body, but a blocked result had `html = null`). The new `needsCfSolve()` gate is live: when a follower's own fetch is CF-blocked after the leader succeeded, a breaker-gated queued solve now runs instead of returning null. Improvement, but a behaviour change; watch for extra solves in logs. |
+| Non-CF 404/500 are `HttpError`, not success | Documents are still parsed from the error body; adoption, meta-refresh and caching are gated on `Success` (behaviour-based, R3-neutral). Text and POST paths return the body via `bodyOrNull()` exactly as before (review F1 fixed a regression where they returned null). |
+| `solveAttempted` stamped at exactly the three sites that produced the three live literals | The fourth literal, "Cookie verification", matched nothing and was deleted. |
+| `getDocumentNoFallback` no longer throws on a 2xx body containing "403 Forbidden" | Spec-sanctioned (design section 3 table). |
+
+**Metrics.** Tests 95 to 105 for the slice plus the review fix-pass additions (`FetchOutcomeTest`,
+`RequestQueueTest` incl. solve-failure stamping, re-solve, and redirect rewrite paths). All modules
+compile. `RequestQueue.allowedDomains` body byte-identical; `domain/` untouched.
+
+## 6c. Wave 4b-3: parser rename
+
+`parsing/NewBaseParser.kt` becomes `BaseParser.kt` (the old `BaseParser` was deleted in Wave 3, so
+the name is free); 160 occurrences in 84 files renamed; `BaseProvider.getParser()` typed as
+`ParserInterface`; provider overrides keep their concrete return types. No behaviour change. Kept as
+its own commit so `git log --follow` on the parser stays readable. `ArabseedV4` returns its concrete
+parser type so the file carries no base-class name and could travel with 4b-1.
+
 ## 7. Cumulative status
 
 | Wave | Commit | Runnable tests after | LOC (all files, `git show --stat`) | LOC (excluding `docs/`, `log3.txt`) | Status |
@@ -325,8 +361,9 @@ cancel lines in `log3.txt`.
 | 2 | `aae6481f` | 68 | 21 files, +651 / -847 | +501 / -847 | Committed; four device checks owed |
 | 3 | `02d55477` | 83 | 57 files, +811 / -4,143 | +560 / -4,129 | Committed; EarnVids device check owed |
 | 4a | see git log ("Wave 4a") | 95 | see commit | see commit | Committed; device checks owed |
-| 4b-1 | uncommitted | 105 | - | - | Implemented (`FetchOutcome`, `RequestQueue.Host`), under review |
-| 4b-2, 4b-3 | not started | - | - | - | Design at `docs/wave-4b-design.md` |
+| 4b-1 | see git log ("Wave 4b-1") | see commit | see commit | see commit | Committed after review fix pass (F1 body regression, F3) |
+| 4b-3 | see git log ("Wave 4b-3") | unchanged | see commit | see commit | Committed; mechanical rename |
+| 4b-2 | not started | - | - | - | Gateway split per `docs/wave-4b-design.md`; freex device check is a release gate |
 | 5 | not started | - | - | - | Discussion item: `shared-core` into the APK |
 | 6 | not started | - | - | - | Domain handling under R3, last by owner decision |
 

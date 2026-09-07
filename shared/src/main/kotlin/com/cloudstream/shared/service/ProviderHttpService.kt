@@ -13,8 +13,11 @@ import com.cloudstream.shared.core.FingerprintInterceptor
 import com.cloudstream.shared.core.RequestKind
 import com.cloudstream.shared.network.ChromiumFetcher
 import com.cloudstream.shared.provider.ProviderConfig
+import com.cloudstream.shared.core.FetchOutcome
+import com.cloudstream.shared.core.classify
+import com.cloudstream.shared.core.needsCfSolve
+import com.cloudstream.shared.core.bodyOrNull
 import com.cloudstream.shared.queue.RequestQueue
-import com.cloudstream.shared.queue.RequestResult
 import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
@@ -45,7 +48,7 @@ class ProviderHttpService private constructor(
     private val domainManager: DomainManager,
     /** Chrome-TLS HTTP client for Tier 3 TLS fingerprint fallback */
     val chromiumFetcher: ChromiumFetcher
-) {
+) : RequestQueue.Host {
     @Volatile
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain)
     
@@ -53,18 +56,23 @@ class ProviderHttpService private constructor(
     private var initialized = false
     private val initMutex = Mutex()
 
-    private val requestQueue = RequestQueue(
-        executeRequest = { url, headers -> executeDirectRequest(url, headers, rewriteDomain = true) },
-        solveCfAndRequest = { url, allowedDomains -> solveCloudflareThenRequest(url, allowedDomains) },
-        onDomainRedirect = { oldDomain, newDomain ->
-            updateDomain(newDomain)
-            domainManager.updateDomain(newDomain)
-            domainManager.syncToRemote()
-        },
-        getCurrentDomain = { sessionState.domain }
-    )
-    
-    val currentDomain: String
+    private val requestQueue = RequestQueue(this)
+
+    // ── RequestQueue.Host ──
+
+    override suspend fun execute(url: String, headers: Map<String, String>): FetchOutcome =
+        executeDirectRequest(url, headers, rewriteDomain = true)
+
+    override suspend fun solveCloudflare(url: String, allowedDomains: Set<String>): FetchOutcome =
+        solveCloudflareThenRequest(url, allowedDomains)
+
+    override suspend fun onDomainRedirect(oldHost: String, newHost: String) {
+        updateDomain(newHost)
+        domainManager.updateDomain(newHost)
+        domainManager.syncToRemote()
+    }
+
+    override val currentDomain: String
         get() = sessionState.domain
 
     val mainUrl: String
@@ -131,7 +139,7 @@ class ProviderHttpService private constructor(
     suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
         val fullUrl = buildUrl(url)
         val result = executeDirectRequest(fullUrl, headers, rewriteDomain)
-        return result.html
+        return result.bodyOrNull()
     }
 
     /**
@@ -247,7 +255,8 @@ class ProviderHttpService private constructor(
             val preview = try {
                 response.peekBody(CF_PEEK_BYTES).string()
             } catch (_: Exception) { "" }
-            if (CloudflareDetector.isBlocked(response.code, preview)) {
+            val peeked = classify(response.code, preview, fullUrl, response.header("Server"))
+            if (peeked is FetchOutcome.CloudflareBlocked) {
                 ProviderLogger.e(TAG_PROVIDER_HTTP, "getRaw",
                     "🔒 Cloudflare blocked a getRaw() call — this method cannot solve a challenge, " +
                         "so the body you are about to parse is a block page, not the site. Use " +
@@ -267,19 +276,19 @@ class ProviderHttpService private constructor(
     suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): Document? {
         val fullUrl = buildUrl(url)
         val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
-        return result.html?.let { Jsoup.parse(it, fullUrl) }
+        return result.bodyOrNull()?.let { Jsoup.parse(it, fullUrl) }
     }
 
     suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
         val fullUrl = buildUrl(url)
         val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
-        return result.html
+        return result.bodyOrNull()
     }
     
     /**
      * DEBUG: Post request with full result details for troubleshooting
      */
-    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
+    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
         val fullUrl = buildUrl(url)
         return executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
     }
@@ -401,30 +410,26 @@ class ProviderHttpService private constructor(
             requestQueue.enqueueAction(url) { executeDirectRequest(url, headers, rewriteDomain = false) }
         }
         
-        if (result.success && checkDomainChange) {
-            checkAndUpdateDomain(url, result.finalUrl)
+        val success = result as? FetchOutcome.Success
+
+        if (success != null && checkDomainChange) {
+            checkAndUpdateDomain(url, success.finalUrl)
         }
         
-        val doc = result.html?.let { Jsoup.parse(it, result.finalUrl ?: url) }
+        // A non-CF error page is still handed to the caller's parser, as it always was.
+        val body = success?.html ?: (result as? FetchOutcome.HttpError)?.body
+        val doc = body?.let { Jsoup.parse(it, success?.finalUrl ?: url) }
         
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
-        if (doc != null && result.success) {
-            val redirected = handleMetaRefreshRedirect(doc, result.finalUrl ?: url)
+        if (doc != null && success != null) {
+            val redirected = handleMetaRefreshRedirect(doc, success.finalUrl)
             if (redirected != null) return redirected
         }
         
-        // Only fall back to WebView if status is 403 AND the HTML contains actual CF markers.
-        // This prevents non-CF 403s (like Akwam's anti-bot) from triggering useless CF solve loops.
-        val hasCfMarkers = result.html?.let { CloudflareDetector.isCloudflareChallenge(it) } == true
-        val isDirectCfBlock = (result.responseCode == 403 && hasCfMarkers)
-        // Don't re-enqueue if the queue already attempted CF solve and failed
-        // This prevents parallel CF solve thundering herd
-        val isQueueLevelFailure = result.error?.message?.contains("Cookie verification") == true ||
-                                  result.error?.message?.contains("CF solve failed") == true ||
-                                  result.error?.message?.contains("CF re-solve failed") == true ||
-                                  result.error?.message?.contains("CF Bypass failed") == true
-        
-        if (isDirectCfBlock && !isQueueLevelFailure) {
+        // Only fall back to WebView for a real Cloudflare block that no solve has been spent on
+        // yet: a non-CF 403 (like Akwam's anti-bot) never reaches here, and a block the queue
+        // already tried to solve carries solveAttempted = true, which prevents a thundering herd.
+        if (result.needsCfSolve()) {
             val cfBreakerDomain = extractDomain(url)
 
             // Circuit open: this domain has failed CF-solve repeatedly and recently — don't
@@ -444,11 +449,11 @@ class ProviderHttpService private constructor(
                     ))
                 }
 
-                if (!cfResult.success) {
+                if (cfResult !is FetchOutcome.Success) {
                     DomainCircuitBreaker.recordFailure(cfBreakerDomain)
                 }
 
-                if (cfResult.success && cfResult.html != null) {
+                if (cfResult is FetchOutcome.Success) {
                     DomainCircuitBreaker.recordSuccess(cfBreakerDomain)
                     // Cache it, same as the clean path below.
                     //
@@ -459,8 +464,8 @@ class ProviderHttpService private constructor(
                     // `allowCached` is opt-in per caller, so an extra entry costs nothing to anyone
                     // who does not ask for it.
                     recentPages[url] = CachedPage(
-                        cfResult.html, cfResult.finalUrl ?: url, System.currentTimeMillis())
-                    return Jsoup.parse(cfResult.html, cfResult.finalUrl ?: url)
+                        cfResult.html, cfResult.finalUrl, System.currentTimeMillis())
+                    return Jsoup.parse(cfResult.html, cfResult.finalUrl)
                 }
             }
         }
@@ -468,10 +473,8 @@ class ProviderHttpService private constructor(
         // Store only a clean, fully-resolved success: anything that went through a meta-refresh or
         // CF fallback has already returned above, so a cache hit can be handed straight back
         // without replaying that logic.
-        if (result.success && doc != null) {
-            result.html?.let {
-                recentPages[url] = CachedPage(it, result.finalUrl ?: url, System.currentTimeMillis())
-            }
+        if (success != null && doc != null) {
+            recentPages[url] = CachedPage(success.html, success.finalUrl, System.currentTimeMillis())
         }
 
         return doc
@@ -486,8 +489,9 @@ class ProviderHttpService private constructor(
         // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
         val result = executeDirectRequest(url, headers, rewriteDomain)
 
-        val isCfBlocked = result.isCloudflareBlocked || result.responseCode == 403 ||
-            result.html?.contains("403 Forbidden") == true
+        val isCfBlocked = result is FetchOutcome.CloudflareBlocked ||
+            (result is FetchOutcome.HttpError &&
+                (result.code == 403 || result.body?.contains("403 Forbidden") == true))
 
         // Detect domain redirects, but — mirroring the guard in solveCloudflareThenRequest —
         // never from a CF-blocked response or a resolved host that fails domain validation.
@@ -495,9 +499,10 @@ class ProviderHttpService private constructor(
         // its way to (or instead of) the real site; recording that as the provider domain
         // poisons it permanently (every later request then targets cloudflare.com and 403s).
         if (checkDomainChange && !isCfBlocked) {
-            val finalHost = result.finalUrl?.let { extractDomain(it) }
+            val resolvedUrl = (result as? FetchOutcome.Success)?.finalUrl
+            val finalHost = resolvedUrl?.let { extractDomain(it) }
             if (finalHost == null || DomainManager.isValidProviderDomain(finalHost)) {
-                checkAndUpdateDomain(url, result.finalUrl)
+                checkAndUpdateDomain(url, resolvedUrl)
             } else {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocumentNoFallback",
                     "Skipped domain update — resolved host failed validation",
@@ -512,11 +517,14 @@ class ProviderHttpService private constructor(
             throw CloudflareBlockedSearchException(config.name, sessionState.domain)
         }
         
-        val doc = result.html?.let { Jsoup.parse(it, url) }
+        val success = result as? FetchOutcome.Success
+        // A non-CF error page is still handed to the caller's parser, as it always was.
+        val body = success?.html ?: (result as? FetchOutcome.HttpError)?.body
+        val doc = body?.let { Jsoup.parse(it, url) }
         
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
-        if (doc != null && result.success) {
-            val redirected = handleMetaRefreshRedirect(doc, result.finalUrl ?: url)
+        if (doc != null && success != null) {
+            val redirected = handleMetaRefreshRedirect(doc, success.finalUrl)
             if (redirected != null) return redirected
         }
         
@@ -543,7 +551,7 @@ class ProviderHttpService private constructor(
 
     // ==================== INTERNAL ====================
 
-    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
+    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
         val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
         return try {
             
@@ -598,7 +606,7 @@ class ProviderHttpService private constructor(
             // "www.example.com" and "example.com" track two independent circuits for one domain.
             val breakerDomain = (urlDomain ?: sessionState.domain).removePrefix("www.")
 
-            if (!result.isCloudflareBlocked) {
+            if (result !is FetchOutcome.CloudflareBlocked) {
                 DomainCircuitBreaker.recordSuccess(breakerDomain)
                 return result
             }
@@ -629,45 +637,43 @@ class ProviderHttpService private constructor(
             // Cookies are irrelevant to whether a TLS block is worth retrying, so the condition is
             // gone. The cost when it does not help is one invisible fetch on a path that was already
             // heading for a full WebView session.
-            if (result.isCloudflareBlocked) {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
+                "url" to targetUrl.take(80))
+
+            val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
+            // Success is a status code, which a block page also has. Check the body too, or a
+            // challenge gets handed back as content and parsed as if it were the site.
+            val stillBlocked = chromiumResponse.isCloudflareBlocked ||
+                CloudflareDetector.isBlocked(chromiumResponse.statusCode, chromiumResponse.body)
+            if (chromiumResponse.success && !stillBlocked) {
+                ProviderLogger.i(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                    "✅ Chrome TLS fallback succeeded — no WebView solve needed",
+                    "url" to targetUrl.take(80),
+                    "htmlLength" to chromiumResponse.body.length)
+
+                return FetchOutcome.Success(
+                    chromiumResponse.body,
+                    chromiumResponse.statusCode,
+                    chromiumResponse.finalUrl ?: targetUrl
+                )
+            } else {
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
-                    "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
-                    "url" to targetUrl.take(80))
-
-                val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
-                // Success is a status code, which a block page also has. Check the body too, or a
-                // challenge gets handed back as content and parsed as if it were the site.
-                val stillBlocked = chromiumResponse.isCloudflareBlocked ||
-                    CloudflareDetector.isBlocked(chromiumResponse.statusCode, chromiumResponse.body)
-                if (chromiumResponse.success && !stillBlocked) {
-                    ProviderLogger.i(TAG_PROVIDER_HTTP, "executeDirectRequest",
-                        "✅ Chrome TLS fallback succeeded — no WebView solve needed",
-                        "url" to targetUrl.take(80),
-                        "htmlLength" to chromiumResponse.body.length)
-
-                    return RequestResult.success(
-                        chromiumResponse.body,
-                        chromiumResponse.statusCode,
-                        chromiumResponse.finalUrl ?: targetUrl
-                    )
-                } else {
-                    ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
-                        "Chrome TLS fallback did not get through — leaving it to the CF solve",
-                        "code" to chromiumResponse.statusCode,
-                        "stillBlocked" to stillBlocked.toString(),
-                        "error" to (chromiumResponse.error ?: ""))
-                    DomainCircuitBreaker.recordFailure(breakerDomain)
-                }
+                    "Chrome TLS fallback did not get through — leaving it to the CF solve",
+                    "code" to chromiumResponse.statusCode,
+                    "stillBlocked" to stillBlocked.toString(),
+                    "error" to (chromiumResponse.error ?: ""))
+                DomainCircuitBreaker.recordFailure(breakerDomain)
             }
 
             result
         } catch (e: Exception) {
             ProviderLogger.e(TAG_PROVIDER_HTTP, "executeDirectRequest", "Failed", e, "url" to targetUrl.take(80))
-            RequestResult.failure(e)
+            FetchOutcome.Transport(e)
         }
     }
 
-    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): RequestResult {
+    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
         return try {
             val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
             // Caller-specific headers only — identity comes from FingerprintInterceptor.
@@ -710,28 +716,29 @@ class ProviderHttpService private constructor(
 
             executeRequestHelper(directClient, okRequest)
         } catch (e: Exception) {
-            RequestResult.failure(e)
+            FetchOutcome.Transport(e)
         }
     }
 
-    private fun executeRequestHelper(client: okhttp3.OkHttpClient, request: okhttp3.Request): RequestResult {
+    private fun executeRequestHelper(client: okhttp3.OkHttpClient, request: okhttp3.Request): FetchOutcome {
         val response = client.newCall(request).execute()
         val code = response.code
         val html = response.body?.string() ?: ""
         val finalUrl = response.request.url.toString()
+        val serverHeader = response.header("Server")
         
         // Set-Cookie ingestion is SystemCookieJar's job, on every client built here.
         response.close()
         
-        if (CloudflareDetector.isBlocked(code, html)) {
-            return RequestResult.cloudflareBlocked(code, finalUrl)
-        } else {
-            return RequestResult.success(html, code, finalUrl)
-        }
+        return classify(code, html, finalUrl, serverHeader)
     }
     
-    internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): RequestResult {
-        if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
+    internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): FetchOutcome {
+        if (!config.webViewEnabled) {
+            // No WebView means no solve is possible here — mark it attempted so the caller's
+            // fallback gate does not queue another one.
+            return FetchOutcome.CloudflareBlocked(403, url, solveAttempted = true)
+        }
         
         val targetUrl = rewriteUrlIfNeeded(url)
         
@@ -740,7 +747,7 @@ class ProviderHttpService private constructor(
         // blocked and the solve proceeds.
         if (shouldRetryBeforeSolve(AndroidCookieStorage.get(targetUrl))) {
             val retry = executeDirectRequest(targetUrl, rewriteDomain = true)
-            if (retry.success && !retry.isCloudflareBlocked) {
+            if (retry is FetchOutcome.Success) {
                 ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
                     "Existing clearance worked — skipping CF solve")
                 return retry
@@ -770,14 +777,15 @@ class ProviderHttpService private constructor(
                 // during the challenge. If we detect a domain change from the CF solve's finalUrl,
                 // we'd incorrectly save "cloudflare.com" as the provider domain.
                 // Domain detection should only happen on normal HTTP redirects.
-                RequestResult.success(result.html, 200, result.finalUrl)
+                FetchOutcome.Success(result.html, 200, result.finalUrl)
             }
             is WebViewResult.Cancelled -> {
                 // User pressed back on CF dialog — return failure cleanly, no side effects
-                ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest", "User cancelled CF bypass")
-                RequestResult.failure("User cancelled CF bypass")
+                ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest", "User cancelled")
+                FetchOutcome.Cancelled
             }
-            else -> RequestResult.failure("CF Bypass failed")
+            // The solve ran and did not get through: a further solve for this URL is pointless.
+            else -> FetchOutcome.CloudflareBlocked(403, targetUrl, solveAttempted = true)
         }
     }
     
@@ -857,7 +865,7 @@ class ProviderHttpService private constructor(
         
         // Follow the redirect — use requestQueue so leader/follower logic applies
         val result = requestQueue.enqueue(metaRefreshUrl)
-        return if (result.success && result.html != null) {
+        return if (result is FetchOutcome.Success) {
             Jsoup.parse(result.html, metaRefreshUrl)
         } else {
             ProviderLogger.w(TAG_PROVIDER_HTTP, "handleMetaRefreshRedirect",

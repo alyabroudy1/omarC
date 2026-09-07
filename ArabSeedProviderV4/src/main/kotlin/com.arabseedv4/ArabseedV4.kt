@@ -2,8 +2,8 @@ package com.arabseedv4
 
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
-import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
+import com.cloudstream.shared.core.bodyOrNull
 import kotlinx.coroutines.*
 import org.jsoup.nodes.Document
 
@@ -34,7 +34,7 @@ class ArabseedV4 : BaseProvider() {
         "$mainUrl/category/anime/anime-movies/" to "افلام انيميشن",
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): ArabseedV4Parser {
         return ArabseedV4Parser()
     }
 
@@ -123,8 +123,9 @@ class ArabseedV4 : BaseProvider() {
                                 referer = url
                             )
                             
-                            if (result.success && result.html != null) {
-                                parser.parseEpisodesFromAjax(result.html, seasonNum)
+                            val html = result.bodyOrNull()
+                            if (html != null) {
+                                parser.parseEpisodesFromAjax(html, seasonNum)
                             } else {
                                 emptyList<ParsedEpisode>()
                             }
@@ -174,9 +175,7 @@ class ArabseedV4 : BaseProvider() {
             )
         )
         
-        if (!result.success || result.html == null) return null
-        
-        val serverResponse = result.html
+        val serverResponse = result.bodyOrNull() ?: return null
         var embedUrl = ""
         
         if (serverResponse.trim().startsWith("{")) {
