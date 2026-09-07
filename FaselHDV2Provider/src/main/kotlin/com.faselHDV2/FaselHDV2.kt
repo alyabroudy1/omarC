@@ -94,7 +94,7 @@ class FaselHDV2 : BaseProvider() {
                         val fullUrl = if (pageUrl.startsWith("http")) pageUrl else "$mainUrl$pageUrl"
                         Log.d("[FaselHDV2]", "fetchExtraEpisodes: fetching season $seasonNum from $fullUrl")
                         
-                        val seasonDoc = httpService.getDocument(fullUrl, rewriteDomain = true) ?: return@async emptyList()
+                        val seasonDoc = runtime.document(fullUrl) ?: return@async emptyList()
                         val episodes = parser.parseEpisodes(seasonDoc, seasonNum)
                         
                         Log.d("[FaselHDV2]", "fetchExtraEpisodes: season $seasonNum -> ${episodes.size} episodes")
@@ -115,13 +115,12 @@ class FaselHDV2 : BaseProvider() {
         if (page > 1) return newSearchResponseList(emptyList(), false)
         val methodTag = "[$name] [searchNormal override]"
         try {
-            httpService.ensureInitialized()
             
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching normal search URL: $url")
             
-            var doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
+            var doc = runtime.document(url, adoptRedirect = true)
             var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
             
             if (items.isEmpty()) {
@@ -138,7 +137,8 @@ class FaselHDV2 : BaseProvider() {
                     "trsearch" to query
                 )
                 
-                doc = httpService.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers, rewriteDomain = true)
+                doc = runtime.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers, rewrite = true)
+                    ?.let { org.jsoup.Jsoup.parse(it, ajaxUrl) }
                 if (doc != null) {
                     val rawHtml = doc.html()
                     Log.d(methodTag, "AJAX response HTML (length: ${rawHtml.length}):\n${rawHtml.take(2000)}")
@@ -154,7 +154,7 @@ class FaselHDV2 : BaseProvider() {
             return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             }, false)
         } catch (e: Exception) {
@@ -168,13 +168,12 @@ class FaselHDV2 : BaseProvider() {
         if (page > 1) return newSearchResponseList(emptyList(), false)
         val methodTag = "[$name] [searchLazy override]"
         try {
-            httpService.ensureInitialized()
             
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded)
             Log.d(methodTag, "Fetching lazy search URL: $url")
             
-            var doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
+            var doc = runtime.document(url, adoptRedirect = true, solveCf = false)
             var items = doc?.let { getParser().parseSearch(it) } ?: emptyList()
             
             if (items.isEmpty()) {
@@ -191,7 +190,7 @@ class FaselHDV2 : BaseProvider() {
                     "trsearch" to query
                 )
                 
-                val result = httpService.postText(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
+                val result = runtime.post(ajaxUrl, data, referer = "$mainUrl/main", headers = headers)
                 if (result != null) {
                     Log.d(methodTag, "AJAX Lazy response (length: ${result.length}):\n${result.take(2000)}")
                     doc = org.jsoup.Jsoup.parse(result, ajaxUrl)
@@ -207,7 +206,7 @@ class FaselHDV2 : BaseProvider() {
             return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             }, false)
         } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
@@ -232,11 +231,10 @@ class FaselHDV2 : BaseProvider() {
         Log.i(methodTag, "Provider settings: preferIpv4=$preferIpv4, preferIpv6=$preferIpv6")
 
         try {
-            httpService.ensureInitialized()
 
             // Step 1: Fetch detail/movie document.
             // Reuse load()'s fetch of this same URL — see BaseProvider.loadLinks for why.
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true, allowCached = true)
+            val detailDoc = runtime.document(data, allowCached = true)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch detail document from $data")
                 return false
@@ -248,7 +246,7 @@ class FaselHDV2 : BaseProvider() {
             val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
                 val fullWatchUrl = if (watchPageUrl.startsWith("http")) watchPageUrl else "$mainUrl/$watchPageUrl"
                 Log.i(methodTag, "Following watch player page: $fullWatchUrl")
-                httpService.getDocument(fullWatchUrl, rewriteDomain = true) ?: detailDoc
+                runtime.document(fullWatchUrl) ?: detailDoc
             } else {
                 Log.d(methodTag, "No separate player page found, using detail document")
                 detailDoc

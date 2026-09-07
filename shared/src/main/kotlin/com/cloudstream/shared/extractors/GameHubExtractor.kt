@@ -1,10 +1,10 @@
 package com.cloudstream.shared.extractors
 
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 
-class GameHubExtractor : ExtractorApi() {
+class GameHubExtractor(private val runtime: ProviderRuntime) : ExtractorApi() {
     override var name = "سيرفر عرب سيد"
     override var mainUrl = "https://m.reviewrate.net"
     override val requiresReferer = true
@@ -43,11 +43,9 @@ class GameHubExtractor : ExtractorApi() {
         val displayName = if (qualityStr.isNotBlank()) "$name - ${qualityStr}p" else name
         val actualReferer = referer ?: mainUrl
 
-        val http = ProviderHttpServiceHolder.getInstance() ?: return
-        val html = http.getText(
+        val html = runtime.text(
             cleanUrl,
-            headers = mapOf("Referer" to actualReferer),
-            rewriteDomain = false
+            headers = mapOf("Referer" to actualReferer)
         ) ?: return
 
         val csrfToken = Regex("""['"]csrf_token['"]\s*:\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
@@ -86,9 +84,9 @@ class GameHubExtractor : ExtractorApi() {
         val objId = cleanUrl.substringAfter("embed-", "").substringBefore(".html")
         val ajaxUrl = "${mainUrl.trimEnd('/')}/get__watch__server/"
 
-        val postResponse = http.postText(
+        val postResponse = runtime.post(
             ajaxUrl,
-            data = mapOf(
+            form = mapOf(
                 "post_id" to objId,
                 "csrf_token" to csrfToken
             ),
@@ -97,8 +95,7 @@ class GameHubExtractor : ExtractorApi() {
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With" to "XMLHttpRequest",
                 "Origin" to mainUrl
-            ),
-            rewriteDomain = false
+            )
         ) ?: return
 
         Regex("""src=["'](https?://[^"']+)["']""").findAll(postResponse).forEach { match ->
@@ -117,11 +114,9 @@ class GameHubExtractor : ExtractorApi() {
         qualityStr: String,
         displayName: String
     ): List<ExtractorLink> {
-        val http = ProviderHttpServiceHolder.getInstance() ?: return emptyList()
-        val m3u8Content = http.getText(
+        val m3u8Content = runtime.text(
             m3u8Url,
-            headers = mapOf("Referer" to pageUrl, "Accept" to "*/*"),
-            rewriteDomain = false
+            headers = mapOf("Referer" to pageUrl, "Accept" to "*/*")
         ) ?: return emptyList()
 
         if (!m3u8Content.contains("#EXT-X-STREAM-INF")) {

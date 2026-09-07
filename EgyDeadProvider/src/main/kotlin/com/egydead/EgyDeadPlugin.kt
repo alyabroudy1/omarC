@@ -18,14 +18,15 @@ class EgyDeadPlugin: Plugin() {
             ActivityProvider.setActivity(context)
         }
 
-        registerExtractorAPI(ReviewRateExtractor())
+        val api = EgyDead()
+        registerExtractorAPI(ReviewRateExtractor(api.runtime))
         registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor())
-        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor())
+        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor(api.runtime))
 
         val sniffer = SnifferExtractor()
         sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
         registerExtractorAPI(sniffer)
 
-        registerMainAPI(EgyDead())
+        registerMainAPI(api)
     }
 }

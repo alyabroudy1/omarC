@@ -174,9 +174,9 @@ class FaselHDExtractor : ExtractorApi() {
             // token minted over IPv6 (what Happy Eyeballs picks on dual-stack WiFi) can never be
             // played: ExoPlayer must use IPv4 and the CDN 403s the mismatch. Pin to IPv4 so the
             // embedded address is the same NAT'd IPv4 the player will connect from.
-            // Hardcoded rather than read from ProviderHttpServiceHolder: that holder is a global
-            // singleton holding whichever provider initialised last, and this extractor's CDN is
-            // IPv4-only in every case, so IPv4 is unconditionally the right answer here.
+            // Hardcoded rather than read from a provider runtime: this extractor is registered by
+            // whichever plugin loaded it, and its CDN is IPv4-only in every case, so IPv4 is
+            // unconditionally the right answer here.
             val client = app.baseClient.newBuilder()
                 .followRedirects(true)
                 .followSslRedirects(true)

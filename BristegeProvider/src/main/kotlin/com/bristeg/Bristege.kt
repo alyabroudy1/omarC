@@ -34,10 +34,9 @@ class Bristege : BaseProvider() {
         Log.i(methodTag, "START data='$data'")
 
         try {
-            httpService.ensureInitialized()
 
             // 1. Fetch detail page
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+            val detailDoc = runtime.document(data) ?: return false
 
             // 2. Ask parser for player/watch page URL (a.xtgo redirect)
             val watchPageUrl = getParser().getPlayerPageUrl(detailDoc)
@@ -49,7 +48,7 @@ class Bristege : BaseProvider() {
                     "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
                 }
                 Log.d(methodTag, "Following redirect to player page: $absoluteWatchUrl")
-                httpService.getDocument(absoluteWatchUrl, mapOf("Referer" to data), rewriteDomain = true) ?: detailDoc
+                runtime.document(absoluteWatchUrl, mapOf("Referer" to data)) ?: detailDoc
             } else {
                 detailDoc
             }
@@ -118,7 +117,7 @@ class Bristege : BaseProvider() {
         val methodTag = "[$providerName] [processEmbed]"
         
         // Bristege Logic Step 1: Download embed page natively (bypass aggressive URL rewriting)
-        val html = httpService.getText(embedUrl, mapOf("Referer" to referer), rewriteDomain = false) ?: return
+        val html = runtime.text(embedUrl, mapOf("Referer" to referer)) ?: return
         
         // Bristege Logic Step 2: Direct video link in text (First priority in source)
         val directUrl = findVideoInText(html)

@@ -1,7 +1,7 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 
@@ -11,7 +11,7 @@ import com.lagradost.cloudstream3.utils.*
  * 
  * Optimized to extract all video URLs and parse M3U8 playlists for multiple qualities.
  */
-class ReviewRateExtractor : ExtractorApi() {
+class ReviewRateExtractor(private val runtime: ProviderRuntime) : ExtractorApi() {
     override val name = "ReviewRate"
     override val mainUrl = "https://reviewrate.net"
     override val requiresReferer = true
@@ -46,17 +46,12 @@ class ReviewRateExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing ReviewRate URL", "url" to url.take(80))
         
         try {
-            val http = ProviderHttpServiceHolder.getInstance() ?: run {
-                ProviderLogger.w(TAG, "getUrl", "ProviderHttpService not initialized")
-                return
-            }
-            val html = http.getText(
+            val html = runtime.text(
                 url,
                 headers = mapOf(
                     "Referer" to actualReferer,
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                ),
-                rewriteDomain = false
+                )
             ) ?: run {
                 ProviderLogger.w(TAG, "getUrl", "getText returned null for URL: ${url.take(80)}")
                 return
@@ -178,14 +173,12 @@ class ReviewRateExtractor : ExtractorApi() {
      */
     private suspend fun extractM3u8Qualities(m3u8Url: String, pageUrl: String): List<ExtractorLink> {
         return try {
-            val http = ProviderHttpServiceHolder.getInstance() ?: return emptyList()
-            val m3u8Content = http.getText(
+            val m3u8Content = runtime.text(
                 m3u8Url,
                 headers = mapOf(
                     "Referer" to pageUrl,
                     "Accept" to "*/*"
-                ),
-                rewriteDomain = false
+                )
             ) ?: return emptyList()
             
             ProviderLogger.d(TAG, "extractM3u8Qualities", "M3U8 Content", 

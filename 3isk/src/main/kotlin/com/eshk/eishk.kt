@@ -25,8 +25,7 @@ class eishk : BaseProvider() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl, checkDomainChange = true, rewriteDomain = true) ?: return null
+        val doc = runtime.document(mainUrl, adoptRedirect = true) ?: return null
         val all = ArrayList<HomePageList>()
 
         doc.select("section.home-items-sec").forEach { section ->
@@ -44,10 +43,9 @@ class eishk : BaseProvider() {
 
     override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         if (page > 1) return newSearchResponseList(emptyList(), false)
-        httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
-        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
+        val doc = runtime.document(url, adoptRedirect = true, solveCf = false)
             ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
         val items = getParser().parseSearch(doc)
         return newSearchResponseList(items.map { item ->
@@ -63,10 +61,9 @@ class eishk : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
         Log.w("EshkLinks", "loadLinks called | data=$data")
 
-        val r0 = httpService.getDocument(data, checkDomainChange = true, rewriteDomain = true)
+        val r0 = runtime.document(data, adoptRedirect = true)
         if (r0 == null) {
             Log.w("EshkLinks", "getDocument returned null for data=$data")
             return false
@@ -129,7 +126,7 @@ class eishk : BaseProvider() {
         }
         Log.w("EshkLinks", "POST1 url=$firstPostUrl data=$firstFormData")
 
-        val r1Text = httpService.postText(firstPostUrl, firstFormData, referer = data)
+        val r1Text = runtime.post(firstPostUrl, firstFormData, referer = data)
         if (r1Text == null) {
             Log.w("EshkLinks", "POST1 returned null")
             return null
@@ -148,7 +145,7 @@ class eishk : BaseProvider() {
         Log.w("EshkLinks", "myUrl=$nextPost news=$newsVal")
 
         // Step 4: Second POST — submit news value to get the embed page
-        val r2Text = httpService.postText(
+        val r2Text = runtime.post(
             nextPost,
             mapOf("news" to newsVal, "u" to "", "submit" to "submit"),
             referer = nextPost

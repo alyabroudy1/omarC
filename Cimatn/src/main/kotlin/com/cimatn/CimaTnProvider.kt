@@ -29,14 +29,13 @@ class CimaTn : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
         val cleanUrl = url.substringBefore("?")
 
         if (cleanUrl.contains("film-")) {
             return loadMovieData(cleanUrl)
         }
 
-        val doc = httpService.getDocument(cleanUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(cleanUrl) ?: return null
         val htmlContent = doc.html()
 
         if (htmlContent.contains("data-secure-url") && !htmlContent.contains("const watchPageSlug")) {
@@ -276,7 +275,6 @@ class CimaTn : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
 
         if (data.contains("youtube.com") || data.contains("youtu.be")) {
             loadExtractor(data, "$mainUrl/", subtitleCallback, callback)

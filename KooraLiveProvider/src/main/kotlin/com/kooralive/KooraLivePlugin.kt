@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class KooraLivePlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(KooraLive())
-        registerSharedExtractors()
+        val api = KooraLive()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }

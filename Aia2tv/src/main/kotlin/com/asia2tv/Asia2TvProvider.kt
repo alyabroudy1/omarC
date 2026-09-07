@@ -23,10 +23,9 @@ class Asia2TvProvider : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
         val pageUrl = url.substringBefore("#")
 
-        val doc = httpService.getDocument(pageUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(pageUrl) ?: return null
         val title = doc.selectFirst("h1.mb-0")?.text()?.trim() ?: "Unknown"
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content")
         val posterImg = doc.selectFirst("div.single-thumb-bg img")
@@ -50,9 +49,9 @@ class Asia2TvProvider : BaseProvider() {
             var hasMore = true
             while (hasMore) {
                 try {
-                    val responseText = httpService.postText(
+                    val responseText = runtime.post(
                         "$mainUrl/ajaxGetRequest",
-                        data = mapOf("action" to "moreepisode", "page" to page.toString(), "serieid" to serieId),
+                        form = mapOf("action" to "moreepisode", "page" to page.toString(), "serieid" to serieId),
                         referer = pageUrl,
                         headers = ajaxHeaders
                     )
@@ -117,9 +116,8 @@ class Asia2TvProvider : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
 
-        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val doc = runtime.document(data) ?: return false
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: return false
 
         val serverElements = doc.select("li.getplay")
@@ -137,9 +135,9 @@ class Asia2TvProvider : BaseProvider() {
             if (serverCode.isBlank()) continue
 
             try {
-                val responseText = httpService.postText(
+                val responseText = runtime.post(
                     "$mainUrl/ajaxGetRequest",
-                    data = mapOf("action" to "iframe_server", "code" to serverCode),
+                    form = mapOf("action" to "iframe_server", "code" to serverCode),
                     referer = data,
                     headers = ajaxHeaders
                 )

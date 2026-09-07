@@ -3,7 +3,7 @@ package com.cloudstream.shared.extractors
 import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoSnifferEngine
@@ -14,7 +14,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-class VKVideoEmbed : ExtractorApi() {
+class VKVideoEmbed(private val runtime: ProviderRuntime) : ExtractorApi() {
     override val name = "VKVideo"
     override val mainUrl = "https://vkvideo.ru"
     override val requiresReferer = true
@@ -30,8 +30,6 @@ class VKVideoEmbed : ExtractorApi() {
     ) {
         ProviderLogger.i(TAG, "getUrl", "Processing VK video URL: ${url.take(80)}")
 
-        val http = ProviderHttpServiceHolder.getInstance()
-
         val ua = Fingerprint.current().userAgent
 
         // ── Fast path: video_ext.php returns the player params inline ────────────────────────
@@ -40,7 +38,7 @@ class VKVideoEmbed : ExtractorApi() {
         // desktop or mobile UA, with or without Referer/Accept, gets rate-limited), and on-device
         // that rejection manifests as a ~60s stall rather than a fast error. With the header it is
         // a ~0.4s 200. Verified against live vkvideo.ru on 2026-07-25.
-        val html = http?.getText(
+        val html = runtime.text(
             url,
             headers = mapOf(
                 "Referer" to (referer ?: "https://vk.com/"),
@@ -50,8 +48,7 @@ class VKVideoEmbed : ExtractorApi() {
                 "Sec-Fetch-Dest" to "iframe",
                 "Sec-Fetch-Mode" to "navigate",
                 "Sec-Fetch-Site" to "cross-site"
-            ),
-            rewriteDomain = false
+            )
         )
 
         if (html != null && html.length > 500) {

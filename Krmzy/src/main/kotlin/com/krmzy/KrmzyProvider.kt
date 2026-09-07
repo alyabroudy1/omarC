@@ -81,14 +81,14 @@ class KrmzyProvider : BaseProvider() {
     ): String? {
         val pageText = try {
             logCallback("Custom Extractor: Fetching page $url with referer $referer")
-            httpService.getText(url, headers = mapOf("Referer" to referer), rewriteDomain = false)
+            runtime.text(url, headers = mapOf("Referer" to referer))
         } catch (e: Exception) {
             logCallback("Custom Extractor ERROR: Failed to fetch page $url. Exception: ${e.message}")
             return null
         }
 
         if (pageText == null) {
-            logCallback("Custom Extractor ERROR: httpService.getText returned null for $url")
+            logCallback("Custom Extractor ERROR: runtime.text returned null for $url")
             return null
         }
         logCallback("Custom Extractor: Page fetched, length=${pageText.length}")
@@ -193,7 +193,7 @@ class KrmzyProvider : BaseProvider() {
                     reqHeaders["Cookie"] = cookieHeader
                     reqHeaders["User-Agent"] = Fingerprint.current().userAgent
                 }
-                val resp = httpService.getRaw(streamUrl, headers = reqHeaders)
+                val resp = runtime.raw(streamUrl, headers = reqHeaders)
                 val code = resp.code
                 if (code == 200) {
                     logCallback("checkWorkingStreamReferer: Referer works: $ref (code=$code)")
@@ -234,11 +234,9 @@ class KrmzyProvider : BaseProvider() {
         for (ref in referers) {
             try {
                 logCallback("Custom Extractor v2: Trying referer: $ref")
-                val text = httpService.getText(
+                val text = runtime.text(
                     url,
-                    headers = getBrowserHeaders(ref),
-                    rewriteDomain = false
-                )
+                    headers = getBrowserHeaders(ref))
 
                 if (text != null && text.contains("eval(function")) {
                     pageText = text
@@ -385,19 +383,19 @@ class KrmzyProvider : BaseProvider() {
         }
         log("mainPageHostReferer = $mainPageHostReferer")
 
-        log("STEP 1: Fetching episode page via httpService.getDocument...")
+        log("STEP 1: Fetching episode page via runtime.document...")
         val episodePage = try {
-            httpService.getDocument(resolvedData, rewriteDomain = true)
+            runtime.document(resolvedData)
         } catch (t: Throwable) {
-            log("STEP 1 ERROR: httpService.getDocument threw: ${t.message}")
+            log("STEP 1 ERROR: runtime.document threw: ${t.message}")
             return false
         }
         if (episodePage == null) {
-            log("STEP 1 ERROR: httpService.getDocument returned null for $resolvedData")
+            log("STEP 1 ERROR: runtime.document returned null for $resolvedData")
             return false
         }
         log("STEP 1: Episode page fetched successfully. Title: '${episodePage.title()}'")
-        log("STEP 1: Page URL (after redirects): TODO (httpService doesn't expose final URL)")
+        log("STEP 1: Page URL (after redirects): TODO (the runtime doesn't expose final URL)")
 
         log("STEP 2: Looking for a.fullscreen-clickable...")
         val extractorUrl = episodePage.selectFirst("a.fullscreen-clickable")?.attr("href")
@@ -479,9 +477,9 @@ class KrmzyProvider : BaseProvider() {
         if (serversFromJson.isEmpty()) {
             log("STEP 4: No JSON servers, trying HTML fetch for ul.serversList li...")
             val extractorPage = try {
-                httpService.getDocument(resolvedExtractorUrl, headers = mapOf("Referer" to mainPageHostReferer), rewriteDomain = false)
+                runtime.document(resolvedExtractorUrl, headers = mapOf("Referer" to mainPageHostReferer), rewrite = false)
             } catch (t: Throwable) {
-                log("STEP 4 ERROR: httpService.getDocument threw: ${t.message}")
+                log("STEP 4 ERROR: runtime.document threw: ${t.message}")
                 null
             }
             if (extractorPage != null) {
@@ -666,7 +664,7 @@ class KrmzyProvider : BaseProvider() {
                                  // Manual verification request to see exact status code returned by CDN:
                                  try {
                                      log("Server #$processedCount: Testing manual GET on extracted M3U8 URL...")
-                                     val testResp = httpService.getRaw(extractedM3u8, headers = baseHeaders)
+                                     val testResp = runtime.raw(extractedM3u8, headers = baseHeaders)
                                      log("Server #$processedCount: Manual GET Response Code: ${testResp.code}")
                                      log("Server #$processedCount: Manual GET Content Length: ${testResp.body?.contentLength()}")
                                      log("Server #$processedCount: Manual GET Headers: ${testResp.headers.toMultimap()}")
@@ -741,7 +739,7 @@ class KrmzyProvider : BaseProvider() {
                             val apiUrl = "$apiBase/api/v1/info?id=$hashId"
                             log("Server #$processedCount: fetching $apiUrl")
                             try {
-                                val apiResp = httpService.getText(apiUrl, rewriteDomain = false)
+                                val apiResp = runtime.text(apiUrl)
                                 if (apiResp != null && apiResp.length > 50) {
                                     log("Server #$processedCount: API response length=${apiResp.length}, decrypting...")
                                     val decrypted = decryptUpnsResponse(apiResp)
@@ -786,11 +784,11 @@ class KrmzyProvider : BaseProvider() {
                                                 }
                                             }
                                             if (successCount <= processedCount) {
-                                                log("Server #$processedCount: no video URLs found in decrypted data, trying sniffVideos")
+                                                log("Server #$processedCount: no video URLs found in decrypted data, trying sniff()")
                                                 try {
-                                                    val sniffed = httpService.sniffVideos(embedUrl)
+                                                    val sniffed = runtime.sniff(embedUrl)
                                                     if (sniffed.isNotEmpty()) {
-                                                        log("Server #$processedCount: sniffVideos found ${sniffed.size} sources")
+                                                        log("Server #$processedCount: sniff() found ${sniffed.size} sources")
                                                         for (src in sniffed) {
                                                             callback.invoke(
                                                                 newExtractorLink(source = this.name, name = "$serverTypeRaw (${src.quality})", url = src.url) {
@@ -802,7 +800,7 @@ class KrmzyProvider : BaseProvider() {
                                                         }
                                                     }
                                                 } catch (sn: Throwable) {
-                                                    log("Server #$processedCount: sniffVideos failed: ${sn.message}")
+                                                    log("Server #$processedCount: sniff() failed: ${sn.message}")
                                                 }
                                             }
                                         } catch (je: Exception) {

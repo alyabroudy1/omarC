@@ -2,7 +2,7 @@ package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -13,7 +13,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 
 
-class VidobaExtractor : ExtractorApi() {
+class VidobaExtractor(private val runtime: ProviderRuntime) : ExtractorApi() {
     override val name = "Vidoba"
     override val mainUrl = "https://vidoba.org"
     override val requiresReferer = true
@@ -75,7 +75,7 @@ class VidobaExtractor : ExtractorApi() {
             val headerReferer = referer ?: "https://larozza.casa/"
 
             // ── Phase 1: Fetch embed page ──
-            // Try httpService first (handles CF, cookies, redirects).
+            // Try the runtime first (handles CF, cookies, redirects).
             // Fall back to raw HttpURLConnection if service is unavailable (preserves TLS fingerprint
             // consistency with ExoPlayer for CDNs that check JA3).
             val documentHtml = fetchViaHttpService(url, headerReferer, userAgent)
@@ -142,17 +142,16 @@ class VidobaExtractor : ExtractorApi() {
     }
 
     private suspend fun fetchViaHttpService(url: String, referer: String, userAgent: String): String? {
-        val service = ProviderHttpServiceHolder.getInstance() ?: return null
         val headers = mapOf(
             "User-Agent" to userAgent,
             "Referer" to referer,
             "Accept-Language" to "en-GB,en;q=0.7"
         )
         return try {
-            val doc = service.getDocument(url, headers)
+            val doc = runtime.document(url, headers, rewrite = false)
             doc?.outerHtml()
         } catch (e: Exception) {
-            ProviderLogger.w(TAG, "fetchViaHttpService", "httpService failed: ${e.message}")
+            ProviderLogger.w(TAG, "fetchViaHttpService", "runtime fetch failed: ${e.message}")
             null
         }
     }

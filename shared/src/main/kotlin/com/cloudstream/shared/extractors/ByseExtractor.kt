@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -34,7 +34,8 @@ import javax.crypto.spec.SecretKeySpec
  */
 class ByseExtractor(
     private val host: String,
-    override val name: String = "Byse"
+    override val name: String = "Byse",
+    private val runtime: ProviderRuntime
 ) : ExtractorApi() {
     
     override val mainUrl: String get() = "https://$host"
@@ -338,16 +339,14 @@ class ByseExtractor(
             val responseStr = try {
                 com.lagradost.cloudstream3.app.get(apiUrl).text ?: ""
             } catch (e: Exception) {
-                ProviderLogger.w(EXTRACTOR_TAG, methodName, "app.get failed, trying ProviderHttpService", "error" to e.message)
-                val http = ProviderHttpServiceHolder.getInstance()
-                http?.getText(
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "app.get failed, trying the runtime", "error" to e.message)
+                runtime.text(
                     apiUrl,
                     headers = mapOf(
                         "Referer" to "https://$host/",
                         "X-Requested-With" to "XMLHttpRequest",
                         "Origin" to "https://$host"
-                    ),
-                    rewriteDomain = false
+                    )
                 ) ?: ""
             }
             

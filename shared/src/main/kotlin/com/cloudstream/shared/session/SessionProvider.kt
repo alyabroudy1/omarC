@@ -22,7 +22,7 @@ object SessionProvider {
     
     /**
      * Initialize the session provider with a session state.
-     * Called by ProviderHttpService after CF challenge is solved.
+     * Called by HttpGateway after CF challenge is solved.
      */
     fun initialize(session: SessionState) {
         ProviderLogger.d(TAG, "initialize", "Session initialized",

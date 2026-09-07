@@ -27,11 +27,11 @@ class Wecima : BaseProvider() {
     override fun getParser(): BaseParser = WecimaParser()
 
     private suspend fun searchPost(query: String): List<SearchResponse> {
-        val jsonText = httpService.postText(
+        val jsonText = runtime.post(
             "$mainUrl/search", mapOf("q" to query),
             referer = mainUrl,
             headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
-            rewriteDomain = true
+            rewrite = true
         )
         if (jsonText.isNullOrBlank()) return emptyList()
 
@@ -53,7 +53,7 @@ class Wecima : BaseProvider() {
             items.add(
                 newMovieSearchResponse(title, url, if (isTv) TvType.TvSeries else TvType.Movie) {
                     this.posterUrl = posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             )
         }
@@ -63,7 +63,6 @@ class Wecima : BaseProvider() {
     override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         if (page > 1) return newSearchResponseList(emptyList(), false)
         try {
-            httpService.ensureInitialized()
             return newSearchResponseList(searchPost(query), false)
         } catch (e: Exception) {
             Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
@@ -73,7 +72,6 @@ class Wecima : BaseProvider() {
 
     override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         if (page > 1) return newSearchResponseList(emptyList(), false)
-        httpService.ensureInitialized()
         return newSearchResponseList(searchPost(query), false)
     }
 
@@ -91,7 +89,7 @@ class Wecima : BaseProvider() {
             val dataId = seasonEl.attr("data-id")
             val dataSeason = seasonEl.attr("data-season")
             try {
-                val seasonHtml = httpService.postText("$mainUrl/ajax/Episode", mapOf("post_id" to dataId, "season" to dataSeason), url)
+                val seasonHtml = runtime.post("$mainUrl/ajax/Episode", mapOf("post_id" to dataId, "season" to dataSeason), url)
                 if (seasonHtml != null) {
                     val seasonDocParsed = Jsoup.parse(seasonHtml)
                     seasonDocParsed.select("a.hoverable.activable").forEach { epEl ->
@@ -130,7 +128,7 @@ class Wecima : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val document = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val document = runtime.document(data) ?: return false
         
         document.select("ul.WatchServersList li btn").forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))

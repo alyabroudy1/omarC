@@ -37,7 +37,7 @@ class TopCinemaProvider : BaseProvider() {
     )
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
-        return httpService.getDocument(
+        return runtime.document(
             url,
             headers = standardHeaders.filterKeys { it != "User-Agent" }
         ) ?: throw ErrorLoadingException("Failed to fetch $url")
@@ -48,9 +48,9 @@ class TopCinemaProvider : BaseProvider() {
         data: Map<String, String>,
         referer: String? = null
     ): String {
-        return httpService.postText(
+        return runtime.post(
             url,
-            data = data,
+            form = data,
             referer = referer ?: mainUrl,
             headers = postHeaders.filterKeys { it != "User-Agent" }
         ) ?: throw ErrorLoadingException("Failed to post $url")
@@ -418,7 +418,7 @@ class TopCinemaProvider : BaseProvider() {
         for (rawUrl in data.split("||").filter { it.isNotBlank() }) {
             try {
                 if (rawUrl.contains("/watch/")) {
-                    val watchDoc = httpService.getDocument(
+                    val watchDoc = runtime.document(
                         rawUrl,
                         headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
                     ) ?: continue
@@ -431,9 +431,9 @@ class TopCinemaProvider : BaseProvider() {
 
                     for (server in watchDoc.select(".watch--servers--list li.server--item")) {
                         val ajaxUrl = "$finalBaseUrl/wp-content/themes/movies2023/Ajaxat/Single/Server.php"
-                        val res = httpService.postText(
+                        val res = runtime.post(
                             ajaxUrl,
-                            data = mapOf("id" to server.attr("data-id"), "i" to server.attr("data-server")),
+                            form = mapOf("id" to server.attr("data-id"), "i" to server.attr("data-server")),
                             referer = finalWatchUrl,
                             headers = getDynamicPostHeaders(finalWatchUrl)
                                 .filterKeys { it != "User-Agent" }
@@ -444,7 +444,7 @@ class TopCinemaProvider : BaseProvider() {
                         }
                     }
                 } else if (rawUrl.contains("/download/")) {
-                    val downloadDoc = httpService.getDocument(
+                    val downloadDoc = runtime.document(
                         rawUrl,
                         headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
                     ) ?: continue

@@ -21,13 +21,14 @@ class LarozaPlugin: Plugin() {
         }
 
         // Register extractors
-        registerSharedExtractors()
+        val api = Laroza()
+        registerSharedExtractors(api.runtime)
 
         val sniffer = SnifferExtractor()
         sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }
         registerExtractorAPI(sniffer)       // Handles sniffer:// URLs (video sniffing fallback)
 
         // Register provider
-        registerMainAPI(Laroza())
+        registerMainAPI(api)
     }
 }

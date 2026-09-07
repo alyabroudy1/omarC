@@ -486,7 +486,7 @@ class VideoSnifferEngine(
                         // setting, so the request is re-issued through OkHttp instead.
                         // Cloudflare's own challenge machinery is deliberately NOT re-issued through
                         // OkHttp. Its TLS fingerprint is what these sites block in the first place
-                        // (that is why ProviderHttpService needs a Chrome-TLS tier at all), so
+                        // (that is why HttpGateway needs a Chrome-TLS tier at all), so
                         // serving the challenge from it invites a re-challenge. Let Chrome's stack
                         // answer its own challenge.
                         //

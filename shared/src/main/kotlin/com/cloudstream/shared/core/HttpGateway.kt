@@ -1,31 +1,20 @@
-package com.cloudstream.shared.service
+package com.cloudstream.shared.core
 
 import android.content.Context
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_PROVIDER_HTTP
-import com.cloudstream.shared.core.AndroidCookieStorage
-import com.cloudstream.shared.core.Fingerprint
-import com.cloudstream.shared.core.SystemCookieJar
-import com.cloudstream.shared.core.expireCookiesFor
-import com.cloudstream.shared.core.FingerprintInterceptor
-import com.cloudstream.shared.core.RequestKind
 import com.cloudstream.shared.network.ChromiumFetcher
 import com.cloudstream.shared.provider.ProviderConfig
-import com.cloudstream.shared.core.FetchOutcome
-import com.cloudstream.shared.core.classify
-import com.cloudstream.shared.core.needsCfSolve
-import com.cloudstream.shared.core.bodyOrNull
 import com.cloudstream.shared.queue.RequestQueue
+import com.cloudstream.shared.service.CloudflareBlockedSearchException
 import com.cloudstream.shared.session.SessionState
 import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.strategy.VideoSource
 import com.cloudstream.shared.webview.CfBypassEngine
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
-import com.cloudstream.shared.webview.NavigationEngine
-import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.app
 import org.jsoup.Jsoup
@@ -35,23 +24,38 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * THE GATEWAY - Single entry point for all provider HTTP operations.
- * 
- * Uses shared module components for CloudflareDetector, RequestQueue,
- * SessionState, CfBypassEngine, VideoSnifferEngine, DomainManager.
+ * THE GATEWAY - the one implementation of [ProviderRuntime].
+ *
+ * Owns the session domain, the request queue, the Cloudflare fallback chain and the page cache.
+ * Everything a provider is allowed to reach is on [ProviderRuntime]; the rest is private.
+ *
+ * The heavy fields ([domainManager], [cf], [chromium]) are lazy so [forProvider] can be called at
+ * plugin load without touching the network, disk or a WebView.
  */
-class ProviderHttpService private constructor(
+class HttpGateway private constructor(
     private val config: ProviderConfig,
-    private val cfBypassEngine: CfBypassEngine,
-    private val videoSnifferEngine: VideoSnifferEngine,
-    val navigationEngine: NavigationEngine,
-    private val domainManager: DomainManager,
+    private val context: Context,
+    private val activityProvider: () -> android.app.Activity?,
+    /** Seam so [imageHeaders] is JVM-testable without the system WebView. */
+    private val fingerprint: () -> Fingerprint = { Fingerprint.current() }
+) : ProviderRuntime, RequestQueue.Host {
+
+    private val domainManager by lazy {
+        DomainManager(
+            context = context,
+            providerName = config.name,
+            fallbackDomain = config.fallbackDomain,
+            githubConfigUrl = config.githubConfigUrl,
+            syncWorkerUrl = config.syncWorkerUrl
+        )
+    }
+    private val cf by lazy { CfBypassEngine(activityProvider) }
     /** Chrome-TLS HTTP client for Tier 3 TLS fingerprint fallback */
-    val chromiumFetcher: ChromiumFetcher
-) : RequestQueue.Host {
+    private val chromium by lazy { ChromiumFetcher(activityProvider) }
+
     @Volatile
     private var sessionState: SessionState = SessionState.initial(config.fallbackDomain)
-    
+
     @Volatile
     private var initialized = false
     private val initMutex = Mutex()
@@ -75,34 +79,22 @@ class ProviderHttpService private constructor(
     override val currentDomain: String
         get() = sessionState.domain
 
-    val mainUrl: String
-        get() = "https://$currentDomain"
-    
-    val userAgent: String
-        get() = Fingerprint.current().userAgent
+    // ── ProviderRuntime ──
 
-    /**
-     * The cookies the system store currently holds for the provider's own host, as a map.
-     *
-     * Kept for providers that build a header by hand; the store, not this service, is the source.
-     */
-    val cookies: Map<String, String>
-        get() = parseCookieHeader(AndroidCookieStorage.get(mainUrl))
-        
-    val snifferEngine: VideoSnifferEngine
-        get() = videoSnifferEngine
-    
+    override val domain: String
+        get() = sessionState.domain
+
     suspend fun ensureInitialized() {
         if (initialized) return
-        
+
         initMutex.withLock {
             if (initialized) return@withLock
-            
+
             // A session is a domain now — cookies live in the system store, which persists itself.
             if (SessionProvider.getDomain() == null) {
                 SessionProvider.initialize(sessionState)
             }
-            
+
             // Always run these (lightweight, handles domain changes)
             domainManager.ensureInitialized()
             val remoteDomain = domainManager.currentDomain
@@ -112,45 +104,37 @@ class ProviderHttpService private constructor(
             initialized = true
         }
     }
-    
+
     @Synchronized
-    fun updateDomain(newDomain: String) {
+    private fun updateDomain(newDomain: String) {
         if (newDomain == sessionState.domain) return
         val oldDomain = sessionState.domain
-        
+
         // CRITICAL: Always preserve cookies on domain change.
         // Domains change unpredictably (faselhd.biz → faselhdx.xyz, arabseed.show → asd.pics)
         // CF cookies are UA-bound, not domain-bound, so they remain valid.
         sessionState = sessionState.withDomain(newDomain)
         SessionProvider.update(sessionState)
-        
+
         // CRITICAL: Register the old domain as an alias.
         // HTML content from the new domain may still reference old-domain URLs
         // (e.g., season/episode links: w312x.faselhdx.xyz when current is w318x).
         // Adding as alias ensures cookies are shared for requests to the old domain.
         SessionProvider.addDomainAlias(oldDomain)
-        
+
         ProviderLogger.i(TAG_PROVIDER_HTTP, "updateDomain", "Domain changed, old domain added as alias",
             "old" to oldDomain, "new" to newDomain, "aliases" to SessionProvider.getDomainAliases().size)
     }
-    
-    // ==================== PUBLIC API ====================
-    
-    suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
-        val fullUrl = buildUrl(url)
-        val result = executeDirectRequest(fullUrl, headers, rewriteDomain)
-        return result.bodyOrNull()
-    }
 
     /**
-     * The address-family policy for every request this service makes, or null for system default.
+     * The address-family policy for every request this gateway makes, or null for system default.
      *
      * This must be the SAME policy used by anything that mints an IP-pinned token for this
      * provider (e.g. a WebView interceptor's OkHttp client) — see [ProviderConfig.preferIpv4].
      * IPv4 wins when both flags are set: it is the restrictive choice, and the one that keeps a
      * token usable by ExoPlayer, whose HTTP stack we cannot configure.
      */
-    fun dnsPolicy(): okhttp3.Dns? = when {
+    private fun dnsPolicy(): okhttp3.Dns? = when {
         config.preferIpv4 -> com.cloudstream.shared.network.PreferIpv4Dns()
         config.preferIpv6 -> com.cloudstream.shared.network.PreferIpv6Dns()
         else -> null
@@ -197,6 +181,13 @@ class ProviderHttpService private constructor(
         }
     }
 
+    override suspend fun text(pathOrUrl: String, headers: Map<String, String>): String? {
+        ensureInitialized()
+        val fullUrl = buildUrl(pathOrUrl)
+        val result = executeDirectRequest(fullUrl, headers, rewriteDomain = false)
+        return result.bodyOrNull()
+    }
+
     /**
      * A raw [okhttp3.Response] — for callers that need the status line, the headers, or an unparsed
      * body, and will handle the outcome themselves.
@@ -206,7 +197,7 @@ class ProviderHttpService private constructor(
      * no Cloudflare handling whatsoever, on a service whose every other method carries the session.
      * CimaNow's token chain hit exactly that (2026-08-03): Cloudflare answered 403 with a 128 KB block
      * page, the caller found no link in it, and the failure surfaced as "the site changed its markup".
-     * `load()` had fetched the same URL through [getDocument] seconds earlier and succeeded.
+     * `load()` had fetched the same URL through [document] seconds earlier and succeeded.
      *
      * So the session **identity** is now attached by default: the cookies for this URL's domain, plus
      * the session `User-Agent` and its matching client hints when the caller did not bring its own UA.
@@ -216,17 +207,18 @@ class ProviderHttpService private constructor(
      *
      * What this method still cannot do is **solve** a challenge: that means consuming the response and
      * re-issuing it, which would defeat the point of handing back a raw [okhttp3.Response]. It detects
-     * one and says so loudly instead. If you see that warning, the fix is to call [getDocument]
-     * (`rewriteDomain = true`), which owns the solve-and-retry path.
+     * one and says so loudly instead. If you see that warning, the fix is to call [document], which
+     * owns the solve-and-retry path.
      *
      * @param useSession pass false for a host that must see an anonymous request — an unauthenticated
      *   CDN probe, or a redirect hop where a stale cookie changes the answer.
      */
-    suspend fun getRaw(
+    override suspend fun raw(
         url: String,
-        headers: Map<String, String> = emptyMap(),
-        useSession: Boolean = true
+        headers: Map<String, String>,
+        useSession: Boolean
     ): okhttp3.Response {
+        ensureInitialized()
         val fullUrl = buildUrl(url)
 
         // Cookies come from the jar on the client, scoped by whatever Set-Cookie said, and
@@ -257,47 +249,41 @@ class ProviderHttpService private constructor(
             } catch (_: Exception) { "" }
             val peeked = classify(response.code, preview, fullUrl, response.header("Server"))
             if (peeked is FetchOutcome.CloudflareBlocked) {
-                ProviderLogger.e(TAG_PROVIDER_HTTP, "getRaw",
-                    "🔒 Cloudflare blocked a getRaw() call — this method cannot solve a challenge, " +
+                ProviderLogger.e(TAG_PROVIDER_HTTP, "raw",
+                    "🔒 Cloudflare blocked a raw() call — this method cannot solve a challenge, " +
                         "so the body you are about to parse is a block page, not the site. Use " +
-                        "getDocument(rewriteDomain = true) for anything behind Cloudflare.",
+                        "document() for anything behind Cloudflare.",
                     null,
                     "url" to fullUrl.take(100),
                     "code" to response.code.toString(),
                     "useSession" to useSession.toString())
             } else {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "getRaw", "Non-OK response",
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "raw", "Non-OK response",
                     "url" to fullUrl.take(100), "code" to response.code.toString())
             }
         }
         return response
     }
 
-    suspend fun post(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): Document? {
-        val fullUrl = buildUrl(url)
-        val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
-        return result.bodyOrNull()?.let { Jsoup.parse(it, fullUrl) }
-    }
-
-    suspend fun postText(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): String? {
-        val fullUrl = buildUrl(url)
-        val result = executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
+    override suspend fun post(
+        pathOrUrl: String,
+        form: Map<String, String>,
+        referer: String?,
+        headers: Map<String, String>,
+        rewrite: Boolean
+    ): String? {
+        ensureInitialized()
+        val fullUrl = buildUrl(pathOrUrl)
+        val result = executePostRequest(fullUrl, form, referer, headers, rewrite)
         return result.bodyOrNull()
     }
-    
-    /**
-     * DEBUG: Post request with full result details for troubleshooting
-     */
-    suspend fun postDebug(url: String, data: Map<String, String>, referer: String? = null, headers: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
-        val fullUrl = buildUrl(url)
-        return executePostRequest(fullUrl, data, referer, headers, rewriteDomain)
-    }
 
-    suspend fun sniffVideos(url: String): List<VideoSource> {
-        val result = cfBypassEngine.runSession(
+    override suspend fun sniff(url: String): List<VideoSource> {
+        ensureInitialized()
+        val result = cf.runSession(
             url = url,
             mode = Mode.HEADLESS,
-            userAgent = Fingerprint.current().userAgent,
+            userAgent = fingerprint().userAgent,
             exitCondition = ExitCondition.PageLoaded,
             timeout = 30_000L
         )
@@ -306,10 +292,10 @@ class ProviderHttpService private constructor(
             is WebViewResult.Success -> extractVideoSources(result.html)
             is WebViewResult.Timeout -> {
                 if (CloudflareDetector.isCloudflareChallenge(result.partialHtml)) {
-                     val retry = cfBypassEngine.runSession(
+                     val retry = cf.runSession(
                          url = url,
                          mode = Mode.FULLSCREEN,
-                         userAgent = Fingerprint.current().userAgent,
+                         userAgent = fingerprint().userAgent,
                          exitCondition = ExitCondition.PageLoaded, // Still PageLoaded for CF bypass
                          timeout = 120_000L
                      )
@@ -324,18 +310,6 @@ class ProviderHttpService private constructor(
         return sources.distinctBy { it.url }
     }
 
-    /**
-     * Fetch a URL using Chrome's TLS stack (WebView-based).
-     * Use when OkHttp is TLS-blocked but you need the content programmatically.
-     */
-    suspend fun fetchViaChromeTls(url: String, headers: Map<String, String> = emptyMap()): String? {
-        val allHeaders = mutableMapOf<String, String>("Referer" to "https://${sessionState.domain}/")
-        allHeaders.putAll(headers)
-        // The fetch runs in a WebView, so its cookies are already in the system store.
-        val response = chromiumFetcher.fetch(url, allHeaders)
-        return if (response.success) response.body else null
-    }
-
     private fun extractVideoSources(html: String): List<VideoSource> {
         val sources = mutableListOf<VideoSource>()
         Regex("""file:\s*["']([^"']+)["']""").findAll(html).forEach { match ->
@@ -346,7 +320,7 @@ class ProviderHttpService private constructor(
         }
         return sources
     }
-    
+
     // ==================== LOW LEVEL ====================
 
     /**
@@ -358,7 +332,7 @@ class ProviderHttpService private constructor(
      * OkHttp attempt plus a full Chrome-TLS WebView fetch (~830 ms measured), so the second one is
      * pure waste.
      *
-     * Deliberately opt-in per call site ([getDocument]'s `allowCached`), never on by default:
+     * Deliberately opt-in per call site ([document]'s `allowCached`), never on by default:
      * `shared` is used by ~40 providers and a page cache is exactly the kind of thing that turns
      * into a stale-content bug somewhere unrelated. Writes happen for everyone; only readers who
      * ask get a hit.
@@ -383,49 +357,52 @@ class ProviderHttpService private constructor(
         return hit
     }
 
-    suspend fun getDocument(
-        url: String,
-        headers: Map<String, String> = emptyMap(),
-        checkDomainChange: Boolean = false,
-        rewriteDomain: Boolean = false,
-        /**
-         * Accept a page fetched moments ago instead of refetching. Only pass true where a stale-by-
-         * seconds page is definitely acceptable — a detail page being re-read to extract watch
-         * links, not a listing being refreshed.
-         */
-        allowCached: Boolean = false
+    override suspend fun document(
+        pathOrUrl: String,
+        headers: Map<String, String>,
+        solveCf: Boolean,
+        adoptRedirect: Boolean,
+        allowCached: Boolean,
+        rewrite: Boolean
     ): Document? {
+        ensureInitialized()
+        val url = buildUrl(pathOrUrl)
+
+        if (!solveCf) return documentNoSolve(url, headers, adoptRedirect)
+
         if (allowCached) {
             cachedPage(url)?.let { hit ->
-                ProviderLogger.d(TAG_PROVIDER_HTTP, "getDocument",
+                ProviderLogger.d(TAG_PROVIDER_HTTP, "document",
                     "Reusing page fetched ${System.currentTimeMillis() - hit.atMs}ms ago",
                     "url" to url.take(80))
                 return Jsoup.parse(hit.html, hit.finalUrl)
             }
         }
 
-        val result = if (rewriteDomain) {
+        // HEAD's rewriteDomain=false branch: no host rewriting, so an absolute foreign URL
+        // (an embed host) is fetched as given instead of being pointed at the session domain.
+        val result = if (rewrite) {
             requestQueue.enqueue(url, headers)
         } else {
             requestQueue.enqueueAction(url) { executeDirectRequest(url, headers, rewriteDomain = false) }
         }
-        
+
         val success = result as? FetchOutcome.Success
 
-        if (success != null && checkDomainChange) {
+        if (success != null && adoptRedirect) {
             checkAndUpdateDomain(url, success.finalUrl)
         }
-        
+
         // A non-CF error page is still handed to the caller's parser, as it always was.
         val body = success?.html ?: (result as? FetchOutcome.HttpError)?.body
         val doc = body?.let { Jsoup.parse(it, success?.finalUrl ?: url) }
-        
+
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
         if (doc != null && success != null) {
             val redirected = handleMetaRefreshRedirect(doc, success.finalUrl)
             if (redirected != null) return redirected
         }
-        
+
         // Only fall back to WebView for a real Cloudflare block that no solve has been spent on
         // yet: a non-CF 403 (like Akwam's anti-bot) never reaches here, and a block the queue
         // already tried to solve carries solveAttempted = true, which prevents a thundering herd.
@@ -439,7 +416,7 @@ class ProviderHttpService private constructor(
             }
 
             if (config.webViewEnabled) {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocument", "CF blocked - WebView fallback queueing", "url" to url.take(80))
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "document", "CF blocked - WebView fallback queueing", "url" to url.take(80))
 
                 // CRITICAL FIX: Run the fallback solver through the RequestQueue to respect the domain mutex
                 // This prevents parallel search threads from launching simultaneous WebView sessions
@@ -481,13 +458,13 @@ class ProviderHttpService private constructor(
     }
 
     /**
-     * Like [getDocument] but does NOT fall back to WebView CF solve.
-     * Instead, throws [CloudflareBlockedSearchException] if CF is detected.
+     * `document(solveCf = false)`: does NOT fall back to a WebView CF solve.
+     * Throws [CloudflareBlockedSearchException] if CF is detected instead.
      * Used by lazy search to avoid WebView popups during global search.
      */
-    suspend fun getDocumentNoFallback(url: String, headers: Map<String, String> = emptyMap(), checkDomainChange: Boolean = false, rewriteDomain: Boolean = false): Document? {
+    private suspend fun documentNoSolve(url: String, headers: Map<String, String>, adoptRedirect: Boolean): Document? {
         // CRITICAL FIX: Bypass requestQueue to avoid the automatic CF solver loop
-        val result = executeDirectRequest(url, headers, rewriteDomain)
+        val result = executeDirectRequest(url, headers, rewriteDomain = true)
 
         val isCfBlocked = result is FetchOutcome.CloudflareBlocked ||
             (result is FetchOutcome.HttpError &&
@@ -498,13 +475,13 @@ class ProviderHttpService private constructor(
         // A CF challenge can redirect through cloudflare.com / challenges.cloudflare.com on
         // its way to (or instead of) the real site; recording that as the provider domain
         // poisons it permanently (every later request then targets cloudflare.com and 403s).
-        if (checkDomainChange && !isCfBlocked) {
+        if (adoptRedirect && !isCfBlocked) {
             val resolvedUrl = (result as? FetchOutcome.Success)?.finalUrl
             val finalHost = resolvedUrl?.let { extractDomain(it) }
             if (finalHost == null || DomainManager.isValidProviderDomain(finalHost)) {
                 checkAndUpdateDomain(url, resolvedUrl)
             } else {
-                ProviderLogger.w(TAG_PROVIDER_HTTP, "getDocumentNoFallback",
+                ProviderLogger.w(TAG_PROVIDER_HTTP, "documentNoSolve",
                     "Skipped domain update — resolved host failed validation",
                     "host" to finalHost, "url" to url.take(80))
             }
@@ -512,46 +489,42 @@ class ProviderHttpService private constructor(
 
         // If CF blocked, throw instead of falling back to WebView
         if (isCfBlocked) {
-            ProviderLogger.i(TAG_PROVIDER_HTTP, "getDocumentNoFallback",
+            ProviderLogger.i(TAG_PROVIDER_HTTP, "documentNoSolve",
                 "CF detected — throwing for lazy search", "url" to url.take(80))
             throw CloudflareBlockedSearchException(config.name, sessionState.domain)
         }
-        
+
         val success = result as? FetchOutcome.Success
         // A non-CF error page is still handed to the caller's parser, as it always was.
         val body = success?.html ?: (result as? FetchOutcome.HttpError)?.body
         val doc = body?.let { Jsoup.parse(it, url) }
-        
+
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
         if (doc != null && success != null) {
             val redirected = handleMetaRefreshRedirect(doc, success.finalUrl)
             if (redirected != null) return redirected
         }
-        
+
         return doc
     }
 
     /**
      * One shape for images, on every tier: the device UA, the page as `Referer`, an image `Accept`,
-     * and whatever cookies that host has. [getImageHeadersFull] is the same map — the two used to
-     * differ by nine headers for no reason anyone recorded.
+     * and whatever cookies that host has.
      */
-    fun getImageHeaders(targetDomain: String? = null): Map<String, String> {
+    override fun imageHeaders(targetDomain: String?): Map<String, String> {
         val domain = targetDomain ?: sessionState.domain
         val referer = "https://$domain/"
 
-        return Fingerprint.current().imageHeaders(
+        return fingerprint().imageHeaders(
             referer = referer,
             cookieHeader = AndroidCookieStorage.get(referer).orEmpty()
         )
     }
 
-    fun getImageHeadersFull(targetDomain: String? = null): Map<String, String> =
-        getImageHeaders(targetDomain)
-
     // ==================== INTERNAL ====================
 
-    internal suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
+    private suspend fun executeDirectRequest(url: String, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
         val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
         return try {
             
@@ -565,7 +538,7 @@ class ProviderHttpService private constructor(
             // Caller-specific headers only — identity comes from FingerprintInterceptor and
             // cookies from the jar on the client below.
             val headers = mutableMapOf(
-                "Referer" to "https://${urlDomain ?: sessionState.domain}/"
+                "Referer" to defaultRefererFor(targetUrl).ifBlank { "https://${sessionState.domain}/" }
             )
             
             // Add custom headers
@@ -602,7 +575,7 @@ class ProviderHttpService private constructor(
             
             val result = executeRequestHelper(directClient, okRequest)
             // www-normalized so this shares failure/success counts with the cfBreakerDomain key
-            // used by getDocument()'s CF-solve fallback (extractDomain() below) — otherwise
+            // used by document()'s CF-solve fallback (extractDomain() below) — otherwise
             // "www.example.com" and "example.com" track two independent circuits for one domain.
             val breakerDomain = (urlDomain ?: sessionState.domain).removePrefix("www.")
 
@@ -641,7 +614,7 @@ class ProviderHttpService private constructor(
                 "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
                 "url" to targetUrl.take(80))
 
-            val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
+            val chromiumResponse = chromium.fetch(targetUrl, headers)
             // Success is a status code, which a block page also has. Check the body too, or a
             // challenge gets handed back as content and parsed as if it were the site.
             val stillBlocked = chromiumResponse.isCloudflareBlocked ||
@@ -673,7 +646,7 @@ class ProviderHttpService private constructor(
         }
     }
 
-    internal suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
+    private suspend fun executePostRequest(url: String, data: Map<String, String>, referer: String? = null, customHeaders: Map<String, String> = emptyMap(), rewriteDomain: Boolean = false): FetchOutcome {
         return try {
             val targetUrl = if (rewriteDomain) rewriteUrlIfNeeded(url) else url
             // Caller-specific headers only — identity comes from FingerprintInterceptor.
@@ -733,7 +706,7 @@ class ProviderHttpService private constructor(
         return classify(code, html, finalUrl, serverHeader)
     }
     
-    internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): FetchOutcome {
+    private suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): FetchOutcome {
         if (!config.webViewEnabled) {
             // No WebView means no solve is possible here — mark it attempted so the caller's
             // fallback gate does not queue another one.
@@ -760,10 +733,10 @@ class ProviderHttpService private constructor(
         
         val mode = if (config.skipHeadless) Mode.FULLSCREEN else Mode.HEADLESS
         
-        val result = cfBypassEngine.runSession(
+        val result = cf.runSession(
             url = targetUrl,
             mode = mode,
-            userAgent = Fingerprint.current().userAgent,
+            userAgent = fingerprint().userAgent,
             exitCondition = ExitCondition.PageLoaded,
             timeout = if (mode == Mode.FULLSCREEN) 120_000L else 30_000L,
             allowedDomains = allowedDomains
@@ -789,37 +762,17 @@ class ProviderHttpService private constructor(
         }
     }
     
-    private fun buildUrl(pathOrUrl: String): String {
-        if (pathOrUrl.startsWith("http")) return pathOrUrl
-        val normalizedPath = if (pathOrUrl.startsWith("/")) pathOrUrl else "/$pathOrUrl"
-        return "https://${sessionState.domain}$normalizedPath"
-    }
-    
+    private fun buildUrl(pathOrUrl: String): String = buildUrl(pathOrUrl, sessionState.domain)
+
     private fun rewriteUrlIfNeeded(url: String): String {
         val urlDomain = extractDomain(url)
         val currentDomain = sessionState.domain
-
-        return if (urlDomain.isNotBlank() && currentDomain.isNotBlank() && urlDomain != currentDomain) {
-            try {
-                val uri = URI(url)
-                val host = uri.host
-                val rewritten = if (host != null) {
-                    url.replace(host, currentDomain)
-                } else {
-                    url.replace(urlDomain, currentDomain)
-                }
-                ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
-                    "from" to urlDomain, "to" to currentDomain)
-                rewritten
-            } catch (e: Exception) {
-                val rewritten = url.replace(urlDomain, currentDomain)
-                ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
-                    "from" to urlDomain, "to" to currentDomain)
-                rewritten
-            }
-        } else {
-            url
+        val rewritten = rewriteHost(url, urlDomain.ifBlank { null }, currentDomain)
+        if (rewritten !== url) {
+            ProviderLogger.d(TAG_PROVIDER_HTTP, "rewriteUrlIfNeeded", "Rewrote URL",
+                "from" to urlDomain, "to" to currentDomain)
         }
+        return rewritten
     }
     
     private fun checkAndUpdateDomain(requestUrl: String, finalUrl: String?) {
@@ -885,16 +838,6 @@ class ProviderHttpService private constructor(
         val match = Regex("URL=(.+)", RegexOption.IGNORE_CASE).find(content)
         return match?.groupValues?.get(1)?.trim()
     }
-    
-    /** Parses a `"a=1; b=2"` store header into a map, for [cookies]. */
-    private fun parseCookieHeader(header: String?): Map<String, String> {
-        if (header.isNullOrBlank()) return emptyMap()
-        return header.split(";").mapNotNull { pair ->
-            val name = pair.substringBefore("=").trim()
-            val value = pair.substringAfter("=", "").trim()
-            if (name.isEmpty()) null else name to value
-        }.toMap()
-    }
 
     private fun extractDomain(url: String): String {
         return try {
@@ -903,10 +846,10 @@ class ProviderHttpService private constructor(
     }
     
     companion object {
-        private val instances = mutableMapOf<String, ProviderHttpService>()
+        private val instances = mutableMapOf<String, HttpGateway>()
 
         /**
-         * How much of a refused body [getRaw] peeks at to recognise a Cloudflare block.
+         * How much of a refused body [raw] peeks at to recognise a Cloudflare block.
          *
          * Cloudflare's markers are in the `<head>`; a real block page runs to ~128 KB, and buffering
          * that on every 403 to answer a yes/no question would be waste.
@@ -962,31 +905,29 @@ class ProviderHttpService private constructor(
             }
         }
 
-        fun create(
+        fun forProvider(
             context: Context,
             config: ProviderConfig,
             activityProvider: () -> android.app.Activity?
-        ): ProviderHttpService {
-            // Build the one process-wide fingerprint from the real system WebView.
-            Fingerprint.current()
-            
-            return instances.getOrPut(config.name) {
-                val domainManager = DomainManager(
-                    context = context,
-                    providerName = config.name,
-                    fallbackDomain = config.fallbackDomain,
-                    githubConfigUrl = config.githubConfigUrl,
-                    syncWorkerUrl = config.syncWorkerUrl
-                )
-                val cfBypassEngine = CfBypassEngine(activityProvider)
-                val videoSnifferEngine = VideoSnifferEngine(activityProvider)
-                val navigationEngine = NavigationEngine(activityProvider)
-                val chromiumFetcher = ChromiumFetcher(activityProvider)
-
-                ProviderHttpService(config, cfBypassEngine, videoSnifferEngine, navigationEngine, domainManager, chromiumFetcher)
-            }
+        ): HttpGateway = instances.getOrPut(config.name) {
+            HttpGateway(config, context, activityProvider)
         }
     }
+}
+
+/**
+ * The `Referer` a request gets when the caller did not bring one: the target's own origin, never
+ * the provider's current domain.
+ *
+ * Load-bearing for the shared extractors, which are constructed by one plugin and can serve a
+ * link raised by another (docs/wave-4b-design.md section 5). Returns "" for a URL with no host,
+ * leaving the fallback to the caller.
+ *
+ * Top-level on purpose — no Android type is touched, so the rule is testable on the JVM.
+ */
+internal fun defaultRefererFor(url: String): String {
+    val host = try { java.net.URL(url).host } catch (e: Exception) { null }
+    return if (host.isNullOrBlank()) "" else "https://$host/"
 }
 
 /**
@@ -997,4 +938,38 @@ class ProviderHttpService private constructor(
 internal fun shouldRetryBeforeSolve(cookieHeader: String?): Boolean {
     if (cookieHeader.isNullOrBlank()) return false
     return cookieHeader.split(";").any { it.substringBefore("=").trim() == "cf_clearance" }
+}
+
+/**
+ * Point [url] at [toHost] in place of [fromHost]. Returns [url] unchanged when [fromHost] is null,
+ * either host is blank, or the hosts are already equal.
+ *
+ * CAVEAT — this is a plain string replacement of the host token, which is what this code has always
+ * done: a URL that repeats the old host in its query (`https://old.x/p?u=https://old.x/q`) gets
+ * *both* occurrences rewritten. That is the behaviour pinned by `UrlRewriteTest`, kept verbatim in
+ * this fix pass; narrowing it to the host component only is Wave 6's
+ * `HostHistoryRewriteTest.rewritesHostComponentNotQueryString`.
+ *
+ * Top-level on purpose — no Android type is touched, so the rule is testable on the JVM.
+ */
+internal fun rewriteHost(url: String, fromHost: String?, toHost: String): String {
+    if (fromHost.isNullOrBlank() || toHost.isBlank() || fromHost == toHost) return url
+    return try {
+        val host = URI(url).host
+        if (host != null) url.replace(host, toHost) else url.replace(fromHost, toHost)
+    } catch (e: Exception) {
+        url.replace(fromHost, toHost)
+    }
+}
+
+/**
+ * Absolute URLs pass through; a bare path (with or without a leading `/`) is joined to
+ * `https://[domain]`.
+ *
+ * Top-level on purpose — no Android type is touched, so the rule is testable on the JVM.
+ */
+internal fun buildUrl(pathOrUrl: String, domain: String): String {
+    if (pathOrUrl.startsWith("http")) return pathOrUrl
+    val normalizedPath = if (pathOrUrl.startsWith("/")) pathOrUrl else "/$pathOrUrl"
+    return "https://$domain$normalizedPath"
 }

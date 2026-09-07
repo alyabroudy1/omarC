@@ -1,7 +1,7 @@
 package com.cimanow
 
 import com.lagradost.api.Log
-import com.cloudstream.shared.service.ProviderHttpService
+import com.cloudstream.shared.core.ProviderRuntime
 import com.cloudstream.shared.webview.InterceptChallenge
 import com.cloudstream.shared.webview.NavigationSessionPolicy
 
@@ -26,7 +26,7 @@ import com.cloudstream.shared.webview.NavigationSessionPolicy
  * next HTTP hop both see it — there is no second place to keep in step.
  */
 class CimaNowNavigationPolicy(
-    private val httpService: ProviderHttpService
+    private val runtime: ProviderRuntime
 ) : NavigationSessionPolicy {
 
     override fun onInterceptedResponseCookies(
@@ -151,7 +151,7 @@ class CimaNowNavigationPolicy(
         val body = try {
             kotlinx.coroutines.runBlocking {
                 kotlinx.coroutines.withTimeoutOrNull(ASSET_FETCH_TIMEOUT_MS) {
-                    val res = httpService.getRaw(
+                    val res = runtime.raw(
                         url,
                         headers = buildMap {
                             referer?.let { put("Referer", it) }
@@ -371,17 +371,17 @@ fun List<InterceptChallenge>.cimaCloudflareBlock(): InterceptChallenge? =
  * Fetches [url] through the session path purely to get a Cloudflare challenge solved, and reports
  * whether we actually came out the other side with a usable session.
  *
- * `getDocument` returning non-null is **not** that test: it parses whatever HTML it got, so a
+ * `document` returning non-null is **not** that test: it parses whatever HTML it got, so a
  * Cloudflare block page comes back as a perfectly valid `Document` and a failed solve reads as
  * success. Two things have to be true — the body is not itself a challenge, and the session now holds
  * a clearance (or never needed one, on a site that answers without a challenge).
  */
 suspend fun reestablishSession(
-    httpService: ProviderHttpService,
+    runtime: ProviderRuntime,
     url: String,
     tag: String
 ): Boolean {
-    val doc = httpService.getDocument(url, rewriteDomain = true)
+    val doc = runtime.document(url)
     if (doc == null) {
         Log.w(tag, "Re-establish: no response at all for ${url.take(80)}")
         return false

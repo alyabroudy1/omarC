@@ -64,7 +64,7 @@ class TukTukcima : BaseProvider() {
                     val seasonName = seasonEl.select("h3").text()
                     val seasonNum = seasonName.filter { it.isDigit() }.toIntOrNull() ?: 1
 
-                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true) ?: return@async emptyList<ParserInterface.ParsedEpisode>()
+                    val seasonDoc = runtime.document(seasonUrl) ?: return@async emptyList<ParserInterface.ParsedEpisode>()
                     
                     getParser().parseEpisodes(seasonDoc, seasonNum)
                 }
@@ -80,8 +80,7 @@ class TukTukcima : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val doc = runtime.document(data) ?: return false
 
         val iframeCrypt = doc.selectFirst("iframe#main-video-frame")?.attr("data-crypt")
         if (iframeCrypt.isNullOrBlank()) return false
@@ -89,11 +88,10 @@ class TukTukcima : BaseProvider() {
         val iframeUrl = String(Base64.decode(iframeCrypt, Base64.DEFAULT), Charsets.UTF_8)
         
         val reqHeaders = mapOf(
-            "User-Agent" to httpService.userAgent,
             "Referer" to mainUrl
         )
         
-        val initialRes = httpService.getRaw(iframeUrl, headers = reqHeaders)
+        val initialRes = runtime.raw(iframeUrl, headers = reqHeaders)
         val xsrfTokenDecoded = initialRes.headers("Set-Cookie").find { it.startsWith("XSRF-TOKEN=") }
             ?.substringAfter("XSRF-TOKEN=")?.substringBefore(";")
             ?.let { URLDecoder.decode(it, "UTF-8") }
@@ -117,7 +115,7 @@ class TukTukcima : BaseProvider() {
             "Cookie" to cookieHeaderString
         )
 
-        val jsonRes = httpService.getRaw(iframeUrl, headers = inertiaHeaders)
+        val jsonRes = runtime.raw(iframeUrl, headers = inertiaHeaders)
         val jsonText = jsonRes.body?.string() ?: ""
         
         var linksFound = false

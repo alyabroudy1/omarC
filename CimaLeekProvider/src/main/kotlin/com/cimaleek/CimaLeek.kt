@@ -61,7 +61,7 @@ class CimaLeek : BaseProvider() {
                     
                 Log.d(methodTag, "Fetching season $seasonNum URL: $seasonUrl")
                 try {
-                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true)
+                    val seasonDoc = runtime.document(seasonUrl)
                     if (seasonDoc != null) {
                         val epLinks = seasonDoc.select("ul.episodios li.episodesList a")
                         Log.d(methodTag, "Season $seasonNum: found ${epLinks.size} episodes")
@@ -294,7 +294,7 @@ class CimaLeek : BaseProvider() {
     }
 
     /**
-     * Extracts the video URL directly from known embed hosts using httpService
+     * Extracts the video URL directly from known embed hosts using the runtime
      * (with Cloudflare bypass). Returns true if a video link was found.
      */
     private suspend fun extractEmbedUrl(
@@ -308,7 +308,7 @@ class CimaLeek : BaseProvider() {
 
         // ── MixDrop ──
         if (embedUrl.contains("mixdrop")) {
-            val html = httpService.getText(embedUrl, baseHeaders, rewriteDomain = false) ?: return false
+            val html = runtime.text(embedUrl, baseHeaders) ?: return false
             val unpacked = getAndUnpack(html)
             val link = Regex("""wurl.*?=.*?"(.*?)";""").find(unpacked)?.groupValues?.get(1) ?: return false
             callback(newExtractorLink("MixDrop", "MixDrop", httpsify(link)) {
@@ -320,14 +320,14 @@ class CimaLeek : BaseProvider() {
 
         // ── DoodStream (ds2play, ds2video) ──
         if (embedUrl.contains("ds2play") || embedUrl.contains("ds2video")) {
-            val page = httpService.getText(embedUrl.replace("/d/", "/e/"), baseHeaders, rewriteDomain = false) ?: return false
+            val page = runtime.text(embedUrl.replace("/d/", "/e/"), baseHeaders) ?: return false
             val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
             val md5Path = Regex("/pass_md5/[^']*").find(page)?.value ?: return false
             val md5 = host + md5Path
             val token = md5.substringAfterLast("/")
             val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
             val hash = buildString { repeat(10) { append(alphabet.random()) } }
-            val trueUrl = httpService.getText(md5, baseHeaders, rewriteDomain = false) + hash + "?token=$token"
+            val trueUrl = runtime.text(md5, baseHeaders) + hash + "?token=$token"
             val quality = Regex("\\d{3,4}p").find(page.substringAfter("<title>").substringBefore("</title>"))?.value
             callback(newExtractorLink("DoodStream", "DoodStream", trueUrl) {
                 this.referer = "$host/"; this.quality = getQualityFromName(quality)
@@ -340,7 +340,7 @@ class CimaLeek : BaseProvider() {
         if (embedUrl.contains("krakenfiles")) {
             val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
             val id = Regex("/(?:view|embed-video)/([\\da-zA-Z]+)").find(embedUrl)?.groupValues?.get(1) ?: return false
-            val html = httpService.getText("$host/embed-video/$id", baseHeaders, rewriteDomain = false) ?: return false
+            val html = runtime.text("$host/embed-video/$id", baseHeaders) ?: return false
             val link = Jsoup.parse(html, embedUrl).selectFirst("source")?.attr("src") ?: return false
             callback(newExtractorLink("Krakenfiles", "Krakenfiles", httpsify(link)))
             Log.d(tag, "Krakenfiles OK")
@@ -351,7 +351,7 @@ class CimaLeek : BaseProvider() {
         if (embedUrl.contains("luluvdo") || embedUrl.contains("lulustream") || embedUrl.contains("kinoger.pw")) {
             val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
             val filecode = embedUrl.substringAfterLast("/")
-            val html = httpService.postText("$host/dl", mapOf(
+            val html = runtime.post("$host/dl", mapOf(
                 "op" to "embed", "file_code" to filecode, "auto" to "1", "referer" to referer
             ), referer = referer, headers = baseHeaders) ?: return false
             val script = Jsoup.parse(html, "$host/dl").selectFirst("script:containsData(vplayer)")?.data() ?: return false
@@ -372,7 +372,7 @@ class CimaLeek : BaseProvider() {
                 embedUrl.contains("/file/") -> embedUrl.replace("/file/", "/v/")
                 else -> embedUrl.replace("/f/", "/v/")
             }
-            val html = httpService.getText(embedPage, baseHeaders, rewriteDomain = false) ?: return false
+            val html = runtime.text(embedPage, baseHeaders) ?: return false
             val script = if (!getPacked(html).isNullOrEmpty()) {
                 var r = getAndUnpack(html); if (r.contains("var links")) r = r.substringAfter("var links"); r
             } else {
@@ -398,8 +398,8 @@ class CimaLeek : BaseProvider() {
 
     /**
      * Fetches a cswru/vid872 wrapper page (bypassing CS3 URL rewriting with
-     * rewriteDomain=false), extracts the iframe or AJAX redirect URL, and
-     * extracts the video URL directly via httpService (with Cloudflare bypass).
+     * no domain rewriting), extracts the iframe or AJAX redirect URL, and
+     * extracts the video URL directly via the runtime (with Cloudflare bypass).
      * Falls back to loadExtractor for unknown hosts.
      *
      * @return The resolved (iframe/redirect) URL for sniffer fallback, or null.
@@ -419,7 +419,7 @@ class CimaLeek : BaseProvider() {
 
             Log.d(methodTag, "Fetching wrapper: ${url.take(100)}")
 
-            val html = httpService.getText(url, headers, rewriteDomain = false)
+            val html = runtime.text(url, headers)
             if (html.isNullOrBlank()) {
                 Log.w(methodTag, "Empty response")
                 return null
@@ -445,7 +445,7 @@ class CimaLeek : BaseProvider() {
                 // 1st: try built-in CS3 extractors (loadExtractor)
                 loadExtractor(iframeSrc, url, subtitleCallback, trackingCb)
 
-                // 2nd: if extractors found nothing, try httpService direct fallback
+                // 2nd: if extractors found nothing, try a direct runtime fallback
                 if (innerLinks == 0) {
                     extractEmbedUrl(iframeSrc, url, trackingCb)
                 }
@@ -465,7 +465,7 @@ class CimaLeek : BaseProvider() {
                 Log.d(methodTag, "Found AJAX redirect: $absoluteRedirect")
 
                 // Follow redirect to get final embed URL
-                val redirectHtml = httpService.getText(absoluteRedirect, headers, rewriteDomain = false)
+                val redirectHtml = runtime.text(absoluteRedirect, headers)
                 val finalUrl = if (!redirectHtml.isNullOrBlank()) {
                     Regex("""(https?://[^\s"']+)""").find(redirectHtml)?.groupValues?.get(1) ?: absoluteRedirect
                 } else {
@@ -478,7 +478,7 @@ class CimaLeek : BaseProvider() {
                 // 1st: try built-in CS3 extractors (loadExtractor)
                 loadExtractor(finalUrl, url, subtitleCallback, trackingCb)
 
-                // 2nd: if extractors found nothing, try httpService direct fallback
+                // 2nd: if extractors found nothing, try a direct runtime fallback
                 if (innerLinks == 0) {
                     extractEmbedUrl(finalUrl, url, trackingCb)
                 }
@@ -514,8 +514,7 @@ class CimaLeek : BaseProvider() {
         val methodTag = "[CimaLeek] [loadLinks]"
         Log.i(methodTag, "START data='$data'")
 
-        httpService.ensureInitialized()
-        val userAgent = httpService.userAgent
+        val userAgent = Fingerprint.current().userAgent
 
         // ====================================================================
         // PHASE 0 – Fetch watch page and parse metadata (ver, postId, servers)
@@ -524,7 +523,7 @@ class CimaLeek : BaseProvider() {
         val watchUrl = if (data.endsWith("/watch/")) data else {
             if (data.endsWith("/")) "${data}watch/" else "$data/watch/"
         }
-        val html = httpService.getText(watchUrl, rewriteDomain = false)
+        val html = runtime.text(watchUrl)
         if (html.isNullOrBlank()) {
             Log.e(methodTag, "PHASE 0: Empty watch page HTML")
             return false
@@ -575,7 +574,7 @@ class CimaLeek : BaseProvider() {
                             "X-Requested-With" to "com.android.browser"
                         )
 
-                        val json = httpService.getText(apiUrl, headers, rewriteDomain = false)
+                        val json = runtime.text(apiUrl, headers)
                         if (json.isNullOrBlank()) {
                             Log.w(methodTag, "PHASE 1: [$idx] $serverName — empty API response")
                             return@async null

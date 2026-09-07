@@ -10,8 +10,9 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class eishkPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(eishk())
-        registerSharedExtractors()
+        val api = eishk()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
         registerExtractorAPI(EshkEmbedExtractor())
     }
 }

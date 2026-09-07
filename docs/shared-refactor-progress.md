@@ -351,6 +351,58 @@ the name is free); 160 occurrences in 84 files renamed; `BaseProvider.getParser(
 its own commit so `git log --follow` on the parser stays readable. `ArabseedV4` returns its concrete
 parser type so the file carries no base-class name and could travel with 4b-1.
 
+## 6d. Wave 4b-2: `HttpGateway` and `ProviderRuntime`
+
+Design: `docs/wave-4b-design.md` sections 1, 2, 4, 5, 6, 9, 10. Review: `docs/reviews/wave-4b-2-review.md`.
+
+**What changed.** `service/ProviderHttpService.kt` (992 lines) and `ProviderHttpServiceHolder.kt`
+deleted. New `core/ProviderRuntime.kt`: the provider-facing interface with exactly 7 members
+(`domain`, `document`, `text`, `post`, `raw`, `sniff`, `imageHeaders`). New `core/HttpGateway.kt`
+implements it and `RequestQueue.Host`; the request pipeline, tiers, circuit breaker, cache and CF
+orchestration move verbatim; `DomainManager`, `CfBypassEngine` and `ChromiumFetcher` are lazy;
+`ensureInitialized()` runs at the head of every entry point so the 40 provider-side calls were
+deleted. `BaseProvider` exposes `val runtime` and derives `mainUrl` from `runtime.domain`. The 8
+extractors that resolved the global Holder now take `ProviderRuntime` by constructor;
+`registerSharedExtractors(runtime)` constructs them; 21 plugins call it with `api.runtime`.
+`NavigationEngine` is a private lazy field of `CimaNowProvider` (its only consumer), no longer a
+gateway dependency. 28 provider files migrated by scripted passes.
+
+**Why.** Wave 4 acceptance criteria 1 (a thin provider compiles against at most 8 methods) and 3 (no
+extractor resolves a global). The Holder had one global slot for 41 providers and could be null; the
+service exposed ~20 unrelated public members, OkHttp and Android types, and three engines.
+
+**Decisions.**
+
+| Decision | Alternative rejected | Why |
+|---|---|---|
+| 7 members, `text` added, `post` returns `String?`, `url()`/`playbackHeaders` dropped | the third-eye 8-method sketch verbatim | call-site counts: 31 `getText` sites and `raw` lacks the Tier-3 retry; 14 `postText` vs 2 `post`; 1 and 0 callers for the dropped ones |
+| `HttpGateway` implements `ProviderRuntime` directly | a separate `ProviderScope` | one fewer concept |
+| Extractors take `ProviderRuntime` by constructor | per-call context | `ExtractorApi.getUrl` has a fixed signature |
+| Extractor names unchanged despite collisions with app built-ins | rename | `loadExtractor` matches on `mainUrl` prefix, never on name |
+| Eager `api.runtime` at `Plugin.load` | lambda indirection | gateway fields are lazy; cost is one config object |
+| Hand-built `User-Agent` entries deleted where the request goes through the interceptor; `Fingerprint.current().userAgent` where a value feeds a hand-built client, ExoPlayer or `M3u8Helper` | delete all | deleting those would change the wire |
+| `HttpGateway` is still ~950 lines | internal decomposition now | the design split the surface, not the internals; internal decomposition is a later wave once the domain rule (Wave 6) lands |
+
+**Metrics.** Tests 109 to 112 for the slice. Net 70 files, +430 / -1,520 lines. `DomainManager.kt`
+and `RequestQueue.kt` have empty diffs; `BaseProvider.handleDomainDifference` untouched (Wave 6).
+
+**Review and fix pass.** `docs/reviews/wave-4b-2-review.md`: not ready as-is. F1/F2 (High): the
+design's census said every `getDocument` caller passed `rewriteDomain = true`, but nine relied on the
+default `false`; collapsing the parameter made `document()` rewrite the host of absolute foreign
+embed URLs in three shared extractors (Laroza, OkPrime, Vidoba) and one Krmzy site to the provider
+domain, breaking those extractions. Fixed by a `rewrite: Boolean = true` parameter on `document`
+(interface still 7 members) with the old no-rewrite branch restored and `rewrite = false` at the
+affected sites plus Gesseh. The host rewrite and URL build were extracted as pure functions with
+tests, which would have caught the regression. Everything else verified verbatim against the
+deleted service. Non-blocking: anim3rb's deleted provider-domain `Cookie` headers now come from the
+jar keyed on the request host (differs only in the poisoned-domain edge case; Wave 6 leak table);
+removing the `Fingerprint.current()` warm-up moves the first `getDefaultUserAgent` call to an OkHttp
+thread (gate on logcat; one-line revert if it fails).
+
+**Release gates.** CimaNow freex flow on device (15 hand-built UA headers changed on the wire); wire
+check that `text()` sends a target-host `Referer`, never the provider domain (JVM test pins the pure
+`defaultRefererFor`); first-run `Fingerprint` construction off the main thread.
+
 ## 7. Cumulative status
 
 | Wave | Commit | Runnable tests after | LOC (all files, `git show --stat`) | LOC (excluding `docs/`, `log3.txt`) | Status |

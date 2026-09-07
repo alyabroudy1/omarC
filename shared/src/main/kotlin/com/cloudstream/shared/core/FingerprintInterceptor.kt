@@ -16,7 +16,7 @@ enum class RequestKind { Document, Subresource }
  * Two rules, both inherited from the code this replaces:
  *
  * 1. **A *foreign* caller-supplied `User-Agent` suppresses everything.** Documented at
- *    `ProviderHttpService.kt:366-379`: a caller that sends its own UA (Krmzy sends a *desktop*
+ *    `HttpGateway.executeDirectRequest`: a caller that sends its own UA (Krmzy sends a *desktop*
  *    Chrome) must not be handed mobile Android client hints, because that mismatch is itself the
  *    signal a bot check reads. Either the whole identity is ours, or none of it is. A caller that
  *    sets the *same* UA as the fingerprint is not foreign — it gets the matching hints, and its

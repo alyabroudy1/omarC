@@ -15,7 +15,7 @@ import kotlinx.coroutines.*
  *
  * DECOUPLED FROM STATE: This engine does NOT store cookies.
  * It returns cookies in [WebViewResult.Success], and the caller
- * (ProviderHttpService) is responsible for updating SessionState.
+ * (HttpGateway) is responsible for updating SessionState.
  */
 class CfBypassEngine(
     activityProvider: () -> android.app.Activity?

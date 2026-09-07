@@ -80,7 +80,7 @@ class MyCima : BaseProvider() {
 
             try {
                 val ajaxUrl = "$mainUrl/wp-content/themes/mycima/Ajaxt/Single/Episodes.php"
-                val seasonHtml = httpService.postText(ajaxUrl, mapOf("season" to dataSeason, "post_id" to postId), referer = url)
+                val seasonHtml = runtime.post(ajaxUrl, mapOf("season" to dataSeason, "post_id" to postId), referer = url)
                 
                 if (seasonHtml != null) {
                     val seasonDoc = Jsoup.parse(seasonHtml)

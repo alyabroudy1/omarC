@@ -1,4 +1,4 @@
-package com.cloudstream.shared.service
+package com.cloudstream.shared.core
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

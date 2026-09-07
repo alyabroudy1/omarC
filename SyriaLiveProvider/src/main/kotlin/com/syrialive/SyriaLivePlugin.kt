@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class SyriaLivePlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(SyriaLive())
-        registerSharedExtractors()
+        val api = SyriaLive()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }

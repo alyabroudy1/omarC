@@ -12,7 +12,8 @@ class Anim3rbPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
         ActivityProvider.initCompat(context)
-        registerSharedExtractors()
-        registerMainAPI(Anim3rbProvider())
+        val api = Anim3rbProvider()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

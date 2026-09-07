@@ -56,13 +56,12 @@ class GessehProvider : BaseProvider() {
     override fun getParser(): BaseParser = GessehParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        httpService.ensureInitialized()
         val url = request.data + page
-        val doc = httpService.getDocument(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true) ?: return null
+        val doc = runtime.document(url, headers = defaultHeaders, adoptRedirect = true) ?: return null
         val items = getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }
         return newHomePageResponse(request.name, items)
@@ -70,15 +69,14 @@ class GessehProvider : BaseProvider() {
 
     override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         if (page > 1) return newSearchResponseList(emptyList(), false)
-        httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
-        val doc = httpService.getDocumentNoFallback(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true)
+        val doc = runtime.document(url, headers = defaultHeaders, adoptRedirect = true, solveCf = false)
             ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
         return newSearchResponseList(getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }, false)
     }
@@ -120,9 +118,8 @@ class GessehProvider : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
         val realUrl = resolveRealUrl(url)
-        val document = httpService.getDocument(realUrl, headers = defaultHeaders) ?: return null
+        val document = runtime.document(realUrl, headers = defaultHeaders, rewrite = false) ?: return null
 
         val data = getParser().parseLoadPage(document, realUrl) ?: return null
 
@@ -133,7 +130,7 @@ class GessehProvider : BaseProvider() {
         if (data.isMovie) {
             return newMovieLoadResponse(data.title, realUrl, TvType.Movie, realUrl) {
                 this.posterUrl = fixUrlNull(data.posterUrl)
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
                 this.plot = data.plot
             }
         }
@@ -148,7 +145,7 @@ class GessehProvider : BaseProvider() {
 
         return newTvSeriesLoadResponse(data.title, realUrl, TvType.TvSeries, episodes) {
             this.posterUrl = fixUrlNull(data.posterUrl)
-            this.posterHeaders = httpService.getImageHeaders()
+            this.posterHeaders = runtime.imageHeaders()
             this.plot = data.plot
         }
     }
@@ -182,7 +179,6 @@ class GessehProvider : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val TAG = "GessehProvider"
-        httpService.ensureInitialized()
         val pageUrl = resolveRealUrl(data)
 
         val mainPage = try {

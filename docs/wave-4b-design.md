@@ -47,7 +47,8 @@ interface ProviderRuntime {
     /** Current provider host, no scheme. Replaces currentDomain and mainUrl. */
     val domain: String
 
-    /** Queued, domain-rewriting, CF-solving GET parsed as HTML. solveCf=false throws
+    /** Queued, CF-solving GET parsed as HTML. Rewrites the host to the session domain unless
+     *  `rewrite = false` (absolute foreign embed URLs). solveCf=false throws
      *  CloudflareBlockedSearchException instead of solving. Replaces getDocument and
      *  getDocumentNoFallback. */
     suspend fun document(
@@ -55,7 +56,8 @@ interface ProviderRuntime {
         headers: Map<String, String> = emptyMap(),
         solveCf: Boolean = true,
         adoptRedirect: Boolean = false,
-        allowCached: Boolean = false
+        allowCached: Boolean = false,
+        rewrite: Boolean = true
     ): Document?
 
     /** Unqueued GET body as text, no domain rewriting, Tier-3 Chrome-TLS retry kept. Replaces getText. */
@@ -108,7 +110,7 @@ Migration of what providers lose:
 | `post(...): Document?` | 2 | `runtime.post(...)?.let { Jsoup.parse(it, url) }` |
 | `navigationEngine` | 3 | `CimaNowProvider` owns `private val navigationEngine by lazy { NavigationEngine { ActivityProvider.currentActivity } }` |
 | `mainUrl` | 1 | `MainAPI.mainUrl` getter returns `"https://${runtime.domain}"` |
-| `getDocument(rewriteDomain = ...)` | 72 pass `true`, 0 pass `false` | drop the parameter; always rewrites |
+| `getDocument(rewriteDomain = ...)` | 72 pass `true`; 9 rely on the default `false` (Krmzy passes it explicitly) | keep as `rewrite: Boolean = true`; 3 shared extractors + Krmzy + Gesseh get `rewrite = false`, Shahid4u/Topcinema stay on the default (same-host rewrite is a no-op) |
 | `getDocument(checkDomainChange = true)` | 10 | `document(..., adoptRedirect = true)`, same body (`:404-406`, `:817-835`) |
 | `getText(rewriteDomain = false)` | 17 explicit, 0 pass `true` | drop the parameter |
 
@@ -180,7 +182,7 @@ class HttpGateway private constructor(
 
 Dependency choices: `Fingerprint` is a `() -> Fingerprint` seam so `imageHeaders()` is JVM-testable; `SystemCookieJar` is not injected (stateless, constructed per client today at `:238`, `:577`, `:693`); engines and `DomainManager` are lazy so `forProvider` allocates nothing heavy (section 6 calls it from `Plugin.load`). `VideoSnifferEngine` and `NavigationEngine` are not deps (`snifferEngine` has 0 callers; `sniffVideos :288` uses `cfBypassEngine`).
 
-Public surface: the 7 `ProviderRuntime` members, `suspend fun ensureInitialized()`, and `forProvider`. Everything else private.
+Public surface: the 7 `ProviderRuntime` members, `suspend fun ensureInitialized()`, and `forProvider`. Everything else private except the four `RequestQueue.Host` overrides (`execute`, `solveCloudflare`, `onDomainRedirect`, `currentDomain`), which an interface implementation cannot hide.
 
 Pipeline for `document(path, headers, solveCf, adoptRedirect, allowCached)`:
 1. `ensureInitialized()` (`:87-106` verbatim).

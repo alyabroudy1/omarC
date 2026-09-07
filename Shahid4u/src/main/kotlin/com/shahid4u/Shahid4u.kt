@@ -75,7 +75,7 @@ class Shahid4u : BaseProvider() {
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
         val headers = buildBrowserHeaders(referer).filterKeys { it != "User-Agent" }
-        return httpService.getDocument(url, headers = headers)
+        return runtime.document(url, headers = headers)
             ?: throw ErrorLoadingException("Failed to fetch $url")
     }
 

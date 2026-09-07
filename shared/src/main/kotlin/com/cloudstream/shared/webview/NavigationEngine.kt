@@ -2088,7 +2088,7 @@ class NavigationEngine(
                             }
 
                             // ⚠️ IDENTITY LEAK, by design for now: these interception fetches use
-                            // HttpURLConnection, so they do NOT honour ProviderHttpService.dnsPolicy()
+                            // HttpURLConnection, so they do NOT honour HttpGateway's DNS policy
                             // (preferIpv4 / preferIpv6) or the OkHttp cookie jar. Any provider that
                             // combines a DNS policy with this engine has a split identity: page
                             // fetches exit one way, WebView-served requests another. Harmless while

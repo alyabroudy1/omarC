@@ -1,7 +1,7 @@
 package com.cloudstream.shared.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-class CimaNowTVEmbed : ExtractorApi() {
+class CimaNowTVEmbed(private val runtime: ProviderRuntime) : ExtractorApi() {
     override val name = "CimaNowTV"
     override val mainUrl = "https://cimanowtv.com"
     override val requiresReferer = true
@@ -31,11 +31,9 @@ class CimaNowTVEmbed : ExtractorApi() {
             return
         }
 
-        val http = ProviderHttpServiceHolder.getInstance()
-        val html = http?.getText(
+        val html = runtime.text(
             url,
-            headers = mapOf("Referer" to (referer ?: "https://$host/")),
-            rewriteDomain = false
+            headers = mapOf("Referer" to (referer ?: "https://$host/"))
         ) ?: run {
             ProviderLogger.e(TAG, "getUrl", "Failed to fetch embed page: $url")
             return

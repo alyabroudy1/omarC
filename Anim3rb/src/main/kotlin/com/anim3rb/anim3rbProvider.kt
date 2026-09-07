@@ -13,6 +13,7 @@ import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
+import com.cloudstream.shared.core.AndroidCookieStorage
 import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -43,9 +44,8 @@ class Anim3rbProvider : BaseProvider() {
         Log.i(TAG, "getMainPage: START page=$page, data=${request.data}, name=${request.name}")
         if (page > 1) return null
 
-        httpService.ensureInitialized()
 
-        val doc = httpService.getDocument(request.data, checkDomainChange = true, rewriteDomain = true) ?: run {
+        val doc = runtime.document(request.data, adoptRedirect = true) ?: run {
             Log.e(TAG, "getMainPage: doc is null")
             return null
         }
@@ -150,9 +150,9 @@ class Anim3rbProvider : BaseProvider() {
 
         val doc = try {
             if (useNoFallback) {
-                httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
+                runtime.document(url, adoptRedirect = true, solveCf = false)
             } else {
-                httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
+                runtime.document(url, adoptRedirect = true)
             }
         } catch (e: CloudflareBlockedSearchException) {
             Log.w(TAG, "standardSearch: CF blocked in lazy mode — rethrowing")
@@ -181,7 +181,7 @@ class Anim3rbProvider : BaseProvider() {
             val type = if (item.isMovie) TvType.AnimeMovie else TvType.Anime
             newAnimeSearchResponse(item.title, item.url, type) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }
     }
@@ -191,9 +191,9 @@ class Anim3rbProvider : BaseProvider() {
 
         val mainDoc = try {
             if (useNoFallback) {
-                httpService.getDocumentNoFallback(mainUrl, rewriteDomain = true)
+                runtime.document(mainUrl, solveCf = false)
             } else {
-                httpService.getDocument(mainUrl, rewriteDomain = true)
+                runtime.document(mainUrl)
             }
         } catch (e: CloudflareBlockedSearchException) {
             Log.w(TAG, "livewireSearch: CF blocked in lazy mode — rethrowing")
@@ -246,11 +246,10 @@ class Anim3rbProvider : BaseProvider() {
         Log.d(TAG, "livewireSearch: POST $updateUrl body.length=${jsonBody.length}")
 
         return try {
-            val cookies = httpService.cookies
-            val cookieStr = if (cookies.isNotEmpty()) {
-                cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            } else ""
-            Log.d(TAG, "livewireSearch: cookies=${cookies.size}")
+            // The client built below is hand-rolled and carries no SystemCookieJar, so the
+            // Livewire session has to be read out of the store and sent by hand.
+            val cookieStr = AndroidCookieStorage.get(mainUrl).orEmpty()
+            Log.d(TAG, "livewireSearch: cookieHeader.length=${cookieStr.length}")
 
             val body = jsonBody.toRequestBody("application/json".toMediaType())
 
@@ -304,7 +303,7 @@ class Anim3rbProvider : BaseProvider() {
                 val type = if (item.isMovie) TvType.AnimeMovie else TvType.Anime
                 newAnimeSearchResponse(item.title, item.url, type) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             }
         } catch (e: Exception) {
@@ -320,16 +319,13 @@ class Anim3rbProvider : BaseProvider() {
         Log.i(methodTag, "START url='$url'")
 
         try {
-            httpService.ensureInitialized()
 
             // Use getRaw + Cookie header to bypass domain rewriting in RequestQueue.
             // The session domain may be video.vid3rb.com (persisted from a previous embed redirect),
             // causing getDocument() to rewrite anime3rb.com URLs to video.vid3rb.com (→ "Not Found").
-            val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
             val headers = mutableMapOf("Referer" to mainUrl)
-            if (cookieStr.isNotBlank()) headers["Cookie"] = cookieStr
 
-            val resp = httpService.getRaw(url, headers = headers)
+            val resp = runtime.raw(url, headers = headers)
             val body = resp?.body?.string()
             resp?.close()
             if (body == null) {
@@ -348,7 +344,7 @@ class Anim3rbProvider : BaseProvider() {
                 val newUrl = newUrlMatch?.groupValues?.get(1)
                 if (!newUrl.isNullOrBlank()) {
                     Log.d(methodTag, "Meta-Refresh to: $newUrl")
-                    val refreshResp = httpService.getRaw(newUrl, headers = headers)
+                    val refreshResp = runtime.raw(newUrl, headers = headers)
                     val refreshBody = refreshResp?.body?.string()
                     refreshResp?.close()
                     if (refreshBody != null) {
@@ -370,7 +366,7 @@ class Anim3rbProvider : BaseProvider() {
             if (!data.isMovie && data.episodes.isNullOrEmpty() && !data.parentSeriesUrl.isNullOrBlank()) {
                 val parentUrl = data.parentSeriesUrl!!
                 try {
-                    val parentResp = httpService.getRaw(parentUrl, headers = headers)
+                    val parentResp = runtime.raw(parentUrl, headers = headers)
                     val parentBody = parentResp?.body?.string()
                     parentResp?.close()
                     if (parentBody != null) {
@@ -405,7 +401,7 @@ class Anim3rbProvider : BaseProvider() {
                 val movieDataUrl = data.watchUrl ?: data.url
                 newMovieLoadResponse(data.title, data.url, TvType.Movie, movieDataUrl) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -419,7 +415,7 @@ class Anim3rbProvider : BaseProvider() {
                     }
                 }) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -445,12 +441,10 @@ class Anim3rbProvider : BaseProvider() {
 
         Log.w(TAG, "fetchExtraEpisodes: 0 episodes in static HTML — trying direct fetch with getRaw for $url")
 
-        val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         val headers = mutableMapOf("Referer" to mainUrl)
-        if (cookieStr.isNotBlank()) headers["Cookie"] = cookieStr
 
         return try {
-            val resp = httpService.getRaw(url, headers = headers)
+            val resp = runtime.raw(url, headers = headers)
             val body = resp?.body?.string()
             resp?.close()
             if (body != null) {
@@ -491,14 +485,12 @@ class Anim3rbProvider : BaseProvider() {
 
         // Phase 2: Old pattern — bypass request queue (which rewrites URLs after domain change).
         // Use getRaw() + Jsoup + manual Cookie header to avoid URL rewriting and domain redirect handling.
-        Log.w(TAG, "loadLinks: standard failed, using httpService-based player extraction")
+        Log.w(TAG, "loadLinks: standard failed, using runtime-based player extraction")
 
-        val cookieStr = httpService.cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         val reqHeaders = mutableMapOf("Referer" to mainUrl)
-        if (cookieStr.isNotBlank()) reqHeaders["Cookie"] = cookieStr
 
         // Fetch episode page via getRaw to bypass request queue URL rewriting
-        val episodeResp = httpService.getRaw(data, headers = reqHeaders)
+        val episodeResp = runtime.raw(data, headers = reqHeaders)
         val episodeBody = episodeResp?.body?.string() ?: run { episodeResp?.close(); return false }
         episodeResp.close()
         val episodeDoc = Jsoup.parse(episodeBody, data)
@@ -534,7 +526,7 @@ class Anim3rbProvider : BaseProvider() {
         for (playerUrl in allUrls) {
             Log.i(TAG, "loadLinks: trying player URL: $playerUrl")
             try {
-                val playerResp = httpService.getRaw(playerUrl, headers = reqHeaders)
+                val playerResp = runtime.raw(playerUrl, headers = reqHeaders)
                 val playerBody = playerResp?.body?.string()
                 playerResp?.close()
                 if (playerBody == null) continue
@@ -564,7 +556,7 @@ class Anim3rbProvider : BaseProvider() {
                 if (sourcesUrl != null) {
                     val fullSourcesUrl = "https://anime3rb.com$sourcesUrl"
                     Log.i(TAG, "loadLinks: found sources URL: $fullSourcesUrl")
-                    val jsonResp = httpService.getRaw(fullSourcesUrl, headers = reqHeaders)
+                    val jsonResp = runtime.raw(fullSourcesUrl, headers = reqHeaders)
                     val rawJson = jsonResp?.body?.string()
                     jsonResp?.close()
                     if (rawJson != null) {
@@ -640,7 +632,7 @@ class Anim3rbProvider : BaseProvider() {
 
             newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
                 if (episodeNum != null) addDubStatus(false, episodeNum)
             }
         } catch (e: Exception) {

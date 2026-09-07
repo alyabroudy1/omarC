@@ -7,6 +7,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.android.ActivityProvider
+import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.webview.NavigationEngine
 import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.CapturedEmbedRequest
@@ -39,6 +42,12 @@ class CimaNowProvider : BaseProvider() {
     override var lang = "ar"
 
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+
+    /**
+     * CimaNow's own navigation engine — the gateway no longer owns one (Wave 4b); the move of the
+     * engine itself is Wave 4c.
+     */
+    private val navigationEngine by lazy { NavigationEngine { ActivityProvider.currentActivity } }
 
     private val TAG = "CimaNowDebug"
 
@@ -831,13 +840,13 @@ class CimaNowProvider : BaseProvider() {
             )
         }
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val doc = httpService.getDocument("$mainUrl/?s=$encoded", rewriteDomain = true)
+        val doc = runtime.document("$mainUrl/?s=$encoded")
             ?: return newSearchResponseList(emptyList(), false)
         val items = getParser().parseSearch(doc)
         return newSearchResponseList(items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }, false)
     }
@@ -850,13 +859,13 @@ class CimaNowProvider : BaseProvider() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = request.data + page
-        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+        val doc = runtime.document(url) ?: return null
         val items = getParser().parseMainPage(doc)
         return newHomePageResponse(request.name, items.map { item ->
             val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
             newMovieSearchResponse(item.title, item.url, type) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         })
     }
@@ -926,7 +935,7 @@ class CimaNowProvider : BaseProvider() {
                 this.posterUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/Assets/imgs/logo.svg"
             }
         }
-        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+        val doc = runtime.document(url) ?: return null
         val decodedDoc = decodeHtml(doc)
 
         val isMovie = decodedDoc.title().contains("فيلم")
@@ -970,7 +979,7 @@ class CimaNowProvider : BaseProvider() {
                 val deferredEpisodes = seasonElements.map { seasonElement ->
                     async {
                         val seasonDoc = try {
-                            httpService.getDocument(seasonElement.attr("href"), rewriteDomain = true)
+                            runtime.document(seasonElement.attr("href"))
                         } catch (_: Exception) { null }
                         if (seasonDoc != null) {
                             val decodedSeason = decodeHtml(seasonDoc)
@@ -1083,7 +1092,7 @@ class CimaNowProvider : BaseProvider() {
         // WebView solve itself, and the WebView writes the clearance into the system CookieManager —
         // which is exactly where the surf's interceptor reads its cookies from. The home page is the
         // cheapest thing to ask for; what matters is the session it leaves behind, not the bytes.
-        if (!reestablishSession(httpService, mainUrl, TAG_RETRY)) {
+        if (!reestablishSession(runtime, mainUrl, TAG_RETRY)) {
             Log.e(TAG_RETRY, "❌ Could not re-establish a session — the CF solve failed or the user " +
                 "cancelled it. Not surfing again.")
             return false
@@ -1158,11 +1167,11 @@ class CimaNowProvider : BaseProvider() {
             // So claim to be an Android TV and the site skips all of it. This is a path the page
             // provides, not a hook or an injection — presumably because a TV cannot show a popunder.
             val userAgent = if (SURF_AS_TV_UA) {
-                asTvUserAgent(httpService.userAgent).also {
+                asTvUserAgent(Fingerprint.current().userAgent).also {
                     Log.i(TAG_SURF, "Surfing with a TV UA so the site's own isTv() bypass applies: $it")
                 }
             } else {
-                httpService.userAgent
+                Fingerprint.current().userAgent
             }
 
             // ---------- PHASE 1: obtain the /watching/ URL ----------
@@ -1337,7 +1346,7 @@ class CimaNowProvider : BaseProvider() {
             if (movieHost != null) allowedDomains.add(movieHost)
 
             // FULLSCREEN: the same engine, the same interceptor, the same headers — on screen.
-            val navResult = httpService.navigationEngine.execute(
+            val navResult = navigationEngine.execute(
                 steps = steps,
                 userAgent = userAgent,
                 mode = Mode.FULLSCREEN,
@@ -1435,7 +1444,7 @@ class CimaNowProvider : BaseProvider() {
                 // Keeps the WebView jar and the HTTP session in step for responses the engine answers
                 // itself — see CimaNowNavigationPolicy. Default policy is a no-op, so this is the only
                 // provider that pays for it.
-                sessionPolicy = CimaNowNavigationPolicy(httpService),
+                sessionPolicy = CimaNowNavigationPolicy(runtime),
                 // The ad cycle, completed without the user seeing an ad.
                 //
                 // The manual flow is: click → an ad opens in a new tab → **close it** → click again →
@@ -1757,7 +1766,7 @@ class CimaNowProvider : BaseProvider() {
 
         if (host.contains("vkvideo") || host.contains("vk.com") || host.contains("vk.ru")) {
             try {
-                if (VKVideoEmbed().getUrlFromHtml(html, embed.url, callback)) return true
+                if (VKVideoEmbed(runtime).getUrlFromHtml(html, embed.url, callback)) return true
                 Log.w(TAG_EH, "VK params not found in captured HTML (${html.length} chars)")
             } catch (e: Exception) {
                 Log.w(TAG_EH, "VK HTML parse threw: ${e.message}")
@@ -1969,7 +1978,7 @@ class CimaNowProvider : BaseProvider() {
         try {
             val finalUrl = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else iframeUrl
             Log.d(TAG_CI, "Fetching cimanow iframe page: $finalUrl")
-            val iframeResponse = httpService.getText(finalUrl, headers = mapOf("Referer" to finalUrl), rewriteDomain = false) ?: ""
+            val iframeResponse = runtime.text(finalUrl, headers = mapOf("Referer" to finalUrl)) ?: ""
             Log.d(TAG_CI, "Iframe response size: ${iframeResponse.length} bytes")
 
             val regex = Regex("\\[(\\d+p)]\\s+(/uploads/[^\"]+\\.mp4)")
@@ -2063,13 +2072,12 @@ class CimaNowProvider : BaseProvider() {
     ) {
         val TAG_JL = "JetloadExtractor"
         val headers = mapOf(
-            "User-Agent" to httpService.userAgent,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language" to "ar-EG,ar;q=0.9"
         )
 
         try {
-            val res1 = httpService.getRaw(url, headers = headers)
+            val res1 = runtime.raw(url, headers = headers)
             res1.close()
             val sessionCookies = mutableMapOf<String, String>()
             for (header in res1.headers("Set-Cookie")) {
@@ -2084,7 +2092,7 @@ class CimaNowProvider : BaseProvider() {
             val headers2 = headers + ("Referer" to url)
             val targetUrl = "https://jetload.pp.ua/Jetload4/"
             val cookieHeader = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            val res2 = httpService.getRaw(targetUrl, headers = headers2 + ("Cookie" to cookieHeader))
+            val res2 = runtime.raw(targetUrl, headers = headers2 + ("Cookie" to cookieHeader))
             val html = res2.body?.string() ?: return
             res2.close()
             for (header in res2.headers("Set-Cookie")) {
@@ -2112,7 +2120,7 @@ class CimaNowProvider : BaseProvider() {
                 "Referer" to targetUrl
             )
             val cookieHdr = sessionCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            val finalResp = httpService.getRaw(ajaxUrl, headers = ajaxHeaders + ("Cookie" to cookieHdr))
+            val finalResp = runtime.raw(ajaxUrl, headers = ajaxHeaders + ("Cookie" to cookieHdr))
             val rawLink = finalResp.body?.string()?.trim() ?: return
             finalResp.close()
 
@@ -2149,7 +2157,8 @@ class CimaNowProvider : BaseProvider() {
             val fileId = match.groupValues[2]
 
             val headers = mapOf(
-                "User-Agent" to httpService.userAgent,
+                // Sent through a hand-built client below, which has no FingerprintInterceptor.
+                "User-Agent" to Fingerprint.current().userAgent,
                 "Referer" to url
             )
             val data = mapOf(
@@ -2220,7 +2229,7 @@ class CimaNowProvider : BaseProvider() {
             if (!extracted && (host.endsWith(".cimanowtv.com") || host == "cimanowtv.com")) {
                 Log.i(TAG_FE, "Trying CimaNowTVEmbed for '$serverName'")
                 try {
-                    CimaNowTVEmbed().getUrl(iframeUrl, referer, {}, countingCb)
+                    CimaNowTVEmbed(runtime).getUrl(iframeUrl, referer, {}, countingCb)
                 } catch (e: Exception) {
                     Log.w(TAG_FE, "CimaNowTVEmbed threw for '$serverName': ${e.message}")
                 }
@@ -2238,7 +2247,7 @@ class CimaNowProvider : BaseProvider() {
             if (!extracted && (host.contains("vkvideo") || host.contains("vk.com"))) {
                 Log.i(TAG_FE, "Trying VKVideoEmbed for '$serverName'")
                 try {
-                    VKVideoEmbed().getUrl(iframeUrl, referer, {}, countingCb)
+                    VKVideoEmbed(runtime).getUrl(iframeUrl, referer, {}, countingCb)
                 } catch (e: Exception) {
                     Log.w(TAG_FE, "VKVideoEmbed threw for '$serverName': ${e.message}")
                 }
@@ -2269,7 +2278,7 @@ class CimaNowProvider : BaseProvider() {
 
             // ── HTTP fallback: fetch page and scrape video URLs ──
             Log.w(TAG_FE, "No extractor matched for '$serverName' — trying HTTP fallback for $iframeUrl")
-            val html = httpService.getText(iframeUrl, headers = mapOf("Referer" to referer), rewriteDomain = false)
+            val html = runtime.text(iframeUrl, headers = mapOf("Referer" to referer))
             if (html == null) {
                 Log.w(TAG_FE, "HTTP fallback returned null for '$serverName'")
                 return
@@ -2419,7 +2428,7 @@ class CimaNowProvider : BaseProvider() {
                     put("Sec-Fetch-Site", "cross-site")
                     put("Upgrade-Insecure-Requests", "1")
                 }
-                val body = httpService.getText(watchUrl, headers = headers)
+                val body = runtime.text(watchUrl, headers = headers)
                 if (body.isNullOrBlank()) {
                     Log.w("CimaNowSandbox", "Refetch returned no body")
                     null
@@ -2441,10 +2450,10 @@ class CimaNowProvider : BaseProvider() {
             return null
         }
         return try {
-            val result = httpService.navigationEngine.renderHtmlInSandbox(
+            val result = navigationEngine.renderHtmlInSandbox(
                 html = watchHtml,
                 baseUrl = pageUrl.ifBlank { "https://cimanow.cc/" },
-                userAgent = httpService.userAgent,
+                userAgent = Fingerprint.current().userAgent,
                 referrer = referrer,
                 timeoutMs = 25_000L
             )
@@ -2478,7 +2487,7 @@ class CimaNowProvider : BaseProvider() {
     // ==================== Hybrid Approach: HTTP Nav → WebView Timer ====================
 
     /**
-     * Navigates the freex redirect chain using httpService (okhttp) directly with spoofed headers.
+     * Navigates the freex redirect chain using the runtime (okhttp) directly with spoofed headers.
      *
      * Flow: loadon → redirectingfree → blog-post.html → (follow 301) → blog-post.html/ 158KB timer HTML.
      * Cookies are extracted at each hop and set into CookieManager for the WebView.
@@ -2553,7 +2562,7 @@ class CimaNowProvider : BaseProvider() {
             //
             // Through the session-aware path, NOT `getRaw`.
             //
-            // 2026-08-03: this step fetched the movie page with `httpService.getRaw(fetchUrl, UA +
+            // 2026-08-03: this step fetched the movie page with `runtime.raw(fetchUrl, UA +
             // Accept)`. `getRaw` is a bare OkHttp call — it sends exactly the headers it is handed,
             // so no `cf_clearance`, no `Sec-Ch-Ua`, no `Referer`, no `Sec-Fetch-*` — and it has no
             // Cloudflare handling of any kind. Cloudflare answered **HTTP 403 with a 128,267-byte
@@ -2564,7 +2573,7 @@ class CimaNowProvider : BaseProvider() {
             // The status code was fetched into `movieStatus` and then never checked, which is what
             // let a block masquerade as a parse failure.
             //
-            // `getDocument(rewriteDomain = true)` is the same path `load()` uses on this very URL
+            // `document()` is the same path `load()` uses on this very URL
             // seconds earlier — and that one succeeds. It carries the session cookies (including a
             // `cf_clearance` already minted for this UA), real-Chrome client hints, and falls back
             // to a WebView CF solve when a 403 carries CF markers.
@@ -2576,7 +2585,7 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_HT, "GET $fetchUrl (session path: cookies + client hints + CF fallback)")
 
             val fetched = run {
-                var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
+                var doc = runtime.document(fetchUrl)
                 var html = doc?.outerHtml() ?: ""
                 Log.i(TAG_HT, "Movie page: ${html.length} chars")
                 var freex = extractFreexUrl(html)
@@ -2587,7 +2596,7 @@ class CimaNowProvider : BaseProvider() {
                 // change minute to minute.
                 if (freex == null) {
                     Log.w(TAG_HT, "No freex URL with the cache-buster — retrying the plain URL")
-                    doc = httpService.getDocument(movieUrl, rewriteDomain = true)
+                    doc = runtime.document(movieUrl)
                     html = doc?.outerHtml() ?: ""
                     Log.i(TAG_HT, "Movie page (plain URL): ${html.length} chars")
                     freex = extractFreexUrl(html)
@@ -2627,10 +2636,9 @@ class CimaNowProvider : BaseProvider() {
             // ====================== Step 2: Fetch loadon ======================
             Log.i(TAG_HT, "Step 2/4: Fetching loadon → $resolvedFreexUrl")
             val sessionHeaders = mutableMapOf<String, String>()
-            sessionHeaders["User-Agent"] = httpService.userAgent
             sessionHeaders["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 
-            val loadonResponse = httpService.getRaw(resolvedFreexUrl, headers = sessionHeaders)
+            val loadonResponse = runtime.raw(resolvedFreexUrl, headers = sessionHeaders)
             val loadonStatus = loadonResponse.code
             val loadonBody = loadonResponse.body?.string() ?: ""
             Log.i(TAG_HT, "loadon response: HTTP $loadonStatus, ${loadonBody.length} bytes")
@@ -2674,7 +2682,7 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_HT, "GET https://rm.freex2line.online/redirectingfree/")
             Log.d(TAG_HT, "Request headers: ${sessionHeaders.entries.joinToString(", ") { "${it.key}=${it.value.take(50)}" }}")
 
-            val redirResponse = httpService.getRaw("https://rm.freex2line.online/redirectingfree/", headers = sessionHeaders)
+            val redirResponse = runtime.raw("https://rm.freex2line.online/redirectingfree/", headers = sessionHeaders)
             val redirStatus = redirResponse.code
             val redirBody = redirResponse.body?.string() ?: ""
             Log.i(TAG_HT, "redirectingfree response: HTTP $redirStatus, ${redirBody.length} bytes")
@@ -2722,7 +2730,7 @@ class CimaNowProvider : BaseProvider() {
             Log.d(TAG_HT, "GET https://rm.freex2line.online/2020/02/blog-post.html")
             Log.d(TAG_HT, "Request headers: ${sessionHeaders.entries.joinToString(", ") { "${it.key}=${it.value.take(50)}" }}")
 
-            val blogResponse = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = sessionHeaders)
+            val blogResponse = runtime.raw("https://rm.freex2line.online/2020/02/blog-post.html", headers = sessionHeaders)
             val blogStatus = blogResponse.code
             val blogFinalUrl = blogResponse.request.url.toString()
             val blogBody = blogResponse.body?.string() ?: ""
@@ -2885,11 +2893,11 @@ class CimaNowProvider : BaseProvider() {
             val cacheBuster = "_ts=${System.currentTimeMillis()}"
             val fetchUrl = if (movieUrl.contains("?")) "$movieUrl&$cacheBuster" else "$movieUrl?$cacheBuster"
             val fetched = run {
-                var doc = httpService.getDocument(fetchUrl, rewriteDomain = true)
+                var doc = runtime.document(fetchUrl)
                 var html = doc?.outerHtml() ?: ""
                 var freex = extractFreexUrl(html)
                 if (freex == null) {
-                    doc = httpService.getDocument(movieUrl, rewriteDomain = true)
+                    doc = runtime.document(movieUrl)
                     html = doc?.outerHtml() ?: ""
                     freex = extractFreexUrl(html)
                 }
@@ -2920,13 +2928,12 @@ class CimaNowProvider : BaseProvider() {
             fun cookieHeader() = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
             val headers = linkedMapOf(
-                "User-Agent" to httpService.userAgent,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             )
 
             // ---- Step 2: loadon (sets PHPSESSID, stores the target link server-side) ----
             Log.i(TAG_GL, "Step 2/8: loadon")
-            val loadon = httpService.getRaw(resolvedFreexUrl, headers = headers)
+            val loadon = runtime.raw(resolvedFreexUrl, headers = headers)
             harvest(loadon); loadon.close()
             if (cookies.isNotEmpty()) headers["Cookie"] = cookieHeader()
             Log.i(TAG_GL, "loadon: ${cookies.size} cookie(s), PHPSESSID present=${cookies.containsKey("PHPSESSID")}")
@@ -2934,7 +2941,7 @@ class CimaNowProvider : BaseProvider() {
             // ---- Step 3: redirectingfree (Referer=loadon) ----
             Log.i(TAG_GL, "Step 3/8: redirectingfree")
             headers["Referer"] = resolvedFreexUrl
-            val redir = httpService.getRaw(REDIRECTING_PAGE_URL, headers = headers)
+            val redir = runtime.raw(REDIRECTING_PAGE_URL, headers = headers)
             harvest(redir); redir.close()
             if (cookies.isNotEmpty()) headers["Cookie"] = cookieHeader()
 
@@ -2942,7 +2949,7 @@ class CimaNowProvider : BaseProvider() {
             Log.i(TAG_GL, "Step 4/8: blog-post timer page (Referer=redirectingfree — required for the mint block)")
             headers["Referer"] = REDIRECTING_PAGE_URL
             headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-            val blog = httpService.getRaw("https://rm.freex2line.online/2020/02/blog-post.html", headers = headers)
+            val blog = runtime.raw("https://rm.freex2line.online/2020/02/blog-post.html", headers = headers)
             harvest(blog)
             val timerHtml = blog.body?.string() ?: ""
             blog.close()
@@ -2979,16 +2986,15 @@ class CimaNowProvider : BaseProvider() {
             // ---- Step 7: POST get-link.php (form-urlencoded, Referer=timer page, freex cookie jar) ----
             Log.i(TAG_GL, "Step 7/8: POST get-link.php")
             val postHeaders = linkedMapOf(
-                "User-Agent" to httpService.userAgent,
                 "Accept" to "*/*",
                 "Origin" to "https://rm.freex2line.online"
             )
             if (cookies.isNotEmpty()) postHeaders["Cookie"] = cookieHeader()
             // No X-Requested-With; FormBody sets Content-Type: application/x-www-form-urlencoded and
             // url-encodes the values (so hmac_token's +/=/ travel safely).
-            val rawResp = httpService.postText(
-                url = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php",
-                data = linkedMapOf(
+            val rawResp = runtime.post(
+                pathOrUrl = "https://rm.freex2line.online/2020/02/blog-post.html/get-link.php",
+                form = linkedMapOf(
                     "request_id" to ctx.requestId,
                     "hmac_token" to token,
                     "ch" to ctx.ch,
@@ -2996,7 +3002,7 @@ class CimaNowProvider : BaseProvider() {
                 ),
                 referer = TIMER_PAGE_URL,
                 headers = postHeaders,
-                rewriteDomain = false
+                rewrite = false
             )
 
             // ---- Step 8: validate ----
@@ -3053,10 +3059,10 @@ class CimaNowProvider : BaseProvider() {
         // earlier servers already delivered. The catch below returns this, not a hard false.
         var found = false
         try {
-            val userAgent = httpService.userAgent
+            val userAgent = Fingerprint.current().userAgent
 
             // ======================== PHASE 1: HTTP navigation ========================
-            Log.i(TAG_TEST, "PHASE 1: Navigating redirect chain via httpService (OkHttp)...")
+            Log.i(TAG_TEST, "PHASE 1: Navigating redirect chain via the runtime (OkHttp)...")
             val timerHtml = navigateToTimerPageViaHttp(movieUrl)
             if (timerHtml == null) {
                 Log.e(TAG_TEST, "❌ PHASE 1 FAILED: Could not fetch timer page HTML via HTTP")
@@ -3132,7 +3138,7 @@ class CimaNowProvider : BaseProvider() {
 
             Log.i(TAG_TEST, "Executing navigation engine in FULLSCREEN mode...")
 
-            val navResult = httpService.navigationEngine.execute(
+            val navResult = navigationEngine.execute(
                 steps = steps,
                 userAgent = userAgent,
                 mode = Mode.HEADLESS,
@@ -3191,7 +3197,7 @@ class CimaNowProvider : BaseProvider() {
                             source = "CimaNow",
                             streamUrl = videoUrl,
                             referer = watchUrl,
-                            headers = mapOf("User-Agent" to httpService.userAgent)
+                            headers = mapOf("User-Agent" to userAgent)
                         ).forEach { link ->
                             Log.i(TAG_TEST, ">>> M3U8 quality: ${link.quality}p -> ${link.url.take(100)}")
                             callback(link)
@@ -3332,7 +3338,7 @@ class CimaNowProvider : BaseProvider() {
                                     try {
                                         val ajaxUrl = "https://cimanow.cc/wp-content/themes/Cima%20Now%20New/core.php?action=switch&index=${sv.index}&id=${sv.id}"
                                         Log.d(TAG_TEST, "core.php GET for server '${sv.name}': index=${sv.index} id=${sv.id}")
-                                        val coreText = httpService.getText(ajaxUrl, headers = coreHeaders) ?: ""
+                                        val coreText = runtime.text(ajaxUrl, headers = coreHeaders) ?: ""
                                         val iframeMatch = Regex("<iframe[^>]+src=[\"']([^\"']+)[\"']").find(coreText)
                                         val iframeUrl = iframeMatch?.groupValues?.get(1)?.let {
                                             if (it.startsWith("//")) "https:$it" else it
