@@ -1,16 +1,11 @@
 package com.cloudstream.shared.network
 
 import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.Looper
 import android.webkit.*
 import com.cloudstream.shared.logging.ProviderLogger
-import com.cloudstream.shared.util.WebConfig
+import com.cloudstream.shared.webview.WebViewSession
+import com.cloudstream.shared.webview.parseCookieString
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import org.json.JSONTokener
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * HTTP client that uses Android WebView's Chromium stack for requests.
@@ -29,9 +24,51 @@ import java.util.concurrent.ConcurrentHashMap
  * - Not suitable for streaming media (use CroNet DataSource for ExoPlayer)
  * - One request at a time per instance (serialized via mutex)
  */
+/**
+ * Header names the WebView owns for itself. Each is dropped from the `loadUrl` extra headers:
+ * the WebView sets them from the Fingerprint UA that `WebViewFactory` installed, and a
+ * Kotlin-supplied copy would either be ignored or fight the real one. `Cookie` is dropped here
+ * because the WebView reads the system cookie store itself. `X-Requested-With` is dropped because
+ * `RequestedWithHeaderControl.suppress` owns that policy (an empty value is the detectable
+ * mistake documented in `RequestedWithHeaderControl.kt:110-126`).
+ *
+ * The set covers every identity and fetch-metadata header the browser generates for itself:
+ * `Accept`, `Accept-Language`, `Accept-Encoding`, the `sec-ch-ua*` client hints, the whole
+ * `Sec-Fetch-*` family and `Upgrade-Insecure-Requests` are all dropped, even when the caller set
+ * them deliberately — a `Sec-Fetch-Dest: iframe` supplied here would contradict the value Chromium
+ * derives from the actual navigation. What survives is `Referer` plus any header outside this list
+ * (caller-specific ones such as `Authorization` or an `X-` API header).
+ *
+ * Matching is by exact (case-insensitive) name, not by prefix.
+ */
+private val LOAD_URL_DROPPED_HEADERS = setOf(
+    "user-agent",
+    "cookie",
+    "x-requested-with",
+    "accept",
+    "accept-language",
+    "accept-encoding",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
+    "sec-fetch-site",
+    "sec-fetch-mode",
+    "sec-fetch-dest",
+    "sec-fetch-user",
+    "upgrade-insecure-requests"
+)
+
+/**
+ * Narrows a request header map to what may be passed as `WebView.loadUrl` extra headers.
+ * `Referer` and caller-specific headers survive; the identity headers in
+ * [LOAD_URL_DROPPED_HEADERS] are dropped. Pure — no Android classes touched.
+ */
+internal fun filterLoadUrlHeaders(headers: Map<String, String>): Map<String, String> =
+    headers.filterKeys { it.lowercase() !in LOAD_URL_DROPPED_HEADERS }
+
 class ChromiumFetcher(
-    private val activityProvider: () -> android.app.Activity?
-) {
+    activityProvider: () -> android.app.Activity?
+) : WebViewSession(activityProvider) {
     companion object {
         private const val TAG = "ChromiumFetcher"
 
@@ -41,8 +78,6 @@ class ChromiumFetcher(
         /** Reuse threshold — don't create a new WebView if we fetched within this window */
         private const val WEBVIEW_REUSE_WINDOW_MS = 30_000L
     }
-
-    private val fetchMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Cached WebView for reuse within the reuse window */
     @Volatile
@@ -62,7 +97,7 @@ class ChromiumFetcher(
         url: String,
         headers: Map<String, String> = emptyMap(),
         timeout: Long = DEFAULT_TIMEOUT_MS
-    ): ChromiumResponse = fetchMutex.withLock {
+    ): ChromiumResponse = withSession {
         withContext(Dispatchers.Main) {
             val activity = activityProvider()
             if (activity == null) {
@@ -71,11 +106,10 @@ class ChromiumFetcher(
             }
 
             val deferred = CompletableDeferred<ChromiumResponse>()
-            var delivered = false
             var webViewRef: WebView? = null
 
             try {
-                val webView = getOrCreateWebView(activity, headers)
+                val webView = getOrCreateWebView(activity)
                 webViewRef = webView
 
                 ProviderLogger.d(TAG, "fetch", "Starting Chrome-TLS fetch",
@@ -103,15 +137,15 @@ class ChromiumFetcher(
                     }
 
                     override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                        if (delivered) return
+                        if (resultDelivered) return
                         val currentUrl = view?.url ?: loadedUrl ?: url
 
-                        CoroutineScope(Dispatchers.Main).launch {
+                        launchInSession {
                             try {
                                 val html = extractHtml(view!!)
-                                val cookies = extractCookies(currentUrl)
+                                val cookies = cookiesFromStore(currentUrl)
 
-                                delivered = true
+                                resultDelivered = true
                                 lastFetchTime = System.currentTimeMillis()
 
                                 ProviderLogger.i(TAG, "fetch", "Chrome-TLS fetch complete",
@@ -128,8 +162,8 @@ class ChromiumFetcher(
                                     finalUrl = currentUrl
                                 ))
                             } catch (e: Exception) {
-                                if (!delivered) {
-                                    delivered = true
+                                if (!resultDelivered) {
+                                    resultDelivered = true
                                     deferred.complete(ChromiumResponse.error(e.message ?: "HTML extraction failed"))
                                 }
                             }
@@ -141,12 +175,12 @@ class ChromiumFetcher(
                         request: WebResourceRequest?,
                         error: WebResourceError?
                     ) {
-                        if (request?.isForMainFrame == true && !delivered) {
+                        if (request?.isForMainFrame == true && !resultDelivered) {
                             val desc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                                 error?.description?.toString()
                             } else error?.toString()
 
-                            delivered = true
+                            resultDelivered = true
                             ProviderLogger.w(TAG, "fetch.onReceivedError", "Network error",
                                 "description" to desc, "url" to url.take(80))
                             deferred.complete(ChromiumResponse.error("Network error: $desc"))
@@ -154,28 +188,12 @@ class ChromiumFetcher(
                     }
                 }
 
-                // Build extra headers map (WebView.loadUrl headers)
-                val extraHeaders = mutableMapOf<String, String>()
-                // Strip X-Requested-With to avoid WebView detection
-                extraHeaders["X-Requested-With"] = ""
-                // Forward user-provided headers (except Cookie which goes via CookieManager)
-                for ((k, v) in headers) {
-                    if (!k.equals("Cookie", ignoreCase = true)) {
-                        extraHeaders[k] = v
-                    }
-                }
-
-                // Inject cookies via CookieManager (WebView ignores Cookie header in loadUrl)
-                headers["Cookie"]?.let { cookieHeader ->
-                    val cm = CookieManager.getInstance()
-                    cookieHeader.split(";").forEach { cookie ->
-                        val trimmed = cookie.trim()
-                        if (trimmed.isNotEmpty()) {
-                            cm.setCookie(url, "$trimmed; Path=/; Secure")
-                        }
-                    }
-                    cm.flush()
-                }
+                // Build extra headers map (WebView.loadUrl headers): Referer and
+                // caller-specific headers only. See LOAD_URL_DROPPED_HEADERS for what is dropped
+                // and why. Cookies come from the system store the WebView already reads; nothing
+                // re-injects a Cookie header here (it used to, re-scoped to `Path=/; Secure`,
+                // which no caller needed once the jar owned cookies).
+                val extraHeaders = filterLoadUrlHeaders(headers)
 
                 webView.loadUrl(url, extraHeaders)
 
@@ -188,15 +206,15 @@ class ChromiumFetcher(
                 if (response != null) {
                     response
                 } else {
-                    delivered = true
+                    resultDelivered = true
                     ProviderLogger.w(TAG, "fetch", "Timeout after ${timeout}ms", "url" to url.take(80))
                     ChromiumResponse.timeout(url)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (!delivered) {
-                    delivered = true
+                if (!resultDelivered) {
+                    resultDelivered = true
                 }
                 ChromiumResponse.error(e.message ?: "Unknown error")
             } finally {
@@ -205,6 +223,10 @@ class ChromiumFetcher(
                 if (!deferred.isCompleted) {
                     try { webViewRef?.stopLoading() } catch (_: Exception) {}
                 }
+                // Detach this fetch's client from the *cached* WebView: a straggler onPageFinished
+                // from the page just abandoned would otherwise set the instance-level
+                // resultDelivered against the next fetch's session and make it time out.
+                try { webViewRef?.webViewClient = WebViewClient() } catch (_: Exception) {}
             }
         }
     }
@@ -227,36 +249,27 @@ class ChromiumFetcher(
      */
     @SuppressLint("SetJavaScriptEnabled")
     private fun getOrCreateWebView(
-        activity: android.app.Activity,
-        headers: Map<String, String>
+        activity: android.app.Activity
     ): WebView {
         val now = System.currentTimeMillis()
         val existing = cachedWebView
 
         if (existing != null && (now - lastFetchTime) < WEBVIEW_REUSE_WINDOW_MS) {
-            // Reuse — just update UA if needed
-            val ua = headers["User-Agent"] ?: WebConfig.getCachedUserAgent()
-            existing.settings.userAgentString = ua
+            // Reuse as-is. The UA is the one WebViewFactory installed from the Fingerprint; there
+            // is no per-request UA to re-apply any more.
             return existing
         }
 
         // Create fresh WebView
-        existing?.let { old ->
-            try {
-                old.stopLoading()
-                old.loadUrl("about:blank")
-                old.destroy()
-            } catch (_: Exception) {}
-        }
+        cleanupWebView(existing)
 
-        val webView = WebView(activity).apply {
+        val webView = createWebView(activity).apply {
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 @Suppress("DEPRECATION")
                 databaseEnabled = true
                 cacheMode = WebSettings.LOAD_DEFAULT
-                userAgentString = headers["User-Agent"] ?: WebConfig.getCachedUserAgent()
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 // Block media to speed up page loads (we only want HTML)
                 mediaPlaybackRequiresUserGesture = true
@@ -264,40 +277,6 @@ class ChromiumFetcher(
                 loadsImagesAutomatically = false
             }
         }
-
-        // Anti-bot spoofing
-        webView.evaluateJavascript("""
-            (function() {
-                try {
-                    Object.defineProperty(navigator, 'webdriver', { get: function() { return false; } });
-                } catch(e) {}
-                
-                // DisableDevtool Anti-Bot Bypass
-                try {
-                    var originalDisableDevtool;
-                    Object.defineProperty(window, 'DisableDevtool', {
-                        get: function() {
-                            return function(options) {
-                                options = options || {};
-                                options.ignore = function() { return true; };
-                                options.url = "";
-                                options.timeOutUrl = "";
-                                options.ondevtoolopen = function() {};
-                                if (originalDisableDevtool) {
-                                    try {
-                                        return originalDisableDevtool(options);
-                                    } catch(err) {}
-                                }
-                            };
-                        },
-                        set: function(val) {
-                            originalDisableDevtool = val;
-                        },
-                        configurable: true
-                    });
-                } catch(e) {}
-            })();
-        """.trimIndent(), null)
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -308,28 +287,14 @@ class ChromiumFetcher(
         return webView
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun extractHtml(webView: WebView): String = suspendCancellableCoroutine { cont ->
-        Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return document.documentElement.outerHTML; })();"
-            ) { result ->
-                val html = try {
-                    if (result == null || result == "null") ""
-                    else JSONTokener(result).nextValue().toString()
-                } catch (e: Exception) { "" }
-                if (cont.isActive) cont.resume(html) {}
-            }
-        }
-    }
-
-    private fun extractCookies(url: String): Map<String, String> {
+    /**
+     * Cookies straight from the system store. Chromium deliberately skips the `document.cookie`
+     * half of [extractCookies] — it fetches HTML, never solves JS challenges — so this is a
+     * separate, differently-named path rather than an overload of the inherited method.
+     */
+    private fun cookiesFromStore(url: String): Map<String, String> {
         return try {
-            val raw = CookieManager.getInstance().getCookie(url) ?: return emptyMap()
-            raw.split(";").associate { part ->
-                val kv = part.split("=", limit = 2)
-                (kv.getOrNull(0)?.trim() ?: "") to (kv.getOrNull(1)?.trim() ?: "")
-            }.filter { it.key.isNotBlank() }
+            parseCookieString(CookieManager.getInstance().getCookie(url))
         } catch (_: Exception) { emptyMap() }
     }
 
@@ -337,18 +302,8 @@ class ChromiumFetcher(
      * Release the cached WebView. Call when the provider is being torn down.
      */
     fun release() {
-        try {
-            cachedWebView?.let { wv ->
-                Handler(Looper.getMainLooper()).post {
-                    try {
-                        wv.stopLoading()
-                        wv.loadUrl("about:blank")
-                        wv.destroy()
-                    } catch (_: Exception) {}
-                }
-            }
-            cachedWebView = null
-        } catch (_: Exception) {}
+        cleanupWebView(cachedWebView)
+        cachedWebView = null
     }
 }
 

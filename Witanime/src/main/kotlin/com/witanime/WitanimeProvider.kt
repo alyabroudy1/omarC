@@ -4,8 +4,11 @@ package com.witanime
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.extractors.MailruExtractor
+import com.cloudstream.shared.extractors.VideaExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.core.Fingerprint
 import android.util.Base64
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.network.WebViewResolver
@@ -46,15 +49,13 @@ class WitAnime : BaseProvider() {
     override val baseDomain get() = "witanime.red"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return WitanimeParser()
     }
 
     override var lang = "ar"
 
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-    override val userAgent =
-        "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36"
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -97,12 +98,13 @@ class WitAnime : BaseProvider() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/?search_param=animes&s=$query"
 
-        val document = app.get(url, headers = mapOf("User-Agent" to userAgent)).document
+        val document = app.get(url, headers = mapOf("User-Agent" to Fingerprint.current().userAgent)).document
 
-        return document.select("div.anime-list-content div.anime-card-container").mapNotNull {
+        return newSearchResponseList(document.select("div.anime-list-content div.anime-card-container").mapNotNull {
             val a = it.selectFirst("div.anime-card-poster a")
             val href = a?.attr("href") ?: return@mapNotNull null
 
@@ -113,11 +115,11 @@ class WitAnime : BaseProvider() {
             newAnimeSearchResponse(title, href, TvType.Anime) {
                 this.posterUrl = poster
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -712,8 +714,7 @@ class WitAnime : BaseProvider() {
                 yonaplayUrl,
                 referer = "https://witanime.red/",
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5993.90 Safari/537.36"
+                    "User-Agent" to Fingerprint.current().userAgent
                 )
             ).text
 

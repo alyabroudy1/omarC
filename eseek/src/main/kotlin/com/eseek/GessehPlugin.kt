@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class GessehPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(GessehProvider())
+        val api = GessehProvider()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

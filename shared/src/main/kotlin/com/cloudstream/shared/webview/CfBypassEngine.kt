@@ -1,8 +1,6 @@
 package com.cloudstream.shared.webview
 
 import android.annotation.SuppressLint
-import android.os.Handler
-import android.os.Looper
 import android.webkit.*
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.logging.ProviderLogger
@@ -17,13 +15,12 @@ import kotlinx.coroutines.*
  *
  * DECOUPLED FROM STATE: This engine does NOT store cookies.
  * It returns cookies in [WebViewResult.Success], and the caller
- * (ProviderHttpService) is responsible for updating SessionState.
+ * (HttpGateway) is responsible for updating SessionState.
  */
 class CfBypassEngine(
-    private val activityProvider: () -> android.app.Activity?
-) {
+    activityProvider: () -> android.app.Activity?
+) : WebViewSession(activityProvider) {
     private var deferred: CompletableDeferred<WebViewResult>? = null
-    private var resultDelivered = false
     private var timeoutJob: Job? = null
     private var tvMouseController: com.cloudstream.shared.ui.TvMouseController? = null
     private var sessionStartTime: Long = 0L
@@ -37,7 +34,8 @@ class CfBypassEngine(
      *
      * @param url The URL to load
      * @param mode HEADLESS or FULLSCREEN (FULLSCREEN shows a dialog for manual CAPTCHA)
-     * @param userAgent The user agent string to use
+     * @param userAgent Unused. UA comes from WebViewFactory (Fingerprint); parameter kept for
+     *                  signature stability until Wave 4
      * @param exitCondition When to stop: [ExitCondition.PageLoaded] or [ExitCondition.CookiesPresent]
      * @param timeout Maximum time to wait in milliseconds
      * @param delayMs Optional delay after page load before checking exit condition
@@ -46,12 +44,15 @@ class CfBypassEngine(
     suspend fun runSession(
         url: String,
         mode: Mode,
+        @Suppress("UNUSED_PARAMETER")
+        // UA comes from WebViewFactory (Fingerprint); parameter kept for signature stability until Wave 4
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
         delayMs: Long = 0L,
         allowedDomains: Set<String> = emptySet()
-    ): WebViewResult = withContext(Dispatchers.Main) {
+    ): WebViewResult = withSession {
+      withContext(Dispatchers.Main) {
 
         val activity = activityProvider()
         if (activity == null) {
@@ -61,21 +62,20 @@ class CfBypassEngine(
 
         this@CfBypassEngine.deferred = CompletableDeferred<WebViewResult>()
         val deferred = this@CfBypassEngine.deferred!!
-        resultDelivered = false
         sessionStartTime = System.currentTimeMillis()
         var dialog: android.app.Dialog? = null
         var webView: WebView? = null
 
         // Timeout handler
-        this@CfBypassEngine.timeoutJob = CoroutineScope(Dispatchers.Main).launch {
+        this@CfBypassEngine.timeoutJob = launchInSession {
             delay(timeout)
             if (!resultDelivered) {
                 resultDelivered = true
                 val partialHtml = try {
-                    webView?.let { getHtmlFromWebView(it) }
+                    webView?.let { extractHtml(it) }
                 } catch (e: Exception) { null }
 
-                cleanup(webView, dialog)
+                cleanupWebView(webView, dialog)
                 deferred.complete(WebViewResult.Timeout(url, partialHtml))
             }
         }
@@ -84,7 +84,7 @@ class CfBypassEngine(
             ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.runSession", "Creating WebView", "url" to url.take(80))
 
             // Create WebView
-            webView = WebView(activity).apply {
+            webView = createWebView(activity).apply {
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -92,7 +92,6 @@ class CfBypassEngine(
                     useWideViewPort = true
                     loadWithOverviewMode = true
                     cacheMode = WebSettings.LOAD_DEFAULT
-                    userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
                     javaScriptCanOpenWindowsAutomatically = false
@@ -143,29 +142,7 @@ class CfBypassEngine(
                             } catch(e) {}
                             
                             // DisableDevtool Anti-Bot Bypass
-                            try {
-                                var originalDisableDevtool;
-                                Object.defineProperty(window, 'DisableDevtool', {
-                                    get: function() {
-                                        return function(options) {
-                                            options = options || {};
-                                            options.ignore = function() { return true; };
-                                            options.url = "";
-                                            options.timeOutUrl = "";
-                                            options.ondevtoolopen = function() {};
-                                            if (originalDisableDevtool) {
-                                                try {
-                                                    return originalDisableDevtool(options);
-                                                } catch(err) {}
-                                            }
-                                        };
-                                    },
-                                    set: function(val) {
-                                        originalDisableDevtool = val;
-                                    },
-                                    configurable: true
-                                });
-                            } catch(e) {}
+                            $DISABLE_DEVTOOL_BYPASS_JS
                         })();
                         """.trimIndent(), null
                     )
@@ -230,13 +207,13 @@ class CfBypassEngine(
                     val currentUrl = view?.url ?: loadedUrl ?: url
                     ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Page finished", "url" to currentUrl.take(80))
 
-                    CoroutineScope(Dispatchers.Main).launch {
+                    launchInSession {
                         try {
                             if (delayMs > 0) {
                                 delay(delayMs)
                             }
 
-                            val html = getHtmlFromWebView(view!!)
+                            val html = extractHtml(view!!)
 
                             // Check exit condition
                             val shouldExit = when (exitCondition) {
@@ -253,11 +230,11 @@ class CfBypassEngine(
                                             ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished",
                                                 "Dwell time not met, waiting", "elapsed" to elapsed, "min" to MIN_DWELL_TIME_MS)
                                             // Schedule a re-check after the remaining dwell time
-                                            CoroutineScope(Dispatchers.Main).launch {
+                                            launchInSession {
                                                 delay(MIN_DWELL_TIME_MS - elapsed)
                                                 if (!resultDelivered) {
                                                     // Re-evaluate with fresh cookies after dwell
-                                                    val freshHtml = getHtmlFromWebView(view!!)
+                                                    val freshHtml = extractHtml(view!!)
                                                     val stillCf = CloudflareDetector.isCloudflareChallenge(freshHtml)
                                                     val isReal = CloudflareDetector.isRealContent(freshHtml)
                                                     if (!stillCf && isReal) {
@@ -266,7 +243,7 @@ class CfBypassEngine(
                                                         val freshCookies = extractCookiesWithOrigin(view, currentUrl, url)
                                                         ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Exit after dwell time",
                                                             "cookies" to freshCookies.size, "hasClearance" to freshCookies.containsKey("cf_clearance"))
-                                                        cleanup(view, dialog)
+                                                        cleanupWebView(view, dialog)
                                                         deferred.complete(WebViewResult.Success(freshCookies, freshHtml, currentUrl))
                                                     } else {
                                                         ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "After dwell: still blocked or not real content")
@@ -311,7 +288,7 @@ class CfBypassEngine(
                                 ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.onPageFinished", "Exit condition met",
                                     "cookies" to cookies.size, "hasClearance" to cookies.containsKey("cf_clearance"))
 
-                                cleanup(view, dialog)
+                                cleanupWebView(view, dialog)
                                 deferred.complete(WebViewResult.Success(cookies, html, currentUrl))
                             }
                         } catch (e: Exception) {
@@ -365,15 +342,12 @@ class CfBypassEngine(
             // Load URL
             ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.runSession", "Loading URL", "url" to url.take(80))
 
-            val extraHeaders = mutableMapOf<String, String>()
-            extraHeaders["X-Requested-With"] = ""
-
-            webView.loadUrl(url, extraHeaders)
+            webView.loadUrl(url)
 
         } catch (e: Exception) {
             resultDelivered = true
             timeoutJob?.cancel()
-            cleanup(webView, dialog)
+            cleanupWebView(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
 
@@ -381,13 +355,16 @@ class CfBypassEngine(
         try {
             deferred.await()
         } finally {
-            if (!resultDelivered) {
+            // Keyed on the deferred, not on resultDelivered: a deliverer sets the flag and *then*
+            // suspends on the cookie read, so a cancel in that window must still tear the dialog down.
+            if (!deferred.isCompleted) {
                 resultDelivered = true
                 timeoutJob?.cancel()
                 ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.runSession", "Parent coroutine cancelled, forcing cleanup")
-                cleanup(webView, dialog)
+                cleanupWebView(webView, dialog)
             }
         }
+      }
     }
 
     /**
@@ -447,27 +424,9 @@ class CfBypassEngine(
                     ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine", "Dialog dismissed by user")
                     resultDelivered = true
                     timeoutJob?.cancel()
-                    cleanup(webView, null)
+                    cleanupWebView(webView, null)
                     deferred?.complete(WebViewResult.Cancelled("User cancelled CF bypass"))
                 }
-            }
-        }
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun getHtmlFromWebView(webView: WebView): String = suspendCancellableCoroutine { cont ->
-        Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return document.documentElement.outerHTML; })();"
-            ) { result ->
-                val html = try {
-                    if (result == null || result == "null") ""
-                    else org.json.JSONTokener(result).nextValue().toString()
-                } catch (e: Exception) {
-                    ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.getHtmlFromWebView", "HTML escape failed", e)
-                    ""
-                }
-                cont.resume(html) {}
             }
         }
     }
@@ -509,79 +468,4 @@ class CfBypassEngine(
         return currentCookies
     }
     
-    /**
-     * Extracts cookies using JavaScript to get exactly what the page sees.
-     * This is critical for Cloudflare which binds cookies to the specific JS context.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun extractCookies(webView: WebView, url: String): Map<String, String> = suspendCancellableCoroutine { cont ->
-        try {
-            // 1. Try to get from CookieManager first (fast path)
-            val cmCookies = CookieManager.getInstance().getCookie(url)
-            val cmMap = if (!cmCookies.isNullOrBlank()) {
-                parseCookieString(cmCookies)
-            } else emptyMap()
-
-            // 2. Execute JS to get document.cookie (source of truth)
-            webView.evaluateJavascript("(function() { return document.cookie; })();") { result ->
-                try {
-                    val jsCookieString = if (result != null && result != "null") {
-                        result.removeSurrounding("\"")
-                    } else ""
-
-                    val jsMap = parseCookieString(jsCookieString)
-
-                    // Merge: JS wins on conflict, but keep CM cookies that JS might miss (HttpOnly)
-                    val merged = HashMap<String, String>()
-                    merged.putAll(cmMap)
-                    merged.putAll(jsMap) // JS overwrites
-
-                    ProviderLogger.d(TAG_WEBVIEW, "CfBypassEngine.extractCookies", "Cookie extraction complete",
-                        "cmCount" to cmMap.size,
-                        "jsCount" to jsMap.size,
-                        "total" to merged.size,
-                        "hasClearance" to merged.containsKey("cf_clearance")
-                    )
-
-                    if (cont.isActive) cont.resume(merged) {}
-
-                } catch (e: Exception) {
-                    ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.extractCookies", "JS parse failed", e)
-                    if (cont.isActive) cont.resume(cmMap) {}
-                }
-            }
-        } catch (e: Exception) {
-            ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.extractCookies", "Extraction failed", e)
-            if (cont.isActive) cont.resume(emptyMap()) {}
-        }
-    }
-
-    private fun parseCookieString(cookie: String): Map<String, String> {
-        return cookie.split(";").associate {
-            val parts = it.split("=", limit = 2)
-            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-        }.filter { it.key.isNotBlank() }
-    }
-
-    private fun cleanup(webView: WebView?, dialog: android.app.Dialog?) {
-        try {
-            dialog?.dismiss()
-            webView?.let { view ->
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try {
-                        view.stopLoading()
-                        view.loadUrl("about:blank")
-                        view.clearHistory()
-                        view.removeAllViews()
-                        (view.parent as? android.view.ViewGroup)?.removeView(view)
-                        view.destroy()
-                    } catch (e: Exception) {
-                        ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.cleanup", "Error", "error" to e.message)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_WEBVIEW, "CfBypassEngine.cleanup", "Error", "error" to e.message)
-        }
-    }
 }

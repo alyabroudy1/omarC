@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 
 class IPTVProvider : BaseProvider() {
 
@@ -19,7 +19,7 @@ class IPTVProvider : BaseProvider() {
         "/arach" to "All Channels"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return IPTVParser()
     }
 
@@ -201,27 +201,31 @@ class IPTVProvider : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         try {
             val filteredChannels = getFilteredChannels()
             
             val queryLower = query.lowercase()
-            return filteredChannels
-                .filter { it.name.lowercase().contains(queryLower) }
-                .take(50)
-                .map { chan ->
-                    newMovieSearchResponse(chan.name, chan.url, TvType.Live) {
-                        this.posterUrl = chan.logo
-                    }
-                }
+            return newSearchResponseList(
+                filteredChannels
+                    .filter { it.name.lowercase().contains(queryLower) }
+                    .take(50)
+                    .map { chan ->
+                        newMovieSearchResponse(chan.name, chan.url, TvType.Live) {
+                            this.posterUrl = chan.logo
+                        }
+                    },
+                false
+            )
         } catch (e: Exception) {
             Log.e("IPTV", "Error in searchNormal: ${e.message}")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

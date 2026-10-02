@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class CimaLeekPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(CimaLeek())
-        registerSharedExtractors()
+        val api = CimaLeek()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }

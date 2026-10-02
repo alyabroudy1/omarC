@@ -6,7 +6,7 @@ import com.lagradost.api.Log
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class BristegeParser : NewBaseParser() {
+class BristegeParser : BaseParser() {
 
     override val mainPageConfig = MainPageConfig(
         container = "ul[class*='pm-ul-browse-videos'] > li, ul[class*='pm-ul-carousel-videos'] > li",

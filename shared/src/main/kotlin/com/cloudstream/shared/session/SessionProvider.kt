@@ -5,7 +5,7 @@ import com.cloudstream.shared.logging.ProviderLogger
 /**
  * SINGLE SOURCE OF TRUTH for all session data across the provider.
  * 
- * This singleton ensures that ALL components (HttpService, LazyExtractor, SnifferExtractor)
+ * This singleton ensures that ALL components (HttpService, SnifferExtractor, the WebView engines)
  * use the EXACT same User-Agent and cookies when making requests.
  * 
  * Cloudflare binds cookies to User-Agent, so any mismatch causes 403 errors.
@@ -22,13 +22,11 @@ object SessionProvider {
     
     /**
      * Initialize the session provider with a session state.
-     * Called by ProviderHttpService after CF challenge is solved.
+     * Called by HttpGateway after CF challenge is solved.
      */
     fun initialize(session: SessionState) {
         ProviderLogger.d(TAG, "initialize", "Session initialized",
-            "domain" to session.domain,
-            "hasCookies" to session.cookies.isNotEmpty(),
-            "uaHash" to session.userAgent.hashCode())
+            "domain" to session.domain)
         currentSession = session
     }
     
@@ -130,41 +128,6 @@ object SessionProvider {
     }
     
     /**
-     * Get cookies for a specific domain.
-     * If domain is main domain or an alias, returns the session cookies.
-     */
-    fun getCookiesForDomain(domain: String): Map<String, String> {
-        val session = currentSession ?: return emptyMap()
-        val mainDomain = session.domain
-        
-        // Check if requesting domain is main domain or an alias
-        val shouldReturnCookies = when {
-            domain == mainDomain -> true
-            domain in domainAliases -> true
-            areDomainsRelated(domain, mainDomain) -> {
-                // Auto-add as alias if related but not yet tracked
-                addDomainAlias(domain)
-                true
-            }
-            else -> false
-        }
-        
-        if (shouldReturnCookies) {
-            ProviderLogger.d(TAG, "getCookiesForDomain", "Returning cookies",
-                "requestDomain" to domain,
-                "mainDomain" to mainDomain,
-                "isAlias" to (domain in domainAliases),
-                "cookieCount" to session.cookies.size)
-            return session.cookies
-        }
-        
-        ProviderLogger.w(TAG, "getCookiesForDomain", "Domain not related to session",
-            "requestDomain" to domain,
-            "mainDomain" to mainDomain)
-        return emptyMap()
-    }
-    
-    /**
      * Get all domain aliases.
      */
     fun getDomainAliases(): Set<String> = domainAliases.toSet()
@@ -183,8 +146,7 @@ object SessionProvider {
      */
     fun update(session: SessionState) {
         ProviderLogger.d(TAG, "update", "Session updated",
-            "domain" to session.domain,
-            "hasCookies" to session.cookies.isNotEmpty())
+            "domain" to session.domain)
         currentSession = session
     }
     
@@ -195,46 +157,9 @@ object SessionProvider {
     fun getSession(): SessionState? = currentSession
     
     /**
-     * Get the current User-Agent.
-     * Falls back to unified UA if no session.
-     */
-    fun getUserAgent(): String {
-        return currentSession?.userAgent ?: run {
-            ProviderLogger.w(TAG, "getUserAgent", "No session, using default UA")
-            com.cloudstream.shared.provider.UNIFIED_USER_AGENT
-        }
-    }
-    
-    /**
-     * Get the current cookies map.
-     * Returns empty map if no session.
-     * For specific domain cookies, use getCookiesForDomain(domain).
-     */
-    fun getCookies(): Map<String, String> {
-        return currentSession?.cookies ?: emptyMap()
-    }
-    
-    /**
-     * Build a Cookie header string from current cookies.
-     */
-    fun buildCookieHeader(): String? {
-        val cookies = currentSession?.cookies
-        if (cookies.isNullOrEmpty()) return null
-        return cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-    }
-    
-    /**
      * Get the current domain.
      */
     fun getDomain(): String? = currentSession?.domain
-    
-    /**
-     * Check if we have a valid session with cookies.
-     */
-    fun hasValidSession(): Boolean {
-        val session = currentSession
-        return session != null && session.cookies.isNotEmpty() && !session.isExpired()
-    }
     
     /**
      * Clear the current session.

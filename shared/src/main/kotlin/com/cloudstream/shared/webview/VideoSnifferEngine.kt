@@ -40,8 +40,8 @@ import kotlinx.coroutines.*
  * is responsible for updating SessionState.
  */
 class VideoSnifferEngine(
-    private val activityProvider: () -> android.app.Activity?
-) {
+    activityProvider: () -> android.app.Activity?
+) : WebViewSession(activityProvider) {
     companion object {
         /**
          * Timeout for sniffer-as-player mode (3 hours).
@@ -160,7 +160,6 @@ class VideoSnifferEngine(
 
     // Instance variables to share state with helper methods
     private var deferred: CompletableDeferred<WebViewResult>? = null
-    private var resultDelivered = false
     private var timeoutJob: Job? = null
     private var videoMonitorJob: Job? = null
     /** Fast-fail deadline for the first captured candidate; see [FIRST_CAPTURE_DEADLINE_MS]. */
@@ -196,7 +195,8 @@ class VideoSnifferEngine(
      *
      * @param url The URL to load
      * @param mode HEADLESS or FULLSCREEN
-     * @param userAgent The user agent string to use
+     * @param userAgent Unused. UA comes from WebViewFactory (Fingerprint); parameter kept for
+     *                  signature stability until Wave 4
      * @param exitCondition Must be [ExitCondition.VideoFound]
      * @param timeout Maximum time to wait in milliseconds
      * @param delayMs Optional delay after page load before checking exit condition
@@ -208,13 +208,16 @@ class VideoSnifferEngine(
     suspend fun runSession(
         url: String,
         mode: Mode,
+        @Suppress("UNUSED_PARAMETER")
+        // UA comes from WebViewFactory (Fingerprint); parameter kept for signature stability until Wave 4
         userAgent: String,
         exitCondition: ExitCondition,
         timeout: Long = 60_000L,
         delayMs: Long = 0L,
         preSniffJavaScript: String? = null,
         referer: String? = null
-    ): WebViewResult = withContext(Dispatchers.Main) {
+    ): WebViewResult = withSession {
+      withContext(Dispatchers.Main) {
 
         val activity = activityProvider()
         if (activity == null) {
@@ -225,7 +228,6 @@ class VideoSnifferEngine(
         this@VideoSnifferEngine.deferred = CompletableDeferred<WebViewResult>()
         val deferred = this@VideoSnifferEngine.deferred!!
         this@VideoSnifferEngine.exitConditionReference = exitCondition
-        resultDelivered = false
 
         // Decided once per session from the target URL: ad blocking is counter-productive on hosts
         // that withhold the stream when they detect it.
@@ -270,11 +272,11 @@ class VideoSnifferEngine(
         // then produced a link in 1.4s. Nothing is lost by giving up early here: if the page really
         // is playing video, the same check the timeout path uses keeps the session alive.
         if (timeout >= SNIFFER_PLAYER_TIMEOUT_MS) {
-            this@VideoSnifferEngine.firstCaptureJob = CoroutineScope(Dispatchers.Main).launch {
+            this@VideoSnifferEngine.firstCaptureJob = launchInSession {
                 delay(FIRST_CAPTURE_DEADLINE_MS)
-                if (resultDelivered || capturedLinks.isNotEmpty()) return@launch
+                if (resultDelivered || capturedLinks.isNotEmpty()) return@launchInSession
                 val wv = webView
-                if (wv == null) return@launch
+                if (wv == null) return@launchInSession
                 wv.evaluateJavascript(
                     "(function(){ return window.__snifferIsVideoPlaying ? window.__snifferIsVideoPlaying() : false; })()"
                 ) { isPlaying ->
@@ -291,7 +293,7 @@ class VideoSnifferEngine(
                         videoMonitorJob?.cancel()
                         domPollJob?.cancel()
                         // Not firstCaptureJob — this IS it.
-                        cleanup(webView, dialog)
+                        teardown(webView, dialog)
                         deferred.complete(WebViewResult.Timeout(url, null))
                     }
                 }
@@ -299,7 +301,7 @@ class VideoSnifferEngine(
         }
 
         // Timeout handler — with player mode detection
-        this@VideoSnifferEngine.timeoutJob = CoroutineScope(Dispatchers.Main).launch {
+        this@VideoSnifferEngine.timeoutJob = launchInSession {
             delay(timeout)
             if (!resultDelivered) {
                 // Include any captured links on timeout
@@ -308,7 +310,7 @@ class VideoSnifferEngine(
                     resultDelivered = true
                     ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Timeout with ${foundLinks.size} captured links")
                     val cookies = webView?.let { extractCookies(it, url) } ?: emptyMap()
-                    cleanup(webView, dialog)
+                    teardown(webView, dialog)
                     deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
                 } else {
                     // Check if video is already playing in WebView (DRM / unsniffable)
@@ -352,14 +354,14 @@ class VideoSnifferEngine(
                                 } else {
                                     // Nothing playing — genuine timeout
                                     resultDelivered = true
-                                    cleanup(webView, dialog)
+                                    teardown(webView, dialog)
                                     deferred.complete(WebViewResult.Timeout(url, null))
                                 }
                             }
                         }
                     } else {
                         resultDelivered = true
-                        cleanup(webView, dialog)
+                        teardown(webView, dialog)
                         deferred.complete(WebViewResult.Timeout(url, null))
                     }
                 }
@@ -368,7 +370,7 @@ class VideoSnifferEngine(
 
         // BUGFIX: Proactive video monitoring job - checks every 300ms for captured videos
         this@VideoSnifferEngine.videoMonitorJob = if (exitCondition is ExitCondition.VideoFound) {
-            CoroutineScope(Dispatchers.Main).launch {
+            launchInSession {
                 val requiredCount = (exitCondition as ExitCondition.VideoFound).minCount
                 android.util.Log.d("VideoSnifferEngine", "videoMonitorJob: Started. requiredCount=$requiredCount")
                 ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Video monitor started", "requiredCount" to requiredCount)
@@ -391,7 +393,7 @@ class VideoSnifferEngine(
                              android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] FALLBACK EXIT with ${foundLinks.size} links")
                              android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] First link: ${foundLinks.firstOrNull()?.url?.take(100)}")
                              ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Video monitor forced exit")
-                             cleanup(webView, dialog)
+                             teardown(webView, dialog)
                              android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] Completing deferred with ${foundLinks.size} links")
                              deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
                              android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] Deferred completed!")
@@ -406,7 +408,7 @@ class VideoSnifferEngine(
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Creating WebView", "url" to url.take(80))
 
             // Create WebView
-            webView = WebView(activity).apply {
+            webView = createWebView(activity).apply {
                 // CRITICAL FOR TV MOUSE: Prevent WebView from stealing D-Pad focus.
                 // If focusable, Cloudflare checkboxes and HTML inputs will trap the D-pad
                 // and freeze the TvMouseController.
@@ -421,7 +423,6 @@ class VideoSnifferEngine(
                     useWideViewPort = true
                     loadWithOverviewMode = true
                     cacheMode = WebSettings.LOAD_DEFAULT
-                    userAgentString = userAgent
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     mediaPlaybackRequiresUserGesture = false
                     javaScriptCanOpenWindowsAutomatically = false // Block JS popups (ad windows)
@@ -485,7 +486,7 @@ class VideoSnifferEngine(
                         // setting, so the request is re-issued through OkHttp instead.
                         // Cloudflare's own challenge machinery is deliberately NOT re-issued through
                         // OkHttp. Its TLS fingerprint is what these sites block in the first place
-                        // (that is why ProviderHttpService needs a Chrome-TLS tier at all), so
+                        // (that is why HttpGateway needs a Chrome-TLS tier at all), so
                         // serving the challenge from it invites a re-challenge. Let Chrome's stack
                         // answer its own challenge.
                         //
@@ -726,28 +727,8 @@ class VideoSnifferEngine(
                                     window.chrome = { runtime: {}, app: { isInstalled: false }, csi: function(){}, loadTimes: function(){} };
                                 }
                             } catch(e) {}
-                            // NB: the fakes must be array-LIKE, never real Arrays. A genuine
-                            // navigator.plugins is a PluginArray, so `Array.isArray(navigator.plugins)`
-                            // is false in every real browser — sites probe exactly that to catch
-                            // spoofers (CimaNow ships `Array.isArray(navigator.plugins) &&
-                            // navigator.plugins[0] === 1` as a bot signal). Using an array literal
-                            // here would hand them the tell we are trying to hide.
-                            try {
-                                if (!navigator.plugins || navigator.plugins.length === 0) {
-                                    var fakePlugins = Object.create(null);
-                                    var pluginList = [
-                                        { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                                        { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                                        { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
-                                    ];
-                                    for (var pi = 0; pi < pluginList.length; pi++) fakePlugins[pi] = pluginList[pi];
-                                    fakePlugins.length = pluginList.length;
-                                    fakePlugins.item = function(i) { return this[i] || null; };
-                                    fakePlugins.namedItem = function(n) { for (var i=0;i<this.length;i++) if (this[i].name===n) return this[i]; return null; };
-                                    fakePlugins.refresh = function() {};
-                                    Object.defineProperty(navigator, 'plugins', { get: function() { return fakePlugins; } });
-                                }
-                            } catch(e) {}
+                            // Array-LIKE, never a real Array — see PLUGIN_ARRAY_SPOOF_JS.
+                            $PLUGIN_ARRAY_SPOOF_JS
                             try {
                                 if (!navigator.mimeTypes || navigator.mimeTypes.length === 0) {
                                     var fakeMimes = Object.create(null);
@@ -765,29 +746,7 @@ class VideoSnifferEngine(
                             } catch(e) {}
                             
                             // 3. DisableDevtool Anti-Bot Bypass
-                            try {
-                                var originalDisableDevtool;
-                                Object.defineProperty(window, 'DisableDevtool', {
-                                    get: function() {
-                                        return function(options) {
-                                            options = options || {};
-                                            options.ignore = function() { return true; };
-                                            options.url = "";
-                                            options.timeOutUrl = "";
-                                            options.ondevtoolopen = function() {};
-                                            if (originalDisableDevtool) {
-                                                try {
-                                                    return originalDisableDevtool(options);
-                                                } catch(err) {}
-                                            }
-                                        };
-                                    },
-                                    set: function(val) {
-                                        originalDisableDevtool = val;
-                                    },
-                                    configurable: true
-                                });
-                            } catch(e) {}
+                            $DISABLE_DEVTOOL_BYPASS_JS
                         })();
                         """.trimIndent(), null
                     )
@@ -867,7 +826,7 @@ class VideoSnifferEngine(
                             }
 
                             // Click succeeded (or the callback never came): give the player its 3s.
-                            CoroutineScope(Dispatchers.Main).launch {
+                            launchInSession {
                                 delay(3000)
                                 injectSniffer("post-click-wait")
                             }
@@ -891,20 +850,7 @@ class VideoSnifferEngine(
                             var body = document.body ? document.body.innerText.toLowerCase().substring(0, 3000) : '';
                             var url = window.location.href.toLowerCase();
                             var combined = title + ' ' + body + ' ' + url;
-                            var errorPatterns = [
-                                'file was deleted', 'video not found', '404 not found',
-                                'no longer available', 'file not found',
-                                "we're sorry, this video is no longer available",
-                                'file deleted', 'video removed', 'content removed',
-                                'this video has been removed', 'page not found',
-                                'the file you requested has been deleted',
-                                'تم حذف الملف', 'الملف غير موجود', 'الصفحة غير موجودة',
-                                'هذا الفيديو غير متاح', 'تم الحذف', 'غير موجود',
-                                'الملف المطلوب غير موجود',
-                                'error 404', '404 error', '410 error',
-                                'this video does not exist',
-                                'access denied', 'blocked'
-                            ];
+                            var errorPatterns = [$DELETED_VIDEO_PHRASES_JS];
                             for (var i = 0; i < errorPatterns.length; i++) {
                                 if (combined.indexOf(errorPatterns[i]) !== -1) {
                                     return JSON.stringify({detected: true, pattern: errorPatterns[i]});
@@ -921,7 +867,7 @@ class VideoSnifferEngine(
                                     val pattern = jsonObj.optString("pattern", "unknown")
                                     ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
                                         "Error page detected immediately", "pattern" to pattern)
-                                    CoroutineScope(Dispatchers.Main).launch {
+                                    launchInSession {
                                         delay(1500)
                                         showSkipOverlay(view)
                                     }
@@ -938,13 +884,13 @@ class VideoSnifferEngine(
                         return
                     }
 
-                    CoroutineScope(Dispatchers.Main).launch {
+                    launchInSession {
                         try {
                             if (delayMs > 0) {
                                 delay(delayMs)
                             }
 
-                            val html = getHtmlFromWebView(view!!)
+                            val html = extractHtml(view!!)
 
                             // Check exit condition
                             val shouldExit = when (exitCondition) {
@@ -971,7 +917,7 @@ class VideoSnifferEngine(
                                 android.util.Log.i("VideoSnifferEngine", "[onPageFinished] EXITING! Sending ${found.size} links to deferred.")
                                 found.forEach { android.util.Log.d("VideoSnifferEngine", " > Link: ${it.url}") }
 
-                                cleanup(view, dialog)
+                                teardown(view, dialog)
                                 deferred.complete(WebViewResult.Success(cookies, html, currentUrl, found))
                                 android.util.Log.i("VideoSnifferEngine", "[onPageFinished] Deferred completed.")
                             }
@@ -1012,7 +958,7 @@ class VideoSnifferEngine(
                         if (statusCode == 404 || statusCode == 410 || statusCode == 403 || statusCode == 451) {
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedHttpError",
                                 "Dead/corrupted page detected via HTTP $statusCode, scheduling skip")
-                            CoroutineScope(Dispatchers.Main).launch {
+                            launchInSession {
                                 delay(1500) // Brief grace period for page content to settle
                                 showSkipOverlay(view)
                             }
@@ -1068,7 +1014,6 @@ class VideoSnifferEngine(
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Loading URL", "url" to url.take(80))
 
             val extraHeaders = mutableMapOf<String, String>()
-            extraHeaders["X-Requested-With"] = ""
 
             // Add referer if provided (critical for embed servers like qq.okprime.site)
             if (!referer.isNullOrBlank()) {
@@ -1097,7 +1042,7 @@ class VideoSnifferEngine(
             videoMonitorJob?.cancel()
             domPollJob?.cancel()
             firstCaptureJob?.cancel()
-            cleanup(webView, dialog)
+            teardown(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
 
@@ -1108,7 +1053,9 @@ class VideoSnifferEngine(
         try {
             deferred.await()
         } finally {
-            if (!resultDelivered) {
+            // Keyed on the deferred, not on resultDelivered: a deliverer sets the flag and *then*
+            // suspends on the cookie read, so a cancel in that window must still tear the dialog down.
+            if (!deferred.isCompleted) {
                 resultDelivered = true
                 timeoutJob?.cancel()
                 videoMonitorJob?.cancel()
@@ -1116,9 +1063,10 @@ class VideoSnifferEngine(
                 firstCaptureJob?.cancel()
                 android.util.Log.i("VideoSnifferEngine", "runSession: Parent coroutine cancelled, cleaning up WebView and dialog")
                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Parent coroutine cancelled, forcing cleanup")
-                cleanup(webView, dialog)
+                teardown(webView, dialog)
             }
         }
+      }
     }
 
     /**
@@ -1162,7 +1110,7 @@ class VideoSnifferEngine(
              }
 
              // Update UI and Check Exit
-             CoroutineScope(Dispatchers.Main).launch {
+             launchInSession {
                  updateDialogText("Found ${capturedLinks.size} video stream(s)...")
                  android.util.Log.i("VideoSnifferEngine", "[captureLink] Updated UI: Found ${capturedLinks.size} video stream(s)")
                  // Trigger exit check immediately
@@ -1196,7 +1144,7 @@ class VideoSnifferEngine(
                          "limit" to SMART_WAIT_TIME_MS)
 
                      // Schedule a re-check after the remaining time
-                     CoroutineScope(Dispatchers.Main).launch {
+                     launchInSession {
                          delay(SMART_WAIT_TIME_MS - timeSinceFirst + 100) // Small buffer
                          checkExitCondition()
                      }
@@ -1211,7 +1159,7 @@ class VideoSnifferEngine(
                 firstCaptureJob?.cancel()
 
                 // Launch coroutine to get cookies safely
-                CoroutineScope(Dispatchers.Main).launch {
+                launchInSession {
                     val cookies = activeWebView?.let { extractCookies(it, "") } ?: emptyMap()
                     val found = capturedLinks.toList()
 
@@ -1219,7 +1167,7 @@ class VideoSnifferEngine(
                     found.forEach { android.util.Log.d("VideoSnifferEngine", " > Link: ${it.url}") }
 
                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Cleaning up UI before exit")
-                    cleanup(activeWebView, activeDialog)
+                    teardown(activeWebView, activeDialog)
 
                     deferred?.complete(WebViewResult.Success(cookies, "", "", found))
                     android.util.Log.i("VideoSnifferEngine", "[checkExitCondition] Deferred completed.")
@@ -1441,7 +1389,7 @@ class VideoSnifferEngine(
                     firstCaptureJob?.cancel()
 
                     // User aborted, so we immediately complete with an error to stop execution
-                    cleanup(webView, null)
+                    teardown(webView, null)
                     deferred?.complete(WebViewResult.Error("User cancelled sniffing"))
                  }
 
@@ -1462,7 +1410,7 @@ class VideoSnifferEngine(
         skipButton?.requestFocus()
 
         skipCountdownJob?.cancel()
-        skipCountdownJob = CoroutineScope(Dispatchers.Main).launch {
+        skipCountdownJob = launchInSession {
             for (i in 5 downTo 1) {
                 if (resultDelivered) break
                 skipCountdownText?.text = "Skipping server in ${i}s..."
@@ -1485,7 +1433,7 @@ class VideoSnifferEngine(
         firstCaptureJob?.cancel()
         skipCountdownJob?.cancel()
 
-        cleanup(view, dialog)
+        teardown(view, dialog)
         deferred?.complete(WebViewResult.Error("User cancelled sniffing"))
     }
 
@@ -1508,7 +1456,7 @@ class VideoSnifferEngine(
         domPollJob?.cancel()
 
         // Poll every 2 seconds to extract video sources from DOM
-        domPollJob = CoroutineScope(Dispatchers.Main).launch {
+        domPollJob = launchInSession {
             var attempts = 0
             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.startDomVideoExtraction", "Polling started", "maxAttempts" to 30)
 
@@ -1658,22 +1606,13 @@ class VideoSnifferEngine(
                             var scanLen = scanText.length;
                             if (scanLen > 20) {
                                 var errorTexts = [
-                                    "file was deleted", "video not found", "404 not found",
-                                    "no longer available", "file not found",
-                                    "we're sorry, this video is no longer available",
-                                    "file deleted", "video removed", "content removed",
-                                    "this video has been removed", "page not found",
-                                    "the file you requested has been deleted",
-                                    "تم حذف الملف", "الملف غير موجود", "الصفحة غير موجودة",
-                                    "هذا الفيديو غير متاح", "تم الحذف", "غير موجود",
-                                    "الملف المطلوب غير موجود",
-                                    "error 404", "404 error", "410 error",
-                                    "this video does not exist",
-                                    "access denied", "blocked",
-                                    // Added 2026-07-29. Deliberately phrase-anchored rather than
-                                    // single words: the match triggers a 5s auto-skip, so a loose
-                                    // term like "unavailable" or "expired" on its own would throw
-                                    // away a working server on the strength of some ad's copy.
+                                    $DELETED_VIDEO_PHRASES_JS
+                                    // Added 2026-07-29 — this scan casts a wider net than the
+                                    // on-page-finished one above, which uses the shared base list
+                                    // only. Same phrase-anchoring rule: the match triggers a 5s
+                                    // auto-skip, so a loose term like "unavailable" or "expired"
+                                    // on its own would throw away a working server on the strength
+                                    // of some ad's copy.
                                     "video is unavailable", "video unavailable",
                                     "video is missing", "video missing",
                                     "has been removed", "has been deleted",
@@ -1788,7 +1727,7 @@ class VideoSnifferEngine(
                                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.DOM Extraction",
                                     "Invalid page detected! Initiating skip server.",
                                     "matched" to invalidReason, "scanLen" to scanLen)
-                                CoroutineScope(Dispatchers.Main).launch {
+                                launchInSession {
                                     showSkipOverlay(view)
                                 }
                             }
@@ -1927,104 +1866,15 @@ class VideoSnifferEngine(
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun getHtmlFromWebView(webView: WebView): String = suspendCancellableCoroutine { cont ->
-        Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return document.documentElement.outerHTML; })();"
-            ) { result ->
-                val html = try {
-                    if (result == null || result == "null") ""
-                    else org.json.JSONTokener(result).nextValue().toString()
-                } catch (e: Exception) {
-                    ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.getHtmlFromWebView", "HTML escape failed", e)
-                    ""
-                }
-                cont.resume(html) {}
-            }
-        }
-    }
-
     /**
-     * Extracts cookies using JavaScript to get exactly what the page sees.
-     * This is critical for Cloudflare which binds cookies to the specific JS context.
+     * Ends one sniff: cancels the two pollers that would otherwise outlive the WebView they scrape,
+     * destroys the WebView and its dialog, and drops the active references.
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun extractCookies(webView: WebView, url: String): Map<String, String> = suspendCancellableCoroutine { cont ->
-        try {
-            // 1. Try to get from CookieManager first (fast path)
-            val cmCookies = CookieManager.getInstance().getCookie(url)
-            val cmMap = if (!cmCookies.isNullOrBlank()) {
-                parseCookieString(cmCookies)
-            } else emptyMap()
-
-            // 2. Execute JS to get document.cookie (source of truth)
-            webView.evaluateJavascript("(function() { return document.cookie; })();") { result ->
-                try {
-                    val jsCookieString = if (result != null && result != "null") {
-                        result.removeSurrounding("\"")
-                    } else ""
-
-                    val jsMap = parseCookieString(jsCookieString)
-
-                    // Merge: JS wins on conflict, but keep CM cookies that JS might miss (HttpOnly)
-                    val merged = HashMap<String, String>()
-                    merged.putAll(cmMap)
-                    merged.putAll(jsMap) // JS overwrites
-
-                    ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.extractCookies", "Cookie extraction complete",
-                        "cmCount" to cmMap.size,
-                        "jsCount" to jsMap.size,
-                        "total" to merged.size,
-                        "hasClearance" to merged.containsKey("cf_clearance")
-                    )
-
-                    if (cont.isActive) cont.resume(merged) {}
-
-                } catch (e: Exception) {
-                    ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.extractCookies", "JS parse failed", e)
-                    if (cont.isActive) cont.resume(cmMap) {}
-                }
-            }
-        } catch (e: Exception) {
-            ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.extractCookies", "Extraction failed", e)
-            if (cont.isActive) cont.resume(emptyMap()) {}
-        }
-    }
-
-    private fun parseCookieString(cookie: String): Map<String, String> {
-        return cookie.split(";").associate {
-            val parts = it.split("=", limit = 2)
-            (parts.getOrNull(0)?.trim() ?: "") to (parts.getOrNull(1)?.trim() ?: "")
-        }.filter { it.key.isNotBlank() }
-    }
-
-    private fun cleanup(webView: WebView?, dialog: Dialog?) {
-        // Last line of defence: the poller outlives the WebView it scrapes otherwise.
+    private fun teardown(webView: WebView?, dialog: Dialog?) {
         domPollJob?.cancel()
         firstCaptureJob?.cancel()
-        try {
-            dialog?.dismiss()
-            webView?.let { view ->
-                // Must run on main thread
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try {
-                        view.stopLoading()
-                        view.loadUrl("about:blank")
-                        view.clearHistory()
-                        view.removeAllViews()
-                        (view.parent as? ViewGroup)?.removeView(view)
-                        view.destroy()
-                    } catch (e: Exception) {
-                        ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.cleanup", "Error", "error" to e.message)
-                    }
-                }
-            }
-            // Clear active references
-            if (activeWebView == webView) activeWebView = null
-            if (activeDialog == dialog) activeDialog = null
-        } catch (e: Exception) {
-            ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.cleanup", "Error", "error" to e.message)
-        }
+        cleanupWebView(webView, dialog)
+        if (activeWebView == webView) activeWebView = null
+        if (activeDialog == dialog) activeDialog = null
     }
 }

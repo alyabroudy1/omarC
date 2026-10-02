@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class MyCimaClonePlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(MyCimaClone())
-        registerSharedExtractors()
+        val api = MyCimaClone()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }

@@ -103,7 +103,7 @@ object VideoUrlClassifier {
      *
      * `iv.okcdn.ru/getVideoPreview?id=…&type=39&fn=vid_w` is a JPEG served from the same host family
      * as the stream, and it is requested *before* the stream — hand it to ExoPlayer and playback dies
-     * on an image. (Seen 2026-07-30 in a CimaNow VK server capture.)
+     * on an image. (Seen 2026-07-30 in a VK server capture.)
      */
     private val PREVIEW_KEYWORDS = listOf(
         "getvideopreview", "/preview", "thumb", "poster", "storyboard", "sprite", "/vid_"
@@ -144,7 +144,7 @@ object VideoUrlClassifier {
      *
      * An ad slot and a player embed are both third-party documents in a subframe, so anything hunting
      * for embeds has to reject these or it will hand an ad frame to an extractor. Drawn from what a
-     * CimaNow watch page actually loads (2026-07-30): Google's ad and Funding-Choices endpoints, and
+     * watch page on one ad-heavy target actually loads (2026-07-30): Google's ad and Funding-Choices endpoints, and
      * the `luugy.com` popunder the page gates playback on.
      */
     private val AD_FRAME_HOSTS = listOf(

@@ -8,7 +8,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.ProviderRuntime
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -34,7 +34,8 @@ import javax.crypto.spec.SecretKeySpec
  */
 class ByseExtractor(
     private val host: String,
-    override val name: String = "Byse"
+    override val name: String = "Byse",
+    private val runtime: ProviderRuntime
 ) : ExtractorApi() {
     
     override val mainUrl: String get() = "https://$host"
@@ -324,10 +325,8 @@ class ByseExtractor(
             ProviderLogger.i(EXTRACTOR_TAG, methodName, "Successfully extracted ${apiResult.sources.size} video links via API")
             return
         }
-        
-        // Strategy 2: Fallback to WebView-based extraction
-        ProviderLogger.w(EXTRACTOR_TAG, methodName, "API extraction failed, falling back to WebView")
-        tryWebViewExtraction(host, videoId, url, callback, subtitleCallback)
+
+        ProviderLogger.w(EXTRACTOR_TAG, methodName, "API extraction failed")
     }
     
     private suspend fun tryApiExtraction(host: String, videoId: String): DecryptionResult? {
@@ -340,16 +339,14 @@ class ByseExtractor(
             val responseStr = try {
                 com.lagradost.cloudstream3.app.get(apiUrl).text ?: ""
             } catch (e: Exception) {
-                ProviderLogger.w(EXTRACTOR_TAG, methodName, "app.get failed, trying ProviderHttpService", "error" to e.message)
-                val http = ProviderHttpServiceHolder.getInstance()
-                http?.getText(
+                ProviderLogger.w(EXTRACTOR_TAG, methodName, "app.get failed, trying the runtime", "error" to e.message)
+                runtime.text(
                     apiUrl,
                     headers = mapOf(
                         "Referer" to "https://$host/",
                         "X-Requested-With" to "XMLHttpRequest",
                         "Origin" to "https://$host"
-                    ),
-                    rewriteDomain = false
+                    )
                 ) ?: ""
             }
             
@@ -445,16 +442,6 @@ class ByseExtractor(
         }
     }
 
-    private suspend fun tryWebViewExtraction(
-        host: String,
-        videoId: String,
-        originalUrl: String,
-        callback: (ExtractorLink) -> Unit,
-        subtitleCallback: (SubtitleFile) -> Unit
-    ) {
-        ProviderLogger.w(EXTRACTOR_TAG, "tryWebViewExtraction", "WebView fallback not implemented - API extraction should work")
-    }
-    
     private fun extractVideoId(url: String): String? {
         if (!url.contains("/") && !url.contains(".")) {
             return url.takeIf { it.length > 5 }

@@ -1,6 +1,6 @@
 package com.mycima
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface
@@ -22,7 +22,7 @@ class MyCima : BaseProvider() {
         "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/" to "مسلسلات انمي"
     )
 
-    override fun getParser(): NewBaseParser = MyCimaParser()
+    override fun getParser(): BaseParser = MyCimaParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val response = super.getMainPage(page, request) ?: return null
@@ -80,7 +80,7 @@ class MyCima : BaseProvider() {
 
             try {
                 val ajaxUrl = "$mainUrl/wp-content/themes/mycima/Ajaxt/Single/Episodes.php"
-                val seasonHtml = httpService.postText(ajaxUrl, mapOf("season" to dataSeason, "post_id" to postId), referer = url)
+                val seasonHtml = runtime.post(ajaxUrl, mapOf("season" to dataSeason, "post_id" to postId), referer = url)
                 
                 if (seasonHtml != null) {
                     val seasonDoc = Jsoup.parse(seasonHtml)

@@ -1,9 +1,10 @@
 package com.syrialive
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -77,7 +78,7 @@ class SyriaLive : BaseProvider() {
     // Live football fixtures aren't meaningfully searchable — disable search entirely.
     override val supportsSearch = false
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return SyriaLiveParser()
     }
 
@@ -142,7 +143,7 @@ class SyriaLive : BaseProvider() {
      * Overriding getMainPage because the root URL `https://d.syrlive.com/` returns two 
      * entirely different structural lists ("مباريات اليوم" matches and "آخر الأخبار" news).
      * If we relied on `mainPageOf`, `BaseProvider` would iterate and fetch the heavy 
-     * Cloudflare-protected page multiple times and NewBaseParser configs only support 
+     * Cloudflare-protected page multiple times and BaseParser configs only support 
      * one list per container configuration.
      */
     override suspend fun getMainPage(
@@ -150,8 +151,7 @@ class SyriaLive : BaseProvider() {
         request: MainPageRequest
     ): HomePageResponse? {
         // Ensure HTTP service is ready
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(mainUrl) ?: return null
 
         val homePageList = mutableListOf<HomePageList>()
 
@@ -164,7 +164,7 @@ class SyriaLive : BaseProvider() {
         // 2. Tomorrow's matches
         try {
             val tomorrowUrl = mainUrl.trimEnd('/') + "/matches-tomorrow/"
-            val tomorrowDoc = httpService.getDocument(tomorrowUrl, rewriteDomain = true)
+            val tomorrowDoc = runtime.document(tomorrowUrl)
             if (tomorrowDoc != null) {
                 val tomorrowMatches = parseMatchContainers(tomorrowDoc)
                 if (tomorrowMatches.isNotEmpty()) {
@@ -226,8 +226,7 @@ class SyriaLive : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var foundLinks = false
-        httpService.ensureInitialized()
-        val userAgent = httpService.userAgent
+        val userAgent = Fingerprint.current().userAgent
 
         // 1. Fetch exact match/movie page via getText (bypasses RequestQueue
         //    follower rewrite entirely, keeping the original domain)
@@ -235,7 +234,7 @@ class SyriaLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to "https://www.google.com/"
         )
-        val html = httpService.getText(data, reqHeaders, rewriteDomain = false) ?: return false
+        val html = runtime.text(data, reqHeaders) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst(".entry-content iframe")
@@ -269,7 +268,7 @@ class SyriaLive : BaseProvider() {
         }
         
         // Fallback: fetch page and try inline extraction with deobfuscation
-        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false) ?: return foundLinks
+        val playerResponse = runtime.text(playerUrl, pHeaders) ?: return foundLinks
         
         // Decode document.write hex obfuscation if present
         val decodedHtml = decodePlayerPage(playerResponse)

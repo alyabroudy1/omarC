@@ -1,6 +1,6 @@
 package com.wecima
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface
@@ -24,14 +24,14 @@ class Wecima : BaseProvider() {
         "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/" to "مسلسلات انمي"
     )
 
-    override fun getParser(): NewBaseParser = WecimaParser()
+    override fun getParser(): BaseParser = WecimaParser()
 
     private suspend fun searchPost(query: String): List<SearchResponse> {
-        val jsonText = httpService.postText(
+        val jsonText = runtime.post(
             "$mainUrl/search", mapOf("q" to query),
             referer = mainUrl,
             headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
-            rewriteDomain = true
+            rewrite = true
         )
         if (jsonText.isNullOrBlank()) return emptyList()
 
@@ -53,26 +53,26 @@ class Wecima : BaseProvider() {
             items.add(
                 newMovieSearchResponse(title, url, if (isTv) TvType.TvSeries else TvType.Movie) {
                     this.posterUrl = posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             )
         }
         return items
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         try {
-            httpService.ensureInitialized()
-            return searchPost(query)
+            return newSearchResponseList(searchPost(query), false)
         } catch (e: Exception) {
             Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        httpService.ensureInitialized()
-        return searchPost(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
+        return newSearchResponseList(searchPost(query), false)
     }
 
     override suspend fun fetchExtraEpisodes(
@@ -89,7 +89,7 @@ class Wecima : BaseProvider() {
             val dataId = seasonEl.attr("data-id")
             val dataSeason = seasonEl.attr("data-season")
             try {
-                val seasonHtml = httpService.postText("$mainUrl/ajax/Episode", mapOf("post_id" to dataId, "season" to dataSeason), url)
+                val seasonHtml = runtime.post("$mainUrl/ajax/Episode", mapOf("post_id" to dataId, "season" to dataSeason), url)
                 if (seasonHtml != null) {
                     val seasonDocParsed = Jsoup.parse(seasonHtml)
                     seasonDocParsed.select("a.hoverable.activable").forEach { epEl ->
@@ -128,7 +128,7 @@ class Wecima : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var linksFound = false
-        val document = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val document = runtime.document(data) ?: return false
         
         document.select("ul.WatchServersList li btn").forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))

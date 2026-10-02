@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class DimaToonPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(DimaToon())
+        val api = DimaToon()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

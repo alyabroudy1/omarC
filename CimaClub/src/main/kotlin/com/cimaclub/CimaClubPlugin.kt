@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class CimaClubPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(CimaClub())
+        val api = CimaClub()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

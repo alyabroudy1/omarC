@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -82,10 +83,7 @@ open class EstreamExtractor(
         embedUrl: String,
         callback: (ExtractorLink) -> Unit
     ) {
-        val headers = mapOf(
-            "Referer" to embedUrl,
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36"
-        )
+        val headers = Fingerprint.current().playbackHeaders(embedUrl, null, null)
         val quality = getQualityFromName(videoUrl)
         Log.d(TAG, "Emitting link  | quality=$quality  headers=$headers  url=${videoUrl.take(120)}")
         callback(

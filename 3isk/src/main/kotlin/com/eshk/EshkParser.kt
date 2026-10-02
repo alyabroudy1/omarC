@@ -5,7 +5,7 @@ import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class EshkParser : NewBaseParser() {
+class EshkParser : BaseParser() {
 
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/search/$query/"

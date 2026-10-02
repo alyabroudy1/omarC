@@ -2,7 +2,6 @@ package com.arabseedv4
 
 import com.lagradost.cloudstream3.*
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
-import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import kotlinx.coroutines.*
 import org.jsoup.nodes.Document
@@ -34,14 +33,14 @@ class ArabseedV4 : BaseProvider() {
         "$mainUrl/category/anime/anime-movies/" to "افلام انيميشن",
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): ArabseedV4Parser {
         return ArabseedV4Parser()
     }
 
     // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        httpService.ensureInitialized()
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         
         return coroutineScope {
@@ -50,7 +49,7 @@ class ArabseedV4 : BaseProvider() {
                     val url = "$mainUrl/?s=$encoded&type=$type"
                     android.util.Log.d("ArabseedV4", "searchLazy: requesting $url")
                     try {
-                        val doc = httpService.getDocumentNoFallback(url, rewriteDomain = true)
+                        val doc = runtime.document(url, solveCf = false)
                         if (doc != null) getParser().parseSearch(doc) else emptyList()
                     } catch (e: Exception) {
                         android.util.Log.e("ArabseedV4", "searchLazy: throwing $e")
@@ -60,30 +59,30 @@ class ArabseedV4 : BaseProvider() {
             }.awaitAll().flatten().distinctBy { it.url }.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
-            }
+            }.let { newSearchResponseList(it, false) }
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         android.util.Log.d("ArabseedV4", "searchNormal: Executing parallel search for movies and series")
-        httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         
         return coroutineScope {
             listOf("movies", "series").map { type ->
                 async {
                     val url = "$mainUrl/find/?word=$encoded&type=$type"
-                    val doc = httpService.getDocument(url, rewriteDomain = true)
+                    val doc = runtime.document(url)
                     if (doc != null) getParser().parseSearch(doc) else emptyList()
                 }
             }.awaitAll().flatten().distinctBy { it.url }.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
-            }
+            }.let { newSearchResponseList(it, false) }
         }
     }
 
@@ -114,15 +113,15 @@ class ArabseedV4 : BaseProvider() {
                                 "csrf_token" to csrfToken
                             )
                             
-                            val result = httpService.postDebug(
-                                url = "/season__episodes/",
-                                data = payload,
+                            val html = runtime.post(
+                                pathOrUrl = "/season__episodes/",
+                                form = payload,
                                 headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
                                 referer = url
                             )
                             
-                            if (result.success && result.html != null) {
-                                parser.parseEpisodesFromAjax(result.html, seasonNum)
+                            if (html != null) {
+                                parser.parseEpisodesFromAjax(html, seasonNum)
                             } else {
                                 emptyList<ParsedEpisode>()
                             }
@@ -157,9 +156,9 @@ class ArabseedV4 : BaseProvider() {
         val csrfToken = params["csrf"] ?: return null
         val baseUrl = params["base"] ?: "https://asd.pics"
         
-        val result = httpService.postDebug(
+        val serverResponse = runtime.post(
             "$baseUrl/get__watch__server/",
-            data = mapOf(
+            form = mapOf(
                 "post_id" to postId,
                 "quality" to quality,
                 "server" to serverId,
@@ -172,9 +171,7 @@ class ArabseedV4 : BaseProvider() {
             )
         )
         
-        if (!result.success || result.html == null) return null
-        
-        val serverResponse = result.html
+        if (serverResponse == null) return null
         var embedUrl = ""
         
         if (serverResponse.trim().startsWith("{")) {

@@ -1,111 +1,267 @@
 package com.cloudstream.shared.parsing
 
-import com.lagradost.api.Log
+import com.lagradost.cloudstream3.TvType
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 /**
+ * Advanced Selector for generic parsing.
+ * @param query CSS selector query.
+ * @param attr Attribute to extract (e.g., "href", "src", "text"). Can be comma-separated for fallbacks (e.g., "data-src, src").
+ * @param regex Optional Regex to extract specific content from the result.
+ */
+data class CssSelector(
+    val query: String,
+    val attr: String = "text",
+    val regex: String? = null
+)
+
+// Configuration Data Classes
+data class MainPageConfig(
+    val container: String,
+    val item: String? = null, // Optional if container selects items directly
+    val title: CssSelector,
+    val url: CssSelector,
+    val poster: CssSelector,
+    val isMovie: ((String, String, Element) -> Boolean)? = null // Optional override
+)
+
+data class LoadPageConfig(
+    val title: CssSelector,
+    val plot: CssSelector,
+    val poster: CssSelector,
+    val rating: CssSelector? = null,
+    val tags: CssSelector? = null,
+    val year: CssSelector? = null,
+    val movieIndicator: CssSelector? = null,
+    val seriesIndicator: CssSelector? = null,
+    val parentSeriesUrl: CssSelector? = null
+)
+
+data class EpisodeConfig(
+    val container: String,
+    val title: CssSelector? = null,
+    val url: CssSelector,
+    val season: CssSelector? = null,
+    val episode: CssSelector? = null,
+    val poster: CssSelector? = null
+)
+
+data class SeasonSelector(
+    val container: String,
+    val title: CssSelector? = null,
+    val url: CssSelector,
+)
+
+data class WatchServerSelector(
+    val url: CssSelector? = null,
+    val id: CssSelector? = null,
+    val title: CssSelector? = null,
+    val iframe: CssSelector? = null,
+    val script: CssSelector? = null // For regex extraction from scripts
+)
+
+
+/**
  * Shared parsing logic and helpers.
- * Implements common pattern matching and selector utilities.
+ * Implements common pattern matching and selector utilities using CssConfig.
  */
 abstract class BaseParser : ParserInterface {
     
     protected val TAG = "BaseParser"
-    
-    abstract val providerName: String
-    abstract val mainUrl: String
-    
-    // Default selectors (can be overridden)
-    protected open val mainPageContainerSelectors = listOf("div.MovieBlock", "div.block-item")
-    protected open val itemTitleSelectors = listOf("div.title", "h3")
-    protected open val itemUrlSelectors = listOf("a")
-    protected open val itemPosterSelectors = listOf("img")
-    
-    protected open val isMovieSelector = "div.type:contains(Movie)"
 
-    // ================= HELPER METHODS =================
-    
-    protected fun fixUrl(url: String): String {
-        if (url.isBlank()) return ""
-        if (url.startsWith("http")) return url
-        if (url.startsWith("//")) return "https:$url"
-        
-        val base = mainUrl.trimEnd('/')
-        return if (url.startsWith("/")) "$base$url" else "$base/$url"
+    // Abstract configs to be provided by implementing classes
+    abstract val mainPageConfig: MainPageConfig
+    open val searchConfig: MainPageConfig get() = mainPageConfig
+    abstract val loadPageConfig: LoadPageConfig
+    abstract val episodeConfig: EpisodeConfig
+    abstract val watchServersSelectors: WatchServerSelector
+
+    // ================== PARSING IMPLEMENTATION ==================
+
+    override fun parseMainPage(doc: Document): List<ParserInterface.ParsedItem> {
+        return parseItems(doc, mainPageConfig)
     }
 
-    protected fun findText(doc: Element, selectors: List<String>): String {
-        for (selector in selectors) {
-            val text = doc.select(selector).text()
-            if (text.isNotBlank()) return text
+    fun parseSection(section: Element): List<ParserInterface.ParsedItem> {
+        val items = mutableListOf<ParserInterface.ParsedItem>()
+        val container = mainPageConfig.container
+        val itemSelector = mainPageConfig.item
+        for (element in section.select(container)) {
+            val itemElement = if (itemSelector != null) element.selectFirst(itemSelector) else element
+            if (itemElement != null) {
+                parseItem(itemElement, mainPageConfig)?.let { items.add(it) }
+            }
         }
-        return ""
+        return items
     }
 
-    protected fun findFirst(doc: Element, selectors: List<String>): Element? {
-        for (selector in selectors) {
-            val el = doc.selectFirst(selector)
-            if (el != null) return el
+    override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
+        val items = parseItems(doc, searchConfig)
+        if (items.isEmpty() && searchConfig === mainPageConfig) {
+             return parseMainPage(doc)
+        }
+        return items
+    }
+
+    protected open fun parseItems(doc: Document, config: MainPageConfig): List<ParserInterface.ParsedItem> {
+        val items = mutableListOf<ParserInterface.ParsedItem>()
+        for (element in doc.select(config.container)) {
+             // If 'item' is specified, select it inside container, otherwise use container element itself
+             val itemElement = if (config.item != null) element.selectFirst(config.item) else element
+             if (itemElement != null) {
+                 parseItem(itemElement, config)?.let { items.add(it) }
+             }
+        }
+        return items
+    }
+
+    protected open fun parseItem(element: Element, config: MainPageConfig): ParserInterface.ParsedItem? {
+        val title = element.extract(config.title)
+        val url = element.extract(config.url)
+        val posterUrl = element.extract(config.poster)
+
+        if (!title.isNullOrBlank() && !url.isNullOrBlank()) {
+            return ParserInterface.ParsedItem(
+                title = title,
+                url = url,
+                posterUrl = posterUrl,
+                isMovie = config.isMovie?.invoke(title, url, element) ?: isMovie(title, url, element)
+            )
         }
         return null
     }
 
-    // ================= INTERFACE IMPLEMENTATION (DEFAULTS) =================
-    
-    override fun parseMainPage(doc: Document): List<ParserInterface.ParsedItem> {
-        val containerSelector = mainPageContainerSelectors.joinToString(", ")
-        return doc.select(containerSelector).mapNotNull { element ->
-             parseItem(element)
-        }
+    override fun parseLoadPage(doc: Document, url: String): ParserInterface.ParsedLoadData? {
+        val config = loadPageConfig
+
+
+        val title = doc.extract(config.title) ?: doc.title()
+        val plot = doc.extract(config.plot)
+        val posterUrl = doc.extract(config.poster)
+        val year = doc.extract(config.year)?.toIntOrNull()
+        val parentSeriesUrl = doc.extract(config.parentSeriesUrl)
+        
+        // Type Detection logic
+        val isMovie = isMovie(title, url, doc)
+        
+        val episodes = if (!isMovie) {
+             parseEpisodes(doc, null)
+        } else emptyList()
+
+        return ParserInterface.ParsedLoadData(
+            title = title,
+            plot = plot,
+            posterUrl = posterUrl ?: "",
+            url = url,
+            type = if (isMovie) TvType.Movie else TvType.TvSeries,
+            year = year, 
+            episodes = episodes,
+            parentSeriesUrl = parentSeriesUrl
+        )
     }
-    
-    override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
-        return parseMainPage(doc)
-    }
-    
-    // Abstract so concrete implementation defines it
-    protected open fun parseItem(element: Element): ParserInterface.ParsedItem? {
-        try {
-            val title = extractTitle(element)
-            val url = extractUrl(element)
-            val poster = extractPoster(element)
+
+    override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
+        val config = episodeConfig
+        
+        return doc.select(config.container).mapNotNull { element ->
+            val title = element.extract(config.title) ?: "Episode"
+            val url = element.extract(config.url)
+            val posterUrl = element.extract(config.poster)
             
-            if (url == null || title.isBlank()) return null
-            
-            return ParserInterface.ParsedItem(
-                title = title,
-                url = fixUrl(url),
-                posterUrl = fixUrl(poster),
-                isMovie = isMovie(element)
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error parsing item: ${e.message}")
-            return null
+            if (!url.isNullOrBlank()) {
+                val epNum = element.extract(config.episode)?.toIntOrNull()
+                    ?: Regex("(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull() 
+                    ?: Regex("(\\d+)").find(url)?.groupValues?.get(1)?.toIntOrNull() 
+                    ?: 0
+                    
+                ParserInterface.ParsedEpisode(
+                    name = title,
+                    url = url,
+                    season = seasonNum ?: 1,
+                    episode = epNum,
+                    posterUrl = posterUrl
+                )
+            } else null
         }
     }
-    
-    protected open fun extractTitle(element: Element): String {
-        return findText(element, itemTitleSelectors)
-    }
-    
-    protected open fun extractUrl(element: Element): String? {
-        for (selector in itemUrlSelectors) {
-             val url = element.select(selector).attr("href")
-             if (url.isNotBlank()) return url
+
+    override fun extractWatchServersUrls(doc: Document): List<String> {
+        val urls = mutableListOf<String>()
+        val config = watchServersSelectors
+        
+        config.url?.let { selector ->
+             for (element in doc.select(selector.query)) {
+                 element.extract(selector.copy(query = ""))?.let { if (it.isNotBlank()) urls.add(it) }
+             }
         }
-        return element.attr("href").ifBlank { null }
-    }
-    
-    protected open fun extractPoster(element: Element): String {
-        for (selector in itemPosterSelectors) {
-            val img = element.selectFirst(selector) ?: continue
-            val url = img.attr("data-src").ifBlank { img.attr("src") }
-            if (url.isNotBlank()) return url
+        
+        config.iframe?.let { selector ->
+             for (element in doc.select(selector.query)) {
+                 element.extract(selector.copy(query = ""))?.let { if (it.isNotBlank()) urls.add(it) }
+             }
         }
-        return ""
+        
+        return urls.distinct()
     }
-    
-    protected open fun isMovie(element: Element): Boolean {
-         return element.select(isMovieSelector).isNotEmpty()
+
+    // ================== HELPER FUNCTIONS ==================
+
+    /**
+     * Extracts data from an element based on the CssSelector.
+     * Handles:
+     * - Query selection
+     * - Multiple attribute fallbacks (comma separated)
+     * - "text" attribute special handling
+     * - Regex extraction (optional)
+     */
+    protected fun Element.extract(selector: CssSelector?): String? {
+        if (selector == null) return null
+        
+        // 1. Select Element
+        // If query is blank/empty, use current element (checking itself)
+        val target = if (selector.query.isNotBlank()) this.selectFirst(selector.query) else this
+        if (target == null) return null
+
+        // 2. Extract Attribute value
+        val rawValue = selector.attr.split(",").firstNotNullOfOrNull { attrName ->
+            val attr = attrName.trim()
+            if (attr.equals("text", ignoreCase = true)) {
+                target.text()?.trim()?.takeIf { it.isNotEmpty() }
+            } else {
+                target.attr(attr).trim().takeIf { it.isNotEmpty() }
+            }
+        } ?: return null
+
+        // 3. Apply Regex if present
+        return if (selector.regex != null) {
+            Regex(selector.regex).find(rawValue)?.groupValues?.getOrNull(1) ?: rawValue
+        } else {
+            rawValue
+        }
+    }
+
+
+    open fun isMovie(title: String, url: String, element: Element?): Boolean {
+        if (isEpisode(title, url, element)) return false
+        if (isSeries(title, url, element)) return false
+        return true
+    }
+
+    open fun isSeries(title: String, url: String, element: Element?): Boolean {
+        if (title.contains("مسلسل") || title.contains("حلقة") || title.contains("موسم")) return true
+        // Default generic check
+        if (url.contains("series") || url.contains("season")) return true
+        
+        if (element is Document && loadPageConfig.seriesIndicator != null) {
+            if (element.extract(loadPageConfig.seriesIndicator) != null) return true
+        }
+        
+        return false
+    }
+
+    open fun isEpisode(title: String, url: String, element: Element?): Boolean {
+        // Default generic check
+        return title.contains("حلقة") || title.contains("episode", true)
     }
 }

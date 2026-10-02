@@ -2,14 +2,13 @@ package com.cloudstream.shared.provider
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import org.jsoup.nodes.Document
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
 import com.cloudstream.shared.service.LazySearchConfig
 import com.cloudstream.shared.service.LazySearchConfig.LAZY_SEARCH_PREFIX
-import com.cloudstream.shared.service.ProviderHttpService
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
+import com.cloudstream.shared.core.HttpGateway
+import com.cloudstream.shared.core.ProviderRuntime
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -30,7 +29,7 @@ abstract class BaseProvider : MainAPI() {
 
     override var name: String = providerName
     override var mainUrl: String
-        get() = httpService.mainUrl
+        get() = "https://${runtime.domain}"
         set(value) {}
     override var lang: String = "ar"
     override val hasMainPage: Boolean = true
@@ -51,9 +50,6 @@ abstract class BaseProvider : MainAPI() {
      * call or lazy placeholder is considered.
      */
     open val supportsSearch: Boolean = true
-
-    /** Custom User-Agent override (null = use system mobile UA) */
-    open val userAgent: String? = null
 
     /**
      * Prefer IPv6 DNS resolution to bypass cgNAT blocks.
@@ -78,14 +74,14 @@ abstract class BaseProvider : MainAPI() {
      */
     open val requestTimeoutMs: Long? = null
 
-    protected abstract fun getParser(): NewBaseParser
+    protected abstract fun getParser(): ParserInterface
 
 
-    protected val httpService by lazy {
+    private val gateway by lazy {
         val context = PluginContext.context
             ?: throw RuntimeException("PluginContext not initialized. Call PluginContext.init(context) in your Plugin.load() before registerMainAPI().")
 
-        val service = ProviderHttpService.create(
+        HttpGateway.forProvider(
             context = context,
             config = ProviderConfig(
                 name = name,
@@ -93,19 +89,19 @@ abstract class BaseProvider : MainAPI() {
                 githubConfigUrl = githubConfigUrl,
                 syncWorkerUrl = getSyncWorkerUrl(),
                 skipHeadless = true,
-                userAgent = userAgent,
                 preferIpv6 = preferIpv6,
                 preferIpv4 = preferIpv4,
                 requestTimeoutMs = requestTimeoutMs,
             ),
-            parser = getParser(),
             activityProvider = { ActivityProvider.currentActivity }
         )
-
-        ProviderHttpServiceHolder.initialize(service)
-
-        service
     }
+
+    /**
+     * The HTTP surface this provider — and the shared extractors its plugin registers — use.
+     * Public because `Plugin.load` passes it to `registerSharedExtractors`.
+     */
+    val runtime: ProviderRuntime get() = gateway
 
     open fun getSyncWorkerUrl(): String = "https://omarstreamcloud.alyabroudy1.workers.dev"
 
@@ -114,7 +110,7 @@ abstract class BaseProvider : MainAPI() {
         Log.i(methodTag, "START page=$page, data=${request.data}, name=${request.name}")
 
         try {
-            httpService.ensureInitialized()
+            gateway.ensureInitialized()
             
             val items = mutableListOf<HomePageList>()
             
@@ -127,7 +123,7 @@ abstract class BaseProvider : MainAPI() {
             val pageUrl = if (page > 1 && fmt != null) "${fullUrl}${fmt.format(page)}" else fullUrl
             Log.d(methodTag, "Fetching URL: $pageUrl")
             
-            val doc = httpService.getDocument(pageUrl, checkDomainChange = true, rewriteDomain = true)
+            val doc = runtime.document(pageUrl, adoptRedirect = true)
             
             if (doc != null) {
                 Log.d(methodTag, "Document fetched successfully. Parsing...")
@@ -139,7 +135,7 @@ abstract class BaseProvider : MainAPI() {
                         val type = if (item.isMovie) TvType.Movie else TvType.TvSeries
                         newMovieSearchResponse(item.title, item.url, type) {
                             this.posterUrl = item.posterUrl
-                            this.posterHeaders = httpService.getImageHeaders()
+                            this.posterHeaders = runtime.imageHeaders()
                             
                         }
                     }
@@ -162,18 +158,15 @@ abstract class BaseProvider : MainAPI() {
         }
     }
 
-    /** Legacy pageless entry point — delegates to the paged overload at page 1. */
-    open suspend fun searchNormal(query: String): List<SearchResponse> = searchNormal(query, 1).items
-
     open suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchNormal"
         try {
-            httpService.ensureInitialized()
+            gateway.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
             val url = getParser().getSearchUrl(mainUrl, encoded, page)
             Log.d(methodTag, "Fetching search URL (page=$page): $url")
 
-            val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
+            val doc = runtime.document(url, adoptRedirect = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch search document")
                 return newSearchResponseList(emptyList(), false)
@@ -189,7 +182,7 @@ abstract class BaseProvider : MainAPI() {
             val results = items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
             }
             return newSearchResponseList(results, hasNext)
@@ -254,19 +247,17 @@ abstract class BaseProvider : MainAPI() {
      *
      * The full [search] method (with CF solve) is called later if the user taps the placeholder.
      */
-    open suspend fun searchLazy(query: String): List<SearchResponse> = searchLazy(query, 1).items
-
     open suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         val methodTag = "$providerName.searchLazy"
         Log.i(methodTag, "START query='$query', page=$page")
 
-        httpService.ensureInitialized()
+        gateway.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded, page)
         Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
 
         // This throws CloudflareBlockedSearchException if CF is detected
-        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true)
+        val doc = runtime.document(url, solveCf = false, adoptRedirect = true)
         if (doc == null) {
             Log.e(methodTag, "Failed to fetch search document (no CF)")
             return newSearchResponseList(emptyList(), false)
@@ -282,7 +273,7 @@ abstract class BaseProvider : MainAPI() {
         val results = items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }
         return newSearchResponseList(results, hasNext)
@@ -314,12 +305,12 @@ abstract class BaseProvider : MainAPI() {
         Log.i(methodTag, "START url='$url'")
         
         try {
-            httpService.ensureInitialized()
+            gateway.ensureInitialized()
             
             // Check if URL domain differs from main domain (subdomain case)
             // e.g., mainUrl=https://laroza.cfd/ but url=https://qq.laroza.cfd/vid-...
             
-            val doc = httpService.getDocument(url, rewriteDomain = true)
+            val doc = runtime.document(url)
             if (doc == null) {
                 Log.e(methodTag, "Failed to fetch load document")
                 return null
@@ -362,7 +353,7 @@ abstract class BaseProvider : MainAPI() {
                 val movieDataUrl = data.watchUrl ?: data.url
                 newMovieLoadResponse(data.title, data.url, TvType.Movie, movieDataUrl) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -381,7 +372,7 @@ abstract class BaseProvider : MainAPI() {
                 
                 newTvSeriesLoadResponse(data.title, data.url, TvType.TvSeries, episodeList) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -436,13 +427,13 @@ abstract class BaseProvider : MainAPI() {
         Log.i(methodTag, "START data='$data'")
         
         try {
-            httpService.ensureInitialized()
+            gateway.ensureInitialized()
             
             // Step 1: Fetch detail page.
             // load() just fetched this same URL to build the page the user tapped play on, so reuse
             // it rather than paying a second round trip (and, on TLS-blocked domains, a second
-            // Chrome-TLS WebView fetch). Bounded to seconds — see ProviderHttpService.CachedPage.
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true, allowCached = true)
+            // Chrome-TLS WebView fetch). Bounded to seconds — see HttpGateway.CachedPage.
+            val detailDoc = runtime.document(data, allowCached = true)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch loadLinks document")
                 return false
@@ -460,7 +451,7 @@ abstract class BaseProvider : MainAPI() {
                     "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
                 }
                 Log.d(methodTag, "Following watch page: $actualWatchUrl")
-                httpService.getDocument(actualWatchUrl, rewriteDomain = true) ?: detailDoc
+                runtime.document(actualWatchUrl) ?: detailDoc
             } else {
                 Log.d(methodTag, "No watch page found, using detail page")
                 detailDoc
@@ -480,7 +471,7 @@ abstract class BaseProvider : MainAPI() {
                 try {
                     val html = targetDoc.html()
                     val ctx = ActivityProvider.currentActivity
-                    if (ctx != null) {
+                    if (ctx != null && com.cloudstream.shared.util.DebugFlags.DUMPS) {
                         val dir = ctx.externalCacheDir ?: ctx.cacheDir
                         dir.mkdirs()
                         val file = java.io.File(dir, "noservers_${providerName}.html")
@@ -741,7 +732,7 @@ abstract class BaseProvider : MainAPI() {
 
             if (!newUrl.isNullOrBlank()) {
                 Log.d(methodTag, "Found Meta-Refresh to: $newUrl")
-                val newDoc = httpService.getDocument(newUrl, rewriteDomain = true)
+                val newDoc = runtime.document(newUrl)
                 if (newDoc != null) {
                     Log.d(methodTag, "Swapped to Meta-Refresh document.")
                     return Pair(newDoc, newUrl)
@@ -759,7 +750,7 @@ abstract class BaseProvider : MainAPI() {
         if (!data.isMovie && data.episodes.isNullOrEmpty() && !data.parentSeriesUrl.isNullOrBlank()) {
             val parentUrl = data.parentSeriesUrl!!
             try {
-                val parentDoc = httpService.getDocument(parentUrl, rewriteDomain = true)
+                val parentDoc = runtime.document(parentUrl)
                 if (parentDoc != null) {
                     val parentData = getParser().parseLoadPageData(parentDoc, parentUrl)
                     if (parentData != null) {

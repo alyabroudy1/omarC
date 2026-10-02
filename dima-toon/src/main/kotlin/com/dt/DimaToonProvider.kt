@@ -1,7 +1,7 @@
 package com.dt
 
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -20,15 +20,14 @@ class DimaToon : BaseProvider() {
 
     override val supportedTypes = setOf(TvType.Cartoon)
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return DimaToonParser()
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         if (page > 1) return newHomePageResponse(request.name, emptyList(), hasNext = false)
 
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(mainUrl) ?: return null
 
         val home = when (request.data) {
             "series" -> {
@@ -60,10 +59,9 @@ class DimaToon : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
 
         if (url.contains("/cartoon-episode/")) {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+            val doc = runtime.document(url) ?: return null
             val title = doc.selectFirst("h1.xpro-post-title")?.text()?.trim()
                 ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim() ?: return null
             val poster = doc.selectFirst("div.elementor-element-e7ee95b img")?.attr("src")
@@ -74,7 +72,7 @@ class DimaToon : BaseProvider() {
             }
         }
 
-        val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+        val doc = runtime.document(url) ?: return null
         val title = doc.selectFirst("h1.anime-title")?.text()?.trim() ?: return null
         val poster = doc.selectFirst("div.cartoon-image img")?.attr("src")
         val plot = doc.selectFirst("div.brief-story p")?.text()?.trim()
@@ -101,8 +99,7 @@ class DimaToon : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val doc = runtime.document(data) ?: return false
         val videoSource = doc.selectFirst("video.easy-video-player > source")
             ?.attr("src")
             ?.takeIf { it.isNotBlank() }

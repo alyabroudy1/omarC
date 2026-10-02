@@ -1,9 +1,10 @@
 package com.kooralive
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -27,10 +28,14 @@ class KooraLive : BaseProvider() {
     // Live football fixtures aren't meaningfully searchable — disable search entirely.
     override val supportsSearch = false
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return KooraLiveParser()
     }
 
+    /**
+     * Deliberately *not* `shared.util.fixUrl`: this one rewrites absolute URLs on koora-live's own
+     * rotating hostnames onto the current mainUrl, which the shared helper must never do.
+     */
     private fun fixUrl(url: String): String {
         if (url.isEmpty()) return ""
         if (url.startsWith("data:") || url.startsWith("intent:")) return url
@@ -106,8 +111,7 @@ class KooraLive : BaseProvider() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse? {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(mainUrl) ?: return null
         val homePageList = mutableListOf<HomePageList>()
         
         val todayMatches = parseMatchesFromDocument(doc)
@@ -119,7 +123,7 @@ class KooraLive : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val html = httpService.getText(url, rewriteDomain = false) ?: return null
+        val html = runtime.text(url) ?: return null
         val doc = org.jsoup.Jsoup.parse(html, url)
         
         val titleNode = doc.selectFirst("meta[property='og:title']")
@@ -144,10 +148,9 @@ class KooraLive : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         var foundLinks = false
-        httpService.ensureInitialized()
-        val userAgent = httpService.userAgent
+        val userAgent = Fingerprint.current().userAgent
 
-        val html = httpService.getText(data, rewriteDomain = false) ?: return false
+        val html = runtime.text(data) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst("iframe[src*='albaplayer'], .video-con iframe, iframe")
@@ -166,7 +169,7 @@ class KooraLive : BaseProvider() {
             "User-Agent" to userAgent,
             "Referer" to data
         )
-        val playerResponse = httpService.getText(playerUrl, pHeaders, rewriteDomain = false)
+        val playerResponse = runtime.text(playerUrl, pHeaders)
         
         val menuLinks = mutableListOf<String>()
         if (playerResponse != null) {
@@ -190,7 +193,7 @@ class KooraLive : BaseProvider() {
                             val pResponse = if (targetPlayerUrl == playerUrl) {
                                 playerResponse
                             } else {
-                                httpService.getText(targetPlayerUrl, pHeaders, rewriteDomain = false)
+                                runtime.text(targetPlayerUrl, pHeaders)
                             }
                             
                             if (pResponse != null) {

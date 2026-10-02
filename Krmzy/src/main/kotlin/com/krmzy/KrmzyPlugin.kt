@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class KrmzyPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(KrmzyProvider())
+        val api = KrmzyProvider()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

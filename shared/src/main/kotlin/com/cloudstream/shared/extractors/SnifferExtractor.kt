@@ -1,9 +1,10 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.AndroidCookieStorage
+import com.cloudstream.shared.core.Fingerprint
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.network.pinToIpv4
-import com.cloudstream.shared.session.SessionProvider
 import com.cloudstream.shared.webview.ExitCondition
 import com.cloudstream.shared.webview.Mode
 import com.cloudstream.shared.webview.VideoSnifferEngine
@@ -20,8 +21,8 @@ import java.net.URLEncoder
  * This extractor catches URLs with a special prefix pattern:
  * `sniffer://[base64_encoded_embed_url]?referer=[base64_encoded_referer]`
  * 
- * When LazyExtractor fails to find a matching extractor, it prefixes the embed URL
- * with this pattern and calls loadExtractor again. This extractor then:
+ * A provider that has an embed URL no registered extractor handles wraps it with
+ * [createSnifferUrl] and calls loadExtractor again. This extractor then:
  * 1. Decodes the embed URL
  * 2. Runs VideoSnifferEngine in FULLSCREEN mode to sniff video URLs
  * 3. Returns the found video URLs as ExtractorLinks
@@ -134,23 +135,12 @@ class SnifferExtractor : ExtractorApi() {
         }
         
         // ── UA Resolution ──
-        // Use Android's real WebView UA directly. Both the CF solve WebView and this
-        // sniffer WebView are Android WebViews on the same device — same default UA.
-        // This avoids any class-loader isolation issues with WebConfig/SessionProvider.
-        // Cookies are already in the system CookieManager (injected by ProviderHttpService.updateCookies).
-        val snifferUserAgent = try {
-            val ctx = ActivityProvider.currentActivity
-            if (ctx != null) {
-                android.webkit.WebSettings.getDefaultUserAgent(ctx)
-                    .replace("; wv)", ")")  // Strip WebView marker, same as WebConfig
-            } else {
-                SessionProvider.getUserAgent()
-            }
-        } catch (e: Exception) {
-            SessionProvider.getUserAgent()
-        }
-        
-        ProviderLogger.d(TAG, "getUrl", "Sniffer UA resolved from WebSettings",
+        // One identity for every tier: the sniffer WebView, the CF-solve WebView and the OkHttp
+        // path all read the same device fingerprint.
+        // Cookies are already in the system CookieManager — the one store OkHttp and every WebView share.
+        val snifferUserAgent = Fingerprint.current().userAgent
+
+        ProviderLogger.d(TAG, "getUrl", "Sniffer UA resolved from Fingerprint",
             "uaHash" to snifferUserAgent.hashCode())
         
         android.util.Log.i("SnifferExtractor", "[getUrl] === STARTING WEBVIEW SNIFF ===")
@@ -356,45 +346,22 @@ class SnifferExtractor : ExtractorApi() {
                     }.toMutableMap()
 
                     // PREPARE HEADERS (Common logic)
-                    val webViewCookies = try {
-                        android.webkit.CookieManager.getInstance().getCookie(source.url)
-                    } catch (e: Exception) { null }
+                    // One read from the one store: the player carries exactly the cookies the
+                    // request that produced this page carried.
+                    val cookieHeader = AndroidCookieStorage.get(source.url)?.takeIf { it.isNotBlank() }
                     
-                    val mergedCookies = mutableMapOf<String, String>()
-                    webViewCookies?.split(";")?.forEach { cookie ->
-                        val trimmed = cookie.trim()
-                        if (trimmed.isNotBlank()) {
-                             mergedCookies[trimmed.substringBefore("=")] = trimmed.substringAfter("=", "")
-                        }
-                    }
-                    for ((key, value) in SessionProvider.getCookies()) {
-                        mergedCookies[key] = value
-                    }
-                    
-                    val cookieHeader = if (mergedCookies.isNotEmpty()) {
-                        mergedCookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                    } else null
-                    
-                    val finalHeaders = mutableMapOf<String, String>()
-                    finalHeaders.putAll(filteredHeaders)
                     // Preserve original Origin/Referer from the intercepted request if present.
                     // Some CDNs (e.g. Cloudflare-protected) require the exact origin from the
                     // page that made the request, not a fallback derived from the embed URL.
-                    if (!finalHeaders.containsKey("Origin")) {
-                        finalHeaders["Origin"] = extractOrigin(embedUrl)
-                    }
-                    if (!finalHeaders.containsKey("Referer")) {
-                        finalHeaders["Referer"] = originReferer
-                    }
-                    finalHeaders["User-Agent"] = snifferUserAgent
-                    if (!cookieHeader.isNullOrBlank()) {
-                        finalHeaders["Cookie"] = cookieHeader
-                    }
-                    finalHeaders["Accept"] = "*/*"
-                    // Dynamic sec-ch-ua matching the real WebView Chrome version
-                    finalHeaders["sec-ch-ua"] = com.cloudstream.shared.util.WebConfig.buildSecChUa(snifferUserAgent)
-                    finalHeaders["sec-ch-ua-mobile"] = "?1"
-                    finalHeaders["sec-ch-ua-platform"] = "\"Android\""
+                    val finalHeaders = mutableMapOf<String, String>()
+                    finalHeaders.putAll(filteredHeaders)
+                    finalHeaders.putAll(
+                        Fingerprint.current().playbackHeaders(
+                            referer = filteredHeaders["Referer"] ?: originReferer,
+                            origin = filteredHeaders["Origin"] ?: extractOrigin(embedUrl),
+                            cookieHeader = cookieHeader
+                        )
+                    )
                     finalHeaders["Sec-Fetch-Dest"] = "empty"
                     finalHeaders["Sec-Fetch-Mode"] = "cors"
                     finalHeaders["Sec-Fetch-Site"] = "cross-site"

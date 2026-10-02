@@ -2,6 +2,7 @@ package com.animerco
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.cloudstream.shared.extractors.EarnVidsExtractor
 import com.cloudstream.shared.extractors.MegaboxResolver
 import com.cloudstream.shared.extractors.MailruExtractor
 import com.cloudstream.shared.extractors.VideaExtractor
@@ -30,7 +31,7 @@ class AnimercoProvider : BaseProvider() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val document = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
+        val document = runtime.document(mainUrl) ?: return null
         val items = ArrayList<HomePageList>()
 
         fun toSearchResponse(element: org.jsoup.nodes.Element): AnimeSearchResponse? {
@@ -58,12 +59,14 @@ class AnimercoProvider : BaseProvider() {
         return newHomePageResponse(items)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = false)
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
+        return newSearchResponseList(searchImpl(query, useNoFallback = false), false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchImpl(query, useNoFallback = true)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
+        return newSearchResponseList(searchImpl(query, useNoFallback = true), false)
     }
 
     private suspend fun searchImpl(query: String, useNoFallback: Boolean): List<SearchResponse> {
@@ -73,7 +76,7 @@ class AnimercoProvider : BaseProvider() {
         for (page in 1..3) {
             val url = if (page == 1) "$mainUrl/?s=$encoded" else "$mainUrl/page/$page/?s=$encoded"
             try {
-                val doc = if (useNoFallback) httpService.getDocumentNoFallback(url, rewriteDomain = true) else httpService.getDocument(url, rewriteDomain = true)
+                val doc = if (useNoFallback) runtime.document(url, solveCf = false) else runtime.document(url)
                 doc ?: break
                 val cards = doc.select("div.search-card")
                 if (cards.isEmpty()) break
@@ -117,7 +120,7 @@ class AnimercoProvider : BaseProvider() {
         }
 
         try {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+            val doc = runtime.document(url) ?: return null
             val title = doc.selectFirst("div.media-title h1")?.text()?.trim().orEmpty()
             val poster = posterUrl(doc, "div.anime-card div.image")
             val plot = doc.selectFirst("div.media-story div.content p")?.text()
@@ -159,7 +162,7 @@ class AnimercoProvider : BaseProvider() {
             seasonNodes.forEach { season ->
                 val seasonUrl = normalizeUrl(season.selectFirst("a.title")?.attr("href") ?: return@forEach) ?: return@forEach
                 try {
-                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true)
+                    val seasonDoc = runtime.document(seasonUrl)
                     val seasonNum = seasonDoc?.selectFirst("div.media-title h1")?.text()?.trim()
                         ?.let { Regex("""\d+""").find(it)?.value?.toIntOrNull() }
                     fetchEpisodesFromDoc(seasonDoc ?: return@forEach).forEach { ep -> ep.season = seasonNum ?: 1; episodes.add(ep) }
@@ -199,7 +202,7 @@ class AnimercoProvider : BaseProvider() {
         suspend fun fetchPlayerPageAndExtract(sessionReferer: String?, url: String?): String? {
             if (url.isNullOrBlank()) return null
             return try {
-                val html = httpService.getText(url, headers = mapOf("Referer" to (sessionReferer ?: data)))
+                val html = runtime.text(url, headers = mapOf("Referer" to (sessionReferer ?: data)))
                 val iframe = extractIframeSrc(html)
                 if (!iframe.isNullOrBlank()) ensureHttpsRaw(iframe, url)
                 else Regex("""https?://[^\s"']+\.(m3u8|mp4)(?:\?[^\s"']*)?""", RegexOption.IGNORE_CASE).find(html ?: "")?.value
@@ -207,7 +210,7 @@ class AnimercoProvider : BaseProvider() {
         }
 
         try {
-            val rawHtml = httpService.getText(data) ?: return false
+            val rawHtml = runtime.text(data) ?: return false
             val doc = Jsoup.parse(rawHtml)
             val scriptData = doc.selectFirst("script#dt_main_ajax-js-extra")?.data() ?: rawHtml
             val globalNonce = Regex(""""nonce"\s*:\s*"([a-f0-9]+)"""", RegexOption.IGNORE_CASE).find(scriptData)?.groupValues?.get(1) ?: ""
@@ -224,7 +227,7 @@ class AnimercoProvider : BaseProvider() {
                 Btn(sname, postId, nume, dtype, b.attr("data-nonce").ifBlank { globalNonce })
             }
 
-            val baseHtml = httpService.getText("$mainUrl/") ?: mainUrl
+            val baseHtml = runtime.text("$mainUrl/") ?: mainUrl
             val baseMatch = Regex("""<base[^>]+href=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(baseHtml)?.groupValues?.get(1)
             val ajaxUrl = "${baseMatch ?: mainUrl}/wp-admin/admin-ajax.php"
 
@@ -253,7 +256,7 @@ class AnimercoProvider : BaseProvider() {
                             if (btn.security.isNotBlank()) payload["security"] = btn.security
                             if (globalNonce.isNotBlank()) payload["nonce"] = globalNonce
 
-                            val txt = httpService.postText(ajaxUrl, data = payload, headers = mapOf(
+                            val txt = runtime.post(ajaxUrl, form = payload, headers = mapOf(
                                 "Referer" to data, "X-Requested-With" to "XMLHttpRequest"
                             ))
 
@@ -290,7 +293,7 @@ class AnimercoProvider : BaseProvider() {
                                     loadExtractor(direct, data, subtitleCallback) { l -> runBlocking { sendLinkSafe(l) } }
                                 }
                                 abs.contains("streamhg", true) || abs.contains("earnvids", true) -> {
-                                    val extracted = try { ExternalEarnVidsExtractor.extract(abs, data) } catch (_: Throwable) { null }
+                                    val extracted = try { EarnVidsExtractor.extractDirect(abs, data) } catch (_: Throwable) { null }
                                     if (extracted != null) {
                                         sendLinkSafe(newExtractorLink("EarnVids", "ExternalEarnVids", ensureHttpsRaw(extracted, data) ?: extracted, ExtractorLinkType.VIDEO) {
                                             referer = data; quality = Qualities.Unknown.value
@@ -311,7 +314,7 @@ class AnimercoProvider : BaseProvider() {
                                     for (mb in extras) {
                                         val mbUrl = ensureHttpsRaw(mb, abs) ?: continue
                                         if (mbUrl.contains("streamhg", true) || mbUrl.contains("earnvids", true)) {
-                                            val extracted = try { ExternalEarnVidsExtractor.extract(mbUrl, data) } catch (_: Throwable) { null }
+                                            val extracted = try { EarnVidsExtractor.extractDirect(mbUrl, data) } catch (_: Throwable) { null }
                                             if (extracted != null) {
                                                 sendLinkSafe(newExtractorLink("EarnVids", "ExternalEarnVids", ensureHttpsRaw(extracted, data) ?: extracted, ExtractorLinkType.VIDEO) {
                                                     referer = data; quality = Qualities.Unknown.value
@@ -341,7 +344,7 @@ class AnimercoProvider : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            val html = httpService.getText(yonaplayUrl) ?: return
+            val html = runtime.text(yonaplayUrl) ?: return
             val tokenRegex = Regex("""go_to_player\('([A-Za-z0-9+/=]+)'\)""")
             val tokens = tokenRegex.findAll(html).map { it.groupValues[1] }.toList()
 

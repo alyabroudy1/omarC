@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class Anime4UpPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(Anime4Up())
+        val api = Anime4Up()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

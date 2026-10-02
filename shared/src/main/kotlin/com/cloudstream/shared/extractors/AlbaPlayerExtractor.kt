@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import android.util.Base64
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
@@ -80,7 +81,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing AlbaPlayer URL", "url" to url, "referer" to referer)
 
         try {
-            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            val userAgent = Fingerprint.current().userAgent
             val headers = mutableMapOf(
                 "User-Agent" to userAgent
             )
@@ -208,12 +209,7 @@ class AlbaPlayerExtractor : ExtractorApi() {
         userAgent: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val streamHeaders = mapOf(
-            "User-Agent" to userAgent,
-            "Referer" to pageUrl,
-            "Origin" to origin,
-            "Accept" to "*/*"
-        )
+        val streamHeaders = Fingerprint.current().playbackHeaders(pageUrl, origin, null)
 
         ProviderLogger.d(TAG, "extractFromPage", "Extracting from page: $pageUrl, HTML length: ${html.length}")
 

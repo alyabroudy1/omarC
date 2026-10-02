@@ -2,8 +2,8 @@ package com.cimanow
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
-import com.witanime.MailruExtractor
-import com.witanime.VideaExtractor
+import com.cloudstream.shared.extractors.MailruExtractor
+import com.cloudstream.shared.extractors.VideaExtractor
 import com.witanime. WitAnime
 import com.cloudstream.shared.android.PluginContext
 

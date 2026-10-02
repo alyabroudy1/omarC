@@ -3,7 +3,7 @@ package com.yallashoot
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.newMovieSearchResponse
@@ -24,7 +24,7 @@ class YallaShoot : BaseProvider() {
     // Live football fixtures aren't meaningfully searchable — disable search entirely.
     override val supportsSearch = false
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return YallaShootParser()
     }
 
@@ -146,8 +146,7 @@ class YallaShoot : BaseProvider() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse? {
-        httpService.ensureInitialized()
-        val doc = httpService.getDocument(mainUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(mainUrl) ?: return null
         val homePageList = mutableListOf<HomePageList>()
         
         val todayMatches = parseMatchesFromDocument(doc)
@@ -156,7 +155,7 @@ class YallaShoot : BaseProvider() {
         }
         
         try {
-            val yesterdayDoc = httpService.getDocument("$mainUrl/matches-yesterday/", rewriteDomain = true)
+            val yesterdayDoc = runtime.document("$mainUrl/matches-yesterday/")
             if (yesterdayDoc != null) {
                 val yesterdayMatches = parseMatchesFromDocument(yesterdayDoc)
                 if (yesterdayMatches.isNotEmpty()) {
@@ -192,7 +191,7 @@ class YallaShoot : BaseProvider() {
         val isMatch = url.contains("yallashoooty") || url.contains("/sport") || url.contains("/https") || url.contains(".html") || url.contains("/matches/")
         
         if (isMatch) {
-            val html = httpService.getText(url, rewriteDomain = false) ?: return null
+            val html = runtime.text(url) ?: return null
             val doc = org.jsoup.Jsoup.parse(html, url)
             
             val titleNode = doc.selectFirst(".EntryTitle")
@@ -225,11 +224,9 @@ class YallaShoot : BaseProvider() {
             return false
         }
         var foundLinks = false
-        httpService.ensureInitialized()
-        val userAgent = httpService.userAgent
 
         // Bypass BaseProvider rewrite strictly using getText
-        val html = httpService.getText(data, rewriteDomain = false) ?: return false
+        val html = runtime.text(data) ?: return false
         val doc = org.jsoup.Jsoup.parse(html, data)
         
         val iframeElement = doc.selectFirst(".entry-content iframe, .posts-body iframe, iframe.cf, iframe")

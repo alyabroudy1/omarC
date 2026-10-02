@@ -221,18 +221,21 @@ object InnerTubeClient {
         WEB(
             clientName = "WEB",
             clientVersion = "2.20250220.01.00",
+            // API client, not a browser request (Wave 1, R1 exemption)
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             headerClientName = "1"
         ),
         WEB_CREATOR(
             clientName = "WEB_CREATOR",
             clientVersion = "1.20250220.01.00",
+            // API client, not a browser request (Wave 1, R1 exemption)
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             headerClientName = "62"
         ),
         TV_EMBEDDED(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
+            // API client, not a browser request (Wave 1, R1 exemption)
             userAgent = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Safari/537.36; SmartTv",
             headerClientName = "67"
         ),

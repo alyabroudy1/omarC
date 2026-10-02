@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.ui.DrmPlayerDialog
 import org.jsoup.Jsoup
@@ -36,7 +36,7 @@ class EgyDead : BaseProvider() {
         "/series-category/tv-shows/" to "برامج تلفزيونية"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return EgyDeadParser()
     }
 
@@ -72,7 +72,7 @@ class EgyDead : BaseProvider() {
                 Log.d("EgyDead", "Fetching season $seasonNum: $seasonUrl")
                 
                 try {
-                    val seasonDoc = httpService.getDocument(seasonUrl, rewriteDomain = true)
+                    val seasonDoc = runtime.document(seasonUrl)
                     if (seasonDoc != null) {
                         val episodeLinks = seasonDoc.select("div.EpsList > li > a")
                         Log.d("EgyDead", "Season $seasonNum: found ${episodeLinks.size} episodes")
@@ -145,7 +145,7 @@ class EgyDead : BaseProvider() {
     private suspend fun handleTrgsfjll(iframeUrl: String, serverName: String, callback: (ExtractorLink) -> Unit) {
         try {
             Log.d("EgyDead", "Trgsfjll: $iframeUrl")
-            val doc = httpService.getDocument(iframeUrl, rewriteDomain = true) ?: return
+            val doc = runtime.document(iframeUrl) ?: return
             
             // Extract all script contents
             val scripts = doc.select("script[type='text/javascript']").map { it.html() }
@@ -171,7 +171,7 @@ class EgyDead : BaseProvider() {
     private suspend fun handleVidhide(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
             Log.d("EgyDead", "handleVidhide: $url")
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
+            val doc = runtime.document(url) ?: return
             
             // Extract script contents
             val scripts = doc.select("script[type='text/javascript']").map { it.html() }
@@ -227,7 +227,7 @@ class EgyDead : BaseProvider() {
 
     private suspend fun handleDoodstream(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
+            val doc = runtime.document(url) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -246,7 +246,7 @@ class EgyDead : BaseProvider() {
 
     private suspend fun handleStreamtape(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
+            val doc = runtime.document(url) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -265,7 +265,7 @@ class EgyDead : BaseProvider() {
 
     private suspend fun handleVidguard(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
+            val doc = runtime.document(url) ?: return
             val html = doc.outerHtml()
             
             val packed = html.substringAfter("eval(function(p,a,c,k,e,d)", "").substringBefore("</script>")
@@ -290,7 +290,7 @@ class EgyDead : BaseProvider() {
 
     private suspend fun handleUptostream(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return
+            val doc = runtime.document(url) ?: return
             val html = doc.outerHtml()
             
             val videoUrl = Regex("""sources:\s*\[\s*\{\s*file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
@@ -315,18 +315,17 @@ class EgyDead : BaseProvider() {
     ): Boolean {
         val methodTag = "EgyDead"
         try {
-            httpService.ensureInitialized()
             
             // Step 1: POST to the data URL with View=1 (matching original reference)
             // The original: Requests.post(data, data = mapOf("View" to "1"))
-            val doc = httpService.post(data, mapOf("View" to "1"), rewriteDomain = true)
+            val doc = runtime.post(data, mapOf("View" to "1"), rewrite = true)?.let { Jsoup.parse(it, data) }
             if (doc == null) {
                 Log.e(methodTag, "Failed to POST for server list")
                 return super.loadLinks(data, isCasting, subtitleCallback, callback)
             }
             
             Log.d(methodTag, "POST successful, parsing server elements")
-            val referer = "https://${httpService.currentDomain}/"
+            val referer = "https://${runtime.domain}/"
             var foundLinks = false
             
             // Step 2: Process .donwload-servers-list > li (original: element.select("a").attr("href"))

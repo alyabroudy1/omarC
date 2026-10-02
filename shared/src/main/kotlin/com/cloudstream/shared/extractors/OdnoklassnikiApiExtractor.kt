@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.app
@@ -28,22 +29,17 @@ open class OdnoklassnikiApiExtractor(
          * still works if our header is ever dropped and the player falls back to its own UA;
          * minting as GECKO (what this extractor used to do) fails in exactly that case.
          */
-        private const val MINT_UA =
-            "Mozilla/5.0 (Linux; Android 16; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/150.0.7871.124 Mobile Safari/537.36"
-
-        private const val GECKO_UA =
-            "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0"
+        private val MINT_UA: String get() = Fingerprint.current().userAgent
 
         /**
-         * Playback headers for a signed URL. Reads back the srcAg the CDN actually stamped rather
-         * than assuming our [MINT_UA] survived the HTTP layer, so the player is always told to use
-         * a UA of the family the signature was issued for. Nothing else may be attached: adding
-         * Origin/Sec-Fetch-* to the media request makes the CDN answer 400 even with the right UA.
+         * Playback headers for a signed URL. The link is always minted under [MINT_UA], which is
+         * the device fingerprint UA (Chrome-family), so the player replays it under the same UA.
+         * Nothing else may be attached: adding Origin/Sec-Fetch-* to the media request makes the
+         * CDN answer 400 even with the right UA — so this deliberately does NOT go through
+         * [Fingerprint.playbackHeaders].
          */
         private fun playbackHeadersFor(url: String): Map<String, String> {
-            val agent = Regex("""[?&]srcAg=([A-Za-z]+)""").find(url)?.groupValues?.get(1)?.uppercase()
-            return mapOf("User-Agent" to if (agent == "GECKO") GECKO_UA else MINT_UA)
+            return mapOf("User-Agent" to MINT_UA)
         }
     }
 

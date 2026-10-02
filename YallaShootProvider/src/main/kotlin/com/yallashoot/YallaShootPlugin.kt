@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class YallaShootPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(YallaShoot())
-        registerSharedExtractors()
+        val api = YallaShoot()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }
