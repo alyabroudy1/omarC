@@ -1,10 +1,12 @@
-# `shared/` refactor: progress report (Waves 0 to 3)
+# `shared/` refactor: progress report (Waves 0 to 4c)
 
-Date: 2026-09-07. Baseline `50df2f90`. Head of the refactor: `02d55477`.
+Date: 2026-09-07, updated 2026-10-02. Baseline `50df2f90`. Head of the refactor on `main`: `fe86eb66`
+(Wave 4b-2). Wave 4c is `b5bbdb99` on branch `wave-4c-navigation-engine-to-cimanow`, PR #1, not yet
+merged. Where things stand and what is left: [section 11](#11-plan-done-and-remaining).
 Plan of record: [shared-refactor-waves.md](shared-refactor-waves.md), corrected by
 [shared-architecture-review-third-eye.md](shared-architecture-review-third-eye.md).
 Per-wave reviews: [reviews/wave-0-review.md](reviews/wave-0-review.md) to
-[reviews/wave-3-review.md](reviews/wave-3-review.md).
+[reviews/wave-4b-2-review.md](reviews/wave-4b-2-review.md). Wave 4c has no review yet.
 
 What has been done, why, and what each decision rejected. It records the delta against the plan, not
 the plan.
@@ -403,6 +405,59 @@ thread (gate on logcat; one-line revert if it fails).
 check that `text()` sends a target-host `Referer`, never the provider domain (JVM test pins the pure
 `defaultRefererFor`); first-run `Fingerprint` construction off the main thread.
 
+## 6e. Wave 4c: `NavigationEngine` moves into CimaNow
+
+Commit `b5bbdb99` on branch `wave-4c-navigation-engine-to-cimanow` (PR #1). **Not reviewed yet**: it
+was committed at the owner's request before the third-eye review, so the review and fix pass are
+still owed before it merges (section 11).
+
+**What changed.**
+
+- `git mv` into `CimaNowProviderV2`: `webview/NavigationEngine.kt` (4,228 lines),
+  `webview/NavigationSessionPolicy.kt` and `extractors/CimaNowTVEmbed.kt`, now in the
+  `com.cimanow.webview` and `com.cimanow.extractors` packages.
+- The `NavigationStep` hierarchy, `NavigationResult`, `CapturedVideoRequest`, `CapturedEmbedRequest`
+  and `InterceptChallenge` moved out of `shared/.../webview/WebViewTypes.kt` (-276 lines) into the
+  new `com/cimanow/webview/NavigationTypes.kt` (289 lines). `Mode` and the types other engines use
+  stay in `shared`.
+- `NavigationEngine` now extends `WebViewSession`. Its own `Mutex` is replaced by `withSession`; the
+  mint-relay coroutine (a bare `CoroutineScope(Dispatchers.IO).launch`) now runs through
+  `launchInSession`, so a relay still in flight at teardown is cancelled with the session; the WebView
+  half of teardown calls the base `cleanupWebView`. The engine's own `createWebView`/`cleanupWebView`
+  were renamed `createNavigationWebView`/`cleanupNavigationWebView` so they do not overload-capture
+  the base methods. Teardown order (dialog, popup sinks, WebView) is unchanged.
+- Site names removed from `shared/`: 12 comment and log rewordings in `RequestedWithHeaderControl`,
+  `WebViewShared`, `WebViewFactory`, `VideoUrlClassifier`, `VKVideoEmbed` and `HttpGateway`.
+  `grep -rni "cimanow\|freex" shared/src/main` returns 0.
+- New `SharedHasNoSiteNamesTest` turns that grep into a test. It finds the repo root by climbing to
+  `settings.gradle.kts` and skips, rather than passing, if it cannot.
+- Imports updated in `CimaNowProvider` and `CimaNowSession`; one stale import dropped in
+  `anim3rbProvider`.
+- Also in the commit: `docs/wave-6-design.md` (482 lines) and `log3.txt` changes.
+
+**Why.** Wave 4 acceptance criterion 2: no file in `shared/` references `cimanow` or `freex`. The
+engine had exactly one consumer, yet every one of the 41 plugins compiled and dexed it.
+
+**Decisions.**
+
+| Decision | Alternative rejected | Why |
+|---|---|---|
+| Make it a `WebViewSession` subclass in the same commit as the move | Move first, subclass later | Wave 4a deferred the subclass so it would not be done twice; doing it now finishes Wave 4's "every engine on one base" |
+| Rename the engine's create/cleanup helpers | Override the base methods | The engine's versions take different parameters (UA override, dialog, popup sinks); overriding would capture calls meant for the base |
+| A test for the grep | Rely on the acceptance grep in section 9 | A grep nobody runs does not keep a site name out; CI runs the test |
+| `CimaNowTVEmbed` registration unchanged | Add it to the plugin's extractor list | It was never in `registerSharedExtractors`; CimaNow constructs it directly, so the move changes no registration |
+
+**Metrics.** `@Test` count 119 to 120 (`git grep -c @Test` under `FaselHDV2Provider/src/test`). LOC
+excluding `docs/` and `log3.txt`: +397 / -337, almost all of it the move. The implementing session
+reported 145 tests green and all modules compiled with `--max-workers=2`; that run was not repeated at
+commit time.
+
+**Open after this slice.** Section 8 item 1 (the `X-Requested-With` re-issue values) now lives in the
+CimaNow module and is no longer a `shared` concern. `NavigationEngine.allowedDomains` has 12 live
+callers in CimaNow; Wave 6 design question 5 decides whether it goes.
+
+**Release gate.** CimaNow freex flow on device, now also covering the session-scoped mint relay.
+
 ## 7. Cumulative status
 
 | Wave | Commit | Runnable tests after | LOC (all files, `git show --stat`) | LOC (excluding `docs/`, `log3.txt`) | Status |
@@ -412,15 +467,17 @@ check that `text()` sends a target-host `Referer`, never the provider domain (JV
 | 1 | `6462aa91` | 56 | 62 files, +1,454 / -665 | +1,228 / -665 | Committed; device capture owed |
 | 2 | `aae6481f` | 68 | 21 files, +651 / -847 | +501 / -847 | Committed; four device checks owed |
 | 3 | `02d55477` | 83 | 57 files, +811 / -4,143 | +560 / -4,129 | Committed; EarnVids device check owed |
-| 4a | see git log ("Wave 4a") | 95 | see commit | see commit | Committed; device checks owed |
-| 4b-1 | see git log ("Wave 4b-1") | see commit | see commit | see commit | Committed after review fix pass (F1 body regression, F3) |
-| 4b-3 | see git log ("Wave 4b-3") | unchanged | see commit | see commit | Committed; mechanical rename |
-| 4b-2 | not started | - | - | - | Gateway split per `docs/wave-4b-design.md`; freex device check is a release gate |
-| 5 | not started | - | - | - | Discussion item: `shared-core` into the APK |
-| 6 | not started | - | - | - | Domain handling under R3, last by owner decision |
+| 4a | `c22fda6c` | 95 | 14 files, +1,080 / -318 | +588 / -316 | Committed; device checks owed |
+| 4b-1 | `0410b983` | 109 | 9 files, +864 / -261 | +674 / -259 | Committed after review fix pass (F1 body regression, F3) |
+| 4b-3 | `9707fb11` | 109 | 85 files, +159 / -160 | +157 / -158 | Committed; mechanical rename |
+| 4b-2 | `fe86eb66` | 119 | 76 files, +1,080 / -719 | +772 / -715 | Committed after review fix pass (F1/F2 rewrite regression); freex device check is a release gate |
+| 4c | `b5bbdb99` (branch, PR #1) | 120 | 17 files, +902 / -350 | +397 / -337 | Committed on a branch, **unreviewed**; not on `main` |
+| 5 | not started | - | - | - | Discussion item: `shared-core` into the APK; owner has not decided |
+| 6 | design done (`docs/wave-6-design.md`) | - | - | - | Domain handling under R3; five owner questions open before 6-1 |
 
 Cumulative across Waves 0 to 3, excluding docs and `log3.txt`: +2,694 / -5,855, a net reduction of
-3,161 lines, and 18 to 83 runnable tests.
+3,161 lines, and 18 to 83 runnable tests. Waves 4a to 4c add +2,588 / -1,785 on the same basis (the
+4c move is near-neutral), for 120 `@Test` methods in total.
 
 ## 8. Open items and carry-overs
 
@@ -428,16 +485,16 @@ Deduplicated from the four reviews' "Carry into" sections.
 
 | # | Item | Source |
 |---|---|---|
-| 1 | The `X-Requested-With` policy has two documented exceptions: `NavigationEngine`'s `HttpURLConnection` re-issues still send `""` and `" "` (measured values per the comments there). Record or close them when the CimaNow path is revisited. | wave-1 carry |
+| 1 | The `X-Requested-With` policy has two documented exceptions: `NavigationEngine`'s `HttpURLConnection` re-issues still send `""` and `" "` (measured values per the comments there). Since Wave 4c this is CimaNow-module code, not `shared`; record or close it when the CimaNow path is revisited. | wave-1 carry |
 | 2 | Hand-built `Accept-Language` literals remain in shared extractors that go through `app.get`, which has no interceptor (`EarnVidsExtractor`, `VKVideoEmbed`, `VidobaExtractor`, `ReviewRateExtractor`). Vidoba's `ExtractorLink` therefore sends a locale no WebView tier sends. | wave-1 F10 |
 | 3 | Topcinema's two `loadLinks` fetches are now routed through `httpService`, so they carry the jar and the CF fallback. Device-verify `/watch/` and `/download/`. | wave-2 F2, closed in wave 3 |
-| 4 | `SPOOFING_JS` reports `navigator.plugins` as a real `Array [1,2,3,4,5]`, which is exactly the bot signal CimaNow probes. CimaNow opts out; every other `NavigationEngine` caller still gets it. Unify on the sniffer's array-like fake in Wave 4. | wave-3 F11 |
+| 4 | ~~`SPOOFING_JS` reports `navigator.plugins` as a real `Array`.~~ **Closed in Wave 4a**: replaced by the sniffer's array-like fake, one constant in `WebViewShared`. | wave-3 F11 |
 | 5 | `RegexOption.DOT_MATCHES_ALL` on the EarnVids packer regex; register hosts from `EARNVIDS_HOSTS`; hoist the strategy list so `getUrl` and `extractDirect` share one pipeline; delete the now-unused `ProviderHttpService.mediaValidator`. | wave-3 F7, F9, F10 |
 | 6 | Wave 6 domain items: delete `SessionProvider` entirely, the `DENYLISTED_HOSTS` denylist and `isValidProviderDomain` as a decision, the `trustedDomains` field, every `allowedDomains` parameter, the `www.` prefix stripping, and the five copies of domain string parsing; add behavioural adoption, a persisted host history and the two-success sync rule. Also the registrable-domain cookie expiry deferred from Wave 2 F3. | waves doc Wave 6 |
 | 7 | Wave 5 question, still unanswered: how many older plugin builds must a new app keep loading? That sizes the `requiresCoreApi` compatibility layer. Plus the recommended app-side fix: scope or drop `removeAllCookies` in `CloudflareKiller`'s `init`. | third-eye open question 6, waves doc Wave 5 |
 | 8 | The `SYNC_SECRET` story: either the client sends the header, which an open-source plugin cannot keep secret, or the criterion is dropped and the 22-name allowlist is the whole defence. Ties to Wave 6. | wave-0 carry 2 |
 | 9 | Test seams still open: `chromeBrandMetadata` is private and Android-bound, so nothing asserts the WebView brand spelling equals `Fingerprint.secChUa`; `playbackHeaders` has no null-referer case; the EarnVids strategy order has no fixture test; `MediaUrlValidator` has no wire test proving the source cookie reaches the wire unchanged. | waves 1 to 3 test gaps |
-| 10 | Diff hygiene: add `.gitattributes` with `eol=lf`; keep `log3.txt` out of wave commits. | wave-3 F5, F6 |
+| 10 | Diff hygiene: `.gitattributes` with `eol=lf` added in Wave 4a; `git add --renormalize` as its own commit still owed. Keep `log3.txt` out of wave commits (Wave 4c's commit included it). | wave-3 F5, F6; wave-4a F6 |
 
 ## 9. How to verify locally
 
@@ -467,7 +524,7 @@ grep -rn "open fun searchNormal(query: String)" shared/                         
 # Wave 1 (R1/R2)
 grep -rn "Mozilla/5.0" shared/src/main/kotlin                                    # empty
 grep -rn "Mozilla/5.0" --include=*.kt . | grep -v /build/ | grep -v src/test     # API clients only
-grep -rn 'X-Requested-With"\] = ""' shared/src/main                              # NavigationEngine only
+grep -rn 'X-Requested-With"\] = ""' shared/src/main                              # empty since 4c (moved to CimaNow)
 
 # Wave 2 (D1)
 grep -rn "CookieLifecycleManager\|SessionStore\|updateCookies\|restoreSession" shared/   # empty
@@ -476,6 +533,10 @@ grep -rn "removeAllCookies" --include=*.kt .                                    
 # Wave 3
 git grep -n registerExtractorAPI -- '*Plugin.kt' shared/                         # no registration lost
 grep -rn "ExternalEarnVidsExtractor" --include=*.kt .                            # empty
+
+# Wave 4
+grep -rn "ProviderHttpService" --include=*.kt .                                  # empty
+grep -rni "cimanow\|freex" shared/src/main                                       # empty (SharedHasNoSiteNamesTest)
 
 # Wave 6 pre-check (must still return hits until Wave 6 lands)
 grep -rn "areDomainsRelated\|domainAliases\|MULTI_PART_TLDS\|trustedDomains\|allowedDomains\|DENYLISTED_HOSTS" --include=*.kt .
@@ -491,4 +552,66 @@ grep -rn "areDomainsRelated\|domainAliases\|MULTI_PART_TLDS\|trustedDomains\|all
 | Baseline test count | The waves doc says 18 tests, 4 classes; `git grep -c @Test` at `50df2f90` returns 19. | **18 runnable.** The nineteenth is inside the fully commented-out `shared/src/test/.../FaselHDExtractorTest.kt`, which contributes nothing. |
 | `WebViewTypes.kt` and `TvMouseComponents.kt` | Listed as dead in both `shared-architecture-review.md` section 7a and the Wave 3 scope table. | **Live**, per the Wave 3 deletion audit. Both docs were corrected in `02d55477`. |
 | Wave 3 acceptance criterion 4 | Says `registerSharedExtractors` should stop registering "the 4 external EarnVids duplicates". | Malformed: the four copies were plain `object`s and were never registered anywhere. The intent (no per-provider copy remains) is met. |
+| Wave 4c test count | The implementing session reported 145 tests green. | `git grep -c @Test` at `b5bbdb99`: **120** under `FaselHDV2Provider/src/test` (121 repo-wide). The 145 is a test-run count that was not re-run at commit; the table uses the `@Test` count, as for every other wave. |
 | Wave 1 commit verdict | `wave-1-review.md`'s fix-pass section ends "not ready" on N1. | N1 was fixed before the commit: `6462aa91` carries `sessionUa()` at `NavigationEngine.kt:208`. The review text was not updated. |
+
+## 11. Plan: done and remaining
+
+Status as of 2026-10-02.
+
+### Done
+
+| Wave | What it delivered | Where |
+|---|---|---|
+| 0 | JVM test harness in CI, search regression fixed for 22 providers, debug and diagnostic code off | `main` |
+| 1 | One `Fingerprint` and one interceptor across every tier (R1, R2) | `main` |
+| 2 | `CookieManager` is the only cookie jar (D1) | `main` |
+| 3 | 13 dead files and many dead members deleted, duplicates collapsed | `main` |
+| 4a | `WebViewSession` base for the WebView engines | `main` |
+| 4b-1 | Sealed `FetchOutcome`; `RequestQueue.Host` breaks the constructor cycle | `main` |
+| 4b-3 | `NewBaseParser` renamed to `BaseParser` | `main` |
+| 4b-2 | `ProviderHttpService` and its Holder replaced by `HttpGateway` and the 7-member `ProviderRuntime` | `main` |
+| 4c | `NavigationEngine` and `CimaNowTVEmbed` moved into CimaNow; `shared/` has no site names | branch, PR #1, unreviewed |
+| 6 design | Domain handling under R3, with inventory, deletions, test plan and commit split | `docs/wave-6-design.md` (in the 4c commit) |
+
+Wave 4's six acceptance criteria are met in code once 4c merges. Criterion 6 (MyCima works unchanged)
+and the manual checks are device-only and still owed.
+
+### Remaining, in order
+
+1. **Finish Wave 4c.** Third-eye review of `b5bbdb99` (`docs/reviews/wave-4c-review.md`), fix pass,
+   re-run `./gradlew :FaselHDV2Provider:testDebugUnitTest` and `compileDebugKotlin --max-workers=2`
+   on their own (no parallel Gradle builds), then merge PR #1.
+2. **Device-test release.** Run the owed checks below before stacking Wave 6 on top, because Wave 4
+   says not to ship it in the same release as Wave 6.
+3. **Owner answers the five Wave 6 questions** (`docs/wave-6-design.md` section 8):
+   1. host-history cap (proposed: 8, oldest evicted);
+   2. `www.x` and `x` count as two hosts, so both must be in the history to be rewritten (strict R3);
+   3. keep the syntactic "is a hostname" check (recommended);
+   4. migration: drop the pre-Wave-6 persisted domain once, so poisoned installs self-heal at the
+      cost of one re-adoption on healthy installs, or keep it;
+   5. `NavigationEngine.allowedDomains` (12 CimaNow callers): delete it, or keep exact-host
+      membership and drop only the subdomain widening.
+4. **Wave 6**, in three commits per the design: 6-1 rules and tests; 6-2 wiring and deletions
+   (`SessionProvider`, the denylist, `trustedDomains`, every `allowedDomains`, `www.` stripping, the
+   duplicated domain parsing); 6-3 worker sync (two-success rule). Also fix the Wave 2 F3 KDoc: the
+   `expireCookiesFor` `Path=/` limit is permanent under R3.
+5. **Wave 5, optional.** Moving `shared-core` into the APK. Recommended deferred until after a
+   device-tested release; the owner has not decided. It also needs an answer to section 8 item 7.
+6. **Carry-overs** from section 8, picked up as their areas are touched: items 2, 5, 8, 9, and 10's
+   renormalize commit.
+
+### Device checks owed (never run)
+
+| Check | Gates |
+|---|---|
+| CimaNow freex flow mints a watching URL | 4b-2 and 4c release |
+| FaselHD AJAX search fallback log line | Wave 0 |
+| All four tiers show the same `user-agent` and `sec-ch-ua`; `WebViewFactory` logs `headersControlledGlobally=true` for each tier in `log3.txt` | Wave 1 |
+| Provider A solves CF, provider B's session survives; one `cf_clearance` after a re-solve | Wave 2 |
+| FaselHD sibling host `w312x` / `w318x` | Wave 2 |
+| Animerco, Lodynet, Shahid4u EarnVids links | Wave 3 |
+| Topcinema `/watch/` and `/download/` | Waves 2 and 3 |
+| One CF solve per provider under parallel search; session cancel lines in `log3.txt` | Wave 4a |
+| First `Fingerprint` construction off the main thread works | Wave 4b-2 |
+| `text()` sends a target-host `Referer`, never the provider domain | Wave 4b-2 |

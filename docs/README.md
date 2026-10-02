@@ -26,6 +26,10 @@ Durable notes for work that is expensive to re-derive. Written 2026-08-31.
 | [shared-architecture-review.md](shared-architecture-review.md) | Full review of `shared/`: how it reaches plugins, component map, request lifecycle, WebView layer, state ownership, dead code and duplication tables, 18 live bugs. Section 10 now points at the waves doc. |
 | [shared-architecture-review-third-eye.md](shared-architecture-review-third-eye.md) | Independent second review with corrections: fingerprint inventory (14 construction sites), domain handling under R3, corrected target architecture and `ProviderRuntime`, 16 plan corrections, underestimated risks. |
 | [shared-refactor-waves.md](shared-refactor-waves.md) | The corrected roadmap as 7 independently mergeable waves, each with scope, fingerprint invariant, acceptance criteria, named unit tests, manual verification, risk and size. Includes the Wave 1 `Fingerprint` design note. |
+| [shared-refactor-progress.md](shared-refactor-progress.md) | What each refactor wave did, why, decisions and metrics; section 11 is the live done/remaining plan and the owed device checks. |
+| [wave-4b-design.md](wave-4b-design.md) | Design for the Wave 4b gateway split: `FetchOutcome`, `RequestQueue.Host`, `HttpGateway`, `ProviderRuntime`. |
+| [wave-6-design.md](wave-6-design.md) | Design for Wave 6 (domain handling under R3): inventory, replacement rules, persistence, worker sync, deletions, tests, owner questions. |
+| [reviews/](reviews/) | Independent per-wave reviews (Waves 0 to 4b-2). |
 
 ## Load-bearing facts worth not re-deriving
 1. **Plugin ABI is stable v4.6.0 → upstream pre-release (2026-08-28).** All plugin-facing `MainAPI`

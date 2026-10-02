@@ -401,6 +401,9 @@ unused import). Diff them first and keep the union of behaviour. Rollback per fi
 
 ## Wave 4: `WebViewSession` base, gateway split, `ProviderRuntime`
 
+**Status (2026-10-02).** 4a, 4b-1, 4b-2 and 4b-3 are on `main`; 4c is on PR #1, still unreviewed. See
+[shared-refactor-progress.md](shared-refactor-progress.md) section 11 for what is left.
+
 **Goal.** Break the two god objects. One WebView session base, one HTTP gateway, one provider-facing
 interface, extractors injected by constructor, `NavigationEngine` moved into its only consumer.
 
@@ -508,6 +511,9 @@ must be answered first: how many older plugin builds a new app must keep loading
 ---
 
 ## Wave 6: domain handling under R3
+
+**Status (2026-10-02).** Design done in [wave-6-design.md](wave-6-design.md); five owner questions open
+before 6-1.
 
 **Goal.** Delete every name-based domain decision. Replace it with behaviour-based adoption, a
 persisted host history for rewriting, and a two-success rule for remote sync. Last wave by owner
