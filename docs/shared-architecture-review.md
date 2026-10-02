@@ -1,4 +1,4 @@
-# `shared/` Architecture Review
+clau# `shared/` Architecture Review
 
 Date: 2026-09-03. Scope: `shared/src/main/kotlin/com/cloudstream/shared/**`, its build wiring, and how the 41 provider plugins consume it. All line references are against the current `main` (HEAD `50df2f90`).
 
