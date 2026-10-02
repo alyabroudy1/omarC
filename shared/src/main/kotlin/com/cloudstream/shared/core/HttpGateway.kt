@@ -195,7 +195,7 @@ class HttpGateway private constructor(
      * **This used to send only the headers it was handed**, which made it a trap: a caller passing
      * `User-Agent` and `Accept` got a request with no `cf_clearance`, no client hints, no `Referer` and
      * no Cloudflare handling whatsoever, on a service whose every other method carries the session.
-     * CimaNow's token chain hit exactly that (2026-08-03): Cloudflare answered 403 with a 128 KB block
+     * A provider's token chain hit exactly that (2026-08-03): Cloudflare answered 403 with a 128 KB block
      * page, the caller found no link in it, and the failure surfaced as "the site changed its markup".
      * `load()` had fetched the same URL through [document] seconds earlier and succeeded.
      *
@@ -598,7 +598,7 @@ class HttpGateway private constructor(
             // invisible, reused WebView, ~1-3 s, no dialog.
             //
             // **It used to require `cookiesForDomain.isNotEmpty()`, which made it unreachable exactly
-            // when it was needed.** 2026-08-03, cimanow: every request blocked, session cookie count
+            // when it was needed.** 2026-08-03, on the CF-fronted site: every request blocked, session cookie count
             // 0, so the condition was false, so this never ran — and each request fell through to the
             // CF-solve WebView instead, which every provider runs FULLSCREEN
             // (`BaseProvider.skipHeadless = true`). The solve then harvested **zero** cookies

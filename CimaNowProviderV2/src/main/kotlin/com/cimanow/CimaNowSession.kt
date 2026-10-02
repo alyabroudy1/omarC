@@ -2,8 +2,8 @@ package com.cimanow
 
 import com.lagradost.api.Log
 import com.cloudstream.shared.core.ProviderRuntime
-import com.cloudstream.shared.webview.InterceptChallenge
-import com.cloudstream.shared.webview.NavigationSessionPolicy
+import com.cimanow.webview.InterceptChallenge
+import com.cimanow.webview.NavigationSessionPolicy
 
 /**
  * CimaNow's session policy: everything the shared engine deliberately leaves to the provider.

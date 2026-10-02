@@ -1,4 +1,4 @@
-package com.cloudstream.shared.webview
+package com.cimanow.webview
 
 import android.annotation.SuppressLint
 import android.os.Handler
@@ -8,16 +8,14 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.webkit.*
 import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.webview.*
 import com.cloudstream.shared.logging.ProviderLogger
 import kotlinx.coroutines.*
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.nio.charset.Charset
 
 class NavigationEngine(
-    private val activityProvider: () -> android.app.Activity?
-) {
-    private val sessionMutex = Mutex()
+    activityProvider: () -> android.app.Activity?
+) : WebViewSession(activityProvider) {
 
     /**
      * URL of the document currently loaded, tracked from `onPageStarted`/`onPageFinished`.
@@ -346,7 +344,7 @@ class NavigationEngine(
         /** [earlyInjectJs] runs only on URLs matching this. Without it, nothing is injected anywhere. */
         earlyInjectOnHosts: Regex? = null
     ): NavigationResult = withContext(Dispatchers.Main) {
-        sessionMutex.withLock {
+        withSession {
             // Reset intercepted state for this session
             sessionUserAgentOverride = userAgent
             interceptedWatchingUrl = null
@@ -376,7 +374,7 @@ class NavigationEngine(
             val activity = activityProvider()
             if (activity == null) {
                 ProviderLogger.e(TAG, "execute", "No Activity available")
-                return@withContext NavigationResult(
+                return@withSession NavigationResult(
                     success = false, finalUrl = "", cookies = emptyMap(),
                     extractedHtml = emptyMap(), completedSteps = 0,
                     failedAtStep = 0, error = "No Activity context"
@@ -398,7 +396,7 @@ class NavigationEngine(
                 if (!delivered) {
                     delivered = true
                     ProviderLogger.w(TAG, "execute", "Overall timeout after ${overallTimeoutMs}ms")
-                    cleanupWebView(webView, dialog)
+                    cleanupNavigationWebView(webView, dialog)
                     result.complete(NavigationResult(
                         success = false, finalUrl = currentUrl,
                         cookies = extractCookiesFromManager(currentUrl),
@@ -417,7 +415,7 @@ class NavigationEngine(
             }
 
             try {
-                webView = createWebView(activity)
+                webView = createNavigationWebView(activity)
                 setupWebViewClient(webView, userAgent, requestInterceptor, allowedDomains,
                     destinationLockPatterns, injectSpoofingJs, loadPopupsInSink, captureEmbeds,
                     rewriteDocumentWrite, injectDocumentWriteHook, sessionPolicy,
@@ -1055,7 +1053,7 @@ class NavigationEngine(
                         }
                     }
 
-                    cleanupWebView(webView, dialog)
+                    cleanupNavigationWebView(webView, dialog)
                     result.complete(NavigationResult(
                         success = isSuccess,
                         finalUrl = currentUrl,
@@ -1096,7 +1094,7 @@ class NavigationEngine(
                             }
                         } catch (_: Exception) {}
                     }
-                    cleanupWebView(webView, dialog)
+                    cleanupNavigationWebView(webView, dialog)
                     result.complete(NavigationResult(
                         success = false, finalUrl = currentUrl,
                         cookies = emptyMap(), extractedHtml = extractedHtml,
@@ -1113,7 +1111,7 @@ class NavigationEngine(
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(
+    private fun createNavigationWebView(
         activity: android.app.Activity,
         userAgentOverride: String? = sessionUserAgentOverride
     ): WebView {
@@ -1157,11 +1155,11 @@ class NavigationEngine(
             if (ENABLE_WEBVIEW_REMOTE_DEBUGGING) {
                 try {
                     WebView.setWebContentsDebuggingEnabled(true)
-                    ProviderLogger.w(TAG, "createWebView",
+                    ProviderLogger.w(TAG, "createNavigationWebView",
                         "🔍 WebView remote debugging ENABLED — this app is now inspectable over adb. " +
                             "Diagnostic only; set ENABLE_WEBVIEW_REMOTE_DEBUGGING=false for release.")
                 } catch (e: Throwable) {
-                    ProviderLogger.w(TAG, "createWebView",
+                    ProviderLogger.w(TAG, "createNavigationWebView",
                         "Could not enable remote debugging: ${e.message}")
                 }
             }
@@ -2601,7 +2599,7 @@ class NavigationEngine(
                 // So hand over a detached WebView that answers every request with an empty body. The
                 // page gets a live window object whose `closed` stays false, no ad content is ever
                 // fetched, nothing is shown to the user, and the main frame is untouched. Destroyed
-                // with the session in cleanupWebView.
+                // with the session in cleanupNavigationWebView.
                 val activity = activityProvider()
                 val transport = resultMsg?.obj as? WebView.WebViewTransport
                 if (activity == null || transport == null) {
@@ -2826,7 +2824,10 @@ class NavigationEngine(
                 "package name and is refused",
             "url" to url.take(100), "bodyLen" to body.length.toString())
 
-        CoroutineScope(Dispatchers.IO).launch {
+        // Bound to the session, not to the process: the last thing it does is `loadUrl` into this
+        // session's WebView, so a relay still in flight at teardown has nothing left to drive.
+        launchInSession {
+          withContext(Dispatchers.IO) {
             val referer = try { withContext(Dispatchers.Main) { webView.url } } catch (_: Exception) { null }
             val answer = try {
                 val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -2868,7 +2869,7 @@ class NavigationEngine(
             if (answer == null) {
                 ProviderLogger.w(TAG, "mintRelay",
                     "No usable URL from the replay — leaving the page to its own devices")
-                return@launch
+                return@withContext
             }
             ProviderLogger.w(TAG, "mintRelay", "\u2705 Minted from our side — navigating there",
                 "url" to answer.take(140))
@@ -2883,6 +2884,7 @@ class NavigationEngine(
                     ProviderLogger.w(TAG, "mintRelay", "loadUrl failed: ${e.message}")
                 }
             }
+          }
         }
     }
 
@@ -3541,7 +3543,7 @@ class NavigationEngine(
         var lastTitleStatus: String? = null
         var titleMsgCount = 0
 
-        val webView = createWebView(activity, userAgentOverride = userAgent)
+        val webView = createNavigationWebView(activity, userAgentOverride = userAgent)
         val injectedBytes = injectedHtml.toByteArray(Charsets.UTF_8)
         val mainServed = java.util.concurrent.atomic.AtomicBoolean(false)
         try {
@@ -3933,7 +3935,7 @@ class NavigationEngine(
         }
     }
 
-    private fun cleanupWebView(webView: WebView?, dialog: android.app.Dialog?) {
+    private fun cleanupNavigationWebView(webView: WebView?, dialog: android.app.Dialog?) {
         try {
             dismissingForCleanup = true
             dialog?.dismiss()
@@ -3948,21 +3950,12 @@ class NavigationEngine(
                             sink.destroy()
                         } catch (_: Exception) {}
                     }
-                    ProviderLogger.d(TAG, "cleanupWebView", "Destroyed ${sinks.size} popup sink(s)")
+                    ProviderLogger.d(TAG, "cleanupNavigationWebView", "Destroyed ${sinks.size} popup sink(s)")
                 }
             }
-            webView?.let { wv ->
-                Handler(Looper.getMainLooper()).post {
-                    try {
-                        wv.stopLoading()
-                        wv.loadUrl("about:blank")
-                        wv.clearHistory()
-                        wv.removeAllViews()
-                        (wv.parent as? android.view.ViewGroup)?.removeView(wv)
-                        wv.destroy()
-                    } catch (_: Exception) {}
-                }
-            }
+            // The dialog is already dismissed above, so the base is asked for the WebView half only;
+            // the ordering (dialog, then sinks, then the WebView) is what it was before Wave 4c.
+            cleanupWebView(webView, null)
         } catch (_: Exception) {}
     }
 
@@ -4018,7 +4011,7 @@ class NavigationEngine(
          */
         /**
          * Expose this app's WebViews to Chrome DevTools over adb. **Diagnostic; false for release.**
-         * See the call site in `createWebView` for what it costs and why it is currently worth it.
+         * See the call site in `createNavigationWebView` for what it costs and why it is currently worth it.
          */
         private const val ENABLE_WEBVIEW_REMOTE_DEBUGGING =
             com.cloudstream.shared.util.DebugFlags.WEBVIEW_REMOTE_DEBUGGING

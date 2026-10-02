@@ -19,7 +19,7 @@ object WebViewFactory {
 
     /**
      * @param userAgentOverride a deliberate, per-session deviation from the fingerprint (today only
-     *   CimaNow's TV UA, which the site's own `isTv()` reads to skip the popunder flow). When set,
+     *   one provider's TV UA, which that site's own `isTv()` reads to skip the popunder flow). When set,
      *   every WebView of that one session must be created with the same override so the session
      *   presents one UA. Null — the normal case — means the device fingerprint.
      */

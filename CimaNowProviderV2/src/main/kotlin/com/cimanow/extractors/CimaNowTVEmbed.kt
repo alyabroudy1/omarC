@@ -1,4 +1,4 @@
-package com.cloudstream.shared.extractors
+package com.cimanow.extractors
 
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.core.ProviderRuntime

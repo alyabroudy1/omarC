@@ -1,4 +1,4 @@
-package com.cloudstream.shared.webview
+package com.cimanow.webview
 
 /**
  * The provider's say in session-level decisions [NavigationEngine] deliberately does not make.

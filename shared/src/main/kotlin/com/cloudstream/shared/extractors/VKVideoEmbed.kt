@@ -106,7 +106,7 @@ class VKVideoEmbed(private val runtime: ProviderRuntime) : ExtractorApi() {
      * `video_ext.php` fails two ways (measured 2026-07-30): VK rate-limits the repeat caller and the
      * request stalls to timeout, and loaded as a top-level document instead of an iframe it answers
      * with `video_embed_error` no matter what. The bytes the iframe already received have neither
-     * problem. See `NavigationEngine.fetchEmbedDocument` for the capture side.
+     * problem. See the navigating engine's `fetchEmbedDocument` for the capture side.
      *
      * @return true if any link was produced.
      */

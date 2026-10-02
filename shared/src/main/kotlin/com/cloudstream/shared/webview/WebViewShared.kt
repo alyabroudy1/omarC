@@ -1,7 +1,7 @@
 package com.cloudstream.shared.webview
 
 /**
- * Pieces shared by the three WebView engines ([NavigationEngine], [VideoSnifferEngine],
+ * Pieces shared by the WebView engines ([VideoSnifferEngine],
  * [CfBypassEngine]). Top-level functions and constants only — nothing here touches Android at
  * class-init, so the JVM unit tests can load it.
  */
@@ -88,9 +88,9 @@ internal const val DELETED_VIDEO_PHRASES_JS = """
  * A plain Android WebView reports an empty `PluginArray`, which players that gate on "headless"
  * treat as a bot tell. The fakes must be array-**like**, never real Arrays: a genuine
  * `navigator.plugins` is a `PluginArray`, so `Array.isArray(navigator.plugins)` is false in every
- * real browser, and sites probe exactly that to catch spoofers (CimaNow ships
+ * real browser, and sites probe exactly that to catch spoofers (one target site ships
  * `Array.isArray(navigator.plugins) && navigator.plugins[0] === 1` as a bot signal). An array
- * literal such as `[1,2,3,4,5]` — what `NavigationEngine.SPOOFING_JS` used to install — hands them
+ * literal such as `[1,2,3,4,5]` — what a provider's own spoof JS used to install — hands them
  * the tell we are trying to hide.
  *
  * Only defined when the real list is empty, so a WebView that does report plugins keeps its own.

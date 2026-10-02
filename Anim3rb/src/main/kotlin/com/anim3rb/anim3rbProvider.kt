@@ -11,7 +11,6 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.webview.Mode
-import com.cloudstream.shared.webview.NavigationStep
 import com.cloudstream.shared.service.CloudflareBlockedSearchException
 import com.cloudstream.shared.core.AndroidCookieStorage
 import com.cloudstream.shared.core.Fingerprint
