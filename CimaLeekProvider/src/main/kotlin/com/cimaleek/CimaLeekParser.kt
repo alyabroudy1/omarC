@@ -4,12 +4,12 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.WatchServerSelector
 import org.jsoup.nodes.Element
 import com.cloudstream.shared.parsing.ParserInterface
 
-class CimaLeekParser : NewBaseParser() {
+class CimaLeekParser : BaseParser() {
 
     override val mainPageConfig = MainPageConfig(
         container = ".posts_items .item, .swiper-slide .item, .item",

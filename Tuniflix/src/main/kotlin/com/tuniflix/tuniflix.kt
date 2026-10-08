@@ -3,7 +3,8 @@ package com.lagradost.cloudstream3.plugins
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -16,7 +17,7 @@ class Tuniflix : BaseProvider() {
     override val baseDomain get() = "tuniflix.site"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return TuniflixParser()
     }
 
@@ -65,16 +66,17 @@ class Tuniflix : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/?s=$query"
         val document = app.get(url).document
-        return document.select("article.TPost.B").mapNotNull {
+        return newSearchResponseList(document.select("article.TPost.B").mapNotNull {
             it.toSearchResponse()
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -173,11 +175,7 @@ class Tuniflix : BaseProvider() {
         return true
     }
 
-    private fun fixUrl(url: String): String {
-        if (url.startsWith("//")) return "https:$url"
-        if (url.startsWith("/")) return mainUrl + url
-        return url
-    }
+    private fun fixUrl(url: String): String = com.cloudstream.shared.util.fixUrl(url, mainUrl)
 
 
     object Strp2p {
@@ -261,7 +259,7 @@ class Tuniflix : BaseProvider() {
                     val headers = mapOf(
                         "Referer" to "https://watch.strp2p.site/",
                         "Origin" to "https://watch.strp2p.site",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to Fingerprint.current().userAgent
                     )
 
                     val encryptedResponse = app.get(apiUrl, headers = headers).text

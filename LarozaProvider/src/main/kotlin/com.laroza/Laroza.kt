@@ -3,10 +3,8 @@ package com.laroza
 import com.lagradost.cloudstream3.*
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.ProviderConfig
-import com.cloudstream.shared.service.ProviderHttpService
-import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -39,7 +37,7 @@ class Laroza : BaseProvider() {
         "/category.php?cat=tv-programs12" to "برامج تلفزيونية"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return LarozaParser()
     }
 
@@ -93,7 +91,7 @@ class Laroza : BaseProvider() {
     ): Boolean {
         val methodTag = "[Laroza][newStrategy]"
         try {
-            val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+            val doc = runtime.document(data) ?: return false
             Log.d(methodTag, "Fetched detail page: ${doc.location()}")
 
             val playUrl = getParser().getPlayerPageUrl(doc)
@@ -109,7 +107,7 @@ class Laroza : BaseProvider() {
             val embedUrls = mutableListOf<String>()
 
             if (targetUrl != null) {
-                val targetDoc = httpService.getDocument(targetUrl, rewriteDomain = true)
+                val targetDoc = runtime.document(targetUrl)
                 if (targetDoc != null) {
                     embedUrls.addAll(getParser().extractWatchServersUrls(targetDoc))
                 }

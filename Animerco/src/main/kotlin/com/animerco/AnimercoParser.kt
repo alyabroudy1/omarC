@@ -3,7 +3,7 @@ package com.animerco
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 
-class AnimercoParser : NewBaseParser() {
+class AnimercoParser : BaseParser() {
     override val mainPageConfig = MainPageConfig(
         container = "div.featured-slider div.anime-card",
         title = CssSelector(query = "div.info a h3", attr = "text"),

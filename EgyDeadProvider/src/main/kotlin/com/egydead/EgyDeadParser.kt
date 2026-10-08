@@ -7,7 +7,7 @@ import org.jsoup.nodes.Element
 import kotlin.text.contains
 
 
-class EgyDeadParser : NewBaseParser() {
+class EgyDeadParser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/?s=$query"

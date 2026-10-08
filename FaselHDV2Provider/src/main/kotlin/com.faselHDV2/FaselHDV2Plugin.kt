@@ -20,9 +20,10 @@ class FaselHDV2Plugin: Plugin() {
         }
 
         // Register extractors
-        registerExtractorAPI(com.cloudstream.shared.extractors.ReviewRateExtractor())    // Handles reviewrate.net URLs
+        val api = FaselHDV2()
+        registerExtractorAPI(com.cloudstream.shared.extractors.ReviewRateExtractor(api.runtime))    // Handles reviewrate.net URLs
         registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor()) // Handles savefiles.com URLs
-        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor()) // Handles okprime.site URLs
+        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor(api.runtime)) // Handles okprime.site URLs
         registerExtractorAPI(com.cloudstream.shared.extractors.Up4FunExtractor())
         registerExtractorAPI(com.cloudstream.shared.extractors.FaselHDExtractor())
 
@@ -31,6 +32,6 @@ class FaselHDV2Plugin: Plugin() {
         registerExtractorAPI(sniffer)       // Handles sniffer:// URLs (video sniffing fallback)
 
         // Register provider
-        registerMainAPI(FaselHDV2())
+        registerMainAPI(api)
     }
 }

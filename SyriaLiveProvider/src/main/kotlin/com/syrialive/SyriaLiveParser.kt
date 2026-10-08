@@ -4,12 +4,12 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.parsing.WatchServerSelector
 import org.jsoup.nodes.Document
 
-class SyriaLiveParser : NewBaseParser() {
+class SyriaLiveParser : BaseParser() {
 
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/?s=$query"
@@ -35,7 +35,7 @@ class SyriaLiveParser : NewBaseParser() {
         plot = CssSelector(query = ".entry-content p", attr = "text")
     )
 
-    // Unused but required by NewBaseParser architecture
+    // Unused but required by BaseParser architecture
     override val episodeConfig = EpisodeConfig(
         container = "",
         title = CssSelector(query = "", attr = ""),

@@ -1,7 +1,7 @@
 package com.cimatn
 
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -24,19 +24,18 @@ class CimaTn : BaseProvider() {
 
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return CimaTnParser()
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
         val cleanUrl = url.substringBefore("?")
 
         if (cleanUrl.contains("film-")) {
             return loadMovieData(cleanUrl)
         }
 
-        val doc = httpService.getDocument(cleanUrl, rewriteDomain = true) ?: return null
+        val doc = runtime.document(cleanUrl) ?: return null
         val htmlContent = doc.html()
 
         if (htmlContent.contains("data-secure-url") && !htmlContent.contains("const watchPageSlug")) {
@@ -276,7 +275,6 @@ class CimaTn : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        httpService.ensureInitialized()
 
         if (data.contains("youtube.com") || data.contains("youtu.be")) {
             loadExtractor(data, "$mainUrl/", subtitleCallback, callback)

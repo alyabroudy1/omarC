@@ -17,7 +17,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.core.Fingerprint
 
 class GessehProvider : BaseProvider() {
     override val baseDomain get() = "qeseh.net"
@@ -37,7 +38,7 @@ class GessehProvider : BaseProvider() {
     )
 
     private val defaultHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36"
+        "User-Agent" to Fingerprint.current().userAgent
     )
 
     override val mainPage = mainPageOf(
@@ -52,37 +53,36 @@ class GessehProvider : BaseProvider() {
     override val hasMainPage = true
     override val supportsLazySearch = true
 
-    override fun getParser(): NewBaseParser = GessehParser()
+    override fun getParser(): BaseParser = GessehParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        httpService.ensureInitialized()
         val url = request.data + page
-        val doc = httpService.getDocument(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true) ?: return null
+        val doc = runtime.document(url, headers = defaultHeaders, adoptRedirect = true) ?: return null
         val items = getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
         }
         return newHomePageResponse(request.name, items)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        httpService.ensureInitialized()
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = getParser().getSearchUrl(mainUrl, encoded)
-        val doc = httpService.getDocumentNoFallback(url, headers = defaultHeaders, checkDomainChange = true, rewriteDomain = true)
+        val doc = runtime.document(url, headers = defaultHeaders, adoptRedirect = true, solveCf = false)
             ?: throw com.cloudstream.shared.service.CloudflareBlockedSearchException(name, baseDomain)
-        return getParser().parseSearch(doc).map { item ->
+        return newSearchResponseList(getParser().parseSearch(doc).map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     private fun resolveRealUrl(url: String): String {
@@ -118,9 +118,8 @@ class GessehProvider : BaseProvider() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        httpService.ensureInitialized()
         val realUrl = resolveRealUrl(url)
-        val document = httpService.getDocument(realUrl, headers = defaultHeaders) ?: return null
+        val document = runtime.document(realUrl, headers = defaultHeaders, rewrite = false) ?: return null
 
         val data = getParser().parseLoadPage(document, realUrl) ?: return null
 
@@ -131,7 +130,7 @@ class GessehProvider : BaseProvider() {
         if (data.isMovie) {
             return newMovieLoadResponse(data.title, realUrl, TvType.Movie, realUrl) {
                 this.posterUrl = fixUrlNull(data.posterUrl)
-                this.posterHeaders = httpService.getImageHeaders()
+                this.posterHeaders = runtime.imageHeaders()
                 this.plot = data.plot
             }
         }
@@ -146,7 +145,7 @@ class GessehProvider : BaseProvider() {
 
         return newTvSeriesLoadResponse(data.title, realUrl, TvType.TvSeries, episodes) {
             this.posterUrl = fixUrlNull(data.posterUrl)
-            this.posterHeaders = httpService.getImageHeaders()
+            this.posterHeaders = runtime.imageHeaders()
             this.plot = data.plot
         }
     }
@@ -180,7 +179,6 @@ class GessehProvider : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val TAG = "GessehProvider"
-        httpService.ensureInitialized()
         val pageUrl = resolveRealUrl(data)
 
         val mainPage = try {
@@ -218,7 +216,7 @@ class GessehProvider : BaseProvider() {
         }
 
         val customHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Referer" to playerReferer
         )
 

@@ -3,16 +3,15 @@ package com.shahid4u
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.cloudstream.shared.extractors.EarnVidsExtractor
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.core.Fingerprint
 import org.jsoup.nodes.Element
 import org.jsoup.Jsoup
 import com.lagradost.cloudstream3.utils.loadExtractor
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.network.CloudflareKiller
-import okhttp3.Interceptor
-import okhttp3.Response
 import java.net.URLEncoder
 
 class Shahid4u : BaseProvider() {
@@ -20,7 +19,7 @@ class Shahid4u : BaseProvider() {
     override val baseDomain get() = "shaahed4u.net"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return Shahid4uParser()
     }
 
@@ -44,14 +43,11 @@ class Shahid4u : BaseProvider() {
     override var sequentialMainPageDelay = 50L
     override var sequentialMainPageScrollDelay = 50L
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
-
 
     private fun buildBrowserHeaders(referer: String? = null): Map<String, String> {
         val ref = referer ?: mainUrl
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "ar,en-US;q=0.9,en;q=0.8",
             "Referer" to ref,
@@ -61,22 +57,6 @@ class Shahid4u : BaseProvider() {
             "Sec-Fetch-Mode" to "navigate",
             "Sec-Fetch-Dest" to "document"
         )
-    }
-
-    private fun buildMergedHeaders(url: String, referer: String? = null): Map<String, String> {
-        val base = buildBrowserHeaders(referer).toMutableMap()
-
-        return try {
-
-            val cloudHeaders = cloudflareKiller.getCookieHeaders(url).toMultimap()
-                .mapValues { entry -> entry.value.joinToString("; ") }
-
-            base.putAll(cloudHeaders)
-            base
-        } catch (e: Exception) {
-
-            base
-        }
     }
 
     private fun makeAbsoluteUrl(url: String?): String? {
@@ -94,8 +74,9 @@ class Shahid4u : BaseProvider() {
     }
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
-        val headers = buildMergedHeaders(url, referer)
-        return app.get(url, referer = referer ?: mainUrl, headers = headers, interceptor = cfInterceptor).document
+        val headers = buildBrowserHeaders(referer).filterKeys { it != "User-Agent" }
+        return runtime.document(url, headers = headers)
+            ?: throw ErrorLoadingException("Failed to fetch $url")
     }
 
     private fun parseCard(element: Element): SearchResponse? {
@@ -198,7 +179,8 @@ class Shahid4u : BaseProvider() {
         return newHomePageResponse(homePageList)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val encoded = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "${mainUrl}search?s=$encoded"
 
@@ -208,10 +190,10 @@ class Shahid4u : BaseProvider() {
 
             if (resultItems.isEmpty()) {
 
-                return emptyList()
+                return newSearchResponseList(emptyList(), false)
             }
 
-            resultItems.mapIndexedNotNull { index, element ->
+            newSearchResponseList(resultItems.mapIndexedNotNull { index, element ->
 
                 try {
                     parseCard(element)
@@ -219,15 +201,15 @@ class Shahid4u : BaseProvider() {
 
                     null
                 }
-            }
+            }, false)
         } catch (e: Exception) {
 
-            emptyList()
+            newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
 
@@ -319,7 +301,7 @@ class Shahid4u : BaseProvider() {
 
                     if (server.name.equals("EarnVids", true) || server.name.equals("StreamHG", true)) {
                         try {
-                            val customLink = ExternalEarnVidsExtractor.extract(server.url, mainUrl)
+                            val customLink = EarnVidsExtractor.extractDirect(server.url, mainUrl)
                             if (!customLink.isNullOrBlank()) {
                                 val finalLink = customLink.toString()
 

@@ -1,5 +1,6 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -27,7 +28,7 @@ class VertyuzExtractor : ExtractorApi() {
         ProviderLogger.d(TAG, "getUrl", "Processing Vertyuz URL", "url" to url, "referer" to referer)
         
         try {
-            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            val userAgent = Fingerprint.current().userAgent
             val headers = mutableMapOf(
                 "User-Agent" to userAgent
             )
@@ -53,11 +54,8 @@ class VertyuzExtractor : ExtractorApi() {
 
             ProviderLogger.d(TAG, "getUrl", "Extracted playbackURL: $m3u8Url")
 
-            val streamHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Referer" to url,
-                "Origin" to "https://tv.vertyuz.xyz"
-            )
+            val streamHeaders = Fingerprint.current()
+                .playbackHeaders(url, "https://tv.vertyuz.xyz", null)
 
             // Try to extract qualities from the M3U8 content manually using custom fetcher
             val m3u8Links = extractM3u8Qualities(m3u8Url, url, streamHeaders)

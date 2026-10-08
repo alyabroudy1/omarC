@@ -6,10 +6,9 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.logError
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
-import okhttp3.Interceptor
+import com.cloudstream.shared.parsing.BaseParser
+import com.cloudstream.shared.core.Fingerprint
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.collections.component1
@@ -20,7 +19,7 @@ class TopCinemaProvider : BaseProvider() {
     override val baseDomain get() = "web8.topcinema.cam"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return TopCinemaParser()
     }
 
@@ -31,22 +30,17 @@ class TopCinemaProvider : BaseProvider() {
         TvType.TvSeries
     )
 
-    private val cloudflareKiller by lazy { CloudflareKiller() }
-    private val cfInterceptor: Interceptor get() = cloudflareKiller
-
     private val standardHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+        "User-Agent" to Fingerprint.current().userAgent,
         "Accept-Language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer" to "$mainUrl/"
     )
 
     private suspend fun httpGet(url: String, referer: String? = null): org.jsoup.nodes.Document {
-        return app.get(
+        return runtime.document(
             url,
-            referer = referer ?: mainUrl,
-            headers = standardHeaders,
-            interceptor = cfInterceptor
-        ).document
+            headers = standardHeaders.filterKeys { it != "User-Agent" }
+        ) ?: throw ErrorLoadingException("Failed to fetch $url")
     }
 
     private suspend fun httpPost(
@@ -54,13 +48,12 @@ class TopCinemaProvider : BaseProvider() {
         data: Map<String, String>,
         referer: String? = null
     ): String {
-        return app.post(
+        return runtime.post(
             url,
-            data = data,
+            form = data,
             referer = referer ?: mainUrl,
-            headers = postHeaders,
-            interceptor = cfInterceptor
-        ).text
+            headers = postHeaders.filterKeys { it != "User-Agent" }
+        ) ?: throw ErrorLoadingException("Failed to post $url")
     }
 
     override suspend fun getMainPage(
@@ -127,16 +120,17 @@ class TopCinemaProvider : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val url = "$mainUrl/search/?query=$query&type=all"
         val document = httpGet(url)
-        return document.select(".Posts--List .Small--Box").mapNotNull {
+        return newSearchResponseList(document.select(".Posts--List .Small--Box").mapNotNull {
             toSearchResponse(it)
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -291,7 +285,7 @@ class TopCinemaProvider : BaseProvider() {
 
     private fun getDynamicHeaders(referer: String): Map<String, String> {
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to Fingerprint.current().userAgent,
             "Accept-Language" to "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer" to referer
         )
@@ -424,10 +418,12 @@ class TopCinemaProvider : BaseProvider() {
         for (rawUrl in data.split("||").filter { it.isNotBlank() }) {
             try {
                 if (rawUrl.contains("/watch/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
-                    val finalWatchUrl = response.url
+                    val watchDoc = runtime.document(
+                        rawUrl,
+                        headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
+                    ) ?: continue
+                    val finalWatchUrl = watchDoc.location().ifBlank { rawUrl }
                     val finalBaseUrl = getBaseUrl(finalWatchUrl)
-                    val watchDoc = response.document
 
                     watchDoc.selectFirst(".player--iframe iframe")?.attr("src")?.let {
                         extractedLinks[it] = finalWatchUrl
@@ -435,21 +431,25 @@ class TopCinemaProvider : BaseProvider() {
 
                     for (server in watchDoc.select(".watch--servers--list li.server--item")) {
                         val ajaxUrl = "$finalBaseUrl/wp-content/themes/movies2023/Ajaxat/Single/Server.php"
-                        val res = app.post(
+                        val res = runtime.post(
                             ajaxUrl,
-                            data = mapOf("id" to server.attr("data-id"), "i" to server.attr("data-server")),
-                            headers = getDynamicPostHeaders(finalWatchUrl),
-                            interceptor = cfInterceptor
-                        ).text
+                            form = mapOf("id" to server.attr("data-id"), "i" to server.attr("data-server")),
+                            referer = finalWatchUrl,
+                            headers = getDynamicPostHeaders(finalWatchUrl)
+                                .filterKeys { it != "User-Agent" }
+                        ).orEmpty()
 
                         Jsoup.parse(res).selectFirst("iframe")?.attr("src")?.let {
                             extractedLinks[it] = finalWatchUrl
                         }
                     }
                 } else if (rawUrl.contains("/download/")) {
-                    val response = app.get(rawUrl, headers = getDynamicHeaders(mainUrl), interceptor = cfInterceptor)
-                    val finalDownloadUrl = response.url
-                    for (a in response.document.select("a.downloadsLink")) {
+                    val downloadDoc = runtime.document(
+                        rawUrl,
+                        headers = getDynamicHeaders(mainUrl).filterKeys { it != "User-Agent" }
+                    ) ?: continue
+                    val finalDownloadUrl = downloadDoc.location().ifBlank { rawUrl }
+                    for (a in downloadDoc.select("a.downloadsLink")) {
                         val href = a.attr("href")
                         if (href.isNotBlank()) {
                             extractedLinks[href] = finalDownloadUrl

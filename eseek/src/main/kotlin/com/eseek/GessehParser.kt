@@ -5,13 +5,13 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.parsing.WatchServerSelector
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class GessehParser : NewBaseParser() {
+class GessehParser : BaseParser() {
 
     companion object {
         private const val TAG = "GessehParser"

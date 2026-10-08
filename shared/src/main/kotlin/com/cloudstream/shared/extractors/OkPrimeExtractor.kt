@@ -1,5 +1,7 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.JsUnpacker
@@ -8,7 +10,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 
-open class OkPrimeExtractor : ExtractorApi() {
+open class OkPrimeExtractor(private val runtime: ProviderRuntime) : ExtractorApi() {
     override val name = "OkPrime"
     override val mainUrl = "https://okprime.site"
     override val requiresReferer = true
@@ -19,11 +21,8 @@ open class OkPrimeExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-            ?: throw IllegalStateException("ProviderHttpService not initialized")
-
         val customHeaders = mutableMapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent" to Fingerprint.current().userAgent
         )
         if (referer != null) {
             customHeaders["Referer"] = referer
@@ -31,8 +30,8 @@ open class OkPrimeExtractor : ExtractorApi() {
         
         com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Requesting URL", "url" to url, "referer" to customHeaders["Referer"])
 
-        // Use getDocument to handle Cloudflare automatically
-        val doc = service.getDocument(url, customHeaders)
+        // Use document() to handle Cloudflare automatically
+        val doc = runtime.document(url, customHeaders, rewrite = false)
         val text = doc?.outerHtml() ?: ""
         
         com.cloudstream.shared.logging.ProviderLogger.d("OkPrime", "getUrl", "Response received", 

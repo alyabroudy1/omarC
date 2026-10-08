@@ -10,7 +10,8 @@ import com.cloudstream.shared.android.PluginContext
 class AnimercoPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerSharedExtractors()
-        registerMainAPI(AnimercoProvider())
+        val api = AnimercoProvider()
+        registerSharedExtractors(api.runtime)
+        registerMainAPI(api)
     }
 }

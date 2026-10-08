@@ -17,7 +17,8 @@ import java.lang.reflect.Proxy
  *
  * ## Why this file exists at all
  *
- * This header is what breaks the freex countdown, and it is our package name specifically — not the
+ * This header is what breaks the countdown page on the embed host we measured against, and it is our
+ * package name specifically — not the
  * header's presence. Measured against the real chain, changing only the value (see [SAFE_VALUE] for the
  * full table): `com.android.chrome` mints at 11,710 ms, `XMLHttpRequest` at 10,653 ms, absent at
  * 11,508 ms, and `com.lagradost.cloudstream3` **never mints at all** — 4 requests and then a dead page.
@@ -29,7 +30,7 @@ import java.lang.reflect.Proxy
  * directions before the wire settled it.
  *
  * `shouldInterceptRequest` can only dodge it by re-issuing a request ourselves, which covers GETs, cannot
- * cover POSTs (the API hides the body) and breaks CORS-fetched scripts — that attempt took the freex page
+ * cover POSTs (the API hides the body) and breaks CORS-fetched scripts — that attempt took the measured page
  * from 644 anchors down to 2 and was reverted. The fix has to happen where WebView adds the header.
  *
  * Not a factor, for the record: AdSense. Ad slots do stay empty for us, but a plain browser mints with
@@ -37,7 +38,7 @@ import java.lang.reflect.Proxy
  *
  * ## Why not just depend on androidx.webkit
  *
- * `CimaNowProviderV2/build.gradle.kts` documents the attempt: the CloudStream gradle plugin dexes
+ * A provider plugin's own `build.gradle.kts` documents the attempt: the CloudStream gradle plugin dexes
  * **project classes only**, and declared dependencies are compile-time stubs resolved against what the
  * host app already ships. CloudStream does not bundle androidx.webkit, so a `.cs3` built with the
  * dependency contains zero `androidx/webkit` classes and the device logs
@@ -112,7 +113,7 @@ object RequestedWithHeaderControl {
      *
      * Not `""`. An empty value is a header no real Chrome ever emits, so the mask becomes the signature —
      * the handover records that exact mistake being made and reverted. Measured 2026-08-07 against the
-     * real freex chain, changing only this value:
+     * real embed-host chain, changing only this value:
      *
      * | value | mint | requests | anchors |
      * |---|---|---|---|
@@ -136,7 +137,7 @@ object RequestedWithHeaderControl {
     /**
      * True once **both** offending headers are controlled at the WebView level for every request.
      *
-     * This is what lets [NavigationEngine] stop re-issuing subresources. That re-fetching only ever
+     * This is what lets an intercepting engine stop re-issuing subresources. That re-fetching only ever
      * existed to strip `X-Requested-With` and to replace `sec-ch-ua: "Android WebView"`; it cannot cover
      * POSTs, and it breaks CORS-fetched scripts. When both are fixed globally it is pure cost — but the
      * flag matters because on an old WebView, or if the boundary is unreachable, the old behaviour must
@@ -157,22 +158,22 @@ object RequestedWithHeaderControl {
      * `"Google Chrome"`. Versions are taken from the running WebView so the hints cannot drift out of step
      * with the User-Agent string, which would be its own fingerprint.
      */
-    private fun chromeBrandMetadata(): Map<String, Any> {
-        val full = Regex("""Chrome/([0-9.]+)""")
-            .find(WebSettings.getDefaultUserAgent(com.cloudstream.shared.android.PluginContext.context))
-            ?.groupValues?.getOrNull(1) ?: "150.0.0.0"
-        val major = full.substringBefore('.')
+    private fun chromeBrandMetadata(fp: com.cloudstream.shared.core.Fingerprint): Map<String, Any> {
+        val full = fp.chromeFullVersion
+        val major = fp.chromeMajor
         return mapOf(
+            // Same three brands, same order, as Fingerprint.brandListFor(major) — they are one
+            // spelling now because both come from this one object, not from two UA parses.
             "BRAND_VERSION_LIST" to arrayOf(
                 arrayOf("Not;A=Brand", "8", "8.0.0.0"),
                 arrayOf("Chromium", major, full),
                 arrayOf("Google Chrome", major, full)
             ),
             "FULL_VERSION" to full,
-            "PLATFORM" to "Android",
-            "PLATFORM_VERSION" to "${android.os.Build.VERSION.RELEASE}.0.0",
+            "PLATFORM" to fp.platform,
+            "PLATFORM_VERSION" to fp.platformVersion,
             "ARCHITECTURE" to "",
-            "MODEL" to (android.os.Build.MODEL ?: ""),
+            "MODEL" to fp.model,
             "MOBILE" to true,
             "BITNESS" to 0,
             "WOW64" to false
@@ -235,7 +236,11 @@ object RequestedWithHeaderControl {
      * Every failure mode is logged with what was attempted, because the cost of not knowing which step
      * failed is another day of guessing at 403s.
      */
-    fun suppress(webView: WebView): Boolean {
+    fun suppress(
+        webView: WebView,
+        fingerprint: com.cloudstream.shared.core.Fingerprint =
+            com.cloudstream.shared.core.Fingerprint.current()
+    ): Boolean {
         val factoryHandler = try {
             val loader = webViewClassLoader() ?: return false
             val glue = Class.forName(GLUE_CLASS, false, loader)
@@ -290,11 +295,12 @@ object RequestedWithHeaderControl {
         // sec-ch-ua, globally.
         //
         // The CDP capture showed `sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Android WebView";
-        // v="150"` on every request — the WebView brand, which handover rule 16 says cimanow bounces. The
+        // v="150"` on every request — the WebView brand, which handover rule 16 says the CF-fronted site
+        // bounces. The
         // interceptor has been rewriting it per request; `setUserAgentMetadataFromMap` sets it once for
         // every request this WebView makes, POSTs included.
         val uaOk = try {
-            settings.setUserAgentMetadataFromMap(chromeBrandMetadata())
+            settings.setUserAgentMetadataFromMap(chromeBrandMetadata(fingerprint))
             ProviderLogger.i(TAG, "suppress", "✅ sec-ch-ua brands set to real Chrome for this WebView",
                 "advertised" to features.any { it.startsWith("USER_AGENT_METADATA") }.toString())
             true
@@ -362,7 +368,7 @@ object RequestedWithHeaderControl {
 
         ProviderLogger.w(TAG, "suppress",
             "This WebView exposes neither header API — the package name will keep going out, which " +
-                "breaks freex's countdown and stops Google filling ad slots. See the class doc.")
+                "breaks the embed host's countdown and stops Google filling ad slots. See the class doc.")
         return false
     }
 }

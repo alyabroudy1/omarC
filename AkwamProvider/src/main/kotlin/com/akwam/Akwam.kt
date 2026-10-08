@@ -1,6 +1,6 @@
 package com.akwam
 
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.api.Log
@@ -38,7 +38,7 @@ class Akwam : BaseProvider() {
         "/movies?section=31&category=0&rating=0&year=0&language=0&formats=0&quality=0" to "أفلام هندي"
     )
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         Log.d("Akwam", "getParser called")
         return AkwamParser()
     }
@@ -53,9 +53,8 @@ class Akwam : BaseProvider() {
         Log.i(methodTag, "START data='$data'")
 
         try {
-            httpService.ensureInitialized()
 
-            val detailDoc = httpService.getDocument(data, rewriteDomain = true)
+            val detailDoc = runtime.document(data)
             if (detailDoc == null) {
                 Log.e(methodTag, "Failed to fetch detail page")
                 return false
@@ -74,12 +73,12 @@ class Akwam : BaseProvider() {
             }
 
             Log.d(methodTag, "Fetching watch page: $actualWatchUrl")
-            var watchDoc = httpService.getDocument(actualWatchUrl, rewriteDomain = true)
+            var watchDoc = runtime.document(actualWatchUrl)
 
             // Fallback with Referer as seen in decompiled code
             if (watchDoc == null) {
                 Log.d(methodTag, "Retrying watch page with Referer...")
-                watchDoc = httpService.getDocument(actualWatchUrl, mapOf("Referer" to data), rewriteDomain = true)
+                watchDoc = runtime.document(actualWatchUrl, mapOf("Referer" to data))
             }
 
             if (watchDoc == null) {
@@ -173,7 +172,7 @@ class Akwam : BaseProvider() {
 
             try {
                 Log.d(methodTag, "Fetching season: $absoluteSeasonUrl")
-                val seasonDoc = httpService.getDocument(absoluteSeasonUrl, rewriteDomain = true)
+                val seasonDoc = runtime.document(absoluteSeasonUrl)
                 if (seasonDoc != null) {
                     val seasonName = link.text()
                     val seasonNum = AkwamParser().getSeasonNumber(seasonName) ?: 1

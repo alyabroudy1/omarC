@@ -17,6 +17,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.Toast
+import com.cloudstream.shared.webview.WebViewFactory
 import com.lagradost.cloudstream3.utils.SingleSelectionHelper.showDialog
 
 /**
@@ -318,7 +319,7 @@ class YouTubePlayer(
     }
 
     private fun setupWebView() {
-        webView = WebView(context).apply {
+        webView = WebViewFactory.create(context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -329,8 +330,6 @@ class YouTubePlayer(
                 domStorageEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                // Use the device's true cached User-Agent to avoid YouTube's anti-bot "consent/login" wall
-                userAgentString = com.cloudstream.shared.util.WebConfig.getCachedUserAgent() ?: android.webkit.WebSettings.getDefaultUserAgent(context)
                 useWideViewPort = true
                 loadWithOverviewMode = true
             }

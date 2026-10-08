@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class CimawbasPlugin : Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(Cimawbas())
-        registerSharedExtractors()
+        val api = Cimawbas()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }

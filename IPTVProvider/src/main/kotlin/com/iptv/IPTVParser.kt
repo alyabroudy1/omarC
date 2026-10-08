@@ -2,7 +2,7 @@ package com.iptv
 
 import com.cloudstream.shared.parsing.*
 
-class IPTVParser : NewBaseParser() {
+class IPTVParser : BaseParser() {
     
     override fun getSearchUrl(domain: String, query: String): String {
         return ""

@@ -21,9 +21,10 @@ class ArabseedV4Plugin: Plugin() {
         }
 
         // Dynamically register all shared extractors (Vidmoly, EarnVids, ReviewRate, Sniffer, etc)
-        registerSharedExtractors()
+        val api = ArabseedV4()
+        registerSharedExtractors(api.runtime)
 
         // Register provider
-        registerMainAPI(ArabseedV4())
+        registerMainAPI(api)
     }
 }

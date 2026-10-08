@@ -3,7 +3,7 @@ package com.animewitcher
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -21,7 +21,7 @@ class AnimeWitcherProvider : BaseProvider() {
     override val baseDomain get() = "animewitcher.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return AnimewitcherParser()
     }
 
@@ -135,7 +135,7 @@ class AnimeWitcherProvider : BaseProvider() {
         return@withContext newHomePageResponse("أحدث الأنميات", list)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> = withContext(Dispatchers.IO) {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList = withContext(Dispatchers.IO) {
 
         refreshAlgoliaKeys()
 
@@ -145,7 +145,7 @@ class AnimeWitcherProvider : BaseProvider() {
             "[\"objectID\",\"name\",\"poster_uri\",\"type\",\"details\",\"tags\",\"story\",\"english_title\",\"_highlightResult\"]",
             "utf-8"
         )
-        val params = "attributesToRetrieve=$attributes&hitsPerPage=50&page=0&query=$encodedQuery"
+        val params = "attributesToRetrieve=$attributes&hitsPerPage=50&page=${(page - 1).coerceAtLeast(0)}&query=$encodedQuery"
         val payload = JSONObject().put("params", params)
         val body = payload.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())
 
@@ -165,11 +165,11 @@ class AnimeWitcherProvider : BaseProvider() {
             val url = "$mainUrl/watch/${URLEncoder.encode(animeId, "utf-8")}?data=$fullData"
             results.add(newAnimeSearchResponse(title, url, TvType.Anime) { this.posterUrl = poster })
         }
-        return@withContext results
+        return@withContext newSearchResponseList(results, results.isNotEmpty())
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse = withContext(Dispatchers.IO) {

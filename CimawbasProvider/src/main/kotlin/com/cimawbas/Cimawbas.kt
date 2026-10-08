@@ -1,7 +1,7 @@
 package com.cimawbas
 
 import com.cloudstream.shared.extractors.SnifferExtractor
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.provider.BaseProvider
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
@@ -22,20 +22,19 @@ class Cimawbas : BaseProvider() {
         "/all-series.php" to "مسلسلات",
     )
 
-    override fun getParser(): NewBaseParser = CimawbasParser()
+    override fun getParser(): BaseParser = CimawbasParser()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val methodTag = "[$name] [getMainPage]"
         Log.i(methodTag, "START page=$page, data=${request.data}, name=${request.name}")
         try {
-            httpService.ensureInitialized()
             val items = mutableListOf<HomePageList>()
             val urlPath = request.data
             val sectionName = request.name
             val fullUrl = if (urlPath.startsWith("http")) urlPath else "$mainUrl$urlPath"
             val fmt = paginationFormat
             val pageUrl = if (page > 1 && fmt != null) "${fullUrl}${fmt.format(page)}" else fullUrl
-            val doc = httpService.getDocument(pageUrl, checkDomainChange = true, rewriteDomain = true)
+            val doc = runtime.document(pageUrl, adoptRedirect = true)
             if (doc != null) {
                 val parsedItems = getParser().parseMainPage(doc)
                 Log.i(methodTag, "Parsed ${parsedItems.size} items")
@@ -45,7 +44,7 @@ class Cimawbas : BaseProvider() {
                         Log.i(methodTag, "  Item: title='${item.title}', url='${item.url}', posterUrl='${item.posterUrl}'")
                         newMovieSearchResponse(item.title, item.url, type) {
                             this.posterUrl = item.posterUrl
-                            this.posterHeaders = httpService.getImageHeadersFull()
+                            this.posterHeaders = runtime.imageHeaders()
                         }
                     }
                     items.add(HomePageList(sectionName, searchResponses))
@@ -58,56 +57,55 @@ class Cimawbas : BaseProvider() {
         }
     }
 
-    override suspend fun searchNormal(query: String): List<com.lagradost.cloudstream3.SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         val methodTag = "[$name] [searchNormal]"
         try {
-            httpService.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = getParser().getSearchUrl(mainUrl, encoded)
-            val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true) ?: return emptyList()
+            val url = getParser().getSearchUrl(mainUrl, encoded, page)
+            val doc = runtime.document(url, adoptRedirect = true)
+                ?: return newSearchResponseList(emptyList(), false)
             val items = getParser().parseSearch(doc)
             Log.i(methodTag, "Parsed ${items.size} search items")
             items.forEachIndexed { i, item ->
                 Log.i(methodTag, "  [$i] title='${item.title}', url='${item.url}', posterUrl='${item.posterUrl}'")
             }
-            return items.map { item ->
+            return newSearchResponseList(items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                     this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeadersFull()
+                    this.posterHeaders = runtime.imageHeaders()
                 }
-            }
+            }, items.isNotEmpty())
         } catch (e: Exception) {
             Log.e(methodTag, "Error: ${e.message}")
-            return emptyList()
+            return newSearchResponseList(emptyList(), false)
         }
     }
 
-    override suspend fun searchLazy(query: String): List<com.lagradost.cloudstream3.SearchResponse> {
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         val methodTag = "[$name] [searchLazy]"
         Log.i(methodTag, "START query='$query'")
-        httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = getParser().getSearchUrl(mainUrl, encoded)
-        val doc = httpService.getDocumentNoFallback(url, checkDomainChange = true, rewriteDomain = true) ?: return emptyList()
+        val url = getParser().getSearchUrl(mainUrl, encoded, page)
+        val doc = runtime.document(url, adoptRedirect = true, solveCf = false)
+            ?: return newSearchResponseList(emptyList(), false)
         val items = getParser().parseSearch(doc)
-        return items.map { item ->
+        return newSearchResponseList(items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
                 this.posterUrl = item.posterUrl
-                this.posterHeaders = httpService.getImageHeadersFull()
+                this.posterHeaders = runtime.imageHeaders()
             }
-        }
+        }, items.isNotEmpty())
     }
 
     override suspend fun load(url: String): com.lagradost.cloudstream3.LoadResponse? {
         val methodTag = "[$name] [load]"
         Log.i(methodTag, "START url='$url'")
         try {
-            httpService.ensureInitialized()
-            val html = httpService.getText(url) ?: return null
+            val html = runtime.text(url) ?: return null
             Log.i(methodTag, "=== RAW HTML (first 3000 chars) ===")
             Log.i(methodTag, html.take(3000))
             Log.i(methodTag, "=== END RAW HTML ===")
-            val doc = httpService.getDocument(url, rewriteDomain = true) ?: return null
+            val doc = runtime.document(url) ?: return null
             Log.i(methodTag, "=== Document outerHtml (first 3000 chars) ===")
             val outerHtml = doc.outerHtml()
             Log.i(methodTag, outerHtml.take(3000))
@@ -144,7 +142,7 @@ class Cimawbas : BaseProvider() {
                 val movieDataUrl = data.watchUrl ?: data.url
                 newMovieLoadResponse(data.title, data.url, TvType.Movie, movieDataUrl) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeadersFull()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -163,7 +161,7 @@ class Cimawbas : BaseProvider() {
 
                 newTvSeriesLoadResponse(data.title, data.url, TvType.TvSeries, episodeList) {
                     this.posterUrl = data.posterUrl
-                    this.posterHeaders = httpService.getImageHeadersFull()
+                    this.posterHeaders = runtime.imageHeaders()
                     this.plot = data.plot
                     this.tags = data.tags
                     this.year = data.year
@@ -243,7 +241,7 @@ class Cimawbas : BaseProvider() {
             return false
         }
 
-        val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
+        val doc = runtime.document(data) ?: return false
         if (extractServers(doc)) return true
         if (linksCount > 0) return true
 
@@ -251,7 +249,7 @@ class Cimawbas : BaseProvider() {
         if (playLink != null) {
             val href = playLink.attr("href")
             if (!href.isNullOrBlank()) {
-                val playDoc = httpService.getDocument(href, rewriteDomain = true)
+                val playDoc = runtime.document(href)
                 if (playDoc != null && extractServers(playDoc)) return true
                 if (linksCount > 0) return true
             }
@@ -261,7 +259,7 @@ class Cimawbas : BaseProvider() {
         if (vidMatch != null) {
             val vid = vidMatch.groupValues[1]
             val playUrl = "https://${baseDomain}/play.php?vid=$vid"
-            val playDoc = httpService.getDocument(playUrl, rewriteDomain = true)
+            val playDoc = runtime.document(playUrl)
             if (playDoc != null && extractServers(playDoc)) return true
             if (linksCount > 0) return true
         }

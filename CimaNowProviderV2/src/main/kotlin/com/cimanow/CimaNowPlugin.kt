@@ -18,6 +18,6 @@ class CimaNow : Plugin() {
         // the rest all have extractors here (`UqloadIs` covers uqload.is specifically) and none of them
         // were reachable. Every other provider plugin in the repo already does this; CimaNow's was the
         // one that did not.
-        registerSharedExtractors()
+        registerSharedExtractors(provider.runtime)
     }
 }

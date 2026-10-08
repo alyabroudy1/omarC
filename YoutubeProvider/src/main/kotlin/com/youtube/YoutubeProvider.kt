@@ -9,7 +9,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.youtube.innertube.InnerTubeClient
 import com.youtube.innertube.InnerTubeConfig
 import com.youtube.innertube.InnerTubeParser
@@ -22,7 +22,7 @@ class YoutubeProvider : BaseProvider() {
     override val baseDomain get() = "www.youtube.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return YoutubeParser()
     }
 
@@ -58,7 +58,8 @@ class YoutubeProvider : BaseProvider() {
 
     // ==================== SEARCH ====================
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         Log.d(TAG, "search: query='$query'")
 
         val results = mutableListOf<SearchResponse>()
@@ -78,11 +79,11 @@ class YoutubeProvider : BaseProvider() {
         }
 
         Log.d(TAG, "searchNormal: ${results.size} total results")
-        return results
+        return newSearchResponseList(results, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     // ==================== LOAD ====================

@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import android.util.Base64
 
 data class ChannelData(
@@ -21,7 +21,7 @@ class OhaTvProvider : BaseProvider() {
     override val baseDomain get() = "www.oha.to"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return OhaParser()
     }
 
@@ -84,10 +84,11 @@ class OhaTvProvider : BaseProvider() {
         return newHomePageResponse(homeLists)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        if (page > 1) return newSearchResponseList(emptyList(), false)
         val response = getChannels()
 
-        return response.filter { ch ->
+        return newSearchResponseList(response.filter { ch ->
             val searchTarget = "${ch.name} ${ch.country ?: ""}"
             searchTarget.contains(query, ignoreCase = true)
         }.mapNotNull { ch ->
@@ -109,11 +110,11 @@ class OhaTvProvider : BaseProvider() {
             ) {
                 posterUrl = getCountryFlag(safeCountry)
             }
-        }
+        }, false)
     }
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
-        return searchNormal(query)
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchNormal(query, page)
     }
 
     override suspend fun load(url: String): LoadResponse {

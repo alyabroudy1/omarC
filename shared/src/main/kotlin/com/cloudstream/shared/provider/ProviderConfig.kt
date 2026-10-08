@@ -16,9 +16,6 @@ data class ProviderConfig(
     /** CloudFlare Worker URL for domain sync (optional) */
     val syncWorkerUrl: String? = null,
     
-    /** Custom User-Agent (if null, uses UNIFIED_USER_AGENT) */
-    val userAgent: String? = null,
-    
     /** Whether to enable WebView fallback for CF bypass */
     val webViewEnabled: Boolean = true,
     
@@ -27,12 +24,6 @@ data class ProviderConfig(
     
     /** Trusted domain substrings for private server detection */
     val trustedDomains: List<String> = emptyList(),
-    
-    /** Content validation strings to verify correct domain */
-    val validateWithContent: List<String> = emptyList(),
-    
-    /** Cookie max age in ms (default: 30 minutes) */
-    val cookieMaxAgeMs: Long = 30 * 60 * 1000,
     
     /**
      * HTTP timeout in ms, or null to inherit CloudStream's client defaults (~10 s).
@@ -43,9 +34,6 @@ data class ProviderConfig(
      */
     val requestTimeoutMs: Long? = null,
     
-    /** Video sniff timeout in ms */
-    val videoSniffTimeoutMs: Long = 35_000,
-
     /**
      * Prefer IPv6 DNS resolution to bypass cgNAT/IPv4-reputation blocks.
      *
@@ -64,15 +52,3 @@ data class ProviderConfig(
      */
     val preferIpv4: Boolean = false
 )
-
-/**
- * Unified User-Agent: Single source of truth.
- * 
- * Now dynamically resolved via [com.cloudstream.shared.util.WebConfig].
- * Uses the device's REAL WebView User-Agent to prevent Cloudflare
- * fingerprint mismatch (old Chrome/65 UA vs actual Chrome/131+ engine).
- * 
- * Cloudflare binds cookies to the User-Agent.
- */
-val UNIFIED_USER_AGENT: String
-    get() = com.cloudstream.shared.util.WebConfig.getCachedUserAgent()

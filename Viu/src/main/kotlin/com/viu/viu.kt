@@ -12,14 +12,14 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.cloudstream.shared.provider.BaseProvider
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 
 class Viu : BaseProvider() {
     override val providerName get() = "Viu"
     override val baseDomain get() = "www.viu.com"
     override val githubConfigUrl get() = ""
 
-    override fun getParser(): NewBaseParser {
+    override fun getParser(): BaseParser {
         return ViuParser()
     }
 
@@ -39,6 +39,7 @@ class Viu : BaseProvider() {
     private val deviceId = UUID.randomUUID().toString()
 
     private val baseHeaders = mapOf(
+        // API client, not a browser request (Wave 1, R1 exemption)
         "User-Agent" to "Mozilla/5.0 (Linux; Android 12)",
         "Accept" to "application/json",
         "Referer" to "https://www.viu.com/",

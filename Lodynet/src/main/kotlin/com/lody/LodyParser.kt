@@ -4,10 +4,10 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.WatchServerSelector
 
-class LodyParser : NewBaseParser() {
+class LodyParser : BaseParser() {
 
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/wp-content/themes/Lodynet2020/Api/RequestSearch.php?value=$query"

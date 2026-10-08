@@ -4,10 +4,10 @@ import com.cloudstream.shared.parsing.CssSelector
 import com.cloudstream.shared.parsing.EpisodeConfig
 import com.cloudstream.shared.parsing.LoadPageConfig
 import com.cloudstream.shared.parsing.MainPageConfig
-import com.cloudstream.shared.parsing.NewBaseParser
+import com.cloudstream.shared.parsing.BaseParser
 import com.cloudstream.shared.parsing.WatchServerSelector
 
-class MyCimaCloneParser : NewBaseParser() {
+class MyCimaCloneParser : BaseParser() {
 
     override val mainPageConfig = MainPageConfig(
         container = "div.GridItem",

@@ -1,5 +1,7 @@
 package com.cloudstream.shared.extractors
 
+import com.cloudstream.shared.core.Fingerprint
+import com.cloudstream.shared.core.ProviderRuntime
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -12,7 +14,8 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 
 open class LarozaExtractor(
     override val mainUrl: String,
-    override val name: String
+    override val name: String,
+    private val runtime: ProviderRuntime
 ) : ExtractorApi() {
     override val requiresReferer = true
 
@@ -29,21 +32,15 @@ open class LarozaExtractor(
         Log.d(TAG, "──────────────────────────────────")
         Log.d(TAG, "getUrl called  | name=$name  url=$url  referer=$referer")
 
-        val service = com.cloudstream.shared.service.ProviderHttpServiceHolder.getInstance()
-        if (service == null) {
-            Log.e(TAG, "ProviderHttpService not initialized — cannot bypass CF")
-            return
-        }
-
         val customHeaders = mutableMapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent" to Fingerprint.current().userAgent
         )
         if (referer != null) {
             customHeaders["Referer"] = referer
         }
 
-        Log.d(TAG, "Fetching via httpService (CF-bypass)...")
-        val doc = service.getDocument(url, customHeaders)
+        Log.d(TAG, "Fetching via the runtime (CF-bypass)...")
+        val doc = runtime.document(url, customHeaders, rewrite = false)
         val pageText = doc?.outerHtml() ?: ""
 
         Log.d(TAG, "Page fetched  | length=${pageText.length}  preview=${pageText.take(200)}")
@@ -74,11 +71,8 @@ open class LarozaExtractor(
                 newExtractorLink(source = name, name = name, url = videoUrl, type = linkType) {
                     this.referer = url
                     this.quality = quality
-                    this.headers = mapOf(
-                        "Referer" to url,
-                        "Origin" to mainUrl.trimEnd('/'),
-                        "User-Agent" to customHeaders["User-Agent"]!!
-                    )
+                    this.headers = Fingerprint.current()
+                        .playbackHeaders(url, mainUrl.trimEnd('/'), null)
                 }
             )
         } else {

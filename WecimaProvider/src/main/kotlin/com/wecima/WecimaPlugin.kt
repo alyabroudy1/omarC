@@ -10,7 +10,8 @@ import com.cloudstream.shared.extractors.registerSharedExtractors
 class WecimaPlugin: Plugin() {
     override fun load(context: Context) {
         PluginContext.init(context)
-        registerMainAPI(Wecima())
-        registerSharedExtractors()
+        val api = Wecima()
+        registerMainAPI(api)
+        registerSharedExtractors(api.runtime)
     }
 }
