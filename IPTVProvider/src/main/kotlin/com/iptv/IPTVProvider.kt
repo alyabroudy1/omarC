@@ -13,7 +13,7 @@ class IPTVProvider : BaseProvider() {
 
     override val providerName get() = "IPTV"
     override val baseDomain get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
-    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/mycimaclone.json"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/IPTV.json"
 
 
     override val mainPage = mainPageOf(
@@ -40,7 +40,7 @@ class IPTVProvider : BaseProvider() {
 
     private suspend fun getChannels(): List<M3UChannel> {
         cachedChannels?.let { return it }
-        val content = app.get(baseDomain).text
+        val content = app.get(mainUrl).text
         val channels = parseM3U(content)
         cachedChannels = channels
         return channels
