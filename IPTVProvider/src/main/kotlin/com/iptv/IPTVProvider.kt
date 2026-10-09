@@ -12,11 +12,12 @@ import com.cloudstream.shared.parsing.NewBaseParser
 class IPTVProvider : BaseProvider() {
 
     override val providerName get() = "IPTV"
-    override val baseDomain get() = "airtech35"
-    override val githubConfigUrl get() = ""
+    override val baseDomain get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
+    override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/mycimaclone.json"
+
 
     override val mainPage = mainPageOf(
-        "/arach" to "All Channels"
+        "" to "All Channels"
     )
 
     override fun getParser(): NewBaseParser {
@@ -26,7 +27,7 @@ class IPTVProvider : BaseProvider() {
     override val supportedTypes: Set<TvType> = setOf(TvType.Live, TvType.Movie, TvType.TvSeries)
 
     companion object {
-        private const val M3U_URL = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
+        private const val M3U_URL = baseDomain
     }
 
     data class M3UChannel(
