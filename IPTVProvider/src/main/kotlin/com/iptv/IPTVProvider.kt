@@ -26,10 +26,6 @@ class IPTVProvider : BaseProvider() {
 
     override val supportedTypes: Set<TvType> = setOf(TvType.Live, TvType.Movie, TvType.TvSeries)
 
-    companion object {
-        private const val M3U_URL = baseDomain
-    }
-
     data class M3UChannel(
         val name: String,
         val url: String,
@@ -44,7 +40,7 @@ class IPTVProvider : BaseProvider() {
 
     private suspend fun getChannels(): List<M3UChannel> {
         cachedChannels?.let { return it }
-        val content = app.get(M3U_URL).text
+        val content = app.get(baseDomain).text
         val channels = parseM3U(content)
         cachedChannels = channels
         return channels
