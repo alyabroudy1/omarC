@@ -42,9 +42,6 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Build Plugins
         run: |
           cd $GITHUB_WORKSPACE/src
