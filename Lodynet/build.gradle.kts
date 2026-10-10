@@ -17,8 +17,6 @@ android {
         minSdk = 21
     }
 
-}
-
     buildFeatures {
         buildConfig = true
     }
