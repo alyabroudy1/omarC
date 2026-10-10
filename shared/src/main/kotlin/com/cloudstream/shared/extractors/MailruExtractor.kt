@@ -33,7 +33,13 @@ class MailruExtractor : ExtractorApi() {
         }
 
         val videoKey = videoReq.cookies["video_key"]?.toString().orEmpty()
-        val videoData = AppUtils.tryParseJson<MailRuData>(videoReq.text)
+        val videoData = try {
+            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .readValue(videoReq.text, MailRuData::class.java)
+        } catch (_: Exception) {
+            null
+        }
         if (videoData == null) return
 
         for (video in videoData.videos) {

@@ -6,8 +6,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import java.util.UUID
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import com.lagradost.cloudstream3.utils.AppUtils
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
@@ -254,7 +255,7 @@ class Viu : BaseProvider() {
                 data = mapOf(
                     "ccs" to ccsId,
                     "pid" to productId
-                ).toJson()
+                ).let { jacksonObjectMapper().writeValueAsString(it) }
 
 
                 name = ep.synopsis?.trim() ?: "Episode ${ep.number}"
@@ -291,7 +292,7 @@ class Viu : BaseProvider() {
         println("[VIU-DEBUG] ================= START LOADLINKS =================")
         return try {
 
-            val json = AppUtils.parseJson<Map<String, String>>(data)
+            val json = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(data, object : TypeReference<Map<String, String>>() {})
             val ccsId = json["ccs"] ?: return false.also { println("[VIU-DEBUG] ❌ Error: ccsId is null") }
             val productId = json["pid"] ?: return false.also { println("[VIU-DEBUG] ❌ Error: productId is null") }
 
@@ -318,7 +319,7 @@ class Viu : BaseProvider() {
 
 
 
-            val detailResp = AppUtils.parseJson<ViuDetailResponse>(rawResponse)
+            val detailResp = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(rawResponse, ViuDetailResponse::class.java)
             val currentProduct = detailResp.data?.currentProduct
 
             if (currentProduct == null) {

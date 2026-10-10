@@ -9,6 +9,8 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
 import java.util.Base64
 
 class Tuniflix : BaseProvider() {
@@ -276,7 +278,7 @@ class Tuniflix : BaseProvider() {
 
                         if (jsonResult != null && jsonResult.trim().startsWith("{")) {
                             try {
-                                val data = AppUtils.parseJson<StrpResponse>(jsonResult)
+                                val data = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(jsonResult, StrpResponse::class.java)
 
                                 val linksToAdd = mutableListOf<Pair<String, String>>()
 

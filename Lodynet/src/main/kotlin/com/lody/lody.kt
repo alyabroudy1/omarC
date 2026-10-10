@@ -3,8 +3,6 @@ package com.lagradost.cloudstream3.plugins
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
@@ -73,13 +71,21 @@ class LodyNet : BaseProvider() {
         val response = app.get(url).text
 
         return try {
-            val jsonList = tryParseJson<List<Any>>(response)
+            val mapper = com.fasterxml.jackson.databind.ObjectMapper()
+            val jsonList = try {
+                mapper.readValue(response, object : com.fasterxml.jackson.core.type.TypeReference<List<Any>>() {})
+            } catch (_: Exception) {
+                null
+            }
             if (jsonList == null || jsonList.size < 2) return emptyList()
 
             val rawResults = jsonList[1]
-            val mapper = com.fasterxml.jackson.databind.ObjectMapper()
             val jsonString = mapper.writeValueAsString(rawResults)
-            val results = parseJson<List<SearchResultJson>>(jsonString)
+            val results = try {
+                mapper.readValue(jsonString, object : com.fasterxml.jackson.core.type.TypeReference<List<SearchResultJson>>() {})
+            } catch (_: Exception) {
+                emptyList<SearchResultJson>()
+            }
 
             results.amap { item ->
                 val fullLink = if(item.url.startsWith("http")) item.url else "$mainUrl/${item.url}"

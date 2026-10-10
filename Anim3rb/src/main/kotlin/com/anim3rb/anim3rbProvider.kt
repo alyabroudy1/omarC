@@ -2,7 +2,9 @@ package com.anime3rb
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -273,7 +275,7 @@ class Anim3rbProvider : BaseProvider() {
             }
 
             val json = try {
-                AppUtils.parseJson<Map<String, Any>>(responseBody)
+                jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(responseBody, object : TypeReference<Map<String, Any>>() {})
             } catch (e: Exception) {
                 Log.e(TAG, "livewireSearch: JSON parse error: ${e.message}, body=${responseBody.take(500)}")
                 return emptyList()
@@ -541,7 +543,7 @@ class Anim3rbProvider : BaseProvider() {
                 val scriptMatch = Regex("""var\s+video_sources\s*=\s*(\[[^;]+]);""").find(playerBody)
                 if (scriptMatch != null) {
                     try {
-                        val sources = AppUtils.parseJson<List<Map<String, Any>>>(scriptMatch.groupValues[1])
+                        val sources = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(scriptMatch.groupValues[1], object : TypeReference<List<Map<String, Any>>>() {})
                         Log.i(TAG, "loadLinks: found ${sources.size} video sources via video_sources")
                         for (item in sources) {
                             val src = item["src"]?.toString() ?: item["file"]?.toString()
@@ -566,7 +568,7 @@ class Anim3rbProvider : BaseProvider() {
                     jsonResp?.close()
                     if (rawJson != null) {
                         try {
-                            val sources = AppUtils.parseJson<List<Map<String, Any>>>(rawJson)
+                            val sources = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(rawJson, object : TypeReference<List<Map<String, Any>>>() {})
                             Log.i(TAG, "loadLinks: found ${sources.size} video sources via JSON endpoint")
                             for (item in sources) {
                                 val src = item["src"]?.toString() ?: item["file"]?.toString()

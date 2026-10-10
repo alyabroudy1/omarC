@@ -3,7 +3,9 @@ package com.witanime
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import android.util.Base64
@@ -169,7 +171,7 @@ class WitAnime : BaseProvider() {
                     }
 
                     val episodesList =
-                        AppUtils.parseJson(decodedJson.toString()) as? List<Map<String, Any>>
+                        jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(decodedJson.toString(), object : TypeReference<List<Map<String, Any>>>() {})
                     if (episodesList != null) {
                         episodes = episodesList.mapNotNull { ep ->
                             val epUrl = ep["url"]?.toString() ?: return@mapNotNull null

@@ -1,7 +1,9 @@
 package com.tvgarden
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -26,7 +28,7 @@ class FamelackProvider : BaseProvider() {
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         return try {
             val response = app.get(allChannelsUrl).text
-            val channels = parseJson<List<RawChannel>>(response)
+            val channels = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(response, object : TypeReference<List<RawChannel>>() {})
 
             channels.filter { ch ->
 
@@ -63,10 +65,10 @@ class FamelackProvider : BaseProvider() {
 
             val countriesRes = app.get(countriesMetadataUrl).text
 
-            val countriesMap = parseJson<Map<String, CountryMeta>>(countriesRes)
+            val countriesMap = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(countriesRes, object : TypeReference<Map<String, CountryMeta>>() {})
 
             val channelsRes = app.get(allChannelsUrl).text
-            val allChannels = parseJson<List<RawChannel>>(channelsRes)
+            val allChannels = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(channelsRes, object : TypeReference<List<RawChannel>>() {})
 
             val channelsByCountry = allChannels.groupBy { it.country?.lowercase() }
 

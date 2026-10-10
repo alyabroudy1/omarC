@@ -85,8 +85,13 @@ open class OdnoklassnikiApiExtractor(
         Log.d(TAG, "Trying API: $apiUrl")
         try {
             val apiResponse = app.post(apiUrl, headers = apiHeaders).text
-            Log.d(TAG, "API response: ${apiResponse.take(500)}")
-            val metadata = AppUtils.tryParseJson<VideoPlayerMetadata>(apiResponse)
+            val metadata = try {
+                com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+                    .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                    .readValue(apiResponse, VideoPlayerMetadata::class.java)
+            } catch (_: Exception) {
+                null
+            }
 
             var emitted = 0
 
@@ -158,8 +163,15 @@ open class OdnoklassnikiApiExtractor(
             }
 
         val videosStr = Regex(""""videos":(\[[^]]*])""").find(cleanedText)?.groupValues?.get(1)
-        val videos = videosStr?.let { AppUtils.tryParseJson<List<OkRuVideo>>(it) }
-            ?: return
+        val videos = videosStr?.let {
+            try {
+                com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+                    .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                    .readValue(it, object : com.fasterxml.jackson.core.type.TypeReference<List<OkRuVideo>>() {})
+            } catch (_: Exception) {
+                null
+            }
+        } ?: return
 
         Log.d(TAG, "Embed fallback found ${videos.size} videos")
         for (video in videos) {

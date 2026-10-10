@@ -2,7 +2,9 @@ package com.shahid4u
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.core.type.TypeReference
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import org.jsoup.nodes.Element
@@ -310,7 +312,7 @@ class Shahid4u : BaseProvider() {
             if (jsonStringEncoded.isBlank()) return false
 
             val jsonStringDecoded = jsonStringEncoded.replace("\\/", "/")
-            val servers = parseJson<List<Server>>(jsonStringDecoded)
+            val servers = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(jsonStringDecoded, object : TypeReference<List<Server>>() {})
 
             for (server in servers) {
                 try {

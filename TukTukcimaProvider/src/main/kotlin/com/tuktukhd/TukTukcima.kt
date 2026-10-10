@@ -7,7 +7,8 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.provider.ProviderConfig
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -122,7 +123,7 @@ class TukTukcima : BaseProvider() {
         
         var linksFound = false
         try {
-            val inertia = parseJson<InertiaResponse>(jsonText)
+            val inertia = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(jsonText, InertiaResponse::class.java)
             val streams = inertia.props?.streams?.data
             if (streams != null) {
                 for (stream in streams) {

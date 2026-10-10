@@ -9,7 +9,8 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.getQualityFromName
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.async
@@ -231,7 +232,7 @@ class GessehProvider : BaseProvider() {
                 val encodedJson = java.net.URLDecoder.decode(postMatch.groupValues[1], "UTF-8")
                 val decodedBytes = android.util.Base64.decode(encodedJson, android.util.Base64.DEFAULT)
                 val jsonString = String(decodedBytes, Charsets.UTF_8)
-                val payload = parseJson<GessehPayload>(jsonString)
+                val payload = jacksonObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).readValue(jsonString, GessehPayload::class.java)
                 payload.servers?.let { servers ->
                     for (server in servers) {
                         val sName = server.name ?: continue
