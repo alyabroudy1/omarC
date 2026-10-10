@@ -12,9 +12,12 @@ import com.cloudstream.shared.parsing.NewBaseParser
 class IPTVProvider : BaseProvider() {
 
     override val providerName get() = "IPTV"
-    override val baseDomain get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/IPTVProvider/src/main/kotlin/com/iptv/arach"
+    override val baseDomain get() = "raw.githubusercontent.com"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/IPTV.json"
 
+    companion object {
+        private const val DEFAULT_M3U_URL = "https://raw.githubusercontent.com/airtech35/airtech35/refs/heads/airtech35-patch-1/arach"
+    }
 
     override val mainPage = mainPageOf(
         "" to "All Channels"
@@ -38,9 +41,25 @@ class IPTVProvider : BaseProvider() {
     // ── Cached M3U data ──
     private var cachedChannels: List<M3UChannel>? = null
 
+    private suspend fun getM3uUrl(): String {
+        return try {
+            val res = app.get(githubConfigUrl)
+            if (res.isSuccessful) {
+                val json = org.json.JSONObject(res.text)
+                val domain = json.optString("domain")
+                if (domain.isNotBlank()) domain else DEFAULT_M3U_URL
+            } else {
+                DEFAULT_M3U_URL
+            }
+        } catch (e: Exception) {
+            DEFAULT_M3U_URL
+        }
+    }
+
     private suspend fun getChannels(): List<M3UChannel> {
         cachedChannels?.let { return it }
-        val content = app.get(mainUrl).text
+        val targetUrl = getM3uUrl()
+        val content = app.get(targetUrl).text
         val channels = parseM3U(content)
         cachedChannels = channels
         return channels
