@@ -1,5 +1,7 @@
 
 
+version = 1
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -40,7 +42,12 @@ dependencies {
     implementation("androidx.room:room-ktx:2.8.0")
 
     implementation("androidx.preference:preference-ktx:1.2.1")
+}
 
-
-
+cloudstream {
+    authors = listOf("omarflex")
+    language = "ar"
+    status = 3
+    tvTypes = listOf("Movie", "TvSeries", "Live")
+    iconUrl = "https://www.google.com/s2/favicons?domain=replaymatch.com&sz=%size%"
 }

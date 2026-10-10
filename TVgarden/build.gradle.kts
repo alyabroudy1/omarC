@@ -1,10 +1,10 @@
 
+version = 1
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
 }
-
-
 
 android {
     namespace = "com.tvgarden"
@@ -28,6 +28,12 @@ dependencies {
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.room:room-ktx:2.8.0")
     testImplementation("junit:junit:4.13.2")
+}
 
-
+cloudstream {
+    authors = listOf("omarflex")
+    language = "en"
+    status = 3
+    tvTypes = listOf("Live", "Movie", "TvSeries")
+    iconUrl = "https://famelack.com/assets/favicons/favicon-512.png"
 }

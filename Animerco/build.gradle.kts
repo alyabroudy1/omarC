@@ -1,4 +1,6 @@
 
+version = 1
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
@@ -18,4 +20,12 @@ android.sourceSets {
 
 dependencies {
     val cloudstream by configurations
+}
+
+cloudstream {
+    authors = listOf("omarflex")
+    language = "ar"
+    status = 3
+    tvTypes = listOf("Anime")
+    iconUrl = "https://www.google.com/s2/favicons?domain=animerco.com&sz=%size%"
 }

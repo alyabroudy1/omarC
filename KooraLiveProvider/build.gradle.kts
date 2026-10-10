@@ -1,4 +1,4 @@
-version = 2
+version = 3
 
 // Include shared source directory
 android {
@@ -17,6 +17,6 @@ cloudstream {
     authors = listOf("omarflex")
     language = "ar"
     status = 3  // Beta
-    tvTypes = listOf("Live")
+    tvTypes = listOf("Live", "Movie", "TvSeries")
     iconUrl = "https://www.google.com/s2/favicons?domain=koora-livehd7.com&sz=%size%"
 }

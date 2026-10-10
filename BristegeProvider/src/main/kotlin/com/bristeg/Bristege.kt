@@ -16,8 +16,24 @@ class Bristege : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "/newvideos.php" to "مسلسلات برستيج",
-        "/cat44.php?cat=movies2-2224" to "افلام",
-        "/cat44.php?cat=ramdan2026" to "مسلسلات رمضان 2026",
+        "/cat03.php?cat=ramdan2026" to "مسلسلات رمضان 2026",
+        "/cat03.php?cat=prss7-2025" to "مسلسلات برستيج الحصرية",
+        "/cat03.php?cat=eg8-2025" to "مسلسلات مصرية",
+        "/cat03.php?cat=syy5-2025" to "مسلسلات شامية",
+        "/cat03.php?cat=5a7-2024" to "مسلسلات خليجية",
+        "/cat03.php?cat=arab8-2025" to "مسلسلات عربية",
+        "/cat03.php?cat=ty9-2025" to "مسلسلات تركية",
+        "/cat03.php?cat=english1-2025" to "مسلسلات اجنبية",
+        "/cat03.php?cat=2ind2-2025" to "مسلسلات هندية",
+        "/cat03.php?cat=asia" to "مسلسلات اسيوية",
+        "/cat03.php?cat=anmei" to "مسلسلات انمي",
+        "/cat03.php?cat=movies2-2224" to "افلام",
+        "/cat03.php?cat=aflam02-2024" to "افلام عربية",
+        "/cat03.php?cat=aflamajnby3-2024" to "افلام اجنبية",
+        "/cat03.php?cat=turkish3-movies2024" to "افلام تركية",
+        "/cat03.php?cat=hindi1-moviess" to "افلام هندية",
+        "/cat03.php?cat=anime1" to "افلام انمي",
+        "/cat03.php?cat=tv4-2024" to "برامج ومنوعات تلفزيونية",
     )
 
     override fun getParser(): NewBaseParser {
