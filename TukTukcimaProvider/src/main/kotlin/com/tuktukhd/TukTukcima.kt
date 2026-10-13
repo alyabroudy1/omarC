@@ -145,10 +145,6 @@ class TukTukcima : BaseProvider() {
             com.lagradost.api.Log.d(methodTag, "Iframe: ${iframeUrl.take(80)}")
             if (isMirrorPlayer(iframeUrl)) {
                 for ((mirrorUrl, label) in resolveIframeStreams(iframeUrl, data)) {
-                    if (isDeadHost(mirrorUrl)) {
-                        com.lagradost.api.Log.d(methodTag, "Skipping dead host: ${mirrorUrl.take(80)}")
-                        continue
-                    }
                     try {
                         com.lagradost.api.Log.d(methodTag, "Mirror [$label]: ${mirrorUrl.take(80)}")
                         loadExtractor(mirrorUrl, iframeUrl, subtitleCallback, ::countingCallback)
@@ -156,7 +152,7 @@ class TukTukcima : BaseProvider() {
                         com.lagradost.api.Log.d(methodTag, "Extractor failed for $mirrorUrl: ${e.message}")
                     }
                 }
-            } else if (!isTrailerOrJunk(iframeUrl) && !isDeadHost(iframeUrl)) {
+            } else if (!isTrailerOrJunk(iframeUrl)) {
                 try {
                     com.lagradost.api.Log.d(methodTag, "Direct embed iframe, extracting as-is")
                     loadExtractor(iframeUrl, data, subtitleCallback, ::countingCallback)
@@ -182,7 +178,7 @@ class TukTukcima : BaseProvider() {
             if (dlUrl.isNullOrBlank() || isTrailerOrJunk(dlUrl) || isThemeRedirect(dlUrl)) continue
             if (isMirrorDownloadPage(dlUrl)) {
                 for ((mirrorUrl, label) in resolveDownloadMirrors(dlUrl, data)) {
-                    if (isTrailerOrJunk(mirrorUrl) || isDeadHost(mirrorUrl)) continue
+                    if (isTrailerOrJunk(mirrorUrl)) continue
                     try {
                         com.lagradost.api.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
                         loadExtractor(mirrorUrl, dlUrl, subtitleCallback, ::countingCallback)
@@ -191,10 +187,6 @@ class TukTukcima : BaseProvider() {
                     }
                 }
             } else {
-                if (isDeadHost(dlUrl)) {
-                    com.lagradost.api.Log.d(methodTag, "Skipping dead host: ${dlUrl.take(80)}")
-                    continue
-                }
                 try {
                     com.lagradost.api.Log.d(methodTag, "Direct download link: ${dlUrl.take(80)}")
                     loadExtractor(dlUrl, data, subtitleCallback, ::countingCallback)
@@ -229,19 +221,6 @@ class TukTukcima : BaseProvider() {
     private fun isTrailerOrJunk(url: String): Boolean {
         val lower = url.lowercase()
         return lower.contains("youtube.com") || lower.contains("youtu.be")
-    }
-
-    /**
-     * Hosts that can never yield a playable stream: files deleted host-side
-     * (krakenfiles "File not found") or premium download lockers with no
-     * player (1fichier/nitroflare). Skipped before extraction so a bogus
-     * entry can never surface as an unplayable "video".
-     */
-    private fun isDeadHost(url: String): Boolean {
-        val lower = url.lowercase()
-        return lower.contains("krakenfiles.com")
-            || lower.contains("1fichier.com")
-            || lower.contains("nitroflare.com")
     }
 
     private fun decodeCrypt(crypt: String): String? {
