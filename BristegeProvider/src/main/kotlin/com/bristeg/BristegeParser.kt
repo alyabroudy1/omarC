@@ -16,26 +16,30 @@ class BristegeParser : NewBaseParser() {
     //                              pgh-featured-grid / pgh-series-grid > li
     //  - search  (#prs-results)  : ul.prs-grid > li
     //  - series  (#pds-detail)   : article.pds-episode
+    //  - movies  (#pmc-movies)   : .pmc-results-grid article.pmc-card
+    //    NOTE: movie cards use RELATIVE img src ("/uploads/...") -> resolved via abs:src.
     override val mainPageConfig = MainPageConfig(
         container = "article.pln-card, ul.pcg-episodes-grid > li, ul.pcg-featured-grid > li, " +
                 "ul.pcg-series-grid > li, ul.pgh-latest-grid > li, ul.pgh-category-grid > li, " +
                 "ul.pgh-featured-grid > li, ul.pgh-series-grid > li, ul.prs-grid > li, " +
-                "article.pds-episode, article.prs-card",
+                "article.pds-episode, article.prs-card, " +
+                ".pmc-results-grid article, article.pmc-card",
         title = CssSelector(
             "div.pln-caption h3 a, div.caption h2 a, div.caption h3 a, " +
-                    "div.prs-caption h3 a, div.pds-caption h4 a, h3.pgh-simple-title, " +
+                    "div.prs-caption h3 a, div.pds-caption h4 a, div.pmc-caption h3 a, " +
+                    "h3.pgh-simple-title, " +
                     ".pgh-series-name, .pcg-series-name, a.pcg-series-card, a.pgh-series-card",
             "title, text"
         ),
         url = CssSelector(
             "div.pln-caption h3 a, div.caption h2 a, div.caption h3 a, " +
-                    "div.prs-caption h3 a, div.pds-caption h4 a, " +
+                    "div.prs-caption h3 a, div.pds-caption h4 a, div.pmc-caption h3 a, " +
                     "a.pcg-series-card, a.pgh-series-card, a.pgh-simple-card, " +
-                    "a.prs-image, a.pln-picture, a.pds-thumb, " +
+                    "a.prs-image, a.pln-picture, a.pds-thumb, a.pmc-photo, a.pmc-detail, " +
                     "a[href*=\"watch.php\"], a[href*=\"series1.php\"], a[href*=\"view-serie.php\"]",
             "abs:href, href"
         ),
-        poster = CssSelector("img", "src, data-src, data-echo, data-original")
+        poster = CssSelector("img", "abs:src, abs:data-src, src, data-src, data-echo, data-original")
     )
 
     override val loadPageConfig = LoadPageConfig(
@@ -79,7 +83,11 @@ class BristegeParser : NewBaseParser() {
         val viaConfig = super.parseMainPage(doc)
         if (viaConfig.isNotEmpty()) {
             return viaConfig.map {
-                it.copy(posterUrl = cleanPosterUrl(it.posterUrl), isMovie = !isSeries(it.title, it.url, null))
+                it.copy(
+                    posterUrl = cleanPosterUrl(resolveUrl(doc.baseUri(), it.posterUrl)),
+                    url = resolveUrl(doc.baseUri(), it.url) ?: it.url,
+                    isMovie = !isSeries(it.title, it.url, null)
+                )
             }
         }
         // Fallback: generic link scan (dedup by URL)
@@ -90,7 +98,11 @@ class BristegeParser : NewBaseParser() {
         val items = super.parseSearch(doc)
         if (items.isNotEmpty()) {
             return items.map {
-                it.copy(posterUrl = cleanPosterUrl(it.posterUrl), isMovie = !isSeries(it.title, it.url, null))
+                it.copy(
+                    posterUrl = cleanPosterUrl(resolveUrl(doc.baseUri(), it.posterUrl)),
+                    url = resolveUrl(doc.baseUri(), it.url) ?: it.url,
+                    isMovie = !isSeries(it.title, it.url, null)
+                )
             }
         }
         return scanListingLinks(doc)
@@ -110,12 +122,13 @@ class BristegeParser : NewBaseParser() {
 
             // Nearest card scope for title/poster lookup
             val scope: Element = a.closest(
-                "article, li, div.thumbnail, div.pds-episode, div.pln-caption, div.caption, div.prs-caption, div.pds-caption"
+                "article, li, div.thumbnail, div.pds-episode, div.pln-caption, div.caption, div.prs-caption, div.pds-caption, div.pmc-caption"
             ) ?: a.parent() ?: continue
 
             var title = scope.selectFirst(
                 "div.pln-caption h3 a, div.caption h2 a, div.caption h3 a, " +
-                        "div.prs-caption h3 a, div.pds-caption h4 a, h3.pgh-simple-title, " +
+                        "div.prs-caption h3 a, div.pds-caption h4 a, div.pmc-caption h3 a, " +
+                        "h3.pgh-simple-title, " +
                         ".pgh-series-name, .pcg-series-name"
             )?.let { it.attr("title").ifBlank { it.text() } }
                 ?: a.attr("title").ifBlank { a.text() }
@@ -126,15 +139,17 @@ class BristegeParser : NewBaseParser() {
             if (scope.hasClass("pagination") || a.hasClass("pcg-view-all")) continue
 
             val poster = scope.selectFirst("img")?.let {
-                it.attr("src").ifBlank {
-                    it.attr("data-src").ifBlank { it.attr("data-echo") }
+                it.attr("abs:src").ifBlank {
+                    it.attr("src").ifBlank {
+                        it.attr("data-src").ifBlank { it.attr("data-echo") }
+                    }
                 }
             }?.trim()
 
             seen[url] = ParserInterface.ParsedItem(
                 title = title,
                 url = url,
-                posterUrl = cleanPosterUrl(poster),
+                posterUrl = cleanPosterUrl(resolveUrl(doc.baseUri(), poster)),
                 isMovie = !isSeries(title, url, null)
             )
         }
@@ -150,11 +165,18 @@ class BristegeParser : NewBaseParser() {
             ?: doc.title()?.trim()
             ?: return null
 
-        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
-            ?: doc.selectFirst(".pwu-poster-image")?.attr("src")?.trim()
-            ?: doc.selectFirst(".pds-art img")?.attr("src")?.trim()
-            ?: doc.selectFirst(".pva-poster-picture img")?.attr("src")?.trim()
+        val posterRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+            ?: doc.selectFirst(".pwu-poster-image")?.attr("abs:src")?.ifBlank {
+                doc.selectFirst(".pwu-poster-image")?.attr("src")
+            }?.trim()
+            ?: doc.selectFirst(".pds-art img")?.attr("abs:src")?.ifBlank {
+                doc.selectFirst(".pds-art img")?.attr("src")
+            }?.trim()
+            ?: doc.selectFirst(".pva-poster-picture img")?.attr("abs:src")?.ifBlank {
+                doc.selectFirst(".pva-poster-picture img")?.attr("src")
+            }?.trim()
             ?: ""
+        val poster = resolveUrl(doc.baseUri(), posterRaw) ?: posterRaw
 
         var plot: String? = doc.selectFirst(".pds-description")?.text()?.trim()
             ?: doc.select(".pwa-article p, .pwr-description p").eachText()
@@ -379,5 +401,21 @@ class BristegeParser : NewBaseParser() {
         if (u.startsWith("//")) u = "https:$u"
 
         return u
+    }
+
+    /**
+     * Resolves a possibly-relative URL against the document's base URI.
+     * Movie cards (#pmc-movies) use root-relative posters ("/uploads/...").
+     */
+    private fun resolveUrl(baseUri: String?, url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val u = url.trim()
+        if (u.startsWith("http") || u.startsWith("//")) return u
+        if (baseUri.isNullOrBlank()) return u
+        return try {
+            java.net.URL(java.net.URL(baseUri), u).toString()
+        } catch (e: Exception) {
+            u
+        }
     }
 }

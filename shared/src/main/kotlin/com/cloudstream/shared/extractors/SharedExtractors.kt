@@ -12,6 +12,10 @@ class UqloadIs : Uqload() {
     override var mainUrl = "https://uqload.is"
 }
 
+class UqloadVc : Uqload() {
+    override var mainUrl = "https://uqload.vc"
+}
+
 /**
  * An extension function to easily register all shared extractors at once
  * inside the respective Provider's Plugin.kt file.
@@ -43,7 +47,10 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ByseExtractor("byseztajaos.com", "Byseztajaos"))
     registerExtractorAPI(ByseExtractor("byseztajos.com", "Byseztajos"))
     registerExtractorAPI(ByseExtractor("bysetayico.com", "Bysetayico"))
-    
+    // Byse clones seen on EgyDead (same /e/ + api/videos AES-GCM backend)
+    registerExtractorAPI(ByseExtractor("bysekoze.com", "Bysekoze"))
+    registerExtractorAPI(ByseExtractor("byseraguci.com", "Byseraguci"))
+
     // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
     registerExtractorAPI(EarnVidsExtractor("dingtezuni.com"))
@@ -51,6 +58,12 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(EarnVidsExtractor("govid.live", "GoVid"))
     registerExtractorAPI(EarnVidsExtractor("1vid1shar.space", "Vid1Shar"))
     registerExtractorAPI(EarnVidsExtractor("mycima.page", "MyCima"))
+    // EarnVids/VidHide-family clones seen on EgyDead (same eval-packed jwplayer)
+    registerExtractorAPI(EarnVidsExtractor("vidhidevip.com", "VidhideVip"))
+    registerExtractorAPI(EarnVidsExtractor("morencius.com", "Morencius"))
+    registerExtractorAPI(EarnVidsExtractor("rubyvidhub.com", "Rubyvidhub"))
+    registerExtractorAPI(EarnVidsExtractor("streamruby.com", "StreamRuby"))
+    registerExtractorAPI(EarnVidsExtractor("stmruby.com", "StmRuby"))
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }
@@ -64,6 +77,10 @@ fun Plugin.registerSharedExtractors() {
 
     // Uqload and proxies (built-in covers uqload.com / uqload.co)
     registerExtractorAPI(UqloadIs())
+    registerExtractorAPI(UqloadVc())
+
+    // Vidara (vidaraa.cc /e/ embeds -> POST /api/stream -> m3u8)
+    registerExtractorAPI(VidaraExtractor())
 
     // Luluvid
     registerExtractorAPI(LuluvidExtractor())
