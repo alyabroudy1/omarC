@@ -50,6 +50,49 @@ class TukTukcima : BaseProvider() {
         return TukTukcimaParser()
     }
 
+    override fun getSeasonName(seasonNum: Int): String = "الموسم $seasonNum"
+
+    /**
+     * Laroza-style series resolution: opening an episode (or a season page)
+     * swaps the whole context to the series-root page (breadcrumb
+     * /series/<slug>/), so the user gets the series title/poster/plot.
+     * Episode aggregation still runs against the original page document
+     * (which carries the .allseasonss season links the root page lacks),
+     * so no functionality is lost — see BaseProvider.load().
+     */
+    override suspend fun resolveParentSeries(
+        data: ParserInterface.ParsedLoadData,
+        methodTag: String
+    ): ParserInterface.ParsedLoadData {
+        val parentUrl = data.parentSeriesUrl?.trim().orEmpty()
+        if (parentUrl.isBlank() || parentUrl == data.url || !isSeriesRootUrl(parentUrl)) {
+            return super.resolveParentSeries(data, methodTag)
+        }
+        // Don't swap a series root onto itself.
+        if (isSeriesRootUrl(data.url)) return data
+        try {
+            val parentDoc = httpService.getDocument(parentUrl, rewriteDomain = true)
+            val parentData = parentDoc?.let { getParser().parseLoadPageData(it, parentUrl) }
+            if (parentData != null && !parentData.isMovie) {
+                com.lagradost.api.Log.d(methodTag, "Swapped episode context to series root: $parentUrl")
+                return parentData
+            }
+        } catch (e: Exception) {
+            com.lagradost.api.Log.e(methodTag, "Parent series swap failed: ${e.message}")
+        }
+        return data
+    }
+
+    /**
+     * Series-root URLs look like /series/<slug>/ where the slug is NOT a
+     * season (season slugs contain "الموسم", URL-encoded on the wire).
+     */
+    private fun isSeriesRootUrl(url: String): Boolean {
+        if (!url.contains("/series/")) return false
+        val decoded = try { java.net.URLDecoder.decode(url, "UTF-8") } catch (_: Exception) { url }
+        return !decoded.contains("الموسم") && !decoded.contains("موسم")
+    }
+
     override suspend fun fetchExtraEpisodes(
         doc: Document,
         url: String,

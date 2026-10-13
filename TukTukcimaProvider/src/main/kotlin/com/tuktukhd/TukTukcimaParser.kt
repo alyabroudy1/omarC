@@ -25,7 +25,11 @@ class TukTukcimaParser : NewBaseParser() {
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector(query = "h1.post-title a, h1", attr = "text"),
         poster = CssSelector(query = ".MainSingle .left .image img", attr = "src"),
-        plot = CssSelector(query = ".story p", attr = "text")
+        plot = CssSelector(query = ".story p", attr = "text"),
+        // Breadcrumb series-root link (/series/<slug>/). Comes before the
+        // season link in document order; season links are filtered out in
+        // TukTukcima.resolveParentSeries via URL decoding.
+        parentSeriesUrl = CssSelector(query = ".breadcrumb a[href*='/series/']", attr = "abs:href, href")
     )
 
     override val episodeConfig = EpisodeConfig(
@@ -97,6 +101,14 @@ class TukTukcimaParser : NewBaseParser() {
             parseEpisodes(doc, 1).takeIf { it.isNotEmpty() }
         } else null
 
+        // Series-root breadcrumb (/series/<slug>/). First match in document
+        // order is the series root (category + season links don't match the
+        // '/series/' substring the same way); season links are filtered out
+        // in TukTukcima.resolveParentSeries via URL decoding.
+        val parentSeriesUrl = doc.select(".breadcrumb a[href*='/series/']")
+            .map { it.attr("abs:href").ifBlank { it.attr("href") }.trim() }
+            .firstOrNull { it.isNotBlank() }
+
         return ParserInterface.ParsedLoadData(
             title = cleanTitle,
             url = url,
@@ -105,7 +117,8 @@ class TukTukcimaParser : NewBaseParser() {
             year = year,
             type = type,
             watchUrl = url,
-            episodes = episodes
+            episodes = episodes,
+            parentSeriesUrl = parentSeriesUrl
         )
     }
 
