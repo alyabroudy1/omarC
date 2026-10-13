@@ -2,13 +2,10 @@ package com.cimaleek
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 import com.lagradost.api.Log
 import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
-import com.cloudstream.shared.extractors.SnifferSelector
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -292,217 +289,14 @@ class CimaLeek : BaseProvider() {
         }
     }
 
-    /**
-     * Extracts the video URL directly from known embed hosts using httpService
-     * (with Cloudflare bypass). Returns true if a video link was found.
-     */
-    private suspend fun extractEmbedUrl(
-        embedUrl: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val tag = "[CimaLeek] [DirectEmbed]"
-        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-        val baseHeaders = mapOf("User-Agent" to ua, "Referer" to referer)
-
-        // ── MixDrop ──
-        if (embedUrl.contains("mixdrop")) {
-            val html = httpService.getText(embedUrl, baseHeaders, rewriteDomain = false) ?: return false
-            val unpacked = getAndUnpack(html)
-            val link = Regex("""wurl.*?=.*?"(.*?)";""").find(unpacked)?.groupValues?.get(1) ?: return false
-            callback(newExtractorLink("MixDrop", "MixDrop", httpsify(link)) {
-                this.referer = embedUrl; this.quality = Qualities.Unknown.value
-            })
-            Log.d(tag, "MixDrop OK")
-            return true
-        }
-
-        // ── DoodStream (ds2play, ds2video) ──
-        if (embedUrl.contains("ds2play") || embedUrl.contains("ds2video")) {
-            val page = httpService.getText(embedUrl.replace("/d/", "/e/"), baseHeaders, rewriteDomain = false) ?: return false
-            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
-            val md5Path = Regex("/pass_md5/[^']*").find(page)?.value ?: return false
-            val md5 = host + md5Path
-            val token = md5.substringAfterLast("/")
-            val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-            val hash = buildString { repeat(10) { append(alphabet.random()) } }
-            val trueUrl = httpService.getText(md5, baseHeaders, rewriteDomain = false) + hash + "?token=$token"
-            val quality = Regex("\\d{3,4}p").find(page.substringAfter("<title>").substringBefore("</title>"))?.value
-            callback(newExtractorLink("DoodStream", "DoodStream", trueUrl) {
-                this.referer = "$host/"; this.quality = getQualityFromName(quality)
-            })
-            Log.d(tag, "DoodStream OK")
-            return true
-        }
-
-        // ── Krakenfiles ──
-        if (embedUrl.contains("krakenfiles")) {
-            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
-            val id = Regex("/(?:view|embed-video)/([\\da-zA-Z]+)").find(embedUrl)?.groupValues?.get(1) ?: return false
-            val html = httpService.getText("$host/embed-video/$id", baseHeaders, rewriteDomain = false) ?: return false
-            val link = Jsoup.parse(html, embedUrl).selectFirst("source")?.attr("src") ?: return false
-            callback(newExtractorLink("Krakenfiles", "Krakenfiles", httpsify(link)))
-            Log.d(tag, "Krakenfiles OK")
-            return true
-        }
-
-        // ── LuluStream (luluvdo, lulustream, kinoger.pw) ──
-        if (embedUrl.contains("luluvdo") || embedUrl.contains("lulustream") || embedUrl.contains("kinoger.pw")) {
-            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
-            val filecode = embedUrl.substringAfterLast("/")
-            val html = httpService.postText("$host/dl", mapOf(
-                "op" to "embed", "file_code" to filecode, "auto" to "1", "referer" to referer
-            ), referer = referer, headers = baseHeaders) ?: return false
-            val script = Jsoup.parse(html, "$host/dl").selectFirst("script:containsData(vplayer)")?.data() ?: return false
-            val link = Regex("file:\"(.*)\"").find(script)?.groupValues?.get(1) ?: return false
-            callback(newExtractorLink("LuluStream", "LuluStream", link) {
-                this.referer = host; this.quality = Qualities.P1080.value
-            })
-            Log.d(tag, "LuluStream OK")
-            return true
-        }
-
-        // ── Filelions / VidHidePro ──
-        if (embedUrl.contains("filelions") || embedUrl.contains("vidhide")) {
-            val host = java.net.URI(embedUrl).let { "${it.scheme}://${it.host}" }
-            val embedPage = when {
-                embedUrl.contains("/d/") -> embedUrl.replace("/d/", "/v/")
-                embedUrl.contains("/download/") -> embedUrl.replace("/download/", "/v/")
-                embedUrl.contains("/file/") -> embedUrl.replace("/file/", "/v/")
-                else -> embedUrl.replace("/f/", "/v/")
-            }
-            val html = httpService.getText(embedPage, baseHeaders, rewriteDomain = false) ?: return false
-            val script = if (!getPacked(html).isNullOrEmpty()) {
-                var r = getAndUnpack(html); if (r.contains("var links")) r = r.substringAfter("var links"); r
-            } else {
-                Jsoup.parse(html, embedPage).selectFirst("script:containsData(sources:)")?.data()
-            } ?: return false
-            val vidHeaders = mapOf(
-                "Sec-Fetch-Dest" to "empty", "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "cross-site", "Origin" to host, "User-Agent" to ua
-            )
-            var found = false
-            Regex(":\\s*\"(.*?m3u8.*?)\"").findAll(script).forEach { m ->
-                val videoUrl = m.groupValues[1]
-                val absoluteUrl = if (videoUrl.startsWith("http")) videoUrl else "$host/$videoUrl"
-                generateM3u8("VidHidePro", absoluteUrl, referer = "$host/", headers = vidHeaders).forEach(callback)
-                found = true
-            }
-            if (found) Log.d(tag, "Filelions OK")
-            return found
-        }
-
-        return false
-    }
-
-    /**
-     * Fetches a cswru/vid872 wrapper page (bypassing CS3 URL rewriting with
-     * rewriteDomain=false), extracts the iframe or AJAX redirect URL, and
-     * extracts the video URL directly via httpService (with Cloudflare bypass).
-     * Falls back to loadExtractor for unknown hosts.
-     *
-     * @return The resolved (iframe/redirect) URL for sniffer fallback, or null.
-     */
-    private suspend fun handleCswruWrapper(
-        url: String,
-        referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): String? {
-        val methodTag = "[CimaLeek] [CswruWrapper]"
-        try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to referer
-            )
-
-            Log.d(methodTag, "Fetching wrapper: ${url.take(100)}")
-
-            val html = httpService.getText(url, headers, rewriteDomain = false)
-            if (html.isNullOrBlank()) {
-                Log.w(methodTag, "Empty response")
-                return null
-            }
-
-            val doc = Jsoup.parse(html, url)
-
-            // 1) Find iframe (same selectors as CswruExtractor)
-            val iframeSrc = doc.selectFirst("iframe#embedr")?.let {
-                val src = it.attr("src")
-                if (src.startsWith("http")) src else it.absUrl("src")
-            } ?: doc.selectFirst("iframe")?.let {
-                val src = it.attr("src")
-                if (src.startsWith("http")) src else it.absUrl("src")
-            }
-
-            if (!iframeSrc.isNullOrBlank()) {
-                Log.d(methodTag, "Found iframe: $iframeSrc")
-
-                var innerLinks = 0
-                val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
-
-                // 1st: try built-in CS3 extractors (loadExtractor)
-                loadExtractor(iframeSrc, url, subtitleCallback, trackingCb)
-
-                // 2nd: if extractors found nothing, try httpService direct fallback
-                if (innerLinks == 0) {
-                    extractEmbedUrl(iframeSrc, url, trackingCb)
-                }
-
-                Log.d(methodTag, "Phase2 produced $innerLinks links from iframe")
-                return iframeSrc
-            }
-
-            // 2) AJAX redirect data block
-            val redirectLink = Regex(""""link"\s*:\s*"([^"]+)"""").find(html)
-                ?.groupValues?.get(1)?.replace("\\/", "/")
-            if (!redirectLink.isNullOrBlank()) {
-                val absoluteRedirect = if (redirectLink.startsWith("http")) redirectLink else {
-                    val uri = java.net.URI(url)
-                    "${uri.scheme}://${uri.host}$redirectLink"
-                }
-                Log.d(methodTag, "Found AJAX redirect: $absoluteRedirect")
-
-                // Follow redirect to get final embed URL
-                val redirectHtml = httpService.getText(absoluteRedirect, headers, rewriteDomain = false)
-                val finalUrl = if (!redirectHtml.isNullOrBlank()) {
-                    Regex("""(https?://[^\s"']+)""").find(redirectHtml)?.groupValues?.get(1) ?: absoluteRedirect
-                } else {
-                    absoluteRedirect
-                }
-
-                var innerLinks = 0
-                val trackingCb: (ExtractorLink) -> Unit = { link -> innerLinks++; callback(link) }
-
-                // 1st: try built-in CS3 extractors (loadExtractor)
-                loadExtractor(finalUrl, url, subtitleCallback, trackingCb)
-
-                // 2nd: if extractors found nothing, try httpService direct fallback
-                if (innerLinks == 0) {
-                    extractEmbedUrl(finalUrl, url, trackingCb)
-                }
-
-                Log.d(methodTag, "Phase2 produced $innerLinks links from redirect")
-                return absoluteRedirect
-            }
-
-            Log.w(methodTag, "No iframe or redirect found (${html.length} chars)")
-            return null
-        } catch (e: Exception) {
-            Log.w(methodTag, "Error: ${e.javaClass.simpleName}: ${e.message}")
-            return null
-        }
-    }
-
     // ──────────────────────────────────────────────────────────────────────────────
-    // 4-phase loadLinks (mirrors Laroza / shared BaseProvider pattern):
+    // loadLinks: extract watch-server EMBED URLs, hand each to the standard
+    // CloudStream extractor system (loadExtractor). No custom video sniffing
+    // here — unsupported hosts fall through to the shared sniffer fallback
+    // inside the extraction system.
     //
-    //   Phase 1 – Resolve (decrypt) all server URLs in parallel
-    //   Phase 2 – Try standard extractors on EVERY resolved URL in parallel
-    //   Phase 3 – Deliver all found links from Phase 2
-    //   Phase 4 – Sniffer fallback: try servers ONE-BY-ONE sequentially
-    //
-    // Logging is verbose so each phase can be traced in logcat.
+    //   Watch page -> .lalaplay_player_option servers -> lalaplayer API
+    //   -> V1/V2 decrypt strategies -> embed URL -> loadExtractor
     // ──────────────────────────────────────────────────────────────────────────────
     override suspend fun loadLinks(
         data: String,
@@ -516,22 +310,19 @@ class CimaLeek : BaseProvider() {
         httpService.ensureInitialized()
         val userAgent = httpService.userAgent
 
-        // ====================================================================
-        // PHASE 0 – Fetch watch page and parse metadata (ver, postId, servers)
-        // ====================================================================
+        // PHASE 0 – Fetch watch page (getDocument owns the CF solve + cookies
+        // the lalaplayer API calls need) and parse metadata + servers.
         Log.i(methodTag, "PHASE 0: Fetching watch page...")
         val watchUrl = if (data.endsWith("/watch/")) data else {
             if (data.endsWith("/")) "${data}watch/" else "$data/watch/"
         }
-        // NOTE: getDocument (not getText) — it owns the Cloudflare solve and
-        // stores clearance cookies, which the lalaplayer API calls below need.
-        // A raw getText returns the CF challenge page here ("Just a moment").
         val doc = httpService.getDocument(watchUrl, rewriteDomain = true)
         if (doc == null || doc.body().text().isBlank()) {
             Log.e(methodTag, "PHASE 0: Empty watch page document")
             return false
         }
         val html = doc.html()
+
         val ver = Regex(""""ver"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
         val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)
             ?: Regex(""""post_id"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
@@ -552,11 +343,8 @@ class CimaLeek : BaseProvider() {
             postId = postId,
             ver = ver
         )
-        Log.d(methodTag, "PHASE 0: postLinkPathLength=${metadata.postLinkPathLength}, watchPathLength=${metadata.watchPathLength}")
 
-        // ====================================================================
-        // PHASE 1 – Call API + decrypt for every server (all in parallel)
-        // ====================================================================
+        // PHASE 1 – Resolve (decrypt) all server URLs in parallel.
         Log.i(methodTag, "PHASE 1: Resolving ${serverElements.size} servers...")
 
         data class Resolved(val name: String, val url: String, val idx: Int)
@@ -626,153 +414,28 @@ class CimaLeek : BaseProvider() {
         }
 
         Log.i(methodTag, "PHASE 1 done: ${resolved.size}/${serverElements.size} resolved")
-        if (resolved.isEmpty()) {
-            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} resolved via native strategies — falling back to WebView sniffing on watch page")
-            return sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)
-        }
+        if (resolved.isEmpty()) return false
 
-        // ====================================================================
-        // PHASE 2 – Pipe ALL resolved embed URLs through loadExtractor in
-        //           parallel (standard CloudStream extractor system).
-        //           Collect links AND track which URLs failed extraction.
-        // ====================================================================
-        Log.i(methodTag, "PHASE 2: Piping ${resolved.size} embed URLs through extractors in parallel...")
-
-        data class Phase2Result(
-            val name: String,
-            val idx: Int,
-            val url: String,
-            val links: List<ExtractorLink>
-        )
-
-        val phase2: List<Phase2Result> = coroutineScope {
+        // PHASE 2 – Hand EVERY embed URL to the standard extractor system.
+        Log.i(methodTag, "PHASE 2: Piping ${resolved.size} embed URLs through loadExtractor...")
+        val delivered = java.util.concurrent.atomic.AtomicInteger(0)
+        coroutineScope {
             resolved.map { (serverName, decryptedUrl, idx) ->
                 async {
-                    val collected = mutableListOf<ExtractorLink>()
-                    val collectCb: (ExtractorLink) -> Unit = { collected.add(it) }
-
-                    Log.d(methodTag, "PHASE 2: [$idx] $serverName — ${decryptedUrl.take(80)}")
-                    loadExtractor(decryptedUrl, watchUrl, subtitleCallback, collectCb)
-
-                    Log.d(methodTag, "PHASE 2: [$idx] $serverName — extractor produced ${collected.size} link(s)")
-                    Phase2Result(serverName, idx, decryptedUrl, collected.toList())
+                    try {
+                        Log.d(methodTag, "PHASE 2: [$idx] $serverName — ${decryptedUrl.take(80)}")
+                        loadExtractor(decryptedUrl, watchUrl, subtitleCallback) { link ->
+                            delivered.incrementAndGet()
+                            callback(link)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(methodTag, "PHASE 2: [$idx] $serverName extractor error: ${e.message}")
+                    }
                 }
             }.awaitAll()
         }
 
-        // ====================================================================
-        // PHASE 3 – Deliver ALL links found in Phase 2
-        // ====================================================================
-        val allLinks = phase2.flatMap { it.links }
-        if (allLinks.isNotEmpty()) {
-            val unique = allLinks.distinctBy { it.url }
-            Log.i(methodTag, "PHASE 3: Extractors produced ${allLinks.size} link(s) from ${phase2.count { it.links.isNotEmpty() }} server(s), delivering ${unique.size} unique")
-            unique.forEach { link ->
-                Log.d(methodTag, "PHASE 3: → ${link.name} | ${link.url.take(80)}")
-                callback(link)
-            }
-            return true
-        }
-
-        Log.w(methodTag, "PHASE 2-3: no extractor matched any of ${resolved.size} embed URL(s)")
-
-        // ====================================================================
-        // PHASE 4 – Sniffer fallback: try each unresolved embed URL one-by-one
-        //           via WebView sniffing. Stops after first success per server
-        //           but tries ALL servers to maximize sources/qualities.
-        // ====================================================================
-        val failedUrls = phase2.filter { it.links.isEmpty() }
-        // Deduplicate: servers often resolve to the same embed URL (same CDN content).
-        // Extract the path portion (before query) to identify duplicates.
-        val seenPaths = mutableSetOf<String>()
-        val uniqueFailedUrls = failedUrls.filter { result ->
-            val path = try { java.net.URI(result.url).path ?: result.url } catch (_: Exception) { result.url }
-            seenPaths.add(path)
-        }
-        val skipped = failedUrls.size - uniqueFailedUrls.size
-        if (skipped > 0) Log.d(methodTag, "PHASE 4: Deduplicated $skipped server(s) with identical embed paths")
-        Log.i(methodTag, "PHASE 4: Sniffer fallback — ${uniqueFailedUrls.size} unique server(s) with no extractor links...")
-
-        var phase4Successes = 0
-        for (result in uniqueFailedUrls) {
-            Log.d(methodTag, "PHASE 4: Sniffing [${result.idx}] ${result.name} — ${result.url.take(80)}")
-            val ok = awaitSnifferResult(result.url, watchUrl, subtitleCallback, callback, 15000L)
-            if (ok) {
-                phase4Successes++
-                Log.i(methodTag, "PHASE 4: SUCCESS [${result.idx}] ${result.name}")
-            } else {
-                Log.w(methodTag, "PHASE 4: FAILED [${result.idx}] ${result.name}")
-            }
-        }
-
-        if (phase4Successes > 0) {
-            Log.i(methodTag, "PHASE 4 done: $phase4Successes/${failedUrls.size} server(s) produced links via sniffer")
-            return true
-        }
-
-        // ====================================================================
-        // PHASE 5 – Ultimate WebView fallback: load the watch page itself in
-        //           WebView and click each server tab to let the site's own JS
-        //           resolve and mount the player.
-        // ====================================================================
-        Log.w(methodTag, "PHASE 5: All sniffer attempts failed. Attempting watch page WebView fallback...")
-        if (sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)) {
-            return true
-        }
-
-        Log.w(methodTag, "END — all ${resolved.size} URLs and WebView fallbacks exhausted, no video found")
-        return false
-    }
-
-    /**
-     * Ultimate fallback: Uses Android WebView (via SnifferExtractor) to load the watch page
-     * and click server option buttons directly in DOM, allowing the website's real JavaScript bundle
-     * to resolve and mount the video player.
-     */
-    private suspend fun sniffWatchPageServers(
-        watchUrl: String,
-        serverElements: org.jsoup.select.Elements,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val methodTag = "[CimaLeek] [loadLinks]"
-        Log.i(methodTag, "WebView Fallback: Sniffing ${serverElements.size} server(s) on watch page...")
-        var successes = 0
-        for ((idx, server) in serverElements.withIndex()) {
-            val dataType = server.attr("data-type")
-            val dataNume = server.attr("data-nume")
-            val serverName = server.text().trim().ifBlank { "Server $idx" }
-
-            val selectorQuery = when {
-                dataType.isNotBlank() && dataNume.isNotBlank() ->
-                    ".lalaplay_player_option[data-type='$dataType'][data-nume='$dataNume']"
-                dataNume.isNotBlank() ->
-                    ".lalaplay_player_option[data-nume='$dataNume']"
-                else ->
-                    ".lalaplay_player_option:nth-of-type(${idx + 1})"
-            }
-            val selector = SnifferSelector(
-                query = selectorQuery,
-                waitAfterClick = 3500L
-            )
-
-            Log.d(methodTag, "WebView Fallback: Sniffing [$idx] $serverName with selector '$selectorQuery' on $watchUrl")
-            val ok = awaitSnifferResult(
-                targetUrl = watchUrl,
-                referer = watchUrl,
-                subtitleCallback = subtitleCallback,
-                callback = callback,
-                timeoutMs = 15000L,
-                selector = selector
-            )
-            if (ok) {
-                successes++
-                Log.i(methodTag, "WebView Fallback: SUCCESS [$idx] $serverName (total=$successes)")
-            } else {
-                Log.w(methodTag, "WebView Fallback: FAILED [$idx] $serverName")
-            }
-        }
-        Log.i(methodTag, "WebView Fallback done: $successes/${serverElements.size} server(s) produced links")
-        return successes > 0
+        Log.i(methodTag, "END delivered=${delivered.get()} from ${resolved.size} servers")
+        return delivered.get() > 0
     }
 }
