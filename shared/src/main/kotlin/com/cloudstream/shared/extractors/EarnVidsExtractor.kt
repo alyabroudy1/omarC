@@ -13,6 +13,22 @@ interface EarnVidsObfuscationStrategy {
     fun decode(response: String): String?
 }
 
+/**
+ * True for absolute http(s) media URLs. Rejects thumbnail/storyboard tracks
+ * (get_slides), images, subtitle tracks and site assets that share the same
+ * file:/src: syntax inside jwplayer setups.
+ */
+private fun isPlayableStreamUrl(url: String): Boolean {
+    if (url.isBlank()) return false
+    val u = url.trim()
+    if (!u.startsWith("http://") && !u.startsWith("https://")) return false
+    val lower = u.lowercase()
+    if (lower.contains("get_slides")) return false
+    if (Regex("""\.(jpg|jpeg|png|gif|webp|bmp|svg|vtt|srt|css|js)(\?|#|$)""").containsMatchIn(lower)) return false
+    if (lower.contains("logo")) return false
+    return true
+}
+
 class HexObfuscationStrategy : EarnVidsObfuscationStrategy {
     override fun decode(response: String): String? {
         val hexRegex = Regex("""const\s+[A-Za-z0-9_]+\s*=\s*["']([0-9a-fA-F]{40,})["']""")
@@ -26,7 +42,10 @@ class HexObfuscationStrategy : EarnVidsObfuscationStrategy {
                 break
             }
         }
-        return if (decodedUrl.startsWith("http")) decodedUrl else null
+        if (!decodedUrl.startsWith("http")) return null
+        // A hex blob may decode to a thumbnail/slides URL rather than the
+        // stream — reject those so the packer strategy still gets its turn.
+        return if (isPlayableStreamUrl(decodedUrl)) decodedUrl else null
     }
 }
 
@@ -76,52 +95,62 @@ class PackerObfuscationStrategy : EarnVidsObfuscationStrategy {
         if (unpackedPayload.isEmpty()) return null
         
         // Target 1: sources: [{ file: "..." }]
-        val sourceRegex = Regex("""sources:\s*\[\s*\{.*?(?:file|src):\s*['"](.*?)['"].*?\}\s*\]""")
-        val sourceMatch = sourceRegex.find(unpackedPayload)
-        if (sourceMatch != null) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [sources] syntax: ${sourceMatch.groupValues[1]}")
-            return sourceMatch.groupValues[1]
+        // NOTE: the first file: entry is often a thumbnails track
+        // ("/dl?op=get_slides...") or a JS var reference
+        // ("links.hls4||links.hls3"), NOT the stream. Accept only absolute
+        // http(s) media URLs here; otherwise fall through to the
+        // var-links targets below which resolve links.hlsN references.
+        val sourceRegex = Regex("""(?:file|src):\s*['"](.*?)['"]""")
+        for (sourceMatch in sourceRegex.findAll(unpackedPayload)) {
+            val candidate = sourceMatch.groupValues[1].trim()
+            if (isPlayableStreamUrl(candidate)) {
+                Log.d("EarnVidsExtractor", "✅ Extracted via [sources] syntax: ${candidate.take(100)}")
+                return candidate
+            }
         }
         
-        // Target 2: var links = { "hls4": "...", "hls": "..." }
+        // Target 2: var links = { "hls4": "...", "hls3"/"hls2"/"hls": "..." }
+        // Any hlsN key counts (observed hls3+hls2 without hls4); prefer the
+        // highest-numbered variant, which is the best quality.
         val linksRegex = Regex("""var\s+links\s*=\s*(\{.*?})\s*;""", RegexOption.DOT_MATCHES_ALL)
         val linksMatch = linksRegex.find(unpackedPayload)
-        
+
         if (linksMatch != null) {
             Log.d("EarnVidsExtractor", "🔎 Found [var links] JSON dictionary instead of sources.")
             val jsonStr = linksMatch.groupValues[1].replace("'", "\"")
-            // Basic regex parsing to extract the keys gracefully without org.json
-            val hls4Regex = Regex(""""hls4"\s*:\s*"([^"]+)"""")
-            val hlsRegex = Regex(""""hls"\s*:\s*"([^"]+)"""")
-            
-            val hls4Val = hls4Regex.find(jsonStr)?.groupValues?.get(1)
-            if (!hls4Val.isNullOrBlank()) {
-                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links -> hls4]: $hls4Val")
-                return hls4Val
-            }
-            
-            val hlsVal = hlsRegex.find(jsonStr)?.groupValues?.get(1)
-            if (!hlsVal.isNullOrBlank()) {
-                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links -> hls]: $hlsVal")
-                return hlsVal
+            val bestHls = pickBestHlsVariant(jsonStr)
+            if (!bestHls.isNullOrBlank()) {
+                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links]: ${bestHls.take(100)}")
+                return bestHls
             }
         }
-        
+
         // Target 3: Quick fallback if JSON bracket wasn't matched but keys are there
-        val fallbackHls4 = Regex(""""hls4"\s*:\s*"([^"]+)"""").find(unpackedPayload)?.groupValues?.get(1)
-        if (!fallbackHls4.isNullOrBlank()) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [\"hls4\":]: $fallbackHls4")
-            return fallbackHls4
+        val fallbackBest = pickBestHlsVariant(unpackedPayload)
+        if (!fallbackBest.isNullOrBlank()) {
+            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [hlsN]: ${fallbackBest.take(100)}")
+            return fallbackBest
         }
-        
-        val fallbackHls = Regex(""""hls"\s*:\s*"([^"]+)"""").find(unpackedPayload)?.groupValues?.get(1)
-        if (!fallbackHls.isNullOrBlank()) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [\"hls\":]: $fallbackHls")
-            return fallbackHls
-        }
-        
+
         Log.w("EarnVidsExtractor", "❌ Finished all unpackings but no valid M3U8 links were intercepted!")
         return null
+    }
+
+    /**
+     * Picks the best "hlsN" stream URL from a JSON-ish blob: highest N wins
+     * (hls4 > hls3 > hls2 > plain hls), skipping non-playable values.
+     */
+    private fun pickBestHlsVariant(jsonStr: String): String? {
+        return Regex(""""(hls\d*)"\s*:\s*"([^"]+)"""").findAll(jsonStr)
+            .mapNotNull { m ->
+                val key = m.groupValues[1]
+                val value = m.groupValues[2].trim()
+                if (!isPlayableStreamUrl(value)) return@mapNotNull null
+                val rank = if (key == "hls") 0 else key.removePrefix("hls").toIntOrNull() ?: -1
+                rank to value
+            }
+            .maxByOrNull { it.first }
+            ?.second
     }
 }
 
