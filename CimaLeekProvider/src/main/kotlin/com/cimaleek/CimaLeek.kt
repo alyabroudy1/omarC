@@ -523,13 +523,15 @@ class CimaLeek : BaseProvider() {
         val watchUrl = if (data.endsWith("/watch/")) data else {
             if (data.endsWith("/")) "${data}watch/" else "$data/watch/"
         }
-        val html = httpService.getText(watchUrl, rewriteDomain = false)
-        if (html.isNullOrBlank()) {
-            Log.e(methodTag, "PHASE 0: Empty watch page HTML")
+        // NOTE: getDocument (not getText) — it owns the Cloudflare solve and
+        // stores clearance cookies, which the lalaplayer API calls below need.
+        // A raw getText returns the CF challenge page here ("Just a moment").
+        val doc = httpService.getDocument(watchUrl, rewriteDomain = true)
+        if (doc == null || doc.body().text().isBlank()) {
+            Log.e(methodTag, "PHASE 0: Empty watch page document")
             return false
         }
-
-        val doc = Jsoup.parse(html, watchUrl)
+        val html = doc.html()
         val ver = Regex(""""ver"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
         val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)
             ?: Regex(""""post_id"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
@@ -539,7 +541,10 @@ class CimaLeek : BaseProvider() {
 
         val serverElements = doc.select(".lalaplay_player_option")
         Log.d(methodTag, "PHASE 0: Found ${serverElements.size} server options")
-        if (serverElements.isEmpty()) return false
+        if (serverElements.isEmpty()) {
+            Log.w(methodTag, "PHASE 0: no servers (title='${doc.title().take(80)}', html=${html.length} chars)")
+            return false
+        }
 
         val metadata = DecryptionMetadata(
             watchUrl = watchUrl,
@@ -574,7 +579,7 @@ class CimaLeek : BaseProvider() {
                             "X-Requested-With" to "com.android.browser"
                         )
 
-                        val json = httpService.getText(apiUrl, headers, rewriteDomain = false)
+                        val json = httpService.getText(apiUrl, headers, rewriteDomain = true)
                         if (json.isNullOrBlank()) {
                             Log.w(methodTag, "PHASE 1: [$idx] $serverName — empty API response")
                             return@async null
