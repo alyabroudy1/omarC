@@ -85,7 +85,7 @@ class Wecima : BaseProvider() {
         
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
         seasonsEl.forEach { seasonEl ->
-            val seasonNum = Regex("الموسم (\\\\d+)").find(seasonEl.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val seasonNum = Regex("الموسم (\\d+)").find(seasonEl.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
             val dataId = seasonEl.attr("data-id")
             val dataSeason = seasonEl.attr("data-season")
             try {
@@ -94,7 +94,7 @@ class Wecima : BaseProvider() {
                     val seasonDocParsed = Jsoup.parse(seasonHtml)
                     seasonDocParsed.select("a.hoverable.activable").forEach { epEl ->
                         val epName = epEl.selectFirst("episodetitle")?.text() ?: "Episode"
-                        val epNum = Regex("الحلقة (\\\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        val epNum = Regex("الحلقة (\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
                         episodes.add(
                             ParserInterface.ParsedEpisode(
                                 url = epEl.attr("href"),
@@ -127,25 +127,51 @@ class Wecima : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var linksFound = false
-        val document = httpService.getDocument(data, rewriteDomain = true) ?: return false
-        
-        document.select("ul.WatchServersList li btn").forEach { serverBtn ->
+        val methodTag = "[Wecima] [loadLinks]"
+        Log.i(methodTag, "START data='$data'")
+        val document = httpService.getDocument(data, rewriteDomain = true)
+        if (document == null) {
+            Log.e(methodTag, "Failed to fetch detail document")
+            return false
+        }
+
+        var delivered = 0
+        fun countingCallback(link: ExtractorLink) {
+            delivered++
+            callback(link)
+        }
+
+        val serverBtns = document.select("ul.WatchServersList li btn")
+        Log.d(methodTag, "Found ${serverBtns.size} server buttons")
+        serverBtns.forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
-                linksFound = true
-                loadExtractor(decodedUrl, subtitleCallback, callback)
+                Log.d(methodTag, "Server: ${decodedUrl.take(80)}")
+                try {
+                    loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
+                } catch (e: Exception) {
+                    Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
+                }
+            } else {
+                Log.w(methodTag, "Undecodable server btn: '${serverBtn.attr("data-url").take(60)}'")
             }
         }
-        
-        document.select(".openLinkDown").forEach { downloadBtn ->
+
+        val dlBtns = document.select(".openLinkDown")
+        Log.d(methodTag, "Found ${dlBtns.size} download buttons")
+        dlBtns.forEach { downloadBtn ->
             val decodedUrl = decodeWecimaUrl(downloadBtn.attr("data-href"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
-                linksFound = true
-                loadExtractor(decodedUrl, subtitleCallback, callback)
+                Log.d(methodTag, "Download: ${decodedUrl.take(80)}")
+                try {
+                    loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
+                } catch (e: Exception) {
+                    Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
+                }
             }
         }
-        
-        return linksFound
+
+        Log.i(methodTag, "END delivered=$delivered")
+        return delivered > 0
     }
 }

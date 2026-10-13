@@ -8,6 +8,10 @@ class MixDropTop : MixDrop() {
     override var mainUrl = "https://mixdrop.top"
 }
 
+class MixDropPs : MixDrop() {
+    override var mainUrl = "https://mixdrop.ps"
+}
+
 class UqloadIs : Uqload() {
     override var mainUrl = "https://uqload.is"
 }
@@ -50,6 +54,8 @@ fun Plugin.registerSharedExtractors() {
     // Byse clones seen on EgyDead (same /e/ + api/videos AES-GCM backend)
     registerExtractorAPI(ByseExtractor("bysekoze.com", "Bysekoze"))
     registerExtractorAPI(ByseExtractor("byseraguci.com", "Byseraguci"))
+    // Byse clone seen on Wecima (same scheme)
+    registerExtractorAPI(ByseExtractor("byselapuix.com", "Byselapuix"))
 
     // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
@@ -73,8 +79,9 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
 
-    // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top)
+    // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top/.ps)
     registerExtractorAPI(MixDropTop())
+    registerExtractorAPI(MixDropPs())
 
     // Uqload and proxies (built-in covers uqload.com / uqload.co)
     registerExtractorAPI(UqloadIs())
