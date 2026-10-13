@@ -19,9 +19,9 @@ class Wecima : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "/movies/" to "الافلام",
-        "/series/" to "المسلسلات",
-        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/" to "افلام انمي",
-        "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/" to "مسلسلات انمي"
+        "/seriestv" to "المسلسلات",
+        "/category/anime-movies" to "افلام انمي",
+        "/category/anime-series" to "مسلسلات انمي"
     )
 
     override fun getParser(): NewBaseParser = WecimaParser()

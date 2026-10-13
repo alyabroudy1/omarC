@@ -13,11 +13,20 @@ import com.cloudstream.shared.logging.ProviderLogger
 
 class WecimaParser : NewBaseParser() {
 
+    // Strategy layers (newest first, legacy kept as fallback — the site
+    // rotates markup often, e.g. div.GridItem -> div.Wecima-Card in 2026).
+    // Jsoup comma-selectors union, so all generations parse simultaneously.
     override val mainPageConfig = MainPageConfig(
-        container = "div.GridItem",
-        title = CssSelector("h2, strong", "text"),
-        url = CssSelector("a", "href"),
-        poster = CssSelector("meta[itemprop=thumbnailUrl], span.BG--GridItem", "content, data-src, data-lazy-style, style", regex = """url\(['"]?(.*?)['"]?\)""")
+        container = "div.Wecima-Card, div.GridItem",
+        title = CssSelector("strong.Wecima-Card__title, h2, strong", "text"),
+        url = CssSelector("a.Wecima-Card__link, a.film-poster, a", "abs:href, href"),
+        poster = CssSelector(
+            "span.Wecima-Card__img, meta[itemprop=thumbnailUrl], span.BG--GridItem",
+            "style, content, data-src, data-lazy-style",
+            // Greedy prefix: some cards list a placeholder first
+            // (--image) and the real poster second (background-image).
+            regex = """.*url\(['"]?(.*?)['"]?\)"""
+        )
     )
 
     override fun parseItem(element: Element, config: com.cloudstream.shared.parsing.MainPageConfig): ParserInterface.ParsedItem? {
