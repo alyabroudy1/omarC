@@ -156,13 +156,16 @@ class PackerObfuscationStrategy : EarnVidsObfuscationStrategy {
     /**
      * Picks the best "hlsN" stream URL from a JSON-ish blob: highest N wins
      * (hls4 > hls3 > hls2 > plain hls), skipping non-playable values.
+     * Relative values are kept (caller resolves them against the page URL);
+     * only absolute-but-unplayable ones (slides/images) are dropped.
      */
     private fun pickBestHlsVariant(jsonStr: String): String? {
         return Regex(""""(hls\d*)"\s*:\s*"([^"]+)"""").findAll(jsonStr)
             .mapNotNull { m ->
                 val key = m.groupValues[1]
                 val value = m.groupValues[2].trim()
-                if (!isPlayableStreamUrl(value)) return@mapNotNull null
+                if (value.isBlank()) return@mapNotNull null
+                if (value.startsWith("http") && !isPlayableStreamUrl(value)) return@mapNotNull null
                 val rank = if (key == "hls") 0 else key.removePrefix("hls").toIntOrNull() ?: -1
                 rank to value
             }

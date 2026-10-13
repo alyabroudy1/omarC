@@ -71,6 +71,12 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(EarnVidsExtractor("streamruby.com", "StreamRuby"))
     registerExtractorAPI(EarnVidsExtractor("stmruby.com", "StmRuby"))
     registerExtractorAPI(EarnVidsExtractor("lolololu.website", "Lolololu"))
+    // Same player family (verified identical packed jwplayer + var-links):
+    // Wecima's dhcplay + rotating mirrors, and the hgcloud twin.
+    registerExtractorAPI(EarnVidsExtractor("dhcplay.com", "Dhcplay"))
+    registerExtractorAPI(EarnVidsExtractor("hanerix.com", "Hanerix"))
+    registerExtractorAPI(EarnVidsExtractor("vibuxer.com", "Vibuxer"))
+    registerExtractorAPI(EarnVidsExtractor("hgcloud.to", "Hgcloud"))
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }

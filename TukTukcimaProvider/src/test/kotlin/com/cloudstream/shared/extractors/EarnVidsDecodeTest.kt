@@ -80,4 +80,15 @@ class EarnVidsDecodeTest {
             PackerObfuscationStrategy().decode(html)
         )
     }
+
+    @Test
+    fun `relative best variant is kept for caller resolution`() {
+        // hanerix-style pages: best key hls4 is a site-relative stream path
+        // (/stream/.../master.m3u8); getUrl resolves it against the page.
+        // It must survive variant picking (not be dropped as non-absolute).
+        val html = fixture("earnvids_hanerix_relative_hls4.html")
+        val url = PackerObfuscationStrategy().decode(html)
+        assertNotNull("relative hls4 must be returned", url)
+        assertTrue("stream path kept: $url", url!!.contains("/stream/") && url.contains("master.m3u8"))
+    }
 }
