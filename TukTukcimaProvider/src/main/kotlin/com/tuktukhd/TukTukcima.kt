@@ -136,12 +136,18 @@ class TukTukcima : BaseProvider() {
 
         val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
 
-        // 1. Mirror iframe from the encrypted holder.
+        // 1. Watch targets: encrypted iframe holder + visible server list.
         // Two flavors exist: MegaMax-style (/iframe/<hash>, needs the Inertia
         // streams API) and direct embeds (e.g. lolololu /v/, playable as-is).
+        // Server-list tokens use the theme cipher (reverse + base64, see
+        // TukTukCinema3/setup.js decodeLink) and decode to the same URLs.
+        val watchTargets = mutableListOf<String>()
         val iframeCrypt = doc.selectFirst("iframe#main-video-frame")?.attr("data-crypt")
-        val iframeUrl = iframeCrypt?.takeIf { it.isNotBlank() }?.let { decodeCrypt(it) }
-        if (iframeUrl != null) {
+        iframeCrypt?.takeIf { it.isNotBlank() }?.let { decodeCrypt(it) }?.let { watchTargets.add(it) }
+        for (li in doc.select("div.watch--servers--list li.server--item[data-link]")) {
+            decodeServerToken(li.attr("data-link"))?.let { watchTargets.add(it) }
+        }
+        for (iframeUrl in watchTargets.distinct()) {
             com.lagradost.api.Log.d(methodTag, "Iframe: ${iframeUrl.take(80)}")
             if (isMirrorPlayer(iframeUrl)) {
                 for ((mirrorUrl, label) in resolveIframeStreams(iframeUrl, data)) {
@@ -160,8 +166,9 @@ class TukTukcima : BaseProvider() {
                     com.lagradost.api.Log.d(methodTag, "Extractor failed for $iframeUrl: ${e.message}")
                 }
             }
-        } else {
-            com.lagradost.api.Log.w(methodTag, "No data-crypt iframe on page")
+        }
+        if (watchTargets.isEmpty()) {
+            com.lagradost.api.Log.w(methodTag, "No data-crypt iframe or server items on page")
         }
 
         // 2. Download servers. Two flavors: go.php pills (decode to the mirror
@@ -235,6 +242,24 @@ class TukTukcima : BaseProvider() {
                 if (decoded.startsWith("http")) return decoded
             } catch (_: Exception) {}
         }
+        return null
+    }
+
+    /**
+     * Theme server-token cipher (TukTukCinema3/setup.js decodeLink):
+     * split off the &suffix, reverse the string, base64-decode.
+     */
+    private fun decodeServerToken(value: String): String? {
+        try {
+            val v = value.trim()
+            if (v.isBlank()) return null
+            val part = if (v.contains("0REL0Y&")) v.split("0REL0Y&")[0] else v.split("&")[0]
+            val reversed = part.reversed()
+            if (reversed.isBlank()) return null
+            val padded = reversed.padEnd((reversed.length + 3) / 4 * 4, '=')
+            val decoded = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8).trim()
+            if (decoded.startsWith("http")) return decoded
+        } catch (_: Exception) {}
         return null
     }
 
