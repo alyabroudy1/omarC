@@ -136,42 +136,86 @@ class TukTukcima : BaseProvider() {
 
         val doc = httpService.getDocument(data, rewriteDomain = true) ?: return false
 
-        // 1. Mirror iframe from the encrypted holder (may point at a dead/rotated host)
+        // 1. Mirror iframe from the encrypted holder.
+        // Two flavors exist: MegaMax-style (/iframe/<hash>, needs the Inertia
+        // streams API) and direct embeds (e.g. lolololu /v/, playable as-is).
         val iframeCrypt = doc.selectFirst("iframe#main-video-frame")?.attr("data-crypt")
         val iframeUrl = iframeCrypt?.takeIf { it.isNotBlank() }?.let { decodeCrypt(it) }
         if (iframeUrl != null) {
             com.lagradost.api.Log.d(methodTag, "Iframe: ${iframeUrl.take(80)}")
-            for ((mirrorUrl, label) in resolveIframeStreams(iframeUrl, data)) {
+            if (isMirrorPlayer(iframeUrl)) {
+                for ((mirrorUrl, label) in resolveIframeStreams(iframeUrl, data)) {
+                    try {
+                        com.lagradost.api.Log.d(methodTag, "Mirror [$label]: ${mirrorUrl.take(80)}")
+                        loadExtractor(mirrorUrl, iframeUrl, subtitleCallback, ::countingCallback)
+                    } catch (e: Exception) {
+                        com.lagradost.api.Log.d(methodTag, "Extractor failed for $mirrorUrl: ${e.message}")
+                    }
+                }
+            } else if (!isTrailerOrJunk(iframeUrl)) {
                 try {
-                    com.lagradost.api.Log.d(methodTag, "Mirror [$label]: ${mirrorUrl.take(80)}")
-                    loadExtractor(mirrorUrl, iframeUrl, subtitleCallback, ::countingCallback)
+                    com.lagradost.api.Log.d(methodTag, "Direct embed iframe, extracting as-is")
+                    loadExtractor(iframeUrl, data, subtitleCallback, ::countingCallback)
                 } catch (e: Exception) {
-                    com.lagradost.api.Log.d(methodTag, "Extractor failed for $mirrorUrl: ${e.message}")
+                    com.lagradost.api.Log.d(methodTag, "Extractor failed for $iframeUrl: ${e.message}")
                 }
             }
         } else {
             com.lagradost.api.Log.w(methodTag, "No data-crypt iframe on page")
         }
 
-        // 2. Download servers (go.php?u=<b64 share4max URL>) — independent of the
-        // mirror host, works even when the iframe host is dead.
-        val downloadUrls = doc.select(".downloads a.smart-external-link[href], .downloadBTN ~ .downloads a[href], div.downloads a[href]")
-            .mapNotNull { decodeGoPhp(it.attr("href")) }
+        // 2. Download servers. Two flavors: go.php pills (decode to the mirror
+        // front's /download/ page) and direct file/embed links. Mirror-backend
+        // /download/ pages go through the mirrors flow, everything else is fed
+        // to the standard extractors as-is (works even when the iframe host
+        // is dead).
+        val downloadHrefs = doc.select(".downloads a.smart-external-link[href], .downloadBTN ~ .downloads a[href], div.downloads a[href]")
+            .map { it.attr("href").trim() }
+            .filter { it.isNotBlank() }
             .distinct()
-        com.lagradost.api.Log.d(methodTag, "Download targets: $downloadUrls")
-        for (dlUrl in downloadUrls) {
-            for ((mirrorUrl, label) in resolveDownloadMirrors(dlUrl, data)) {
-                if (isTrailerOrJunk(mirrorUrl)) continue
+        for (href in downloadHrefs) {
+            val dlUrl = decodeGoPhp(href) ?: href.takeIf { it.startsWith("http") || it.startsWith("//") }?.let { normalizeUrl(it) }
+            if (dlUrl.isNullOrBlank() || isTrailerOrJunk(dlUrl) || isThemeRedirect(dlUrl)) continue
+            if (isMirrorDownloadPage(dlUrl)) {
+                for ((mirrorUrl, label) in resolveDownloadMirrors(dlUrl, data)) {
+                    if (isTrailerOrJunk(mirrorUrl)) continue
+                    try {
+                        com.lagradost.api.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
+                        loadExtractor(mirrorUrl, dlUrl, subtitleCallback, ::countingCallback)
+                    } catch (e: Exception) {
+                        com.lagradost.api.Log.d(methodTag, "Extractor failed for $mirrorUrl: ${e.message}")
+                    }
+                }
+            } else {
                 try {
-                    com.lagradost.api.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
-                    loadExtractor(mirrorUrl, dlUrl, subtitleCallback, ::countingCallback)
+                    com.lagradost.api.Log.d(methodTag, "Direct download link: ${dlUrl.take(80)}")
+                    loadExtractor(dlUrl, data, subtitleCallback, ::countingCallback)
                 } catch (e: Exception) {
-                    com.lagradost.api.Log.d(methodTag, "Extractor failed for $mirrorUrl: ${e.message}")
+                    com.lagradost.api.Log.d(methodTag, "Extractor failed for $dlUrl: ${e.message}")
                 }
             }
         }
 
         return linksFound
+    }
+
+    private fun normalizeUrl(url: String): String {
+        val u = url.trim()
+        return if (u.startsWith("//")) "https:$u" else u
+    }
+
+    private fun isThemeRedirect(url: String): Boolean {
+        return url.contains("go.php")
+    }
+
+    /** MegaMax-style watch player (/iframe/<hash>) served by the Inertia backend. */
+    private fun isMirrorPlayer(url: String): Boolean {
+        return url.contains("/iframe/")
+    }
+
+    /** Mirror-backend download page (/download/<hash>) with per-quality attachments. */
+    private fun isMirrorDownloadPage(url: String): Boolean {
+        return Regex("/download/[^/]+/?$").containsMatchIn(url)
     }
 
     private fun isTrailerOrJunk(url: String): Boolean {
