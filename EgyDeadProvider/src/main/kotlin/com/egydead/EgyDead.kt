@@ -337,9 +337,12 @@ class EgyDead : BaseProvider() {
             Log.d(methodTag, "POST successful, parsing server elements")
             val referer = "https://${httpService.currentDomain}/"
 
-            // Collect watch + download server targets
+            // Collect watch + download server targets.
+            // NOTE: mobile UA (which the app uses) gets a different layout:
+            // watch servers live in div.mob-servers ul > li[data-link],
+            // desktop UA gets ul.serversList > li. Select both.
             val targets = mutableListOf<String>()
-            for (li in doc.select("ul.serversList > li")) {
+            for (li in doc.select("ul.serversList > li, .mob-servers ul > li, div.mob-servers li")) {
                 li.attr("data-link").trim().takeIf { it.isNotBlank() }?.let { targets.add(it) }
             }
             for (a in doc.select(".donwload-servers-list > li a[href]")) {
