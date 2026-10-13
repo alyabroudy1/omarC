@@ -1,4 +1,4 @@
-version = 7 // Round 15: Search Logic Refactor
+version = 8 // Round 16: .trade front, download path, poster fix
 
 // Include shared source directory
 android {

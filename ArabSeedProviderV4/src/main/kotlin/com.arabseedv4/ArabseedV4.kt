@@ -1,6 +1,9 @@
 package com.arabseedv4
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.cloudstream.shared.extractors.MegamaxDownloader
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
@@ -10,7 +13,7 @@ import org.jsoup.nodes.Document
 class ArabseedV4 : BaseProvider() {
 
     override var name = "عرب سيد"
-    override val baseDomain get() = "arabseed.show"
+    override val baseDomain get() = "arabseed.trade"
     override val providerName get() = "ArabseedV4"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
     override val paginationFormat get() = "page/%d/"
@@ -27,11 +30,11 @@ class ArabseedV4 : BaseProvider() {
     override val requestTimeoutMs get() = 60_000L
 
     override val mainPage = mainPageOf(
-        "$mainUrl/category/films/" to "مضاف حديثا",
-        "$mainUrl/category/films/foreign-movies/" to "أفلام أجنبية",
-        "$mainUrl/category/films/turkish-movies/" to "أفلام تركية",
-        "$mainUrl/category/tv/" to "المسلسلات",
-        "$mainUrl/category/anime/anime-movies/" to "افلام انيميشن",
+        "/%D8%A7%D9%81%D9%84%D8%A7%D9%85/" to "الافلام",
+        "/recently/" to "مضاف حديثا",
+        "/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa/" to "المسلسلات",
+        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%b9%d8%b1%d8%a8%d9%8a/" to "افلام عربي",
+        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/" to "افلام انمي"
     )
 
     override fun getParser(): NewBaseParser {
@@ -136,6 +139,75 @@ class ArabseedV4 : BaseProvider() {
         }
         
         return episodes
+    }
+
+    // ================= LOAD LINKS (WATCH + DOWNLOAD PATHS) =================
+
+    /**
+     * Watch path runs first via the standard BaseProvider flow (lazy AJAX +
+     * direct embeds -> loadExtractor). The download path (/download/ page ->
+     * MegaMax mirrors) runs ALONGSIDE it: every mirror feeds the standard
+     * extractor system too. Either path delivering links counts as success.
+     */
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[ArabseedV4] [loadLinks]"
+        android.util.Log.i(methodTag, "START data='$data'")
+        httpService.ensureInitialized()
+
+        val delivered = java.util.concurrent.atomic.AtomicInteger(0)
+        val countingCb: (ExtractorLink) -> Unit = { delivered.incrementAndGet(); callback(it) }
+
+        // Watch path (standard flow).
+        val watchOk = try {
+            super.loadLinks(data, isCasting, subtitleCallback, countingCb)
+        } catch (e: Exception) {
+            android.util.Log.e(methodTag, "Watch path error: ${e.message}")
+            false
+        }
+        android.util.Log.d(methodTag, "Watch path ok=$watchOk delivered=${delivered.get()}")
+
+        // Download path (alongside).
+        try {
+            val base = data.trimEnd('/').removeSuffix("/watch").trimEnd('/')
+            val dlPageUrl = "$base/download/"
+            android.util.Log.d(methodTag, "Download page: $dlPageUrl")
+            val dlDoc = httpService.getDocument(dlPageUrl, rewriteDomain = true)
+            if (dlDoc != null) {
+                val dlHrefs = dlDoc.select("ul.downloads__links__list a[href], a.download__item[href]")
+                    .map { it.attr("abs:href").ifBlank { it.attr("href") }.trim() }
+                    .filter { it.startsWith("http") && it.length > 10 }
+                    .distinct()
+                android.util.Log.d(methodTag, "Download targets: ${dlHrefs.size}")
+                for (href in dlHrefs) {
+                    try {
+                        if (href.contains("/download/")) {
+                            for ((mirrorUrl, label) in MegamaxDownloader.resolveMirrors(href, dlPageUrl)) {
+                                try {
+                                    android.util.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
+                                    loadExtractor(mirrorUrl, href, subtitleCallback, countingCb)
+                                } catch (e: Exception) {
+                                    android.util.Log.d(methodTag, "Extractor failed: ${e.message}")
+                                }
+                            }
+                        } else {
+                            loadExtractor(href, dlPageUrl, subtitleCallback, countingCb)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.d(methodTag, "Download target failed: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(methodTag, "Download path error: ${e.message}")
+        }
+
+        android.util.Log.i(methodTag, "END delivered=${delivered.get()}")
+        return delivered.get() > 0
     }
 
     // ================= RESOLVE SERVER URL (LAZY AJAX) =================
