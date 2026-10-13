@@ -262,8 +262,25 @@ class EarnVidsExtractor(
                 }
             }
             Log.e("EarnVidsExtractor", "🛑 All extraction strategies failed heavily against $finalUrl")
+
+            // Fallback: download-landing URLs (/d/<id>) carry no player, only
+            // a download button. Retry once against the embed variant
+            // (/v/<id>.html) which holds the packed jwplayer. Single hop:
+            // embed URLs never produce a further variant, so no loop risk.
+            toEmbedVariant(finalUrl)?.let { embedUrl ->
+                Log.d("EarnVidsExtractor", "🔁 Retrying as embed variant: $embedUrl")
+                getUrl(embedUrl, referer, subtitleCallback, callback)
+            }
         } catch (e: Exception) {
             Log.e("EarnVidsExtractor", "❌ Catastrophic Error running EarnVidsExtractor: ${e.message}", e)
         }
+    }
+
+    private fun toEmbedVariant(url: String): String? {
+        val id = Regex("""/d/([A-Za-z0-9]+)/?$""").find(url)?.groupValues?.get(1)
+            ?: return null
+        val base = url.substringBefore("/d/")
+        if (base.isBlank() || base == url) return null
+        return "$base/v/$id.html"
     }
 }
