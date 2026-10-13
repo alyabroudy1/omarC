@@ -15,7 +15,7 @@ dependencies {
 cloudstream {
     authors = listOf("omarflex")
     language = "ar"
-    status = 3
+    status = 0
     tvTypes = listOf("TvSeries", "Movie", "Anime")
     iconUrl = "https://www.google.com/s2/favicons?domain=cimaleek.pw&sz=%size%"
 }

@@ -8,8 +8,6 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.parsing.ParserInterface
 import com.cloudstream.shared.extractors.SnifferSelector
-import com.cloudstream.shared.webview.Mode
-import com.cloudstream.shared.webview.NavigationStep
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.async
@@ -508,79 +506,52 @@ class CimaLeek : BaseProvider() {
     // Logging is verbose so each phase can be traced in logcat.
     // ──────────────────────────────────────────────────────────────────────────────
     /**
-     * Resolves watch-server EMBED URLs by running the site's own JS in a
-     * headless WebView: load the watch page, click each server tab, read the
-     * mounted player iframe src. Only extracts watch links — video extraction
-     * stays in the shared system. Used when native API+decrypt yields nothing
-     * (e.g. rotated bundle keys).
+     * Fallback when native API+decrypt yields nothing: managed headless video
+     * sniffing through httpService (own lifecycle — opens nothing visible and
+     * always closes). The site's JS decrypts with its current keys inside the
+     * session and the interceptor captures the streams.
      */
-    private suspend fun resolveEmbedsViaWebView(
+    private suspend fun sniffWatchVideos(
         watchUrl: String,
-        serverElements: org.jsoup.select.Elements
-    ): List<ServerEmbed> {
-        val methodTag = "[CimaLeek] [WebViewEmbeds]"
-        val out = mutableListOf<ServerEmbed>()
-        try {
-            val steps = mutableListOf<NavigationStep>(
-                NavigationStep.LoadUrl(watchUrl)
-            )
-            val selectors = mutableListOf<String>()
-            serverElements.forEachIndexed { idx, server ->
-                val dataType = server.attr("data-type")
-                val dataNume = server.attr("data-nume")
-                val selectorQuery = when {
-                    dataType.isNotBlank() && dataNume.isNotBlank() ->
-                        ".lalaplay_player_option[data-type='$dataType'][data-nume='$dataNume']"
-                    dataNume.isNotBlank() ->
-                        ".lalaplay_player_option[data-nume='$dataNume']"
-                    else ->
-                        ".lalaplay_player_option:nth-of-type(${idx + 1})"
-                }
-                selectors.add(selectorQuery)
-                steps.add(NavigationStep.ClickElement(selectorQuery, timeoutMs = 10_000L, abortOnFailure = false))
-                steps.add(NavigationStep.WaitForDelay(3_000L))
-                steps.add(
-                    NavigationStep.ExecuteJs(
-                        javascript = "(function(){var o=[];var fs=document.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){var s=fs[i].getAttribute('data-src')||fs[i].src||'';if(s&&s.indexOf('about:blank')===-1)o.push(s);}return JSON.stringify(o);})();",
-                        key = "iframes_$idx"
-                    )
-                )
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[CimaLeek] [SniffFallback]"
+        return try {
+            Log.i(methodTag, "Sniffing watch page (managed, headless)...")
+            val sources = httpService.sniffVideos(watchUrl)
+            if (sources.isEmpty()) {
+                Log.w(methodTag, "No video sources sniffed")
+                return false
             }
-
-            Log.i(methodTag, "Navigating watch page + clicking ${serverElements.size} servers...")
-            val navResult = httpService.navigateWithSteps(
-                steps = steps,
-                mode = Mode.HEADLESS,
-                overallTimeoutMs = 120_000L
-            )
-            if (!navResult.success) {
-                Log.w(methodTag, "Navigation failed at step ${navResult.failedAtStep}: ${navResult.error}")
-            }
-            val seen = mutableSetOf<String>()
-            serverElements.forEachIndexed { idx, server ->
-                val serverName = server.text().trim().ifBlank { "Server $idx" }
-                val raw = navResult.extractedHtml["iframes_$idx"].orEmpty()
-                if (raw.isBlank()) return@forEachIndexed
+            var delivered = 0
+            for (src in sources) {
+                val url = src.url.trim()
+                if (url.isBlank()) continue
                 try {
-                    val arr = org.json.JSONArray(raw)
-                    for (i in 0 until arr.length()) {
-                        val src = arr.optString(i).trim()
-                        if (src.isBlank() || src.contains("about:blank")) continue
-                        val absolute = src
-                        if (seen.add(absolute)) {
-                            Log.d(methodTag, "[$idx] $serverName -> ${absolute.take(80)}")
-                            out.add(ServerEmbed(serverName, absolute, idx))
+                    val isHls = url.contains(".m3u8", ignoreCase = true)
+                    callback(
+                        newExtractorLink(
+                            source = providerName,
+                            name = "${providerName} Sniffer",
+                            url = url,
+                            type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = watchUrl
+                            this.headers = src.headers
                         }
-                    }
+                    )
+                    delivered++
                 } catch (e: Exception) {
-                    Log.w(methodTag, "[$idx] parse failed: ${e.message}")
+                    Log.w(methodTag, "Deliver failed: ${e.message}")
                 }
             }
+            Log.i(methodTag, "Delivered $delivered/${sources.size} sniffed sources")
+            delivered > 0
         } catch (e: Exception) {
             Log.e(methodTag, "Error: ${e.javaClass.simpleName}: ${e.message}")
+            false
         }
-        Log.i(methodTag, "Done: ${out.size} embed URLs from ${serverElements.size} servers")
-        return out
     }
 
     override suspend fun loadLinks(
@@ -705,16 +676,10 @@ class CimaLeek : BaseProvider() {
         Log.i(methodTag, "PHASE 1 done: ${resolved.size}/${serverElements.size} resolved")
         val allResolved = resolved.toMutableList()
         if (allResolved.isEmpty()) {
-            // Native strategies failed (rotated keys) — let the site's own JS
-            // resolve the EMBED URLs via WebView clicks. This only extracts
-            // watch links; video extraction stays in the shared system.
-            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} via native strategies — resolving embed URLs via WebView...")
-            allResolved.addAll(resolveEmbedsViaWebView(watchUrl, serverElements))
-            Log.i(methodTag, "PHASE 1b done: ${allResolved.size}/${serverElements.size} embed URLs via WebView")
-        }
-        if (allResolved.isEmpty()) {
-            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} resolved via native strategies — falling back to WebView sniffing on watch page")
-            return sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)
+            // Native strategies failed (rotated keys) — managed headless
+            // sniffing through httpService (opens nothing, always closes).
+            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} via native strategies — managed sniff fallback...")
+            return sniffWatchVideos(watchUrl, subtitleCallback, callback)
         }
 
         // ====================================================================
