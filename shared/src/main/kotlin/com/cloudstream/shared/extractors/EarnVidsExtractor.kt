@@ -14,6 +14,20 @@ interface EarnVidsObfuscationStrategy {
 }
 
 /**
+ * Proprietary Javascript cookies set by the embed page (e.g.
+ * $.cookie('file_id', '...')). These become the Cookie header on the
+ * stream request — the CDN rejects playback without them.
+ * Pure function (no Android/network), covered by EarnVidsDecodeTest.
+ */
+fun extractJsCookies(response: String): Map<String, String> {
+    val merged = mutableMapOf<String, String>()
+    for (m in Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""").findAll(response)) {
+        merged[m.groupValues[1]] = m.groupValues[2]
+    }
+    return merged
+}
+
+/**
  * True for absolute http(s) media URLs. Rejects thumbnail/storyboard tracks
  * (get_slides), images, subtitle tracks and site assets that share the same
  * file:/src: syntax inside jwplayer setups.
@@ -200,9 +214,8 @@ class EarnVidsExtractor(
             Log.d("EarnVidsExtractor", "✅ Response acquired. Length: ${response.length}")
             
             // Extract proprietary Javascript cookies (e.g. $.cookie('file_id', ...))
-            val jsCookies = Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
-                .findAll(response)
-                .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
+            val jsCookies = extractJsCookies(response)
+                .map { "${it.key}=${it.value}" }
                 .distinct()
                 .toList()
                 

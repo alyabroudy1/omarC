@@ -60,6 +60,16 @@ class EarnVidsDecodeTest {
     }
 
     @Test
+    fun `embed page provides playback cookies`() {
+        // The CDN requires the file_id cookie on the stream request. It is
+        // set by the embed page via $.cookie(...) and forwarded as the
+        // Cookie header. If the page stops providing it, playback breaks.
+        val cookies = extractJsCookies(fixture("lolololu_sonic_s3e1.html"))
+        assertTrue("file_id cookie present: $cookies", cookies.containsKey("file_id"))
+        assertTrue("file_id non-blank", cookies["file_id"].isNullOrBlank().not())
+    }
+
+    @Test
     fun `download landing yields nothing bogus`() {
         // /d/<id> pages carry no player. decode() must return null here
         // (getUrl retries as /v/<id>.html instead) rather than emitting a
