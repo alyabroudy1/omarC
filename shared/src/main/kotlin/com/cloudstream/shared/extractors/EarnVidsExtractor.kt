@@ -112,7 +112,10 @@ class PackerObfuscationStrategy : EarnVidsObfuscationStrategy {
         // Target 2: var links = { "hls4": "...", "hls3"/"hls2"/"hls": "..." }
         // Any hlsN key counts (observed hls3+hls2 without hls4); prefer the
         // highest-numbered variant, which is the best quality.
-        val linksRegex = Regex("""var\s+links\s*=\s*(\{.*?})\s*;""", RegexOption.DOT_MATCHES_ALL)
+        // NOTE: no literal {}/braces in the pattern — Android's ICU regex
+        // engine rejects the unescaped } (PatternSyntaxException), so the
+        // object is captured as "everything up to the semicolon".
+        val linksRegex = Regex("""var\s+links\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
         val linksMatch = linksRegex.find(unpackedPayload)
 
         if (linksMatch != null) {
