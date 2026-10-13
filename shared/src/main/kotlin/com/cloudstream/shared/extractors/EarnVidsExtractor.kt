@@ -247,13 +247,19 @@ class EarnVidsExtractor(
                     if (videoUrl.startsWith("http")) {
                         Log.d("EarnVidsExtractor", "🥇 Extraction Success via Strategy: ${strategy::class.java.simpleName}")
                         Log.d("EarnVidsExtractor", "🔗 Handing off Link to ExoPlayer: $videoUrl")
-                        
+
+                        // master.txt playlists carry HLS content under a .txt
+                        // extension (verified: #EXTM3U master with variants).
+                        // They must go out as M3U8, or ExoPlayer probes them
+                        // as progressive video and fails.
+                        val isHls = videoUrl.contains(".m3u8", ignoreCase = true) ||
+                                videoUrl.contains("master.txt", ignoreCase = true)
                         callback(
                             com.lagradost.cloudstream3.utils.newExtractorLink(
                                 source = name,
                                 name = name,
                                 url = videoUrl,
-                                type = if (videoUrl.contains(".m3u8", ignoreCase = true)) com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8 else com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                                type = if (isHls) com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8 else com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = activeReferer ?: finalUrl
                                 this.quality = Qualities.Unknown.value

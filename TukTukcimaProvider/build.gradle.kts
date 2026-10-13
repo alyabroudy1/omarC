@@ -1,4 +1,4 @@
-version = 9
+version = 10
 
 // Include shared source directory
 android {
@@ -7,10 +7,14 @@ android {
             kotlin.srcDir("../shared/src/main/kotlin")
         }
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
     implementation("org.mozilla:rhino:1.7.14")
+    testImplementation("junit:junit:4.13.2")
 }
 
 cloudstream {
