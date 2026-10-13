@@ -64,6 +64,7 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(EarnVidsExtractor("rubyvidhub.com", "Rubyvidhub"))
     registerExtractorAPI(EarnVidsExtractor("streamruby.com", "StreamRuby"))
     registerExtractorAPI(EarnVidsExtractor("stmruby.com", "StmRuby"))
+    registerExtractorAPI(EarnVidsExtractor("lolololu.website", "Lolololu"))
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }

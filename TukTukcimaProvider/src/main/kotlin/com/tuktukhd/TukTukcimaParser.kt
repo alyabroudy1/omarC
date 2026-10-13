@@ -29,10 +29,10 @@ class TukTukcimaParser : NewBaseParser() {
     )
 
     override val episodeConfig = EpisodeConfig(
-        container = ".allepcont a",
-        title = CssSelector(query = ".ep-info h2", attr = "text"),
-        url = CssSelector(query = "a", attr = "href"),
-        episode = CssSelector(query = ".epnum", attr = "text", regex = "(\\d+)")
+        container = "a.SeriesEpisodeCard, .allepcont a",
+        title = CssSelector(query = ".SeriesEpisodeInfo h3, .ep-info h2, a[title]", attr = "title, text"),
+        url = CssSelector(query = "", attr = "abs:href, href"),
+        episode = CssSelector(query = ".SeriesEpisodeNumber strong, .epnum", attr = "text", regex = "(\\d+)")
     )
 
     override val watchServersSelectors = WatchServerSelector(
@@ -90,29 +90,11 @@ class TukTukcimaParser : NewBaseParser() {
         val yearStr = doc.select(".RightTaxContent a[href*='release-year']").text()
         val year = yearStr.filter { it.isDigit() }.toIntOrNull()
 
-        val type = if (doc.select(".allepcont, .allseasonss").isEmpty()) TvType.Movie else TvType.TvSeries
+        val type = if (doc.select(".allepcont a, .allseasonss, a.SeriesEpisodeCard").isEmpty()) TvType.Movie else TvType.TvSeries
 
-        // Check for direct episodes on the loaded page
+        // Check for direct episodes on the loaded page (new SeriesEpisodeCard cards + legacy allepcont)
         val episodes = if (type == TvType.TvSeries) {
-            val list = mutableListOf<ParserInterface.ParsedEpisode>()
-            doc.select(".allepcont a").forEach { ep ->
-                val epTitle = ep.select(".ep-info h2").text().trim()
-                val epHref = ep.attr("href")
-                val epNumStr = ep.select(".epnum").text()
-                val epNum = epNumStr.filter { it.isDigit() }.toIntOrNull()
-                val epThumb = ep.select("img").let { img ->
-                    img?.attr("data-src").takeIf { !it.isNullOrBlank() } ?: img?.attr("src")
-                }
-                list.add(
-                    ParserInterface.ParsedEpisode(
-                        url = epHref,
-                        name = epTitle,
-                        season = 1,
-                        episode = epNum ?: 0
-                    )
-                )
-            }
-            list
+            parseEpisodes(doc, 1).takeIf { it.isNotEmpty() }
         } else null
 
         return ParserInterface.ParsedLoadData(
@@ -129,21 +111,43 @@ class TukTukcimaParser : NewBaseParser() {
 
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
         val list = mutableListOf<ParserInterface.ParsedEpisode>()
+        // New layout: season pages list a.SeriesEpisodeCard
+        doc.select("a.SeriesEpisodeCard").forEach { ep ->
+            val epHref = ep.attr("abs:href").ifBlank { ep.attr("href") }.trim()
+            if (epHref.isBlank()) return@forEach
+            val epTitle = ep.attr("title").ifBlank {
+                ep.selectFirst(".SeriesEpisodeInfo h3")?.text().orEmpty()
+            }.trim()
+            val epNum = ep.selectFirst(".SeriesEpisodeNumber strong")?.text()
+                ?.filter { it.isDigit() }?.toIntOrNull()
+                ?: Regex("(\\d+)").find(epTitle)?.groupValues?.get(1)?.toIntOrNull()
+                ?: 0
+            list.add(
+                ParserInterface.ParsedEpisode(
+                    url = epHref,
+                    name = epTitle.ifBlank { "الحلقة $epNum" },
+                    season = seasonNum ?: 1,
+                    episode = epNum
+                )
+            )
+        }
+        // Legacy layout fallback
         doc.select(".allepcont a").forEach { ep ->
             val epTitle = ep.select(".ep-info h2").text().trim()
-            val epHref = ep.attr("href")
+            val epHref = ep.attr("abs:href").ifBlank { ep.attr("href") }.trim()
+            if (epHref.isBlank()) return@forEach
             val epNumStr = ep.select(".epnum").text()
             val epNum = epNumStr.filter { it.isDigit() }.toIntOrNull()
             list.add(
                 ParserInterface.ParsedEpisode(
                     url = epHref,
-                    name = epTitle,
+                    name = epTitle.ifBlank { "الحلقة ${epNum ?: 0}" },
                     season = seasonNum ?: 1,
                     episode = epNum ?: 0
                 )
             )
         }
-        return list
+        return list.distinctBy { it.url }
     }
 
 
