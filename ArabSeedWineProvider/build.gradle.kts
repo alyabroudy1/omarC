@@ -1,4 +1,4 @@
-version = 1 // ArabSeed .wine front clone
+version = 2 // Download-first ordering
 
 // Include shared source directory
 android {

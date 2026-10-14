@@ -144,10 +144,10 @@ class ArabseedWine : BaseProvider() {
     // ================= LOAD LINKS (WATCH + DOWNLOAD PATHS) =================
 
     /**
-     * Watch path runs first via the standard BaseProvider flow (lazy AJAX +
-     * direct embeds -> loadExtractor). The download path (/download/ page ->
-     * MegaMax mirrors) runs ALONGSIDE it: every mirror feeds the standard
-     * extractor system too. Either path delivering links counts as success.
+     * Download path runs FIRST: it is fast plain HTTP with working mirrors,
+     * while the watch path can burn the whole loadLinks time budget inside
+     * its sniffer WebView (leaving the download path starved — observed as a
+     * single WebView then failure). Either path delivering links counts.
      */
     override suspend fun loadLinks(
         data: String,
@@ -162,16 +162,7 @@ class ArabseedWine : BaseProvider() {
         val delivered = java.util.concurrent.atomic.AtomicInteger(0)
         val countingCb: (ExtractorLink) -> Unit = { delivered.incrementAndGet(); callback(it) }
 
-        // Watch path (standard flow).
-        val watchOk = try {
-            super.loadLinks(data, isCasting, subtitleCallback, countingCb)
-        } catch (e: Exception) {
-            android.util.Log.e(methodTag, "Watch path error: ${e.message}")
-            false
-        }
-        android.util.Log.d(methodTag, "Watch path ok=$watchOk delivered=${delivered.get()}")
-
-        // Download path (alongside).
+        // Download path first (fast).
         try {
             val base = data.trimEnd('/').removeSuffix("/watch").trimEnd('/')
             val dlPageUrl = "$base/download/"
@@ -206,7 +197,20 @@ class ArabseedWine : BaseProvider() {
             android.util.Log.e(methodTag, "Download path error: ${e.message}")
         }
 
-        android.util.Log.i(methodTag, "END delivered=${delivered.get()}")
+        if (delivered.get() > 0) {
+            android.util.Log.i(methodTag, "END delivered=${delivered.get()} via download path")
+            return true
+        }
+
+        // Watch path fallback (standard flow; may open the sniffer WebView).
+        val watchOk = try {
+            super.loadLinks(data, isCasting, subtitleCallback, countingCb)
+        } catch (e: Exception) {
+            android.util.Log.e(methodTag, "Watch path error: ${e.message}")
+            false
+        }
+
+        android.util.Log.i(methodTag, "END delivered=${delivered.get()} watchOk=$watchOk")
         return delivered.get() > 0
     }
 
