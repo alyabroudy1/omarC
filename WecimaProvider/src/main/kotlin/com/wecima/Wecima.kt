@@ -70,9 +70,27 @@ class Wecima : BaseProvider() {
         }
     }
 
+    // The app calls the paged entry points. Without these overrides the base
+    // class falls back to GET ?s= — which the site ignores (returns the
+    // homepage), so every query showed the same results.
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        return try {
+            httpService.ensureInitialized()
+            newSearchResponseList(searchPost(query), false)
+        } catch (e: Exception) {
+            Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
+            newSearchResponseList(emptyList(), false)
+        }
+    }
+
     override suspend fun searchLazy(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         return searchPost(query)
+    }
+
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        httpService.ensureInitialized()
+        return newSearchResponseList(searchPost(query), false)
     }
 
     override suspend fun fetchExtraEpisodes(
