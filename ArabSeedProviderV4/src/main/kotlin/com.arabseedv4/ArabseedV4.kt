@@ -163,6 +163,9 @@ class ArabseedV4 : BaseProvider() {
         val countingCb: (ExtractorLink) -> Unit = { delivered.incrementAndGet(); callback(it) }
 
         // Download path first (fast).
+        // Mirrors fan out to extractors IN PARALLEL (same as the standard
+        // Phase 2); the sequential one-by-one sniffer stays inside the
+        // shared system, never here.
         try {
             val base = data.trimEnd('/').removeSuffix("/watch").trimEnd('/')
             val dlPageUrl = "$base/download/"
@@ -174,23 +177,31 @@ class ArabseedV4 : BaseProvider() {
                     .filter { it.startsWith("http") && it.length > 10 }
                     .distinct()
                 android.util.Log.d(methodTag, "Download targets: ${dlHrefs.size}")
+                val jobs = mutableListOf<Pair<String, String>>()
                 for (href in dlHrefs) {
                     try {
                         if (href.contains("/download/")) {
                             for ((mirrorUrl, label) in MegamaxDownloader.resolveMirrors(href, dlPageUrl)) {
-                                try {
-                                    android.util.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
-                                    loadExtractor(mirrorUrl, href, subtitleCallback, countingCb)
-                                } catch (e: Exception) {
-                                    android.util.Log.d(methodTag, "Extractor failed: ${e.message}")
-                                }
+                                android.util.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
+                                jobs.add(mirrorUrl to href)
                             }
                         } else {
-                            loadExtractor(href, dlPageUrl, subtitleCallback, countingCb)
+                            jobs.add(href to dlPageUrl)
                         }
                     } catch (e: Exception) {
                         android.util.Log.d(methodTag, "Download target failed: ${e.message}")
                     }
+                }
+                coroutineScope {
+                    jobs.distinctBy { it.first }.map { (mirrorUrl, ref) ->
+                        async {
+                            try {
+                                loadExtractor(mirrorUrl, ref, subtitleCallback, countingCb)
+                            } catch (e: Exception) {
+                                android.util.Log.d(methodTag, "Extractor failed: ${e.message}")
+                            }
+                        }
+                    }.awaitAll()
                 }
             }
         } catch (e: Exception) {

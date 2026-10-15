@@ -82,6 +82,19 @@ class EarnVidsDecodeTest {
     }
 
     @Test
+    fun `play landing exposes embedded player`() {
+        // /play/<token> pages carry no packed sources; the real player
+        // lives in their iframe. The extractor follows it (one hop).
+        val html = fixture("earnvids_play_landing_iframe.html")
+        assertNull(
+            "no packed player on the landing itself",
+            PackerObfuscationStrategy().decode(html)
+        )
+        val embed = extractIframeEmbed(html, "https://govid.live/play/9sWQaF1QodHU3lldFFXUxY2L1xWStFkeGdDd4p0RXFUYspmMuhlYY9UZkNHECCIl3fHxLg1SXpTHF6F4/")
+        assertNotNull("iframe embed found", embed)
+        assertTrue("embed is absolute http: $embed", embed!!.startsWith("https://"))
+    }
+    @Test
     fun `relative best variant is kept for caller resolution`() {
         // hanerix-style pages: best key hls4 is a site-relative stream path
         // (/stream/.../master.m3u8); getUrl resolves it against the page.

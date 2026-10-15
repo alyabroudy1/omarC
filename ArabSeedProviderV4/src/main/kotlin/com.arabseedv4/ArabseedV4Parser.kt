@@ -108,7 +108,7 @@ class ArabseedV4Parser : NewBaseParser() {
         
         Log.d("ArabseedV4.parser", "extractWatchServersUrls: total=${validUrls.size} valid URLs out of ${urls.size}")
         
-        return validUrls
+        return validUrls.distinct()
     }
     
     // Series Detection Logic override to match V2

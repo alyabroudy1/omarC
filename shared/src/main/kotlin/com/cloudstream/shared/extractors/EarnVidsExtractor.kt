@@ -28,6 +28,34 @@ fun extractJsCookies(response: String): Map<String, String> {
 }
 
 /**
+ * First player iframe with a real src on the page, resolved absolute.
+ * Landing pages (/play/<token>) embed the actual player this way instead
+ * of carrying packed sources themselves. Pure function, unit-tested.
+ */
+fun extractIframeEmbed(html: String, pageUrl: String): String? {
+    val doc = try {
+        org.jsoup.Jsoup.parse(html, pageUrl)
+    } catch (_: Exception) { return null }
+    for (iframe in doc.select("iframe[src], iframe[data-src]")) {
+        val raw = iframe.attr("abs:src").ifBlank { iframe.attr("abs:data-src") }
+            .ifBlank { iframe.attr("src") }.ifBlank { iframe.attr("data-src") }.trim()
+        if (raw.isBlank()) continue
+        val lower = raw.lowercase()
+        if (lower.contains("about:blank")) continue
+        if (!raw.startsWith("http") && !raw.startsWith("//")) continue
+        val absolute = if (raw.startsWith("//")) "https:$raw" else raw
+        // Skip the page embedding itself.
+        try {
+            if (java.net.URI(absolute).path == java.net.URI(pageUrl).path &&
+                java.net.URI(absolute).host == java.net.URI(pageUrl).host
+            ) continue
+        } catch (_: Exception) {}
+        return absolute
+    }
+    return null
+}
+
+/**
  * True for absolute http(s) media URLs. Rejects thumbnail/storyboard tracks
  * (get_slides), images, subtitle tracks and site assets that share the same
  * file:/src: syntax inside jwplayer setups.
@@ -192,6 +220,16 @@ class EarnVidsExtractor(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        getUrlInternal(url, referer, subtitleCallback, callback, depth = 0)
+    }
+
+    private suspend fun getUrlInternal(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        depth: Int
+    ) {
         val finalUrl = if (url.startsWith("http")) url else "https:$url"
         Log.d("EarnVidsExtractor", "▶️ Initializing Phase 2 Extractor | Domain: $name | URL: $finalUrl")
         try {
@@ -288,7 +326,19 @@ class EarnVidsExtractor(
             }
             Log.e("EarnVidsExtractor", "🛑 All extraction strategies failed heavily against $finalUrl")
 
-            // Fallback: download-landing URLs (/d/<id>) carry no player, only
+            // Fallback 1: landing pages (/play/<token>) embed the real player
+            // in an iframe instead of carrying packed sources. Follow it
+            // (one hop) and let the extractor system handle the target —
+            // usually the packed jwplayer, sometimes another host entirely.
+            if (depth < 1) {
+                extractIframeEmbed(response, finalUrl)?.let { embedUrl ->
+                    Log.d("EarnVidsExtractor", "🖼️ Following embedded player: ${embedUrl.take(100)}")
+                    getUrlInternal(embedUrl, embedUrl, subtitleCallback, callback, depth + 1)
+                    return
+                }
+            }
+
+            // Fallback 2: download-landing URLs (/d/<id>) carry no player, only
             // a download button. Retry once against the embed variant
             // (/v/<id>.html) which holds the packed jwplayer. Single hop:
             // embed URLs never produce a further variant, so no loop risk.
