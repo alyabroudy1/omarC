@@ -1,4 +1,4 @@
-version = 9 // Round 17: download-first ordering
+version = 10 // Round 18: ?s= search fix
 
 // Include shared source directory
 android {

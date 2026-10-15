@@ -42,52 +42,51 @@ class ArabseedWine : BaseProvider() {
     }
 
     // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
+    // Uses the site's own ?s=<query>&type= endpoint: proven to return real
+    // per-query results. (The /find/?word= endpoint ignores the word and the
+    // base fallbacks returned the same items for every query.)
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    private suspend fun searchSite(query: String, page: Int, withFallback: Boolean): SearchResponseList {
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        
-        return coroutineScope {
+
+        val items = coroutineScope {
             listOf("movies", "series").map { type ->
                 async {
                     val url = "$mainUrl/?s=$encoded&type=$type"
-                    android.util.Log.d("ArabseedWine", "searchLazy: requesting $url")
+                    android.util.Log.d("ArabseedWine", "searchSite: requesting $url")
                     try {
-                        val doc = httpService.getDocumentNoFallback(url, rewriteDomain = true)
+                        val doc = if (withFallback) {
+                            httpService.getDocument(url, rewriteDomain = true)
+                        } else {
+                            httpService.getDocumentNoFallback(url, rewriteDomain = true)
+                        }
                         if (doc != null) getParser().parseSearch(doc) else emptyList()
-                    } catch (e: Exception) {
-                        android.util.Log.e("ArabseedWine", "searchLazy: throwing $e")
+                    } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
                         throw e
+                    } catch (e: Exception) {
+                        android.util.Log.e("ArabseedWine", "searchSite error: ${e.message}")
+                        emptyList()
                     }
                 }
-            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
-                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
-                }
+            }.awaitAll().flatten().distinctBy { it.url }
+        }
+        android.util.Log.d("ArabseedWine", "searchSite: '${query}' -> ${items.size} items")
+        val results = items.map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
             }
         }
+        return newSearchResponseList(results, false)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        android.util.Log.d("ArabseedWine", "searchNormal: Executing parallel search for movies and series")
-        httpService.ensureInitialized()
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        
-        return coroutineScope {
-            listOf("movies", "series").map { type ->
-                async {
-                    val url = "$mainUrl/find/?word=$encoded&type=$type"
-                    val doc = httpService.getDocument(url, rewriteDomain = true)
-                    if (doc != null) getParser().parseSearch(doc) else emptyList()
-                }
-            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
-                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
-                }
-            }
-        }
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchSite(query, page, withFallback = false)
+    }
+
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        return searchSite(query, page, withFallback = true)
     }
 
     // ================= LOAD HOOKS (AJAX SEASONS) =================

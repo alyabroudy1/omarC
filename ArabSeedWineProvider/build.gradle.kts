@@ -1,4 +1,4 @@
-version = 2 // Download-first ordering
+version = 3 // ?s= search fix
 
 // Include shared source directory
 android {
