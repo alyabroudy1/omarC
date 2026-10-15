@@ -128,6 +128,11 @@ class Wecima : BaseProvider() {
         return episodes
     }
 
+    private fun isTrailerOrJunk(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
     private fun decodeWecimaUrl(encodedStr: String): String? {
         try {
             if (encodedStr.isBlank()) return null
@@ -161,15 +166,20 @@ class Wecima : BaseProvider() {
 
         val serverBtns = document.select("ul.WatchServersList li btn")
         Log.d(methodTag, "Found ${serverBtns.size} server buttons")
+        // URLs no extractor handled (e.g. JS-gated players like dhcplay):
+        // retry them through the shared WebView sniffer at the end.
+        val failedUrls = mutableListOf<Pair<String, String>>()
         serverBtns.forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 Log.d(methodTag, "Server: ${decodedUrl.take(80)}")
+                val before = delivered
                 try {
                     loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
                 } catch (e: Exception) {
                     Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
                 }
+                if (delivered == before) failedUrls.add(decodedUrl to data)
             } else {
                 Log.w(methodTag, "Undecodable server btn: '${serverBtn.attr("data-url").take(60)}'")
             }
@@ -181,12 +191,34 @@ class Wecima : BaseProvider() {
             val decodedUrl = decodeWecimaUrl(downloadBtn.attr("data-href"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 Log.d(methodTag, "Download: ${decodedUrl.take(80)}")
+                val before = delivered
                 try {
                     loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
                 } catch (e: Exception) {
                     Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
                 }
+                if (delivered == before) failedUrls.add(decodedUrl to data)
             }
+        }
+
+        // Shared WebView sniffer fallback for anything extractors couldn't
+        // handle (JS-rendered players). Bounded per URL so one stuck host
+        // can't eat the whole loadLinks budget.
+        for ((failedUrl, referer) in failedUrls.distinctBy { it.first }) {
+            if (isTrailerOrJunk(failedUrl)) continue
+            try {
+                Log.d(methodTag, "Sniffer fallback: ${failedUrl.take(80)}")
+                val sniffed = kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                    val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor
+                        .createSnifferUrl(failedUrl, referer)
+                    loadExtractor(sniffUrl, subtitleCallback, ::countingCallback)
+                    delivered
+                }
+                Log.d(methodTag, "Sniffer done for ${failedUrl.take(60)} (delivered=$delivered)")
+            } catch (e: Exception) {
+                Log.d(methodTag, "Sniffer failed for $failedUrl: ${e.message}")
+            }
+            if (delivered > 0) break
         }
 
         Log.i(methodTag, "END delivered=$delivered")
