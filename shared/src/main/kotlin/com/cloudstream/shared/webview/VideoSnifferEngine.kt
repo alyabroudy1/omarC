@@ -375,27 +375,14 @@ class VideoSnifferEngine(
                 while (!resultDelivered) {
                     delay(300)
                     if (capturedLinks.size >= requiredCount) {
-                        // BUGFIX: Add delay to ensure all headers/cookies are captured
+                        // Give the page a moment to attach request headers/cookies.
                         ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Videos found, waiting for headers to sync...")
-                        delay(500)  // Give time for headers to be captured
+                        delay(500)
 
-                        checkExitCondition() // Trigger exit via helper
-
-                        // Fallback if checkExitCondition didn't trigger for some reason
-                        if (!resultDelivered) {
-                             resultDelivered = true
-                             timeoutJob?.cancel()
-
-                             val cookies = webView?.let { extractCookies(it, url) } ?: emptyMap()
-                             val foundLinks = capturedLinks.toList()
-                             android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] FALLBACK EXIT with ${foundLinks.size} links")
-                             android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] First link: ${foundLinks.firstOrNull()?.url?.take(100)}")
-                             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Video monitor forced exit")
-                             cleanup(webView, dialog)
-                             android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] Completing deferred with ${foundLinks.size} links")
-                             deferred.complete(WebViewResult.Success(cookies, "", url, foundLinks))
-                             android.util.Log.i("VideoSnifferEngine", "[videoMonitorJob] Deferred completed!")
-                        }
+                        // There is exactly ONE exit path. checkExitCondition() owns the master-M3U8
+                        // soft wait; forcing a completion here bypassed that wait and handed back a
+                        // single variant 0.5s after capture, before the master could arrive.
+                        checkExitCondition()
                         break
                     }
                 }
@@ -1127,18 +1114,13 @@ class VideoSnifferEngine(
      * Delegates all URL filtering to [VideoUrlClassifier] to avoid duplication.
      */
     private fun captureLink(url: String, qualityLabel: String, headers: Map<String, String>) {
-         // Reject non-video URLs (segments, assets, DRM) — single source of truth
-         if (VideoUrlClassifier.isDrmProtected(url) || VideoUrlClassifier.isSegmentOrAsset(url)) {
-             android.util.Log.d("VideoSnifferEngine", "[captureLink] Filtered out | url=${url.take(80)}")
-             return
-         }
-         // Analytics/telemetry never counts as a stream. This guard belongs HERE, not only at the
-         // network interceptor: the injected JS reports fetch/XHR URLs straight to the bridge with
-         // no classification, so a tracker beacon used to be captured, satisfy the exit condition
-         // and end the session with garbage before the real manifest was ever requested.
-         if (VideoUrlClassifier.isBlacklisted(url)) {
-             android.util.Log.d("VideoSnifferEngine", "[captureLink] Tracker rejected | url=${url.take(80)}")
-             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.captureLink", "Tracker/analytics rejected",
+         // The JS bridge reports raw DOM values, including iframe/player page URLs, thumbnails and
+         // trackers. The network interceptor classifies its own requests, but this boundary must
+         // apply the same rejection rules or a page URL satisfies the exit condition and reaches
+         // ExoPlayer as a "video".
+         if (!VideoUrlClassifier.isPlayableCapture(url)) {
+             android.util.Log.d("VideoSnifferEngine", "[captureLink] Non-playable capture rejected | url=${url.take(80)}")
+             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.captureLink", "Capture rejected as non-playable",
                  "url" to url.take(100), "label" to qualityLabel)
              return
          }
@@ -1182,48 +1164,55 @@ class VideoSnifferEngine(
 
         if (currentExitCondition is ExitCondition.VideoFound) {
             val count = capturedLinks.size
-            if (count >= currentExitCondition.minCount) {
-                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Exit condition met!", "count" to count)
+            val timeSinceFirst = if (firstLinkTime == 0L) 0L
+                else System.currentTimeMillis() - firstLinkTime
+            val decision = SnifferExitPolicy.decide(
+                capturedCount = count,
+                requiredCount = currentExitCondition.minCount,
+                hasMasterM3u8 = capturedLinks.any { VideoUrlClassifier.isMasterM3u8(it.url) },
+                millisSinceFirstCapture = timeSinceFirst,
+                softWaitMs = SMART_WAIT_TIME_MS
+            )
 
-                // === SMART EXIT STRATEGY ===
-                // Check if we should wait for a Master M3U8
-                val hasMaster = capturedLinks.any { VideoUrlClassifier.isMasterM3u8(it.url) }
-                val timeSinceFirst = System.currentTimeMillis() - firstLinkTime
+            if (decision == SnifferExitDecision.NOT_READY) return
 
-                if (!hasMaster && timeSinceFirst < SMART_WAIT_TIME_MS) {
-                     ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Soft waiting for Master M3U8...",
-                         "elapsed" to timeSinceFirst,
-                         "limit" to SMART_WAIT_TIME_MS)
+            ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Exit condition met!",
+                "count" to count, "decision" to decision.name)
 
-                     // Schedule a re-check after the remaining time
-                     CoroutineScope(Dispatchers.Main).launch {
-                         delay(SMART_WAIT_TIME_MS - timeSinceFirst + 100) // Small buffer
-                         checkExitCondition()
-                     }
-                     return
-                }
+            if (decision == SnifferExitDecision.WAIT_FOR_MASTER) {
+                 ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Soft waiting for Master M3U8...",
+                     "elapsed" to timeSinceFirst,
+                     "limit" to SMART_WAIT_TIME_MS)
 
-                // Trigger success
-                resultDelivered = true
-                timeoutJob?.cancel()
-                videoMonitorJob?.cancel()
-                domPollJob?.cancel()
-                firstCaptureJob?.cancel()
+                 // Schedule a re-check after the remaining time. Capturing a master meanwhile triggers
+                 // another check immediately, so the wait can end early.
+                 CoroutineScope(Dispatchers.Main).launch {
+                     delay((SMART_WAIT_TIME_MS - timeSinceFirst + 100).coerceAtLeast(100))
+                     checkExitCondition()
+                 }
+                 return
+            }
 
-                // Launch coroutine to get cookies safely
-                CoroutineScope(Dispatchers.Main).launch {
-                    val cookies = activeWebView?.let { extractCookies(it, "") } ?: emptyMap()
-                    val found = capturedLinks.toList()
+            // Trigger success
+            resultDelivered = true
+            timeoutJob?.cancel()
+            videoMonitorJob?.cancel()
+            domPollJob?.cancel()
+            firstCaptureJob?.cancel()
 
-                    android.util.Log.i("VideoSnifferEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
-                    found.forEach { android.util.Log.d("VideoSnifferEngine", " > Link: ${it.url}") }
+            // Launch coroutine to get cookies safely
+            CoroutineScope(Dispatchers.Main).launch {
+                val cookies = activeWebView?.let { extractCookies(it, "") } ?: emptyMap()
+                val found = capturedLinks.toList()
 
-                    ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Cleaning up UI before exit")
-                    cleanup(activeWebView, activeDialog)
+                android.util.Log.i("VideoSnifferEngine", "[checkExitCondition] EXITING! Sending ${found.size} links to deferred.")
+                found.forEach { android.util.Log.d("VideoSnifferEngine", " > Link: ${it.url}") }
 
-                    deferred?.complete(WebViewResult.Success(cookies, "", "", found))
-                    android.util.Log.i("VideoSnifferEngine", "[checkExitCondition] Deferred completed.")
-                }
+                ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.checkExitCondition", "Cleaning up UI before exit")
+                cleanup(activeWebView, activeDialog)
+
+                deferred?.complete(WebViewResult.Success(cookies, "", "", found))
+                android.util.Log.i("VideoSnifferEngine", "[checkExitCondition] Deferred completed.")
             }
         }
     }

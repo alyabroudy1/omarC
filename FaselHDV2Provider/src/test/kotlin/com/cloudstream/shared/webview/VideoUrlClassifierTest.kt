@@ -64,4 +64,42 @@ class VideoUrlClassifierTest {
     fun `media segments are not masters`() {
         assertFalse(VideoUrlClassifier.isMasterM3u8(variant("seg-1-v1-a1.ts")))
     }
+
+    @Test
+    fun `player page URLs are not playable captures`() {
+        assertFalse(
+            VideoUrlClassifier.isPlayableCapture(
+                "https://www.fasel-hd.co/video_player?player_token=abc123"
+            )
+        )
+        assertTrue(
+            VideoUrlClassifier.isLikelyPageUrl(
+                "https://www.fasel-hd.co/video_player?player_token=abc123"
+            )
+        )
+    }
+
+    @Test
+    fun `generic detail pages are not playable captures`() {
+        assertFalse(VideoUrlClassifier.isPlayableCapture("https://www.fasel-hd.co/?p=8672"))
+        assertTrue(VideoUrlClassifier.isLikelyPageUrl("https://www.fasel-hd.co/?p=8672"))
+    }
+
+    @Test
+    fun `jpeg thumbnails are not playable captures`() {
+        assertFalse(
+            VideoUrlClassifier.isPlayableCapture(
+                "https://static.faselhdcdn.com/open-uri20150422-12561-z7nsh7_240f9deb-400x600.jpeg"
+            )
+        )
+    }
+
+    @Test
+    fun `a no-extension network stream is still playable`() {
+        assertTrue(
+            VideoUrlClassifier.isPlayableCapture(
+                "https://vk6-3.vkuser.net/?expires=1790000000&type=1&sig=abc"
+            )
+        )
+    }
 }

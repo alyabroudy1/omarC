@@ -12,6 +12,7 @@ import com.cloudstream.shared.service.ProviderHttpService
 import com.cloudstream.shared.service.ProviderHttpServiceHolder
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.android.PluginContext
+import com.cloudstream.shared.webview.VideoUrlClassifier
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.async
@@ -690,12 +691,15 @@ abstract class BaseProvider : MainAPI() {
                 loadExtractor(sniffUrl, referer, subtitleCallback) { link ->
                     Log.i("$providerName.awaitSnifferResult", "CALLBACK FIRED! URL=${link.url.take(80)}")
                     val isAudioChunk = link.url.contains("audio", ignoreCase = true) && link.url.contains(".mp4", ignoreCase = true)
-                    if (!found && !isAudioChunk) {
+                    val isPlayableCapture = VideoUrlClassifier.isPlayableCapture(link.url)
+                    if (!found && !isAudioChunk && isPlayableCapture) {
                         found = true
                         callback(link)
                         deferred.complete(true)
                     } else if (isAudioChunk) {
                         Log.w("$providerName.awaitSnifferResult", "Rejected AUDIO fragment from sniffer: ${link.url.take(80)}")
+                    } else if (!isPlayableCapture) {
+                        Log.w("$providerName.awaitSnifferResult", "Rejected non-playable URL from sniffer: ${link.url.take(80)}")
                     }
                 }
                 

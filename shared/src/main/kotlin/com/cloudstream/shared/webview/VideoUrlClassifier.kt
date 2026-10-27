@@ -15,8 +15,18 @@ object VideoUrlClassifier {
     private val DRM_EXTENSIONS = listOf(".mpd")
 
     /** Segment/asset patterns that should never be captured as video links. */
-    private val SEGMENT_EXTENSIONS = listOf(".ts", ".key", ".png", ".jpg", ".gif", ".css", ".js")
-    private val SEGMENT_KEYWORDS = listOf("favicon")
+    private val SEGMENT_EXTENSIONS = listOf(
+        ".ts", ".m4s", ".key", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        ".svg", ".avif", ".heic", ".heif", ".ico", ".css", ".js", ".swf"
+    )
+    private val SEGMENT_KEYWORDS = listOf("favicon", "init.mp4")
+
+    /** Page shapes that are documents, never media, even when a query contains a media-looking word. */
+    private val DOCUMENT_EXTENSIONS = listOf(".html", ".htm", ".xhtml")
+    private val PLAYER_PAGE_PATHS = listOf("/video_player", "/watch", "/embed")
+
+    /** `/?p=8672`-style detail pages on FaselHD and similar WordPress layouts. */
+    private val GENERIC_DETAIL_QUERY = Regex("""(?:^|&)p=\d+(?:&|$)""", RegexOption.IGNORE_CASE)
 
     /**
      * Determines if a URL is an extractable video stream.
@@ -26,6 +36,7 @@ object VideoUrlClassifier {
      */
     fun isVideoUrl(url: String): Boolean {
         if (isBlacklisted(url)) return false
+        if (isLikelyPageUrl(url)) return false
 
         // Blob URLs (WebRTC/MediaSource) are always considered video
         if (url.startsWith("blob:")) return true
@@ -56,6 +67,31 @@ object VideoUrlClassifier {
         val lower = url.lowercase()
         return SEGMENT_EXTENSIONS.any { lower.contains(it) } ||
                SEGMENT_KEYWORDS.any { lower.contains(it) }
+    }
+
+    /**
+     * True for a document/player page rather than a media file.
+     *
+     * The sniffer's JS bridge reads `[data-src]` attributes from the whole DOM. Those routinely
+     * contain an iframe's `video_player?...` URL and the site's own `/?p=8672` detail-page URL;
+     * both were reported as final video links and sent to ExoPlayer, which correctly failed with
+     * `UnrecognizedInputFormatException`. This check is about URL shape only — no host-specific
+     * FaselHD knowledge belongs here.
+     */
+    fun isLikelyPageUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+
+        val lower = url.lowercase().substringBefore('#')
+        val withoutScheme = lower.substringAfter("://", lower)
+        val query = withoutScheme.substringAfter('?', "")
+        val path = "/" + withoutScheme.substringBefore('?').substringAfter('/', "")
+        val normalizedPath = path.trimEnd('/').ifBlank { "/" }
+
+        if (DOCUMENT_EXTENSIONS.any { path.endsWith(it) }) return true
+        if (PLAYER_PAGE_PATHS.any { normalizedPath == it }) return true
+        if (normalizedPath == "/" && GENERIC_DETAIL_QUERY.containsMatchIn(query)) return true
+
+        return false
     }
 
     /**
@@ -132,7 +168,11 @@ object VideoUrlClassifier {
      */
     fun isPlayableCapture(url: String): Boolean {
         if (url.isBlank()) return false
+        if (url.startsWith("data:", ignoreCase = true) ||
+            url.startsWith("javascript:", ignoreCase = true)
+        ) return false
         if (isBlacklisted(url)) return false
+        if (isLikelyPageUrl(url)) return false
         if (isSegmentOrAsset(url)) return false
         if (isPreviewAsset(url)) return false
         if (isDrmProtected(url)) return false

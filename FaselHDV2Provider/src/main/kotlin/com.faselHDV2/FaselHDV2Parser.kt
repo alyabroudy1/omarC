@@ -219,11 +219,12 @@ class FaselHDV2Parser : NewBaseParser() {
             if (text.startsWith("http")) addResult(text)
         }
 
-        Log.i("[FaselHDV2Parser]", "extractIframeSources: extracted ${results.size} watch server URLs:")
-        results.forEachIndexed { idx, u ->
+        val selected = FaselHDV2WatchUrlPolicy.select(results.toList())
+        Log.i("[FaselHDV2Parser]", "extractIframeSources: extracted ${results.size} candidates, ${selected.size} after player policy:")
+        selected.forEachIndexed { idx, u ->
             Log.d("[FaselHDV2Parser]", "  [$idx] -> ${u.take(120)}")
         }
-        return results.toList()
+        return selected
     }
 
     /**
