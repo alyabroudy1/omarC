@@ -10,7 +10,7 @@ import org.jsoup.nodes.Document
 
 class Bristege : BaseProvider() {
 
-    override val baseDomain get() = "amd.brstej.com"
+    override val baseDomain get() = "brstej.com"
     override val providerName get() = "Bristege"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/bristege.json"
 
@@ -59,10 +59,10 @@ class Bristege : BaseProvider() {
             val watchPageUrl = getParser().getPlayerPageUrl(detailDoc)
             
             val targetDoc = if (!watchPageUrl.isNullOrBlank()) {
-                val absoluteWatchUrl = if (watchPageUrl.startsWith("http")) {
-                    watchPageUrl
-                } else {
-                    "$mainUrl/$watchPageUrl".replace("//", "/").replace("https:/", "https://")
+                val absoluteWatchUrl = when {
+                    watchPageUrl.startsWith("http") -> watchPageUrl
+                    watchPageUrl.startsWith("/") -> "$mainUrl$watchPageUrl"
+                    else -> "$mainUrl/$watchPageUrl"
                 }
                 Log.d(methodTag, "Following redirect to player page: $absoluteWatchUrl")
                 httpService.getDocument(absoluteWatchUrl, mapOf("Referer" to data), rewriteDomain = true) ?: detailDoc

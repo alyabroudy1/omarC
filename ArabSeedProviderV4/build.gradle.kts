@@ -1,4 +1,4 @@
-version = 7 // Round 15: Search Logic Refactor
+version = 10 // Round 18: ?s= search fix
 
 // Include shared source directory
 android {

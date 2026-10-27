@@ -5,8 +5,8 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import com.cloudstream.shared.android.PluginContext
 import com.cloudstream.shared.android.ActivityProvider
-import com.cloudstream.shared.extractors.ReviewRateExtractor
 import com.cloudstream.shared.extractors.SnifferExtractor
+import com.cloudstream.shared.extractors.registerSharedExtractors
 
 @CloudstreamPlugin
 class EgyDeadPlugin: Plugin() {
@@ -18,9 +18,10 @@ class EgyDeadPlugin: Plugin() {
             ActivityProvider.setActivity(context)
         }
 
-        registerExtractorAPI(ReviewRateExtractor())
-        registerExtractorAPI(com.cloudstream.shared.extractors.SavefilesExtractor())
-        registerExtractorAPI(com.cloudstream.shared.extractors.OkPrimeExtractor())
+        // Shared registry: ReviewRate/Savefiles/OkPrime plus the Byse/EarnVids/
+        // Vidmoly/MixDropTop/Uqload/Vidara clones used by this site's watch
+        // servers (same pattern as sibling providers)
+        registerSharedExtractors()
 
         val sniffer = SnifferExtractor()
         sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { ActivityProvider.currentActivity }

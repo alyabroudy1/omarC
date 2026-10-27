@@ -23,8 +23,8 @@ class ArabseedV4Parser : NewBaseParser() {
     override val searchConfig = mainPageConfig
 
     override val loadPageConfig = LoadPageConfig(
-        title = CssSelector(query = "div.title h1, h1.postTitle, div.h1-title h1", attr = "text"),
-        poster = CssSelector(query = "div.posterDiv img, div.poster img, img.poster, div.single-poster img, div.postDiv a div img, div.postDiv img, .moviePoster img", attr = "data-src, src"),
+        title = CssSelector(query = "div.title h1, div.title__and__br h1, h1.postTitle, div.h1-title h1, h1", attr = "text"),
+        poster = CssSelector(query = "meta[property='og:image'], div.posterDiv img, div.poster img, img.poster, div.single-poster img, div.postDiv a div img, div.postDiv img, .moviePoster img", attr = "content, data-src, src"),
         plot = CssSelector(
             query = "div.singleInfo span:contains(القصة) p, div.singleDesc p, div.story p, div.post__story p, div.postContent p, meta[property='og:description']", 
             attr = "text, content"
@@ -87,7 +87,14 @@ class ArabseedV4Parser : NewBaseParser() {
             }
         }
         
-        // Direct Embeds (iframes already on the page)
+        // Direct embeds: li[data-link] (.trade front serves these, no AJAX),
+        // iframes already on the page. Social/trailer frames excluded.
+        for (li in doc.select("li[data-link]")) {
+            val link = li.attr("data-link").trim()
+            if (link.startsWith("http") && link.length > 10 && !isJunkEmbed(link)) {
+                urls.add(link)
+            }
+        }
         urls.addAll(extractDirectEmbeds(doc))
         
         // Final Validation: Only keep structurally valid URLs 
@@ -101,7 +108,7 @@ class ArabseedV4Parser : NewBaseParser() {
         
         Log.d("ArabseedV4.parser", "extractWatchServersUrls: total=${validUrls.size} valid URLs out of ${urls.size}")
         
-        return validUrls
+        return validUrls.distinct()
     }
     
     // Series Detection Logic override to match V2
@@ -124,8 +131,14 @@ class ArabseedV4Parser : NewBaseParser() {
 
     // ================= HELPERS FOR ARABSEED LOGIC =================
 
-    private fun fixUrl(url: String): String {
-        if (url.isBlank()) return ""
+    private fun isJunkEmbed(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("facebook") || lower.contains("twitter") ||
+            lower.contains("instagram") || lower.contains("google") ||
+            lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
+    private fun fixUrl(url: String): String {        if (url.isBlank()) return ""
         if (url.startsWith("//")) return "https:$url"
         if (!url.startsWith("http")) return "https://$url"
         return url
@@ -287,7 +300,9 @@ class ArabseedV4Parser : NewBaseParser() {
         if (finalPoster.isNullOrBlank()) {
             val contentImg = doc.select("img").firstOrNull { img ->
                 val src = img.attr("data-src").ifBlank { img.attr("src") }
-                src.contains("/wp-content/uploads/") && src.length > 10
+                val cls = img.classNames().joinToString(" ")
+                src.contains("/wp-content/uploads/") && src.length > 10 &&
+                    !src.contains("coupon", true) && !cls.contains("coupon", true)
             }
             finalPoster = contentImg?.let { it.attr("data-src").ifBlank { it.attr("src") } }
         }

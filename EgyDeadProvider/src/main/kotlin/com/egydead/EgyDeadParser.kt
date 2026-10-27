@@ -1,6 +1,7 @@
 package com.egydead
 
 import com.lagradost.api.Log
+import com.lagradost.cloudstream3.TvType
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -52,6 +53,48 @@ class EgyDeadParser : NewBaseParser() {
     )
 
     /**
+     * Collection pages (/assembly/...) list movies instead of carrying a player.
+     * Expose the contained movies as episodes so the collection is browsable
+     * and every entry resolves through the normal movie loadLinks flow.
+     */
+    override fun parseLoadPage(doc: Document, url: String): ParserInterface.ParsedLoadData? {
+        if (url.contains("/assembly/")) {
+            val title = doc.selectFirst("div.singleTitle em")?.text()?.trim()
+                ?: doc.selectFirst("div.singleTitle")?.text()?.trim()
+                ?: doc.title()?.trim()
+                ?: return null
+            val poster = doc.selectFirst("div.single-thumbnail > img")?.attr("src")
+                ?: doc.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: ""
+            val plot = doc.selectFirst("div.extra-content:contains(القصه) p")?.text()?.trim()
+            val episodes = doc.select("li.movieItem").mapIndexedNotNull { index, li ->
+                val a = li.selectFirst("a[href]") ?: return@mapIndexedNotNull null
+                val epUrl = a.attr("abs:href").ifBlank { a.attr("href") }.trim()
+                if (epUrl.isBlank()) return@mapIndexedNotNull null
+                val epTitle = li.selectFirst("h1.BottomTitle")?.text()?.trim()
+                    ?: a.attr("title").ifBlank { a.text().trim() }.trim()
+                ParserInterface.ParsedEpisode(
+                    name = epTitle.ifBlank { "Part ${index + 1}" },
+                    url = epUrl,
+                    season = 1,
+                    episode = index + 1
+                )
+            }
+            return ParserInterface.ParsedLoadData(
+                title = title,
+                plot = plot,
+                posterUrl = poster,
+                url = url,
+                type = TvType.TvSeries,
+                year = null,
+                episodes = episodes,
+                tags = emptyList()
+            )
+        }
+        return super.parseLoadPage(doc, url)
+    }
+
+    /**
      * Parse episodes from a document.
      * Reference: div.EpsList > li > a, with href and title attrs
      */
@@ -98,7 +141,7 @@ class EgyDeadParser : NewBaseParser() {
         for (link in doc.select("a[data-src]")) {
             val dataSrc = link.attr("data-src")
             if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
-                urls.add(dataSrc)
+                if (!isTrailerOrJunk(dataSrc)) urls.add(dataSrc)
             }
         }
         
@@ -106,15 +149,16 @@ class EgyDeadParser : NewBaseParser() {
         for (iframe in doc.select("iframe[data-src]")) {
             val dataSrc = iframe.attr("data-src")
             if (dataSrc.isNotBlank()) {
-                urls.add(dataSrc)
+                if (!isTrailerOrJunk(dataSrc) && !isHiddenIframe(iframe)) urls.add(dataSrc)
             }
         }
         
-        // Method 3: From inline iframes
+        // Method 3: From inline iframes (skips the youtube trailer popup and
+        // hidden tracking pixels, which otherwise open a trailer-only webview)
         for (iframe in doc.select("iframe[src]")) {
             val src = iframe.attr("src")
             if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
-                urls.add(src)
+                if (!isTrailerOrJunk(src) && !isHiddenIframe(iframe)) urls.add(src)
             }
         }
         
@@ -122,11 +166,26 @@ class EgyDeadParser : NewBaseParser() {
         for (link in doc.select("a[data-id]")) {
             val dataId = link.attr("data-id")
             if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
-                urls.add(dataId)
+                if (!isTrailerOrJunk(dataId)) urls.add(dataId)
             }
         }
         
         return urls.distinct()
+    }
+
+    private fun isTrailerOrJunk(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
+    private fun isHiddenIframe(iframe: Element): Boolean {
+        val style = iframe.attr("style").lowercase()
+        if (style.contains("display:none") || style.contains("display: none")) return true
+        if (style.contains("width: 0") || style.contains("width:0")) return true
+        if (style.contains("height: 0") || style.contains("height:0")) return true
+        if (style.contains("-1000px") || style.contains("left:-1000")) return true
+        if (iframe.attr("width") == "0" || iframe.attr("height") == "0") return true
+        return false
     }
 
     /**

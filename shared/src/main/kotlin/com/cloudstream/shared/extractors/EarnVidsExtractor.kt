@@ -13,6 +13,64 @@ interface EarnVidsObfuscationStrategy {
     fun decode(response: String): String?
 }
 
+/**
+ * Proprietary Javascript cookies set by the embed page (e.g.
+ * $.cookie('file_id', '...')). These become the Cookie header on the
+ * stream request — the CDN rejects playback without them.
+ * Pure function (no Android/network), covered by EarnVidsDecodeTest.
+ */
+fun extractJsCookies(response: String): Map<String, String> {
+    val merged = mutableMapOf<String, String>()
+    for (m in Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""").findAll(response)) {
+        merged[m.groupValues[1]] = m.groupValues[2]
+    }
+    return merged
+}
+
+/**
+ * First player iframe with a real src on the page, resolved absolute.
+ * Landing pages (/play/<token>) embed the actual player this way instead
+ * of carrying packed sources themselves. Pure function, unit-tested.
+ */
+fun extractIframeEmbed(html: String, pageUrl: String): String? {
+    val doc = try {
+        org.jsoup.Jsoup.parse(html, pageUrl)
+    } catch (_: Exception) { return null }
+    for (iframe in doc.select("iframe[src], iframe[data-src]")) {
+        val raw = iframe.attr("abs:src").ifBlank { iframe.attr("abs:data-src") }
+            .ifBlank { iframe.attr("src") }.ifBlank { iframe.attr("data-src") }.trim()
+        if (raw.isBlank()) continue
+        val lower = raw.lowercase()
+        if (lower.contains("about:blank")) continue
+        if (!raw.startsWith("http") && !raw.startsWith("//")) continue
+        val absolute = if (raw.startsWith("//")) "https:$raw" else raw
+        // Skip the page embedding itself.
+        try {
+            if (java.net.URI(absolute).path == java.net.URI(pageUrl).path &&
+                java.net.URI(absolute).host == java.net.URI(pageUrl).host
+            ) continue
+        } catch (_: Exception) {}
+        return absolute
+    }
+    return null
+}
+
+/**
+ * True for absolute http(s) media URLs. Rejects thumbnail/storyboard tracks
+ * (get_slides), images, subtitle tracks and site assets that share the same
+ * file:/src: syntax inside jwplayer setups.
+ */
+private fun isPlayableStreamUrl(url: String): Boolean {
+    if (url.isBlank()) return false
+    val u = url.trim()
+    if (!u.startsWith("http://") && !u.startsWith("https://")) return false
+    val lower = u.lowercase()
+    if (lower.contains("get_slides")) return false
+    if (Regex("""\.(jpg|jpeg|png|gif|webp|bmp|svg|vtt|srt|css|js)(\?|#|$)""").containsMatchIn(lower)) return false
+    if (lower.contains("logo")) return false
+    return true
+}
+
 class HexObfuscationStrategy : EarnVidsObfuscationStrategy {
     override fun decode(response: String): String? {
         val hexRegex = Regex("""const\s+[A-Za-z0-9_]+\s*=\s*["']([0-9a-fA-F]{40,})["']""")
@@ -26,7 +84,10 @@ class HexObfuscationStrategy : EarnVidsObfuscationStrategy {
                 break
             }
         }
-        return if (decodedUrl.startsWith("http")) decodedUrl else null
+        if (!decodedUrl.startsWith("http")) return null
+        // A hex blob may decode to a thumbnail/slides URL rather than the
+        // stream — reject those so the packer strategy still gets its turn.
+        return if (isPlayableStreamUrl(decodedUrl)) decodedUrl else null
     }
 }
 
@@ -76,52 +137,68 @@ class PackerObfuscationStrategy : EarnVidsObfuscationStrategy {
         if (unpackedPayload.isEmpty()) return null
         
         // Target 1: sources: [{ file: "..." }]
-        val sourceRegex = Regex("""sources:\s*\[\s*\{.*?(?:file|src):\s*['"](.*?)['"].*?\}\s*\]""")
-        val sourceMatch = sourceRegex.find(unpackedPayload)
-        if (sourceMatch != null) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [sources] syntax: ${sourceMatch.groupValues[1]}")
-            return sourceMatch.groupValues[1]
+        // NOTE: the first file: entry is often a thumbnails track
+        // ("/dl?op=get_slides...") or a JS var reference
+        // ("links.hls4||links.hls3"), NOT the stream. Accept only absolute
+        // http(s) media URLs here; otherwise fall through to the
+        // var-links targets below which resolve links.hlsN references.
+        val sourceRegex = Regex("""(?:file|src):\s*['"](.*?)['"]""")
+        for (sourceMatch in sourceRegex.findAll(unpackedPayload)) {
+            val candidate = sourceMatch.groupValues[1].trim()
+            if (isPlayableStreamUrl(candidate)) {
+                Log.d("EarnVidsExtractor", "✅ Extracted via [sources] syntax: ${candidate.take(100)}")
+                return candidate
+            }
         }
         
-        // Target 2: var links = { "hls4": "...", "hls": "..." }
-        val linksRegex = Regex("""var\s+links\s*=\s*(\{.*?})\s*;""", RegexOption.DOT_MATCHES_ALL)
+        // Target 2: var links = { "hls4": "...", "hls3"/"hls2"/"hls": "..." }
+        // Any hlsN key counts (observed hls3+hls2 without hls4); prefer the
+        // highest-numbered variant, which is the best quality.
+        // NOTE: no literal {}/braces in the pattern — Android's ICU regex
+        // engine rejects the unescaped } (PatternSyntaxException), so the
+        // object is captured as "everything up to the semicolon".
+        val linksRegex = Regex("""var\s+links\s*=\s*([^;]+);""", RegexOption.DOT_MATCHES_ALL)
         val linksMatch = linksRegex.find(unpackedPayload)
-        
+
         if (linksMatch != null) {
             Log.d("EarnVidsExtractor", "🔎 Found [var links] JSON dictionary instead of sources.")
             val jsonStr = linksMatch.groupValues[1].replace("'", "\"")
-            // Basic regex parsing to extract the keys gracefully without org.json
-            val hls4Regex = Regex(""""hls4"\s*:\s*"([^"]+)"""")
-            val hlsRegex = Regex(""""hls"\s*:\s*"([^"]+)"""")
-            
-            val hls4Val = hls4Regex.find(jsonStr)?.groupValues?.get(1)
-            if (!hls4Val.isNullOrBlank()) {
-                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links -> hls4]: $hls4Val")
-                return hls4Val
-            }
-            
-            val hlsVal = hlsRegex.find(jsonStr)?.groupValues?.get(1)
-            if (!hlsVal.isNullOrBlank()) {
-                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links -> hls]: $hlsVal")
-                return hlsVal
+            val bestHls = pickBestHlsVariant(jsonStr)
+            if (!bestHls.isNullOrBlank()) {
+                Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via [var links]: ${bestHls.take(100)}")
+                return bestHls
             }
         }
-        
+
         // Target 3: Quick fallback if JSON bracket wasn't matched but keys are there
-        val fallbackHls4 = Regex(""""hls4"\s*:\s*"([^"]+)"""").find(unpackedPayload)?.groupValues?.get(1)
-        if (!fallbackHls4.isNullOrBlank()) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [\"hls4\":]: $fallbackHls4")
-            return fallbackHls4
+        val fallbackBest = pickBestHlsVariant(unpackedPayload)
+        if (!fallbackBest.isNullOrBlank()) {
+            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [hlsN]: ${fallbackBest.take(100)}")
+            return fallbackBest
         }
-        
-        val fallbackHls = Regex(""""hls"\s*:\s*"([^"]+)"""").find(unpackedPayload)?.groupValues?.get(1)
-        if (!fallbackHls.isNullOrBlank()) {
-            Log.d("EarnVidsExtractor", "✅ Extracted M3U8 via Regex [\"hls\":]: $fallbackHls")
-            return fallbackHls
-        }
-        
+
         Log.w("EarnVidsExtractor", "❌ Finished all unpackings but no valid M3U8 links were intercepted!")
         return null
+    }
+
+    /**
+     * Picks the best "hlsN" stream URL from a JSON-ish blob: highest N wins
+     * (hls4 > hls3 > hls2 > plain hls), skipping non-playable values.
+     * Relative values are kept (caller resolves them against the page URL);
+     * only absolute-but-unplayable ones (slides/images) are dropped.
+     */
+    private fun pickBestHlsVariant(jsonStr: String): String? {
+        return Regex(""""(hls\d*)"\s*:\s*"([^"]+)"""").findAll(jsonStr)
+            .mapNotNull { m ->
+                val key = m.groupValues[1]
+                val value = m.groupValues[2].trim()
+                if (value.isBlank()) return@mapNotNull null
+                if (value.startsWith("http") && !isPlayableStreamUrl(value)) return@mapNotNull null
+                val rank = if (key == "hls") 0 else key.removePrefix("hls").toIntOrNull() ?: -1
+                rank to value
+            }
+            .maxByOrNull { it.first }
+            ?.second
     }
 }
 
@@ -142,6 +219,16 @@ class EarnVidsExtractor(
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
+    ) {
+        getUrlInternal(url, referer, subtitleCallback, callback, depth = 0)
+    }
+
+    private suspend fun getUrlInternal(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit,
+        depth: Int
     ) {
         val finalUrl = if (url.startsWith("http")) url else "https:$url"
         Log.d("EarnVidsExtractor", "▶️ Initializing Phase 2 Extractor | Domain: $name | URL: $finalUrl")
@@ -168,9 +255,8 @@ class EarnVidsExtractor(
             Log.d("EarnVidsExtractor", "✅ Response acquired. Length: ${response.length}")
             
             // Extract proprietary Javascript cookies (e.g. $.cookie('file_id', ...))
-            val jsCookies = Regex("""\$\.cookie\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
-                .findAll(response)
-                .map { "${it.groupValues[1]}=${it.groupValues[2]}" }
+            val jsCookies = extractJsCookies(response)
+                .map { "${it.key}=${it.value}" }
                 .distinct()
                 .toList()
                 
@@ -215,13 +301,19 @@ class EarnVidsExtractor(
                     if (videoUrl.startsWith("http")) {
                         Log.d("EarnVidsExtractor", "🥇 Extraction Success via Strategy: ${strategy::class.java.simpleName}")
                         Log.d("EarnVidsExtractor", "🔗 Handing off Link to ExoPlayer: $videoUrl")
-                        
+
+                        // master.txt playlists carry HLS content under a .txt
+                        // extension (verified: #EXTM3U master with variants).
+                        // They must go out as M3U8, or ExoPlayer probes them
+                        // as progressive video and fails.
+                        val isHls = videoUrl.contains(".m3u8", ignoreCase = true) ||
+                                videoUrl.contains("master.txt", ignoreCase = true)
                         callback(
                             com.lagradost.cloudstream3.utils.newExtractorLink(
                                 source = name,
                                 name = name,
                                 url = videoUrl,
-                                type = if (videoUrl.contains(".m3u8", ignoreCase = true)) com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8 else com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
+                                type = if (isHls) com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8 else com.lagradost.cloudstream3.utils.ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = activeReferer ?: finalUrl
                                 this.quality = Qualities.Unknown.value
@@ -233,8 +325,37 @@ class EarnVidsExtractor(
                 }
             }
             Log.e("EarnVidsExtractor", "🛑 All extraction strategies failed heavily against $finalUrl")
+
+            // Fallback 1: landing pages (/play/<token>) embed the real player
+            // in an iframe instead of carrying packed sources. Follow it
+            // (one hop) and let the extractor system handle the target —
+            // usually the packed jwplayer, sometimes another host entirely.
+            if (depth < 1) {
+                extractIframeEmbed(response, finalUrl)?.let { embedUrl ->
+                    Log.d("EarnVidsExtractor", "🖼️ Following embedded player: ${embedUrl.take(100)}")
+                    getUrlInternal(embedUrl, embedUrl, subtitleCallback, callback, depth + 1)
+                    return
+                }
+            }
+
+            // Fallback 2: download-landing URLs (/d/<id>) carry no player, only
+            // a download button. Retry once against the embed variant
+            // (/v/<id>.html) which holds the packed jwplayer. Single hop:
+            // embed URLs never produce a further variant, so no loop risk.
+            toEmbedVariant(finalUrl)?.let { embedUrl ->
+                Log.d("EarnVidsExtractor", "🔁 Retrying as embed variant: $embedUrl")
+                getUrl(embedUrl, referer, subtitleCallback, callback)
+            }
         } catch (e: Exception) {
             Log.e("EarnVidsExtractor", "❌ Catastrophic Error running EarnVidsExtractor: ${e.message}", e)
         }
+    }
+
+    private fun toEmbedVariant(url: String): String? {
+        val id = Regex("""/d/([A-Za-z0-9]+)/?$""").find(url)?.groupValues?.get(1)
+            ?: return null
+        val base = url.substringBefore("/d/")
+        if (base.isBlank() || base == url) return null
+        return "$base/v/$id.html"
     }
 }

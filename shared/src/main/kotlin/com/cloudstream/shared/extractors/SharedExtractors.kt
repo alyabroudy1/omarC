@@ -8,8 +8,16 @@ class MixDropTop : MixDrop() {
     override var mainUrl = "https://mixdrop.top"
 }
 
+class MixDropPs : MixDrop() {
+    override var mainUrl = "https://mixdrop.ps"
+}
+
 class UqloadIs : Uqload() {
     override var mainUrl = "https://uqload.is"
+}
+
+class UqloadVc : Uqload() {
+    override var mainUrl = "https://uqload.vc"
 }
 
 /**
@@ -43,7 +51,12 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(ByseExtractor("byseztajaos.com", "Byseztajaos"))
     registerExtractorAPI(ByseExtractor("byseztajos.com", "Byseztajos"))
     registerExtractorAPI(ByseExtractor("bysetayico.com", "Bysetayico"))
-    
+    // Byse clones seen on EgyDead (same /e/ + api/videos AES-GCM backend)
+    registerExtractorAPI(ByseExtractor("bysekoze.com", "Bysekoze"))
+    registerExtractorAPI(ByseExtractor("byseraguci.com", "Byseraguci"))
+    // Byse clone seen on Wecima (same scheme)
+    registerExtractorAPI(ByseExtractor("byselapuix.com", "Byselapuix"))
+
     // EarnVids and its proxies
     registerExtractorAPI(EarnVidsExtractor())
     registerExtractorAPI(EarnVidsExtractor("dingtezuni.com"))
@@ -51,6 +64,19 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(EarnVidsExtractor("govid.live", "GoVid"))
     registerExtractorAPI(EarnVidsExtractor("1vid1shar.space", "Vid1Shar"))
     registerExtractorAPI(EarnVidsExtractor("mycima.page", "MyCima"))
+    // EarnVids/VidHide-family clones seen on EgyDead (same eval-packed jwplayer)
+    registerExtractorAPI(EarnVidsExtractor("vidhidevip.com", "VidhideVip"))
+    registerExtractorAPI(EarnVidsExtractor("morencius.com", "Morencius"))
+    registerExtractorAPI(EarnVidsExtractor("rubyvidhub.com", "Rubyvidhub"))
+    registerExtractorAPI(EarnVidsExtractor("streamruby.com", "StreamRuby"))
+    registerExtractorAPI(EarnVidsExtractor("stmruby.com", "StmRuby"))
+    registerExtractorAPI(EarnVidsExtractor("lolololu.website", "Lolololu"))
+    // Same player family (verified identical packed jwplayer + var-links):
+    // Wecima's dhcplay + rotating mirrors, and the hgcloud twin.
+    registerExtractorAPI(EarnVidsExtractor("dhcplay.com", "Dhcplay"))
+    registerExtractorAPI(EarnVidsExtractor("hanerix.com", "Hanerix"))
+    registerExtractorAPI(EarnVidsExtractor("vibuxer.com", "Vibuxer"))
+    registerExtractorAPI(EarnVidsExtractor("hgcloud.to", "Hgcloud"))
     
     val sniffer = SnifferExtractor()
     sniffer.videoSnifferEngine = com.cloudstream.shared.webview.VideoSnifferEngine { com.cloudstream.shared.android.ActivityProvider.currentActivity }
@@ -59,11 +85,16 @@ fun Plugin.registerSharedExtractors() {
     registerExtractorAPI(VidmolyExtractor("vidmoly.net", "VidmolyNet"))
     registerExtractorAPI(VidmolyExtractor("vidmoly.biz", "VidmolyBiz"))
 
-    // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top)
+    // MixDrop proxies (built-in MixDrop covers .co/.bz/.ag/.ch/.to, but not .top/.ps)
     registerExtractorAPI(MixDropTop())
+    registerExtractorAPI(MixDropPs())
 
     // Uqload and proxies (built-in covers uqload.com / uqload.co)
     registerExtractorAPI(UqloadIs())
+    registerExtractorAPI(UqloadVc())
+
+    // Vidara (vidaraa.cc /e/ embeds -> POST /api/stream -> m3u8)
+    registerExtractorAPI(VidaraExtractor())
 
     // Luluvid
     registerExtractorAPI(LuluvidExtractor())

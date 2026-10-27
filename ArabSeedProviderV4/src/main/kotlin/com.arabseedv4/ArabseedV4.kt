@@ -1,6 +1,9 @@
 package com.arabseedv4
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.cloudstream.shared.extractors.MegamaxDownloader
 import com.cloudstream.shared.parsing.ParserInterface.ParsedEpisode
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.provider.BaseProvider
@@ -10,7 +13,7 @@ import org.jsoup.nodes.Document
 class ArabseedV4 : BaseProvider() {
 
     override var name = "عرب سيد"
-    override val baseDomain get() = "arabseed.show"
+    override val baseDomain get() = "arabseed.trade"
     override val providerName get() = "ArabseedV4"
     override val githubConfigUrl get() = "https://raw.githubusercontent.com/alyabroudy1/omarC/main/configs/arabseedv4.json"
     override val paginationFormat get() = "page/%d/"
@@ -27,11 +30,11 @@ class ArabseedV4 : BaseProvider() {
     override val requestTimeoutMs get() = 60_000L
 
     override val mainPage = mainPageOf(
-        "$mainUrl/category/films/" to "مضاف حديثا",
-        "$mainUrl/category/films/foreign-movies/" to "أفلام أجنبية",
-        "$mainUrl/category/films/turkish-movies/" to "أفلام تركية",
-        "$mainUrl/category/tv/" to "المسلسلات",
-        "$mainUrl/category/anime/anime-movies/" to "افلام انيميشن",
+        "/%D8%A7%D9%81%D9%84%D8%A7%D9%85/" to "الافلام",
+        "/recently/" to "مضاف حديثا",
+        "/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa/" to "المسلسلات",
+        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%b9%d8%b1%d8%a8%d9%8a/" to "افلام عربي",
+        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/" to "افلام انمي"
     )
 
     override fun getParser(): NewBaseParser {
@@ -39,52 +42,52 @@ class ArabseedV4 : BaseProvider() {
     }
 
     // ================= SEARCH (PARALLEL MOVIES + SERIES) =================
+    // Uses the site's own ?s=<query>&type= endpoint: proven to return real
+    // per-query results. (The /find/?word= endpoint ignores the word and the
+    // base ?s= fallback returned the homepage — both showed the same items
+    // for every query.)
 
-    override suspend fun searchLazy(query: String): List<SearchResponse> {
+    private suspend fun searchSite(query: String, page: Int, withFallback: Boolean): SearchResponseList {
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        
-        return coroutineScope {
+
+        val items = coroutineScope {
             listOf("movies", "series").map { type ->
                 async {
                     val url = "$mainUrl/?s=$encoded&type=$type"
-                    android.util.Log.d("ArabseedV4", "searchLazy: requesting $url")
+                    android.util.Log.d("ArabseedV4", "searchSite: requesting $url")
                     try {
-                        val doc = httpService.getDocumentNoFallback(url, rewriteDomain = true)
+                        val doc = if (withFallback) {
+                            httpService.getDocument(url, rewriteDomain = true)
+                        } else {
+                            httpService.getDocumentNoFallback(url, rewriteDomain = true)
+                        }
                         if (doc != null) getParser().parseSearch(doc) else emptyList()
-                    } catch (e: Exception) {
-                        android.util.Log.e("ArabseedV4", "searchLazy: throwing $e")
+                    } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
                         throw e
+                    } catch (e: Exception) {
+                        android.util.Log.e("ArabseedV4", "searchSite error: ${e.message}")
+                        emptyList()
                     }
                 }
-            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
-                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
-                }
+            }.awaitAll().flatten().distinctBy { it.url }
+        }
+        android.util.Log.d("ArabseedV4", "searchSite: '${query}' -> ${items.size} items")
+        val results = items.map { item ->
+            newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
+                this.posterUrl = item.posterUrl
+                this.posterHeaders = httpService.getImageHeaders()
             }
         }
+        return newSearchResponseList(results, false)
     }
 
-    override suspend fun searchNormal(query: String): List<SearchResponse> {
-        android.util.Log.d("ArabseedV4", "searchNormal: Executing parallel search for movies and series")
-        httpService.ensureInitialized()
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        
-        return coroutineScope {
-            listOf("movies", "series").map { type ->
-                async {
-                    val url = "$mainUrl/find/?word=$encoded&type=$type"
-                    val doc = httpService.getDocument(url, rewriteDomain = true)
-                    if (doc != null) getParser().parseSearch(doc) else emptyList()
-                }
-            }.awaitAll().flatten().distinctBy { it.url }.map { item ->
-                newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
-                    this.posterUrl = item.posterUrl
-                    this.posterHeaders = httpService.getImageHeaders()
-                }
-            }
-        }
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        return searchSite(query, page, withFallback = false)
+    }
+
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        return searchSite(query, page, withFallback = true)
     }
 
     // ================= LOAD HOOKS (AJAX SEASONS) =================
@@ -136,6 +139,90 @@ class ArabseedV4 : BaseProvider() {
         }
         
         return episodes
+    }
+
+    // ================= LOAD LINKS (WATCH + DOWNLOAD PATHS) =================
+
+    /**
+     * Download path runs FIRST: it is fast plain HTTP with working mirrors,
+     * while the watch path can burn the whole loadLinks time budget inside
+     * its sniffer WebView (leaving the download path starved — observed as a
+     * single WebView then failure). Either path delivering links counts.
+     */
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[ArabseedV4] [loadLinks]"
+        android.util.Log.i(methodTag, "START data='$data'")
+        httpService.ensureInitialized()
+
+        val delivered = java.util.concurrent.atomic.AtomicInteger(0)
+        val countingCb: (ExtractorLink) -> Unit = { delivered.incrementAndGet(); callback(it) }
+
+        // Download path first (fast).
+        // Mirrors fan out to extractors IN PARALLEL (same as the standard
+        // Phase 2); the sequential one-by-one sniffer stays inside the
+        // shared system, never here.
+        try {
+            val base = data.trimEnd('/').removeSuffix("/watch").trimEnd('/')
+            val dlPageUrl = "$base/download/"
+            android.util.Log.d(methodTag, "Download page: $dlPageUrl")
+            val dlDoc = httpService.getDocument(dlPageUrl, rewriteDomain = true)
+            if (dlDoc != null) {
+                val dlHrefs = dlDoc.select("ul.downloads__links__list a[href], a.download__item[href]")
+                    .map { it.attr("abs:href").ifBlank { it.attr("href") }.trim() }
+                    .filter { it.startsWith("http") && it.length > 10 }
+                    .distinct()
+                android.util.Log.d(methodTag, "Download targets: ${dlHrefs.size}")
+                val jobs = mutableListOf<Pair<String, String>>()
+                for (href in dlHrefs) {
+                    try {
+                        if (href.contains("/download/")) {
+                            for ((mirrorUrl, label) in MegamaxDownloader.resolveMirrors(href, dlPageUrl)) {
+                                android.util.Log.d(methodTag, "Download mirror [$label]: ${mirrorUrl.take(80)}")
+                                jobs.add(mirrorUrl to href)
+                            }
+                        } else {
+                            jobs.add(href to dlPageUrl)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.d(methodTag, "Download target failed: ${e.message}")
+                    }
+                }
+                coroutineScope {
+                    jobs.distinctBy { it.first }.map { (mirrorUrl, ref) ->
+                        async {
+                            try {
+                                loadExtractor(mirrorUrl, ref, subtitleCallback, countingCb)
+                            } catch (e: Exception) {
+                                android.util.Log.d(methodTag, "Extractor failed: ${e.message}")
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(methodTag, "Download path error: ${e.message}")
+        }
+
+        if (delivered.get() > 0) {
+            android.util.Log.i(methodTag, "END delivered=${delivered.get()} via download path")
+            return true
+        }
+
+        // Watch path fallback (standard flow; may open the sniffer WebView).
+        val watchOk = try {
+            super.loadLinks(data, isCasting, subtitleCallback, countingCb)
+        } catch (e: Exception) {
+            android.util.Log.e(methodTag, "Watch path error: ${e.message}")
+            false
+        }
+
+        android.util.Log.i(methodTag, "END delivered=${delivered.get()} watchOk=$watchOk")
+        return delivered.get() > 0
     }
 
     // ================= RESOLVE SERVER URL (LAZY AJAX) =================

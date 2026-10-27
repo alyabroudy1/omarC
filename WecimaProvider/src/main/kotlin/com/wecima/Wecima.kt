@@ -19,9 +19,9 @@ class Wecima : BaseProvider() {
 
     override val mainPage = mainPageOf(
         "/movies/" to "الافلام",
-        "/series/" to "المسلسلات",
-        "/category/%d8%a7%d9%81%d9%84%d8%a7%d9%85-%d8%a7%d9%86%d9%85%d9%8a/" to "افلام انمي",
-        "/category/%d9%85%d8%b3%d9%84%d8%b3%d9%84%d8%a7%d8%aa-%d8%a7%d9%86%d9%85%d9%8a/" to "مسلسلات انمي"
+        "/seriestv" to "المسلسلات",
+        "/category/anime-movies" to "افلام انمي",
+        "/category/anime-series" to "مسلسلات انمي"
     )
 
     override fun getParser(): NewBaseParser = WecimaParser()
@@ -70,9 +70,27 @@ class Wecima : BaseProvider() {
         }
     }
 
+    // The app calls the paged entry points. Without these overrides the base
+    // class falls back to GET ?s= — which the site ignores (returns the
+    // homepage), so every query showed the same results.
+    override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
+        return try {
+            httpService.ensureInitialized()
+            newSearchResponseList(searchPost(query), false)
+        } catch (e: Exception) {
+            Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
+            newSearchResponseList(emptyList(), false)
+        }
+    }
+
     override suspend fun searchLazy(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
         return searchPost(query)
+    }
+
+    override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
+        httpService.ensureInitialized()
+        return newSearchResponseList(searchPost(query), false)
     }
 
     override suspend fun fetchExtraEpisodes(
@@ -85,7 +103,7 @@ class Wecima : BaseProvider() {
         
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
         seasonsEl.forEach { seasonEl ->
-            val seasonNum = Regex("الموسم (\\\\d+)").find(seasonEl.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val seasonNum = Regex("الموسم (\\d+)").find(seasonEl.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
             val dataId = seasonEl.attr("data-id")
             val dataSeason = seasonEl.attr("data-season")
             try {
@@ -94,7 +112,7 @@ class Wecima : BaseProvider() {
                     val seasonDocParsed = Jsoup.parse(seasonHtml)
                     seasonDocParsed.select("a.hoverable.activable").forEach { epEl ->
                         val epName = epEl.selectFirst("episodetitle")?.text() ?: "Episode"
-                        val epNum = Regex("الحلقة (\\\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        val epNum = Regex("الحلقة (\\d+)").find(epName)?.groupValues?.get(1)?.toIntOrNull() ?: 1
                         episodes.add(
                             ParserInterface.ParsedEpisode(
                                 url = epEl.attr("href"),
@@ -108,6 +126,11 @@ class Wecima : BaseProvider() {
             } catch (e: Exception) {}
         }
         return episodes
+    }
+
+    private fun isTrailerOrJunk(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
     }
 
     private fun decodeWecimaUrl(encodedStr: String): String? {
@@ -127,25 +150,78 @@ class Wecima : BaseProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var linksFound = false
-        val document = httpService.getDocument(data, rewriteDomain = true) ?: return false
-        
-        document.select("ul.WatchServersList li btn").forEach { serverBtn ->
+        val methodTag = "[Wecima] [loadLinks]"
+        Log.i(methodTag, "START data='$data'")
+        val document = httpService.getDocument(data, rewriteDomain = true)
+        if (document == null) {
+            Log.e(methodTag, "Failed to fetch detail document")
+            return false
+        }
+
+        var delivered = 0
+        fun countingCallback(link: ExtractorLink) {
+            delivered++
+            callback(link)
+        }
+
+        val serverBtns = document.select("ul.WatchServersList li btn")
+        Log.d(methodTag, "Found ${serverBtns.size} server buttons")
+        // URLs no extractor handled (e.g. JS-gated players like dhcplay):
+        // retry them through the shared WebView sniffer at the end.
+        val failedUrls = mutableListOf<Pair<String, String>>()
+        serverBtns.forEach { serverBtn ->
             val decodedUrl = decodeWecimaUrl(serverBtn.attr("data-url"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
-                linksFound = true
-                loadExtractor(decodedUrl, subtitleCallback, callback)
+                Log.d(methodTag, "Server: ${decodedUrl.take(80)}")
+                val before = delivered
+                try {
+                    loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
+                } catch (e: Exception) {
+                    Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
+                }
+                if (delivered == before) failedUrls.add(decodedUrl to data)
+            } else {
+                Log.w(methodTag, "Undecodable server btn: '${serverBtn.attr("data-url").take(60)}'")
             }
         }
-        
-        document.select(".openLinkDown").forEach { downloadBtn ->
+
+        val dlBtns = document.select(".openLinkDown")
+        Log.d(methodTag, "Found ${dlBtns.size} download buttons")
+        dlBtns.forEach { downloadBtn ->
             val decodedUrl = decodeWecimaUrl(downloadBtn.attr("data-href"))
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
-                linksFound = true
-                loadExtractor(decodedUrl, subtitleCallback, callback)
+                Log.d(methodTag, "Download: ${decodedUrl.take(80)}")
+                val before = delivered
+                try {
+                    loadExtractor(decodedUrl, subtitleCallback, ::countingCallback)
+                } catch (e: Exception) {
+                    Log.d(methodTag, "Extractor failed for $decodedUrl: ${e.message}")
+                }
+                if (delivered == before) failedUrls.add(decodedUrl to data)
             }
         }
-        
-        return linksFound
+
+        // Shared WebView sniffer fallback for anything extractors couldn't
+        // handle (JS-rendered players). Bounded per URL so one stuck host
+        // can't eat the whole loadLinks budget.
+        for ((failedUrl, referer) in failedUrls.distinctBy { it.first }) {
+            if (isTrailerOrJunk(failedUrl)) continue
+            try {
+                Log.d(methodTag, "Sniffer fallback: ${failedUrl.take(80)}")
+                val sniffed = kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                    val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor
+                        .createSnifferUrl(failedUrl, referer)
+                    loadExtractor(sniffUrl, subtitleCallback, ::countingCallback)
+                    delivered
+                }
+                Log.d(methodTag, "Sniffer done for ${failedUrl.take(60)} (delivered=$delivered)")
+            } catch (e: Exception) {
+                Log.d(methodTag, "Sniffer failed for $failedUrl: ${e.message}")
+            }
+            if (delivered > 0) break
+        }
+
+        Log.i(methodTag, "END delivered=$delivered")
+        return delivered > 0
     }
 }

@@ -1,4 +1,4 @@
-version = 5
+version = 10
 android {
     sourceSets {
         getByName("main") {

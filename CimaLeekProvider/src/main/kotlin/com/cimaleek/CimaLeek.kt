@@ -114,8 +114,9 @@ class CimaLeek : BaseProvider() {
         return if (episodes.isNotEmpty()) episodes else data.episodes ?: emptyList()
     }
 
-    private fun generateRandomString(length: Int): String {
-        val allowedChars = ('A'..'Z') + ('a'..'z') + ('0'..'9')
+    private data class ServerEmbed(val name: String, val url: String, val idx: Int)
+
+    private fun generateRandomString(length: Int): String {        val allowedChars = ('A'..'Z') + ('a'..'z') + ('0'..'9')
         return (1..length)
             .map { allowedChars.random() }
             .joinToString("")
@@ -504,6 +505,55 @@ class CimaLeek : BaseProvider() {
     //
     // Logging is verbose so each phase can be traced in logcat.
     // ──────────────────────────────────────────────────────────────────────────────
+    /**
+     * Fallback when native API+decrypt yields nothing: managed headless video
+     * sniffing through httpService (own lifecycle — opens nothing visible and
+     * always closes). The site's JS decrypts with its current keys inside the
+     * session and the interceptor captures the streams.
+     */
+    private suspend fun sniffWatchVideos(
+        watchUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val methodTag = "[CimaLeek] [SniffFallback]"
+        return try {
+            Log.i(methodTag, "Sniffing watch page (managed, headless)...")
+            val sources = httpService.sniffVideos(watchUrl)
+            if (sources.isEmpty()) {
+                Log.w(methodTag, "No video sources sniffed")
+                return false
+            }
+            var delivered = 0
+            for (src in sources) {
+                val url = src.url.trim()
+                if (url.isBlank()) continue
+                try {
+                    val isHls = url.contains(".m3u8", ignoreCase = true)
+                    callback(
+                        newExtractorLink(
+                            source = providerName,
+                            name = "${providerName} Sniffer",
+                            url = url,
+                            type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = watchUrl
+                            this.headers = src.headers
+                        }
+                    )
+                    delivered++
+                } catch (e: Exception) {
+                    Log.w(methodTag, "Deliver failed: ${e.message}")
+                }
+            }
+            Log.i(methodTag, "Delivered $delivered/${sources.size} sniffed sources")
+            delivered > 0
+        } catch (e: Exception) {
+            Log.e(methodTag, "Error: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -523,13 +573,15 @@ class CimaLeek : BaseProvider() {
         val watchUrl = if (data.endsWith("/watch/")) data else {
             if (data.endsWith("/")) "${data}watch/" else "$data/watch/"
         }
-        val html = httpService.getText(watchUrl, rewriteDomain = false)
-        if (html.isNullOrBlank()) {
-            Log.e(methodTag, "PHASE 0: Empty watch page HTML")
+        // NOTE: getDocument (not getText) — it owns the Cloudflare solve and
+        // stores clearance cookies, which the lalaplayer API calls below need.
+        // A raw getText returns the CF challenge page here ("Just a moment").
+        val doc = httpService.getDocument(watchUrl, rewriteDomain = true)
+        if (doc == null || doc.body().text().isBlank()) {
+            Log.e(methodTag, "PHASE 0: Empty watch page document")
             return false
         }
-
-        val doc = Jsoup.parse(html, watchUrl)
+        val html = doc.html()
         val ver = Regex(""""ver"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
         val postId = Regex(""""post_id"\s*:\s*(\d+)""").find(html)?.groupValues?.get(1)
             ?: Regex(""""post_id"\s*:\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: ""
@@ -539,7 +591,10 @@ class CimaLeek : BaseProvider() {
 
         val serverElements = doc.select(".lalaplay_player_option")
         Log.d(methodTag, "PHASE 0: Found ${serverElements.size} server options")
-        if (serverElements.isEmpty()) return false
+        if (serverElements.isEmpty()) {
+            Log.w(methodTag, "PHASE 0: no servers (title='${doc.title().take(80)}', html=${html.length} chars)")
+            return false
+        }
 
         val metadata = DecryptionMetadata(
             watchUrl = watchUrl,
@@ -554,9 +609,7 @@ class CimaLeek : BaseProvider() {
         // ====================================================================
         Log.i(methodTag, "PHASE 1: Resolving ${serverElements.size} servers...")
 
-        data class Resolved(val name: String, val url: String, val idx: Int)
-
-        val resolved: List<Resolved> = coroutineScope {
+        val resolved: List<ServerEmbed> = coroutineScope {
             serverElements.mapIndexed { idx, server ->
                 async {
                     try {
@@ -574,7 +627,7 @@ class CimaLeek : BaseProvider() {
                             "X-Requested-With" to "com.android.browser"
                         )
 
-                        val json = httpService.getText(apiUrl, headers, rewriteDomain = false)
+                        val json = httpService.getText(apiUrl, headers, rewriteDomain = true)
                         if (json.isNullOrBlank()) {
                             Log.w(methodTag, "PHASE 1: [$idx] $serverName — empty API response")
                             return@async null
@@ -611,7 +664,7 @@ class CimaLeek : BaseProvider() {
                         }
 
                         Log.d(methodTag, "PHASE 1: [$idx] $serverName -> ${decrypted.take(80)}")
-                        Resolved(serverName, decrypted, idx)
+                        ServerEmbed(serverName, decrypted, idx)
                     } catch (e: Exception) {
                         Log.e(methodTag, "PHASE 1: [$idx] error: ${e.javaClass.simpleName}: ${e.message}")
                         null
@@ -621,9 +674,12 @@ class CimaLeek : BaseProvider() {
         }
 
         Log.i(methodTag, "PHASE 1 done: ${resolved.size}/${serverElements.size} resolved")
-        if (resolved.isEmpty()) {
-            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} resolved via native strategies — falling back to WebView sniffing on watch page")
-            return sniffWatchPageServers(watchUrl, serverElements, subtitleCallback, callback)
+        val allResolved = resolved.toMutableList()
+        if (allResolved.isEmpty()) {
+            // Native strategies failed (rotated keys) — managed headless
+            // sniffing through httpService (opens nothing, always closes).
+            Log.w(methodTag, "PHASE 1: 0/${serverElements.size} via native strategies — managed sniff fallback...")
+            return sniffWatchVideos(watchUrl, subtitleCallback, callback)
         }
 
         // ====================================================================
@@ -631,7 +687,7 @@ class CimaLeek : BaseProvider() {
         //           parallel (standard CloudStream extractor system).
         //           Collect links AND track which URLs failed extraction.
         // ====================================================================
-        Log.i(methodTag, "PHASE 2: Piping ${resolved.size} embed URLs through extractors in parallel...")
+        Log.i(methodTag, "PHASE 2: Piping ${allResolved.size} embed URLs through extractors in parallel...")
 
         data class Phase2Result(
             val name: String,
@@ -641,7 +697,7 @@ class CimaLeek : BaseProvider() {
         )
 
         val phase2: List<Phase2Result> = coroutineScope {
-            resolved.map { (serverName, decryptedUrl, idx) ->
+            allResolved.map { (serverName, decryptedUrl, idx) ->
                 async {
                     val collected = mutableListOf<ExtractorLink>()
                     val collectCb: (ExtractorLink) -> Unit = { collected.add(it) }
@@ -669,7 +725,7 @@ class CimaLeek : BaseProvider() {
             return true
         }
 
-        Log.w(methodTag, "PHASE 2-3: no extractor matched any of ${resolved.size} embed URL(s)")
+        Log.w(methodTag, "PHASE 2-3: no extractor matched any of ${allResolved.size} embed URL(s)")
 
         // ====================================================================
         // PHASE 4 – Sniffer fallback: try each unresolved embed URL one-by-one
@@ -715,7 +771,7 @@ class CimaLeek : BaseProvider() {
             return true
         }
 
-        Log.w(methodTag, "END — all ${resolved.size} URLs and WebView fallbacks exhausted, no video found")
+        Log.w(methodTag, "END — all ${allResolved.size} URLs and WebView fallbacks exhausted, no video found")
         return false
     }
 

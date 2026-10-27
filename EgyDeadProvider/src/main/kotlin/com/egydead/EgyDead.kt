@@ -12,12 +12,15 @@ import com.cloudstream.shared.provider.BaseProvider
 import com.cloudstream.shared.parsing.NewBaseParser
 import com.cloudstream.shared.android.ActivityProvider
 import com.cloudstream.shared.ui.DrmPlayerDialog
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.NativeJSON
 import org.mozilla.javascript.NativeObject
 import org.mozilla.javascript.Scriptable
+import java.net.URLDecoder
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.text.Regex
 import kotlin.text.contains
 
@@ -314,97 +317,210 @@ class EgyDead : BaseProvider() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val methodTag = "EgyDead"
+        val delivered = AtomicBoolean(false)
+        fun countingCallback(link: ExtractorLink) {
+            delivered.set(true)
+            callback(link)
+        }
+
         try {
             httpService.ensureInitialized()
-            
-            // Step 1: POST to the data URL with View=1 (matching original reference)
-            // The original: Requests.post(data, data = mapOf("View" to "1"))
+
+            // Step 1: POST to the data URL with View=1 to reveal the server list.
+            // GET only shows a "watch & download" button + the youtube trailer.
             val doc = httpService.post(data, mapOf("View" to "1"), rewriteDomain = true)
             if (doc == null) {
                 Log.e(methodTag, "Failed to POST for server list")
                 return super.loadLinks(data, isCasting, subtitleCallback, callback)
             }
-            
+
             Log.d(methodTag, "POST successful, parsing server elements")
             val referer = "https://${httpService.currentDomain}/"
-            var foundLinks = false
-            
-            // Step 2: Process .donwload-servers-list > li (original: element.select("a").attr("href"))
-            val downloadElements = doc.select(".donwload-servers-list > li")
-            Log.d(methodTag, "Found ${downloadElements.size} download server elements")
-            
-            for (element in downloadElements) {
-                try {
-                    val url = element.select("a").attr("href")
-                    if (url.isBlank()) continue
-                    Log.d(methodTag, "Download server URL: $url")
-                    
-                    val urlLower = url.lowercase()
-                    
-                    // Dispatch based on URL content (matching original)
-                    if (urlLower.contains("trgsfjll")) {
-                        handleTrgsfjll(url, "Trgsfjll", callback)
-                    }
-                    if (urlLower.contains("vidhide")) {
-                        handleVidhide(url, referer, callback)
-                    }
-                    
-                    // Always try loadExtractor as fallback (matching original)
-                    try {
-                        loadExtractor(url, data, subtitleCallback, callback)
-                    } catch (e: Exception) {
-                        Log.d(methodTag, "loadExtractor failed for $url: ${e.message}")
-                    }
-                    foundLinks = true
-                } catch (e: Exception) {
-                    Log.e(methodTag, "Error processing download element: ${e.message}")
-                }
+
+            // Collect watch + download server targets.
+            // NOTE: mobile UA (which the app uses) gets a different layout:
+            // watch servers live in div.mob-servers ul > li[data-link],
+            // desktop UA gets ul.serversList > li. Select both.
+            val targets = mutableListOf<String>()
+            for (li in doc.select("ul.serversList > li, .mob-servers ul > li, div.mob-servers li")) {
+                li.attr("data-link").trim().takeIf { it.isNotBlank() }?.let { targets.add(it) }
             }
-            
-            // Step 3: Process ul.serversList > li (original: li.attr("data-link"))
-            val serverElements = doc.select("ul.serversList > li")
-            Log.d(methodTag, "Found ${serverElements.size} serversList elements")
-            
-            for (li in serverElements) {
+            for (a in doc.select(".donwload-servers-list > li a[href]")) {
+                val href = a.attr("href").trim()
+                if (href.startsWith("http") || href.startsWith("//")) targets.add(href)
+            }
+            Log.d(methodTag, "Found ${targets.size} server targets")
+
+            for (rawUrl in targets.distinct()) {
+                val url = normalizeUrl(rawUrl)
+                if (url.isBlank()) continue
+                if (isTrailerOrJunk(url)) {
+                    Log.d(methodTag, "Skipping trailer/junk URL: ${url.take(80)}")
+                    continue
+                }
                 try {
-                    val iframeUrl = li.attr("data-link")
-                    if (iframeUrl.isBlank()) continue
-                    Log.d(methodTag, "Server iframe URL: $iframeUrl")
-                    
-                    val urlLower = iframeUrl.lowercase()
-                    
-                    // Dispatch based on URL content (matching original)
-                    if (urlLower.contains("trgsfjll")) {
-                        handleTrgsfjll(iframeUrl, "Trgsfjll", callback)
+                    if (isMegamaxIframe(url)) {
+                        // New backend: Inertia-driven mirror player -> resolve real embeds
+                        val mirrors = resolveMegamaxMirrors(url, data)
+                        Log.d(methodTag, "MegaMax ${url.take(60)} -> ${mirrors.size} mirrors")
+                        for ((mirrorUrl, label) in mirrors) {
+                            if (isTrailerOrJunk(mirrorUrl)) continue
+                            try {
+                                Log.d(methodTag, "Trying mirror [$label]: ${mirrorUrl.take(80)}")
+                                loadExtractor(mirrorUrl, url, subtitleCallback, ::countingCallback)
+                            } catch (e: Exception) {
+                                Log.d(methodTag, "loadExtractor failed for $mirrorUrl: ${e.message}")
+                            }
+                        }
+                    } else {
+                        // Legacy dispatch based on URL content
+                        val urlLower = url.lowercase()
+                        if (urlLower.contains("trgsfjll")) {
+                            handleTrgsfjll(url, "Trgsfjll", ::countingCallback)
+                        }
+                        if (urlLower.contains("vidhide")) {
+                            handleVidhide(url, referer, ::countingCallback)
+                        }
+                        if (urlLower.contains("dood")) {
+                            handleDoodstream(url, referer, ::countingCallback)
+                        }
+                        if (urlLower.contains("streamtape")) {
+                            handleStreamtape(url, referer, ::countingCallback)
+                        }
+                        if (urlLower.contains("vidguard")) {
+                            handleVidguard(url, referer, ::countingCallback)
+                        }
+                        if (urlLower.contains("uptostream")) {
+                            handleUptostream(url, referer, ::countingCallback)
+                        }
+                        // Always try loadExtractor as fallback
+                        try {
+                            loadExtractor(url, data, subtitleCallback, ::countingCallback)
+                        } catch (e: Exception) {
+                            Log.d(methodTag, "loadExtractor failed for $url: ${e.message}")
+                        }
                     }
-                    if (urlLower.contains("vidhide")) {
-                        handleVidhide(iframeUrl, referer, callback)
-                    }
-                    
-                    // Always try loadExtractor as fallback
-                    try {
-                        loadExtractor(iframeUrl, data, subtitleCallback, callback)
-                    } catch (e: Exception) {
-                        Log.d(methodTag, "loadExtractor failed for $iframeUrl: ${e.message}")
-                    }
-                    foundLinks = true
                 } catch (e: Exception) {
                     Log.e(methodTag, "Error processing server element: ${e.message}")
                 }
             }
-            
-            if (foundLinks) return true
-            
-            // Debug: log what elements are on the page
-            Log.d(methodTag, "DEBUG: No server elements found. UL elements: ${doc.select("ul").map { it.className() }}")
-            Log.d(methodTag, "DEBUG: HTML snippet: ${doc.outerHtml().take(500)}")
-            
+
+            if (delivered.get()) return true
+            Log.w(methodTag, "No links delivered from ${targets.size} targets, trying base fallback")
+
         } catch (e: Exception) {
             Log.e(methodTag, "loadLinks error: ${e.message}")
         }
 
-        // Fallback to base
+        // Fallback to base (parser filters trailer/junk iframes)
         return super.loadLinks(data, isCasting, subtitleCallback, callback)
+    }
+
+    private fun normalizeUrl(url: String): String {
+        val u = url.trim()
+        return when {
+            u.startsWith("//") -> "https:$u"
+            else -> u
+        }
+    }
+
+    private fun isTrailerOrJunk(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
+    }
+
+    /**
+     * MegaMax-style mirror player: https://<mirror-host>/iframe/<hash>
+     * (legacy file hosts like vidhide/doodstream go through the old handlers).
+     */
+    private fun isMegamaxIframe(url: String): Boolean {
+        if (!url.contains("/iframe/")) return false
+        val lower = url.lowercase()
+        // Known legacy embed hosts are handled by their own code paths
+        val legacy = listOf("vidhide", "dood", "streamtape", "vidguard", "uptostream", "trgsfjll", "ok.ru", "vk.com", "mail.ru", "mp4upload", "filemoon", "voe", "mixdrop", "streamwish", "uqload", "doodstream")
+        if (legacy.any { lower.contains(it) }) return false
+        return true
+    }
+
+    /**
+     * Resolves a MegaMax mirror iframe to per-quality embed mirror links.
+     *
+     * The player is an Inertia.js app: the iframe HTML only carries a version +
+     * video hash, the actual mirrors come from a partial-reload GET
+     * (props.streams.data[].mirrors[].link). Same backend as TukTukcima/Animerco.
+     *
+     * @return list of (embedUrl, qualityLabel)
+     */
+    private suspend fun resolveMegamaxMirrors(iframeUrl: String, referer: String): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        try {
+            val reqHeaders = mapOf(
+                "User-Agent" to httpService.userAgent,
+                "Referer" to referer
+            )
+
+            // 1. Initial page: Inertia version + mirror cookies (XSRF)
+            val initialRes = httpService.getRaw(iframeUrl, headers = reqHeaders)
+            val setCookies = initialRes.headers("Set-Cookie")
+            val xsrf = setCookies.find { it.startsWith("XSRF-TOKEN=") }
+                ?.substringAfter("XSRF-TOKEN=")?.substringBefore(";")
+                ?.let { try { URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { null } }
+            val cookieHeader = setCookies.joinToString("; ") { it.substringBefore(";") }
+            val initialText = try { initialRes.body?.string() ?: "" } catch (_: Exception) { "" } finally {
+                try { initialRes.close() } catch (_: Exception) {}
+            }
+
+            val version = Regex("\"version\":\"([^\"]+)\"").find(initialText)?.groupValues?.get(1)
+            if (version.isNullOrBlank()) {
+                Log.w("EgyDead", "MegaMax: no Inertia version in $iframeUrl")
+                return emptyList()
+            }
+
+            // 2. Partial reload asking only for the streams prop
+            val inertiaHeaders = mutableMapOf(
+                "X-Inertia" to "true",
+                "X-Inertia-Version" to version,
+                "X-Inertia-Partial-Component" to "files/mirror/video",
+                "X-Inertia-Partial-Data" to "streams",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to iframeUrl,
+                "Accept" to "application/json"
+            )
+            if (!xsrf.isNullOrBlank()) inertiaHeaders["X-XSRF-TOKEN"] = xsrf
+            if (cookieHeader.isNotBlank()) inertiaHeaders["Cookie"] = cookieHeader
+
+            val jsonRes = httpService.getRaw(iframeUrl, headers = inertiaHeaders)
+            val jsonText = try { jsonRes.body?.string() ?: "" } catch (_: Exception) { "" } finally {
+                try { jsonRes.close() } catch (_: Exception) {}
+            }
+            if (jsonText.isBlank() || !jsonText.trimStart().startsWith("{")) {
+                Log.w("EgyDead", "MegaMax: unexpected streams response (${jsonText.take(80)})")
+                return emptyList()
+            }
+
+            val data = JSONObject(jsonText).optJSONObject("props")
+                ?.optJSONObject("streams")?.optJSONArray("data")
+            if (data == null) {
+                Log.w("EgyDead", "MegaMax: no streams.data in response")
+                return emptyList()
+            }
+
+            for (i in 0 until data.length()) {
+                val quality = data.optJSONObject(i) ?: continue
+                val label = quality.optString("label", "")
+                val mirrors = quality.optJSONArray("mirrors") ?: continue
+                for (j in 0 until mirrors.length()) {
+                    val link = mirrors.optJSONObject(j)?.optString("link")?.trim().orEmpty()
+                    if (link.isBlank()) continue
+                    val finalLink = if (link.startsWith("//")) "https:$link" else link
+                    if (!finalLink.startsWith("http")) continue
+                    out.add(finalLink to label)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("EgyDead", "resolveMegamaxMirrors failed: ${e.message}")
+        }
+        return out.distinctBy { it.first }
     }
 }
 
