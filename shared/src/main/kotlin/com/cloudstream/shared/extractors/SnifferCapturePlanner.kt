@@ -55,8 +55,12 @@ data class SnifferCapturePlan(
  * never depend on that optional second request.
  *
  * Rules, in priority order:
- *  1. A complete captured variant ladder is used as-is; it keeps the UI's explicit quality choices.
- *  2. Otherwise, a master playlist wins. It carries the whole ladder and is already authorized.
+ *  1. A captured master is delivered alone. It is the URL the page's own player consumes, and
+ *     ExoPlayer can resolve its variants itself. Captured variants are *not* delivered alongside it:
+ *     their filenames prove which quality they intend to be, not that the page actually requested
+ *     them, and Cloudstream auto-selects the highest-quality link. Appending 1080p/720p variants
+ *     therefore bypasses the master entirely (log3.txt: exactly that).
+ *  2. Without a master, a complete captured variant ladder is used.
  *  3. Otherwise, a single captured variant is valid and keeps its filename-derived quality.
  *  4. Otherwise, use a progressive file or a media URL without an extension.
  *
@@ -112,11 +116,14 @@ object SnifferCapturePlanner {
         val progressive = accepted.filter { it.kind == SnifferStreamKind.PROGRESSIVE }
 
         val selected = when {
-            // A complete, self-describing ladder is the most useful thing to hand the UI: it keeps
-            // explicit quality choices and still needs no second network request.
-            variants.size >= 2 -> variants
-            // A master carries every variant and is playable on its own.
+            // The master is the URL the page's player actually consumes. A captured variant can look
+            // perfectly self-describing and still be dead (log3.txt: 1080p/720p/360p filenames, all
+            // variants timed out, while the master was never tried). Cloudstream sorts links by
+            // quality priority, so shipping the variants beside the master would auto-select the
+            // highest variant and defeat this choice. Keep the master alone.
             masters.isNotEmpty() -> masters.distinctBy { it.capture.url }
+            // No master: a complete, self-describing ladder is still useful.
+            variants.size >= 2 -> variants
             // A single captured variant is valid; this is the case the old code discarded.
             variants.isNotEmpty() -> variants
             manifests.isNotEmpty() -> manifests.distinctBy { it.capture.url }

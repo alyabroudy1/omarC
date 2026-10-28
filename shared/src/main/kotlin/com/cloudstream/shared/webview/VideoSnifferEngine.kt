@@ -931,37 +931,14 @@ class VideoSnifferEngine(
                                 delay(delayMs)
                             }
 
-                            val html = getHtmlFromWebView(view!!)
+                            // The capture path can deliver and destroy the WebView while this
+                            // delayed check is still queued. Touching a destroyed WebView logs a
+                            // Chromium error and used to race the real result.
+                            if (resultDelivered || activeWebView !== view) return@launch
 
-                            // Check exit condition
-                            val shouldExit = when (exitCondition) {
-                                is ExitCondition.VideoFound -> {
-                                    val count = capturedLinks.size
-                                    if (count >= exitCondition.minCount) true else false
-                                }
-                                is ExitCondition.PageLoaded -> false
-                                is ExitCondition.CookiesPresent -> false
-                                is ExitCondition.ElementsFound -> false
-                                is ExitCondition.UrlMatches -> false
-                                is ExitCondition.AfterDelay -> false
-                            }
-
-                            if (shouldExit) {
-                                resultDelivered = true
-                                timeoutJob?.cancel()
-                                videoMonitorJob?.cancel()
-                                domPollJob?.cancel()
-                                firstCaptureJob?.cancel()
-
-                                val cookies = extractCookies(view, currentUrl)
-                                val found = capturedLinks.toList()
-                                android.util.Log.i("VideoSnifferEngine", "[onPageFinished] EXITING! Sending ${found.size} links to deferred.")
-                                found.forEach { android.util.Log.d("VideoSnifferEngine", " > Link: ${it.url}") }
-
-                                cleanup(view, dialog)
-                                deferred.complete(WebViewResult.Success(cookies, html, currentUrl, found))
-                                android.util.Log.i("VideoSnifferEngine", "[onPageFinished] Deferred completed.")
-                            }
+                            // Route through the one exit policy. This path used to duplicate the
+                            // count check, which let it exit before the master-M3U8 soft wait.
+                            checkExitCondition()
                         } catch (e: Exception) {
                             ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished", "Error", e)
                         }
@@ -1912,24 +1889,6 @@ class VideoSnifferEngine(
                 } catch (e: Exception) {
                     android.util.Log.w("VideoSnifferEngine", "requestNativeClick failed: ${e.message}")
                 }
-            }
-        }
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun getHtmlFromWebView(webView: WebView): String = suspendCancellableCoroutine { cont ->
-        Handler(Looper.getMainLooper()).post {
-            webView.evaluateJavascript(
-                "(function() { return document.documentElement.outerHTML; })();"
-            ) { result ->
-                val html = try {
-                    if (result == null || result == "null") ""
-                    else org.json.JSONTokener(result).nextValue().toString()
-                } catch (e: Exception) {
-                    ProviderLogger.e(TAG_WEBVIEW, "VideoSnifferEngine.getHtmlFromWebView", "HTML escape failed", e)
-                    ""
-                }
-                cont.resume(html) {}
             }
         }
     }

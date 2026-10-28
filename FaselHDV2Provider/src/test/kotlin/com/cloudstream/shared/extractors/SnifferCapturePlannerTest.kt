@@ -75,17 +75,18 @@ class SnifferCapturePlannerTest {
     }
 
     @Test
-    fun `a complete captured ladder is preferred over a master`() {
+    fun `a master is delivered alone even when a complete captured ladder exists`() {
         val plan = SnifferCapturePlanner.plan(
             listOf(
-                capture(master),
                 capture(variant("155_hd720b_playlist.m3u8")),
+                capture(master),
                 capture(variant("160_hd1080b_playlist.m3u8"))
             )
         )
 
-        assertEquals(listOf(1080, 720), plan.links.map { it.quality })
-        assertEquals(SnifferStreamKind.HLS_VARIANT, plan.links.first().kind)
+        assertEquals(1, plan.links.size)
+        assertEquals(SnifferStreamKind.HLS_MASTER, plan.links.single().kind)
+        assertEquals(master, plan.links.single().capture.url)
     }
 
     @Test

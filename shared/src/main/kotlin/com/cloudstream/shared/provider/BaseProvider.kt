@@ -683,7 +683,10 @@ abstract class BaseProvider : MainAPI() {
                 val sniffUrl = com.cloudstream.shared.extractors.SnifferExtractor.createSnifferUrl(
                     targetUrl, 
                     referer,
-                    selector
+                    selector,
+                    // Keep the provider identity on the final ExtractorLink. Core resolves
+                    // ExtractorLink.source back to a MainAPI to apply per-provider playback hooks.
+                    source = name
                 )
                 Log.d("$providerName.awaitSnifferResult", "Sniffer URL: $sniffUrl")
                 

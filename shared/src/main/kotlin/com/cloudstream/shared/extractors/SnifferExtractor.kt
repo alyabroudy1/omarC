@@ -11,8 +11,6 @@ import com.cloudstream.shared.webview.VideoSnifferEngine
 import com.cloudstream.shared.webview.WebViewResult
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
-import java.net.URLDecoder
-import java.net.URLEncoder
 
 /**
  * Sniffer Extractor - registered as a CloudStream extractor to handle video sniffing.
@@ -42,55 +40,17 @@ class SnifferExtractor : ExtractorApi() {
     var userAgent: String? = null
     
     companion object {
-        // Create a sniffer URL from embed URL and referer
-        fun createSnifferUrl(embedUrl: String, referer: String = "", selector: SnifferSelector? = null): String {
-            val encodedUrl = URLEncoder.encode(embedUrl, "UTF-8")
-            val encodedReferer = URLEncoder.encode(referer, "UTF-8")
-            var url = "sniff://$encodedUrl?referer=$encodedReferer"
-            
-            // Add selector if provided
-            if (selector != null) {
-                val encodedSelector = URLEncoder.encode(selector.toJson(), "UTF-8")
-                url += "&selector=$encodedSelector"
-            }
-            
-            return url
-        }
-        
-        // Parse sniffer URL to get embed URL, referer, and optional selector
-        fun parseSnifferUrl(snifferUrl: String): Triple<String, String, SnifferSelector?>? {
-            if (!snifferUrl.startsWith("sniff://")) return null
-            
-            try {
-                val content = snifferUrl.removePrefix("sniff://")
-                val parts = content.split("?", limit = 2)
-                val embedUrl = URLDecoder.decode(parts[0], "UTF-8")
-                
-                var referer = ""
-                var selector: SnifferSelector? = null
-                
-                if (parts.size > 1) {
-                    val queryString = parts[1]
-                    val queryParams = queryString.split("&").mapNotNull { param ->
-                        val keyValue = param.split("=", limit = 2)
-                        if (keyValue.size == 2) {
-                            keyValue[0] to URLDecoder.decode(keyValue[1], "UTF-8")
-                        } else null
-                    }.toMap()
-                    
-                    referer = queryParams["referer"] ?: ""
-                    
-                    queryParams["selector"]?.let { selectorJson ->
-                        selector = SnifferSelector.fromJson(selectorJson)
-                    }
-                }
-                
-                return Triple(embedUrl, referer, selector)
-            } catch (e: Exception) {
-                android.util.Log.e("SnifferExtractor", "Failed to parse sniffer URL: ${e.message}")
-                return null
-            }
-        }
+        const val DEFAULT_SOURCE = SnifferUrlCodec.DEFAULT_SOURCE
+
+        fun createSnifferUrl(
+            embedUrl: String,
+            referer: String = "",
+            selector: SnifferSelector? = null,
+            source: String = DEFAULT_SOURCE
+        ): String = SnifferUrlCodec.create(embedUrl, referer, selector, source)
+
+        fun parseSnifferUrl(snifferUrl: String): SnifferUrlData? =
+            SnifferUrlCodec.parse(snifferUrl)
     }
     
     override suspend fun getUrl(
@@ -109,11 +69,12 @@ class SnifferExtractor : ExtractorApi() {
             return
         }
         
-        val (embedUrl, embedReferer, selector) = parsed
-        android.util.Log.d("SnifferExtractor", "Parsed embed URL: $embedUrl, referer: $embedReferer, hasSelector: ${selector != null}")
+        val (embedUrl, embedReferer, selector, sourceName) = parsed
+        android.util.Log.d("SnifferExtractor", "Parsed embed URL: $embedUrl, referer: $embedReferer, source: $sourceName, hasSelector: ${selector != null}")
         ProviderLogger.d(TAG, "getUrl", "Parsed embed URL", 
             "embedUrl" to embedUrl.take(60),
             "embedReferer" to embedReferer.take(40),
+            "source" to sourceName,
             "hasSelector" to (selector != null))
             
         if (embedUrl.isBlank() || embedUrl == "https://" || embedUrl == "http://") {
@@ -257,7 +218,7 @@ class SnifferExtractor : ExtractorApi() {
 
                     callback(
                         newExtractorLink(
-                            source = name,
+                            source = sourceName,
                             name = "$name ${planned.qualityLabel}",
                             url = url,
                             type = linkType

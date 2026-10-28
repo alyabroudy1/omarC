@@ -48,6 +48,7 @@ class FaselHDV2 : BaseProvider() {
      */
     override fun getVideoInterceptor(extractorLink: ExtractorLink): okhttp3.Interceptor? =
         if (extractorLink.url.contains("scdns.io", ignoreCase = true)) {
+            Log.i("FaselHDV2", "Playback interceptor applied (IPv4 pin) for ${extractorLink.url.take(100)}")
             com.cloudstream.shared.network.Ipv4PinnedInterceptor
         } else null
 
