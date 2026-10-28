@@ -1,4 +1,4 @@
-version = 6
+version = 7
 
 // Include shared source directory
 android {
@@ -11,6 +11,7 @@ android {
 
 dependencies {
     implementation("org.mozilla:rhino:1.7.14")
+    testImplementation("junit:junit:4.13.2")
 }
 
 cloudstream {

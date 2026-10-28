@@ -42,6 +42,24 @@ class BristegeParser : NewBaseParser() {
         poster = CssSelector("img", "abs:src, abs:data-src, src, data-src, data-echo, data-original")
     )
 
+    /**
+     * Search results must be scoped to the results list. The rest of the page contains a
+     * site-wide `.catfooter` with links to the same promoted series on every page; scanning
+     * the whole document (the old fallback) made every empty search return those series.
+     */
+    override val searchConfig = MainPageConfig(
+        container = "#prs-results ul.prs-grid > li, ul.pm-ul-browse-videos > li",
+        title = CssSelector(
+            "div.prs-caption h3 a, div.caption h3 a, h3 a",
+            "title, text"
+        ),
+        url = CssSelector(
+            "div.prs-caption h3 a, div.caption h3 a, h3 a, a.prs-image",
+            "abs:href, href"
+        ),
+        poster = CssSelector("img", "abs:src, abs:data-src, src, data-src, data-echo, data-original")
+    )
+
     override val loadPageConfig = LoadPageConfig(
         title = CssSelector(".pwr-heading h1, #pds-title, h1", "text"),
         plot = CssSelector(
@@ -88,24 +106,37 @@ class BristegeParser : NewBaseParser() {
                     url = resolveUrl(doc.baseUri(), it.url) ?: it.url,
                     isMovie = !isSeries(it.title, it.url, null)
                 )
-            }
+            }.distinctBy { it.url }
         }
-        // Fallback: generic link scan (dedup by URL)
+        // Fallback: generic link scan, scoped to the page content so footer links cannot leak in.
         return scanListingLinks(doc)
     }
 
     override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
         val items = super.parseSearch(doc)
-        if (items.isNotEmpty()) {
-            return items.map {
-                it.copy(
-                    posterUrl = cleanPosterUrl(resolveUrl(doc.baseUri(), it.posterUrl)),
-                    url = resolveUrl(doc.baseUri(), it.url) ?: it.url,
-                    isMovie = !isSeries(it.title, it.url, null)
-                )
-            }
+        if (items.isEmpty()) {
+            Log.d("BristegeParser", "No search results; ignoring site-wide footer links")
+            return emptyList()
         }
-        return scanListingLinks(doc)
+        return items.map {
+            it.copy(
+                posterUrl = cleanPosterUrl(resolveUrl(doc.baseUri(), it.posterUrl)),
+                url = resolveUrl(doc.baseUri(), it.url) ?: it.url,
+                isMovie = !isSeries(it.title, it.url, null)
+            )
+        }.distinctBy { it.url }
+    }
+
+    override fun hasNextSearchPage(document: Document?): Boolean {
+        val doc = document ?: return false
+        // An empty result page must never keep the app paging forever.
+        if (doc.select("#prs-results ul.prs-grid > li").isEmpty()) return false
+        val pagination = doc.selectFirst("#prs-results ul.pagination")
+            ?: doc.selectFirst("ul.pagination")
+            ?: return false
+        val active = pagination.selectFirst("li.active") ?: return false
+        val next = active.nextElementSibling() ?: return false
+        return !next.hasClass("disabled")
     }
 
     /**
@@ -114,9 +145,11 @@ class BristegeParser : NewBaseParser() {
      */
     private fun scanListingLinks(doc: Document): List<ParserInterface.ParsedItem> {
         val seen = linkedMapOf<String, ParserInterface.ParsedItem>()
-        for (a in doc.select("a[href*=\"watch.php?vid=\"], a[href*=\"series1.php?id=\"], a[href*=\"view-serie.php\"]")) {
+        val root: Element = doc.selectFirst("main") ?: doc
+        for (a in root.select("a[href*=\"watch.php?vid=\"], a[href*=\"series1.php?id=\"], a[href*=\"view-serie.php\"]")) {
             val rawHref = a.attr("abs:href").ifBlank { a.attr("href") }
             if (rawHref.isBlank() || rawHref.startsWith("#")) continue
+            if (a.closest(".catfooter") != null) continue
             val url = rawHref.trim()
             if (seen.containsKey(url)) continue
 
