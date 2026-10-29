@@ -115,7 +115,8 @@ class BristegeParser : NewBaseParser() {
     override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
         val items = super.parseSearch(doc)
         if (items.isEmpty()) {
-            Log.d("BristegeParser", "No search results; ignoring site-wide footer links")
+            // Do not fall back to scanning the whole document: every search page carries a
+            // site-wide `.catfooter` with the same promoted series links.
             return emptyList()
         }
         return items.map {
@@ -130,7 +131,10 @@ class BristegeParser : NewBaseParser() {
     override fun hasNextSearchPage(document: Document?): Boolean {
         val doc = document ?: return false
         // An empty result page must never keep the app paging forever.
-        if (doc.select("#prs-results ul.prs-grid > li").isEmpty()) return false
+        val hasResults = doc.select(
+            "#prs-results ul.prs-grid > li, ul.pm-ul-browse-videos > li"
+        ).isNotEmpty()
+        if (!hasResults) return false
         val pagination = doc.selectFirst("#prs-results ul.pagination")
             ?: doc.selectFirst("ul.pagination")
             ?: return false

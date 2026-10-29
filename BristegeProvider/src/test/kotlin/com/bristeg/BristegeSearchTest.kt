@@ -37,7 +37,7 @@ class BristegeSearchTest {
             ),
             items.map { it.url }
         )
-        assertTrue(items.all { it.posterUrl == null || it.posterUrl!!.contains("/uploads/thumbs/") })
+        assertTrue(items.all { it.posterUrl?.contains("/uploads/thumbs/") == true })
         assertFalse(items.any { it.url.contains("series1.php") })
     }
 
