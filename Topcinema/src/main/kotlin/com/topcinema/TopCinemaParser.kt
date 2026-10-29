@@ -13,6 +13,13 @@ class TopCinemaParser : NewBaseParser() {
         return "$domain/search/?query=$query&type=all"
     }
 
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/search/?query=$query&type=all&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override val mainPageConfig = MainPageConfig(
         container = "section.Two--Items",
         title = CssSelector(query = ".Title--Box h3", attr = "text"),

@@ -51,10 +51,12 @@ class ArabseedV4 : BaseProvider() {
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
 
-        val items = coroutineScope {
+        val pageData = coroutineScope {
             listOf("movies", "series").map { type ->
                 async {
-                    val url = "$mainUrl/?s=$encoded&type=$type"
+                    // WordPress puts the page segment before the query string.
+                    val base = if (page > 1) "$mainUrl/page/$page/" else mainUrl
+                    val url = "$base/?s=$encoded&type=$type"
                     android.util.Log.d("ArabseedV4", "searchSite: requesting $url")
                     try {
                         val doc = if (withFallback) {
@@ -62,16 +64,22 @@ class ArabseedV4 : BaseProvider() {
                         } else {
                             httpService.getDocumentNoFallback(url, rewriteDomain = true)
                         }
-                        if (doc != null) getParser().parseSearch(doc) else emptyList()
+                        if (doc != null) {
+                            getParser().parseSearch(doc) to
+                                (doc.selectFirst("link[rel=next], a.next.page-numbers, a.next") != null)
+                        } else {
+                            emptyList<com.cloudstream.shared.parsing.ParserInterface.ParsedItem>() to false
+                        }
                     } catch (e: com.cloudstream.shared.service.CloudflareBlockedSearchException) {
                         throw e
                     } catch (e: Exception) {
                         android.util.Log.e("ArabseedV4", "searchSite error: ${e.message}")
-                        emptyList()
+                        emptyList<com.cloudstream.shared.parsing.ParserInterface.ParsedItem>() to false
                     }
                 }
-            }.awaitAll().flatten().distinctBy { it.url }
+            }.awaitAll()
         }
+        val items = pageData.flatMap { it.first }.distinctBy { it.url }
         android.util.Log.d("ArabseedV4", "searchSite: '${query}' -> ${items.size} items")
         val results = items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -79,7 +87,7 @@ class ArabseedV4 : BaseProvider() {
                 this.posterHeaders = httpService.getImageHeaders()
             }
         }
-        return newSearchResponseList(results, false)
+        return newSearchResponseList(results, pageData.any { it.second })
     }
 
     override suspend fun searchLazy(query: String, page: Int): SearchResponseList {

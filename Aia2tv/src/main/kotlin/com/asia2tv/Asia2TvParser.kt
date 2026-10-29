@@ -16,6 +16,13 @@ class Asia2TvParser : NewBaseParser() {
         return "$domain/search?category=series&s=$query&show=free&"
     }
 
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/search?category=series&s=$query&show=free&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override val mainPageConfig = MainPageConfig(
         container = "div.home-tvsries",
         item = "div.postmovie",

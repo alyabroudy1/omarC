@@ -49,6 +49,13 @@ class Anim3rbParser : NewBaseParser() {
         return url
     }
 
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/search?q=$query&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override fun parseMainPage(doc: Document): List<ParserInterface.ParsedItem> {
         Log.i(PARSER_TAG, "parseMainPage: doc.title=${doc.title()}, html.length=${doc.html().length}")
         val items = super.parseMainPage(doc)

@@ -23,6 +23,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentHashMap
 
 abstract class BaseProvider : MainAPI() {
     abstract val providerName: String
@@ -80,6 +81,12 @@ abstract class BaseProvider : MainAPI() {
     open val requestTimeoutMs: Long? = null
 
     protected abstract fun getParser(): NewBaseParser
+
+    /**
+     * Fingerprints of already-returned search pages, keyed by query. Used to stop paging
+     * when a site ignores the page parameter and returns the same result set again.
+     */
+    private val searchPageFingerprints = ConcurrentHashMap<String, MutableMap<Int, String>>()
 
 
     protected val httpService by lazy {
@@ -171,7 +178,8 @@ abstract class BaseProvider : MainAPI() {
         try {
             httpService.ensureInitialized()
             val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-            val url = getParser().getSearchUrl(mainUrl, encoded, page)
+            val parser = getParser()
+            val url = parser.getSearchUrl(mainUrl, encoded, page)
             Log.d(methodTag, "Fetching search URL (page=$page): $url")
 
             val doc = httpService.getDocument(url, checkDomainChange = true, rewriteDomain = true)
@@ -180,12 +188,22 @@ abstract class BaseProvider : MainAPI() {
                 return newSearchResponseList(emptyList(), false)
             }
 
-            val items = getParser().parseSearch(doc)
+            val items = parser.parseSearch(doc)
             Log.d(methodTag, "Parsed ${items.size} search items")
             // hasNextSearchPage may return null ("no opinion"); fall back to paging until an
             // empty page (mirrors getMainPage's behavior). Only applies when the parser returned
             // null — an explicit false from the parser is never overridden by the fallback.
-            val hasNext = getParser().hasNextSearchPage(doc) ?: (getParser().supportsSearchPagination && items.isNotEmpty())
+            // Repetition/redirect guards keep sites that ignore the page parameter from paging
+            // forever (or from treating a homepage redirect as page N).
+            val repeatedPage = isRepeatedSearchPage(query, page, items)
+            val redirectedAway = searchRedirectedAway(url, doc, page)
+            val hasNext = if (repeatedPage || redirectedAway) {
+                Log.d(methodTag, "Stopping search paging (page=$page, repeated=$repeatedPage, redirected=$redirectedAway)")
+                false
+            } else {
+                parser.hasNextSearchPage(doc)
+                    ?: (supportsPagedSearch(parser, encoded) && items.isNotEmpty())
+            }
 
             val results = items.map { item ->
                 newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -199,6 +217,58 @@ abstract class BaseProvider : MainAPI() {
             e.printStackTrace()
             return newSearchResponseList(emptyList(), false)
         }
+    }
+
+    /**
+     * A parser can opt into paging explicitly via [ParserInterface.supportsSearchPagination],
+     * or implicitly by returning a different URL for page 2 (e.g. the automatic WordPress
+     * `/page/N/?s=` shape).
+     */
+    private fun supportsPagedSearch(parser: ParserInterface, encodedQuery: String): Boolean {
+        if (parser.supportsSearchPagination) return true
+        return parser.getSearchUrl(mainUrl, encodedQuery, 2) !=
+            parser.getSearchUrl(mainUrl, encodedQuery, 1)
+    }
+
+    /**
+     * Record this page's result fingerprint. Returns true when an earlier page in the
+     * same query already had exactly the same URLs (the site ignored the page parameter).
+     */
+    private fun isRepeatedSearchPage(
+        query: String,
+        page: Int,
+        items: List<ParserInterface.ParsedItem>
+    ): Boolean {
+        val fingerprint = items.joinToString("\u001F") { it.url }
+        synchronized(searchPageFingerprints) {
+            val pages = searchPageFingerprints.getOrPut(query) { mutableMapOf() }
+            if (page <= 1) {
+                pages.clear()
+                pages[1] = fingerprint
+                return false
+            }
+            val repeated = pages.values.any { it == fingerprint }
+            pages[page] = fingerprint
+            if (pages.size > 12) {
+                pages.keys.minOrNull()?.let { pages.remove(it) }
+            }
+            return repeated
+        }
+    }
+
+    /**
+     * A page past the first one that lost its query string and landed on a different path
+     * (usually the homepage after "page N doesn't exist") must not keep the chain alive.
+     */
+    private fun searchRedirectedAway(requestedUrl: String, doc: Document, page: Int): Boolean {
+        if (page <= 1) return false
+        val actual = doc.location()
+        if (actual.isBlank()) return false
+        val requestedQuery = requestedUrl.substringAfter('?', "")
+        val actualQuery = actual.substringAfter('?', "")
+        if (requestedQuery.isBlank() || actualQuery.isNotBlank()) return false
+        return requestedUrl.substringBefore('?').trimEnd('/') !=
+            actual.substringBefore('?').trimEnd('/')
     }
 
     /** Legacy pageless entry point — delegates to the paged overload at page 1. */
@@ -263,7 +333,8 @@ abstract class BaseProvider : MainAPI() {
 
         httpService.ensureInitialized()
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val url = getParser().getSearchUrl(mainUrl, encoded, page)
+        val parser = getParser()
+        val url = parser.getSearchUrl(mainUrl, encoded, page)
         Log.d(methodTag, "Fetching search URL (no CF fallback): $url")
 
         // This throws CloudflareBlockedSearchException if CF is detected
@@ -273,12 +344,20 @@ abstract class BaseProvider : MainAPI() {
             return newSearchResponseList(emptyList(), false)
         }
 
-        val items = getParser().parseSearch(doc)
+        val items = parser.parseSearch(doc)
         Log.d(methodTag, "Parsed ${items.size} search items")
         // hasNextSearchPage may return null ("no opinion"); fall back to paging until an
         // empty page (mirrors getMainPage's behavior). Only applies when the parser returned
         // null — an explicit false from the parser is never overridden by the fallback.
-        val hasNext = getParser().hasNextSearchPage(doc) ?: (getParser().supportsSearchPagination && items.isNotEmpty())
+        val repeatedPage = isRepeatedSearchPage(query, page, items)
+        val redirectedAway = searchRedirectedAway(url, doc, page)
+        val hasNext = if (repeatedPage || redirectedAway) {
+            Log.d(methodTag, "Stopping search paging (page=$page, repeated=$repeatedPage, redirected=$redirectedAway)")
+            false
+        } else {
+            parser.hasNextSearchPage(doc)
+                ?: (supportsPagedSearch(parser, encoded) && items.isNotEmpty())
+        }
 
         val results = items.map { item ->
             newMovieSearchResponse(item.title, item.url, if (item.isMovie) TvType.Movie else TvType.TvSeries) {
@@ -309,6 +388,19 @@ abstract class BaseProvider : MainAPI() {
      * (e.g., lazy AJAX resolution). Return null to skip the URL.
      */
     open suspend fun resolveServerUrl(url: String, referer: String): String? = url
+
+    /**
+     * Expand one server URL into zero or more concrete player/embed URLs.
+     *
+     * Most providers only need the single-URL [resolveServerUrl] hook. This variant exists
+     * for players that fan out into several mirrors (e.g. MegaMax/Inertia iframes). Keeping
+     * the expansion here means BaseProvider can still run every resolved mirror through the
+     * normal extractor/sniffer phases.
+     */
+    open suspend fun resolveServerUrls(url: String, referer: String): List<String> {
+        val resolved = resolveServerUrl(url, referer)
+        return if (resolved.isNullOrBlank()) emptyList() else listOf(resolved)
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         val methodTag = "$providerName.load"
@@ -516,27 +608,32 @@ abstract class BaseProvider : MainAPI() {
             // ========================================
             Log.i(methodTag, "PHASE 1: Resolving ${urls.size} URLs in parallel...")
             
-            // Triple: (originalUrl, resolvedUrl, index)
+            // Triple: (originalUrl, resolvedUrl, index). One server can expand into
+            // several URLs (e.g. a MegaMax iframe with multiple mirrors); they all keep
+            // the original index so the matching server selector still applies.
             val resolvedServers: List<Triple<String, String, Int>> = coroutineScope {
                 urls.mapIndexed { index, url ->
                     async {
                         try {
-                            val resolved = resolveServerUrl(url, referer)
-                            if (!resolved.isNullOrBlank()) {
-                                if (resolved != url) {
-                                    Log.d(methodTag, "PHASE 1: Resolved [$index]: $url -> ${resolved.take(80)}")
-                                }
-                                Triple(url, resolved, index)
+                            val resolvedList = resolveServerUrls(url, referer)
+                                .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+                                .distinct()
+                            if (resolvedList.isEmpty()) {
+                                Log.d(methodTag, "PHASE 1: resolveServerUrls returned empty [$index], skipping: $url")
                             } else {
-                                Log.d(methodTag, "PHASE 1: resolveServerUrl returned null [$index], skipping: $url")
-                                null
+                                resolvedList.forEach { resolved ->
+                                    if (resolved != url) {
+                                        Log.d(methodTag, "PHASE 1: Resolved [$index]: $url -> ${resolved.take(80)}")
+                                    }
+                                }
                             }
+                            resolvedList.map { resolved -> Triple(url, resolved, index) }
                         } catch (e: Exception) {
                             Log.w(methodTag, "PHASE 1: Exception resolving [$index]: ${e.message}")
-                            null
+                            emptyList()
                         }
                     }
-                }.awaitAll().filterNotNull()
+                }.awaitAll().flatten()
             }
             
             Log.i(methodTag, "PHASE 1 complete: ${resolvedServers.size}/${urls.size} URLs resolved")

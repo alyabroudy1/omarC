@@ -58,6 +58,14 @@ class TukTukcimaParser : NewBaseParser() {
         return "$domain/?s=$query&page=1"
     }
 
+    // This site paginates with a query parameter rather than the WordPress
+    // `/page/N/?s=` path used by the other WordPress providers.
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        return "$domain/?s=$query&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     private fun toSearchResult(it: Element): ParserInterface.ParsedItem? {
         val linkTag = it.selectFirst("a") ?: return null
         val titleTag = it.selectFirst(".title")

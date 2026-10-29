@@ -58,22 +58,31 @@ interface ParserInterface {
 
     /**
      * Whether this parser supports paging search results past page 1. Defaults to true when
-     * [searchPaginationFormat] is set. A parser that instead overrides the 3-arg [getSearchUrl]
-     * directly (e.g. WordPress-style "/page/N/?s=" where the page segment precedes the query,
-     * so a simple suffix format can't express it) must override this to force it true.
+     * [searchPaginationFormat] is set. [com.cloudstream.shared.provider.BaseProvider] also
+     * auto-detects support when the 3-arg [getSearchUrl] returns a different URL for page 2
+     * (including the built-in WordPress shape), so overriding this is only needed when the
+     * URL builder cannot express the difference.
      */
     val supportsSearchPagination: Boolean get() = searchPaginationFormat != null
 
     /**
      * Paged search URL. Default: page 1 reuses [getSearchUrl]; page>1 appends
-     * [searchPaginationFormat] (e.g. "&page=%d") if the parser opted in, else
-     * falls back to the page-1 URL (effectively single-page).
+     * [searchPaginationFormat] (e.g. "&page=%d") if the parser opted in.
+     *
+     * WordPress search is handled automatically because its page segment precedes
+     * the query string (`<domain>/page/<N>/?s=<query>`), which a suffix format cannot
+     * express. Parsers with another shape can still override this method directly.
      */
     fun getSearchUrl(domain: String, query: String, page: Int): String {
         val base = getSearchUrl(domain, query)
         if (page <= 1) return base
-        val fmt = searchPaginationFormat ?: return base
-        return "$base${fmt.format(page)}"
+        searchPaginationFormat?.let { return "$base${it.format(page)}" }
+
+        val root = domain.trimEnd('/')
+        if (base == "$root/?s=$query") {
+            return "$root/page/$page/?s=$query"
+        }
+        return base
     }
 
     /**

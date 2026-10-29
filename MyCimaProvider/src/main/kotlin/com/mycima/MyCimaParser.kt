@@ -9,6 +9,17 @@ import com.cloudstream.shared.parsing.WatchServerSelector
 
 class MyCimaParser : NewBaseParser() {
 
+    override fun getSearchUrl(domain: String, query: String): String {
+        return "$domain/filtering/?keywords=$query"
+    }
+
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/filtering/?keywords=$query&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override val mainPageConfig = MainPageConfig(
         container = "div.GridItem",
         title = CssSelector("h2, strong", "text"),
@@ -41,10 +52,6 @@ class MyCimaParser : NewBaseParser() {
         title = CssSelector("", ""),
         iframe = CssSelector("", "")
     )
-
-    override fun getSearchUrl(domain: String, query: String): String {
-        return "$domain/filtering/?keywords=$query"
-    }
 
     override fun isSeries(title: String, url: String, element: org.jsoup.nodes.Element?): Boolean {
         if (title.contains("فيلم") || title.contains("film", true) || title.contains("movie", true)) return false

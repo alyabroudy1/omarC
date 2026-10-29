@@ -1,6 +1,5 @@
 package com.egydead
 
-import com.lagradost.api.Log
 import com.lagradost.cloudstream3.TvType
 import com.cloudstream.shared.parsing.*
 import org.jsoup.nodes.Document
@@ -9,11 +8,38 @@ import kotlin.text.contains
 
 
 class EgyDeadParser : NewBaseParser() {
-    
+
     override fun getSearchUrl(domain: String, query: String): String {
         return "$domain/?s=$query"
     }
-    
+
+    /**
+     * WordPress-style paged search: the page segment precedes the query string
+     * (`<domain>/page/<N>/?s=<query>`), so a plain suffix format cannot express it.
+     */
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/page/$page/?s=$query"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
+    /**
+     * Beyond the last result page the site redirects to the homepage, which still has
+     * plenty of `li.movieItem` cards. Require both a search URL and at least one result
+     * so that redirect cannot be mistaken for "another page exists".
+     */
+    override fun hasNextSearchPage(document: Document?): Boolean {
+        val doc = document ?: return false
+        val location = doc.location()
+        if (!location.contains("?s=", ignoreCase = true) &&
+            !location.contains("&s=", ignoreCase = true)
+        ) {
+            return false
+        }
+        return doc.select("li.movieItem").isNotEmpty()
+    }
+
     // Reference: li.movieItem container, h1.BottomTitle title, img src, a href
     // Same selectors for both main page and search
     override val mainPageConfig = MainPageConfig(
@@ -36,7 +62,7 @@ class EgyDeadParser : NewBaseParser() {
         title = CssSelector(query = "div.singleTitle em", attr = "text"),
         poster = CssSelector(query = "div.single-thumbnail > img", attr = "src"),
         plot = CssSelector(
-            query = "div.extra-content:contains(القصه) p", 
+            query = "div.extra-content:contains(القصه) p",
             attr = "text"
         ),
         // Not used for type detection - we override isSeries instead
@@ -91,86 +117,97 @@ class EgyDeadParser : NewBaseParser() {
                 tags = emptyList()
             )
         }
-        return super.parseLoadPage(doc, url)
+
+        val data = super.parseLoadPage(doc, url) ?: return null
+        if (url.contains("/episodes/", ignoreCase = true) && data.episodes.isNullOrEmpty()) {
+            // The episode page itself has no episode grid; its breadcrumb links to the
+            // season page that does. BaseProvider swaps to this parent when the document
+            // is only one episode.
+            val seasonUrl = EgyDeadSeries.seasonUrlFromBreadcrumb(doc)
+            if (!seasonUrl.isNullOrBlank()) {
+                return data.copy(parentSeriesUrl = seasonUrl)
+            }
+        }
+        return data
     }
 
     /**
-     * Parse episodes from a document.
-     * Reference: div.EpsList > li > a, with href and title attrs
+     * Parse episodes from a season document. The season number comes from the season
+     * page URL/title when the caller does not already know it, and the episode number
+     * comes from the link text or the `sXXeYY` slug.
      */
     override fun parseEpisodes(doc: Document, seasonNum: Int?): List<ParserInterface.ParsedEpisode> {
         val episodes = mutableListOf<ParserInterface.ParsedEpisode>()
-
         val episodeLinks = doc.select("div.EpsList > li > a")
-        Log.d("EgyDeadParser", "parseEpisodes: found ${episodeLinks.size} episode links (season=$seasonNum)")
-        
-        for (link in episodeLinks) {
-            val epUrl = link.attr("href").trim()
-            val epTitle = link.attr("title").trim().ifBlank { link.text().trim() }
-            
-            if (epUrl.isNotBlank()) {
-                val epNum = Regex("""(\d+)""").find(link.text())?.groupValues?.get(1)?.toIntOrNull()
-                    ?: Regex("""(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: 0
 
-                episodes.add(
-                    ParserInterface.ParsedEpisode(
-                        name = epTitle.ifBlank { "Episode $epNum" },
-                        url = epUrl,
-                        season = seasonNum ?: 1,
-                        episode = epNum
-                    )
-                )
+        val season = seasonNum
+            ?: EgyDeadSeries.seasonNumber(doc.location(), doc.title())
+            ?: episodeLinks.firstOrNull()?.let { link ->
+                val href = link.absUrl("href").ifBlank { link.attr("href") }
+                EgyDeadSeries.seasonNumber(href)
             }
+            ?: 1
+
+        for (link in episodeLinks) {
+            val epUrl = link.absUrl("href").ifBlank { link.attr("href") }.trim()
+            if (epUrl.isBlank()) continue
+
+            val epTitle = link.attr("title").trim().ifBlank { link.text().trim() }
+            val epNum = EgyDeadSeries.episodeNumber(epUrl, link.text()) ?: 0
+
+            episodes.add(
+                ParserInterface.ParsedEpisode(
+                    name = epTitle.ifBlank { "Episode $epNum" },
+                    url = epUrl,
+                    season = season,
+                    episode = epNum
+                )
+            )
         }
-        
-        return episodes.sortedBy { it.episode }
+
+        return episodes
+            .distinctBy { it.url }
+            .sortedBy { it.episode }
     }
 
     override val watchServersSelectors = WatchServerSelector(
-        url = CssSelector(query = "div.embed-list a[data-src], ul.embeds li[data-src], .server-link[data-src], a[data-id]", attr = "data-src"),
-        id = CssSelector(query = "div.embed-list a, ul.embeds li, .server-link", attr = "data-id"),
-        title = CssSelector(query = "div.embed-list a span, ul.embeds li span, .server-link span, a", attr = "text"),
+        url = CssSelector(query = "li[data-link]", attr = "data-link"),
+        id = CssSelector(query = "li[data-link]", attr = "class"),
+        title = CssSelector(query = "li[data-link]", attr = "text"),
         iframe = CssSelector(query = "iframe[data-src]", attr = "data-src")
     )
 
     override fun extractWatchServersUrls(doc: Document): List<String> {
         val urls = mutableListOf<String>()
-        
-        // Method 1: From server list links (data-src)
-        for (link in doc.select("a[data-src]")) {
-            val dataSrc = link.attr("data-src")
-            if (dataSrc.isNotBlank() && (dataSrc.startsWith("http") || dataSrc.startsWith("//"))) {
-                if (!isTrailerOrJunk(dataSrc)) urls.add(dataSrc)
-            }
+
+        // Current watch layout (desktop + mobile): each server is an <li data-link>.
+        for (element in doc.select(
+            "ul.serversList > li[data-link], .mob-servers li[data-link], " +
+                ".watchAreaMaster li[data-link]"
+        )) {
+            addServerUrl(element.attr("data-link"), urls)
         }
-        
-        // Method 2: From iframes (data-src)
-        for (iframe in doc.select("iframe[data-src]")) {
-            val dataSrc = iframe.attr("data-src")
-            if (dataSrc.isNotBlank()) {
-                if (!isTrailerOrJunk(dataSrc) && !isHiddenIframe(iframe)) urls.add(dataSrc)
-            }
+
+        // Keep iframe fallbacks for older/mobile layouts, but skip the YouTube trailer
+        // and any hidden tracking iframes.
+        for (iframe in doc.select("iframe[data-src], iframe[src]")) {
+            if (isHiddenIframe(iframe)) continue
+            val src = iframe.attr("data-src").ifBlank { iframe.attr("src") }
+            addServerUrl(src, urls)
         }
-        
-        // Method 3: From inline iframes (skips the youtube trailer popup and
-        // hidden tracking pixels, which otherwise open a trailer-only webview)
-        for (iframe in doc.select("iframe[src]")) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank() && (src.startsWith("http") || src.startsWith("//"))) {
-                if (!isTrailerOrJunk(src) && !isHiddenIframe(iframe)) urls.add(src)
-            }
-        }
-        
-        // Method 4: From data-id
-        for (link in doc.select("a[data-id]")) {
-            val dataId = link.attr("data-id")
-            if (dataId.isNotBlank() && (dataId.startsWith("http") || dataId.startsWith("//"))) {
-                if (!isTrailerOrJunk(dataId)) urls.add(dataId)
-            }
-        }
-        
+
         return urls.distinct()
+    }
+
+    private fun addServerUrl(rawUrl: String, output: MutableList<String>) {
+        val url = rawUrl.trim()
+        if (url.isBlank()) return
+        val absolute = when {
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("http") -> url
+            else -> return
+        }
+        if (!isTrailerOrJunk(absolute)) output.add(absolute)
     }
 
     private fun isTrailerOrJunk(url: String): Boolean {
@@ -189,30 +226,38 @@ class EgyDeadParser : NewBaseParser() {
     }
 
     /**
-     * Type detection matching decompiled reference exactly:
-     * isMovie = !Regex("/serie/|/season/").containsMatchIn(url)
-     * 
-     * So: if URL contains /serie/ or /season/ → it's a series (NOT a movie)
-     * Everything else is a movie.
+     * The current site uses three detail URL shapes. The old `/serie/` and `/season/`
+     * checks no longer matched `/Series/`, `/seasons/` or `/episodes/`, so every series
+     * and season page fell through as a movie.
      */
     override fun isSeries(title: String, url: String, element: Element?): Boolean {
-        // Reference: isMovie = !Regex("/serie/|/season/").containsMatchIn(url)
-        // So isSeries when URL matches /serie/ or /season/
-        if (Regex("/serie/|/season/").containsMatchIn(url)) {
-            return true
-        }
-        return false
+        if (EgyDeadSeries.isSeriesUrl(url)) return true
+        return title.contains("مسلسل") ||
+            title.contains("حلقة") ||
+            title.contains("حلقه") ||
+            title.contains("موسم")
     }
 
     override fun getPlayerPageUrl(doc: Document): String? {
-        // EgyDead doesn't use a separate player page - loadLinks POSTs directly
-        return null
+        val href = doc.selectFirst("a[href*=/watch/]")
+            ?.attr("abs:href")
+            ?.ifBlank { doc.selectFirst("a[href*=/watch/]")?.attr("href").orEmpty() }
+            ?.trim()
+        if (!href.isNullOrBlank()) {
+            return if (href.startsWith("//")) "https:$href" else href
+        }
+
+        // Fallback for a detail page whose watch button is injected by JS.
+        val location = doc.location().trim().trimEnd('/')
+        if (location.isBlank() || location.contains("/watch", ignoreCase = true)) return null
+        return "$location/watch/"
     }
-    
+
     /**
-     * Override parseSearch to filter out individual episode URLs
-     * Reference: search filters out results where a[href] contains "/episode/"
-     * Safety: if filtering removes ALL results, return unfiltered so user sees something
+     * Override parseSearch to filter out individual episode URLs from the legacy
+     * `/episode/` layout. Current `/episodes/` results stay visible: the site's search
+     * pages are mostly episode cards, and dropping them would make later search pages
+     * look empty and stop pagination early.
      */
     override fun parseSearch(doc: Document): List<ParserInterface.ParsedItem> {
         val items = super.parseSearch(doc)
@@ -220,4 +265,3 @@ class EgyDeadParser : NewBaseParser() {
         return if (filtered.isNotEmpty()) filtered else items
     }
 }
-

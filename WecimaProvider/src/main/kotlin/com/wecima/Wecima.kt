@@ -26,19 +26,19 @@ class Wecima : BaseProvider() {
 
     override fun getParser(): NewBaseParser = WecimaParser()
 
-    private suspend fun searchPost(query: String): List<SearchResponse> {
+    private suspend fun searchPost(query: String, page: Int = 1): Pair<List<SearchResponse>, Boolean> {
         val jsonText = httpService.postText(
-            "$mainUrl/search", mapOf("q" to query),
+            "$mainUrl/search", mapOf("q" to query, "page" to page.toString()),
             referer = mainUrl,
             headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
             rewriteDomain = true
         )
-        if (jsonText.isNullOrBlank()) return emptyList()
+        if (jsonText.isNullOrBlank()) return emptyList<SearchResponse>() to false
 
         val json = JSONObject(jsonText)
-        if (!json.optBoolean("status", false)) return emptyList()
+        if (!json.optBoolean("status", false)) return emptyList<SearchResponse>() to false
 
-        val results = json.optJSONArray("results") ?: return emptyList()
+        val results = json.optJSONArray("results") ?: return emptyList<SearchResponse>() to false
         val items = mutableListOf<SearchResponse>()
 
         for (i in 0 until results.length()) {
@@ -57,13 +57,20 @@ class Wecima : BaseProvider() {
                 }
             )
         }
-        return items
+
+        val pagination = json.optJSONObject("pagination") ?: json.optJSONObject("meta")
+        val hasNext = json.optBoolean("has_next", false) ||
+            json.optBoolean("hasNext", false) ||
+            (pagination?.optBoolean("has_next", false) == true) ||
+            (pagination != null && pagination.has("current_page") && pagination.has("last_page") &&
+                pagination.optInt("current_page") < pagination.optInt("last_page"))
+        return items to hasNext
     }
 
     override suspend fun searchNormal(query: String): List<SearchResponse> {
         try {
             httpService.ensureInitialized()
-            return searchPost(query)
+            return searchPost(query).first
         } catch (e: Exception) {
             Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
             return emptyList()
@@ -76,7 +83,8 @@ class Wecima : BaseProvider() {
     override suspend fun searchNormal(query: String, page: Int): SearchResponseList {
         return try {
             httpService.ensureInitialized()
-            newSearchResponseList(searchPost(query), false)
+            val (items, hasNext) = searchPost(query, page)
+            newSearchResponseList(items, hasNext)
         } catch (e: Exception) {
             Log.e("[Wecima] [searchNormal]", "Error: ${e.message}")
             newSearchResponseList(emptyList(), false)
@@ -85,12 +93,13 @@ class Wecima : BaseProvider() {
 
     override suspend fun searchLazy(query: String): List<SearchResponse> {
         httpService.ensureInitialized()
-        return searchPost(query)
+        return searchPost(query).first
     }
 
     override suspend fun searchLazy(query: String, page: Int): SearchResponseList {
         httpService.ensureInitialized()
-        return newSearchResponseList(searchPost(query), false)
+        val (items, hasNext) = searchPost(query, page)
+        return newSearchResponseList(items, hasNext)
     }
 
     override suspend fun fetchExtraEpisodes(

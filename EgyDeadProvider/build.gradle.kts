@@ -1,4 +1,4 @@
-version = 10
+version = 11
 
 android {
     sourceSets {
@@ -10,6 +10,7 @@ android {
 
 dependencies {
     implementation("org.mozilla:rhino:1.7.14")
+    testImplementation("junit:junit:4.13.2")
 }
 
 cloudstream {

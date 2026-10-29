@@ -11,6 +11,17 @@ class AkwamParser : NewBaseParser() {
         return "$domain/search?q=$query"
     }
 
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/search?q=$query&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
+    override fun hasNextSearchPage(document: Document?): Boolean {
+        return document?.selectFirst("a[rel=next]") != null
+    }
+
     override val watchServersSelectors = WatchServerSelector(
         url = CssSelector(""),
         id = CssSelector(""),

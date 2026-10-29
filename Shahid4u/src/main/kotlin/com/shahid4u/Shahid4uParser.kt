@@ -13,6 +13,13 @@ class Shahid4uParser : NewBaseParser() {
         return "$domain/search?s=$query"
     }
 
+    override fun getSearchUrl(domain: String, query: String, page: Int): String {
+        if (page <= 1) return getSearchUrl(domain, query)
+        return "$domain/search?s=$query&page=$page"
+    }
+
+    override val supportsSearchPagination: Boolean get() = true
+
     override val mainPageConfig = MainPageConfig(
         container = "div.shows-container.row div[class*=col-]",
         title = CssSelector(query = "p.title, div.card-content", attr = "text"),
