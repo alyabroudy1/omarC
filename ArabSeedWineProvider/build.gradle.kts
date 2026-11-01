@@ -1,4 +1,4 @@
-version = 3 // ?s= search fix
+version = 4 // ?s= search fix
 
 // Include shared source directory
 android {

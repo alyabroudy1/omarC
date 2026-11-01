@@ -3,6 +3,7 @@ package com.cloudstream.shared.extractors
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import android.util.Log
@@ -41,7 +42,7 @@ fun extractIframeEmbed(html: String, pageUrl: String): String? {
             .ifBlank { iframe.attr("src") }.ifBlank { iframe.attr("data-src") }.trim()
         if (raw.isBlank()) continue
         val lower = raw.lowercase()
-        if (lower.contains("about:blank")) continue
+        if (lower.contains("about:blank") || lower.contains("mycima.help") || lower.contains("help") || lower.contains("advert")) continue
         if (!raw.startsWith("http") && !raw.startsWith("//")) continue
         val absolute = if (raw.startsWith("//")) "https:$raw" else raw
         // Skip the page embedding itself.
@@ -333,7 +334,7 @@ class EarnVidsExtractor(
             if (depth < 1) {
                 extractIframeEmbed(response, finalUrl)?.let { embedUrl ->
                     Log.d("EarnVidsExtractor", "🖼️ Following embedded player: ${embedUrl.take(100)}")
-                    getUrlInternal(embedUrl, embedUrl, subtitleCallback, callback, depth + 1)
+                    loadExtractor(embedUrl, finalUrl, subtitleCallback, callback)
                     return
                 }
             }

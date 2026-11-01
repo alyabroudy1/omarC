@@ -1,4 +1,4 @@
-version = 10 // Round 18: ?s= search fix
+version = 11 // Round 18: ?s= search fix
 
 // Include shared source directory
 android {

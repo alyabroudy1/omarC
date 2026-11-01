@@ -387,7 +387,28 @@ abstract class BaseProvider : MainAPI() {
      * Called for each URL in the loadLinks loop. Override to handle virtual URLs
      * (e.g., lazy AJAX resolution). Return null to skip the URL.
      */
-    open suspend fun resolveServerUrl(url: String, referer: String): String? = url
+    open suspend fun resolveServerUrl(url: String, referer: String): String? {
+        if (url.contains("govid.live/play/")) {
+            try {
+                val resp = app.get(url, referer = referer).text
+                val doc = org.jsoup.Jsoup.parse(resp, url)
+                for (iframe in doc.select("iframe[src], iframe[data-src]")) {
+                    val src = iframe.attr("abs:src").ifBlank { iframe.attr("abs:data-src") }
+                        .ifBlank { iframe.attr("src") }.ifBlank { iframe.attr("data-src") }.trim()
+                    if (src.isBlank()) continue
+                    val lower = src.lowercase()
+                    if (lower.contains("about:blank") || lower.contains("mycima.help") || lower.contains("help") || lower.contains("advert")) continue
+                    if (src.startsWith("http://") || src.startsWith("https://")) {
+                        Log.d("BaseProvider", "Resolved govid.live/play/ landing to embed: $src")
+                        return src
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("BaseProvider", "Failed to resolve govid landing: ${e.message}")
+            }
+        }
+        return url
+    }
 
     /**
      * Expand one server URL into zero or more concrete player/embed URLs.

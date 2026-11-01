@@ -66,12 +66,52 @@ class MyCimaCloneParser : NewBaseParser() {
     private fun decodeWatchUrl(encodedStr: String): String? {
         try {
             if (encodedStr.isBlank()) return null
-            val match = Regex("""(?:/play/|/embed/|\?slp_watch=)([^/&]+)""").find(encodedStr)
-            val base64Str = match?.groupValues?.get(1) ?: encodedStr
-            val cleanedStr = base64Str.replace("+", "").trim()
-            if (cleanedStr.startsWith("http")) return cleanedStr
-            val finalB64Str = if (!cleanedStr.startsWith("aHR0c")) "aHR0c$cleanedStr" else cleanedStr
-            return String(android.util.Base64.decode(finalB64Str, 0), java.nio.charset.StandardCharsets.UTF_8)
+            val trimmed = encodedStr.trim()
+
+            // 1. If it's a URL with query params, check query params for embedded base64 URL (e.g. ?mycimafsd=aHR0c..., ?url=aHR0c...)
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                if (trimmed.contains("?")) {
+                    val query = trimmed.substringAfter("?")
+                    for (param in query.split("&")) {
+                        val value = param.substringAfter("=", "")
+                        if (value.contains("aHR0c")) {
+                            val b64Part = Regex("""aHR0c[A-Za-z0-9+/=]+""").find(value)?.value
+                            if (b64Part != null) {
+                                try {
+                                    val dec = String(android.util.Base64.decode(b64Part, android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8).trim()
+                                    if (dec.startsWith("http://") || dec.startsWith("https://")) {
+                                        return dec
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                }
+                return trimmed
+            }
+
+            if (trimmed.startsWith("//")) {
+                return "https:$trimmed"
+            }
+
+            // 2. Pure Base64 decode
+            try {
+                val dec = String(android.util.Base64.decode(trimmed, android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8).trim()
+                if (dec.startsWith("http://") || dec.startsWith("https://")) {
+                    return dec
+                }
+            } catch (_: Exception) {}
+
+            // 3. Legacy fallback: Base64 without 'http' prefix (prepend 'aHR0c')
+            try {
+                val withPre = if (trimmed.startsWith("aHR0c")) trimmed else "aHR0c$trimmed"
+                val dec = String(android.util.Base64.decode(withPre, android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8).trim()
+                if (dec.startsWith("http://") || dec.startsWith("https://")) {
+                    return dec
+                }
+            } catch (_: Exception) {}
+
+            return null
         } catch (e: Exception) {
             return null
         }
@@ -80,7 +120,7 @@ class MyCimaCloneParser : NewBaseParser() {
     override fun extractWatchServersUrls(doc: org.jsoup.nodes.Document): List<String> {
         val urls = mutableListOf<String>()
         
-        doc.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], ul.WatchServersList li btn, .WatchServersList li, .Links--Content ul li").forEach { serverBtn ->
+        doc.select("ul.WatchServersList li[data-watch], ul#watch li[data-watch], .WatchServersList li[data-watch], .WatchServersList li, .Links--Content ul li, li[data-watch]").forEach { serverBtn ->
             val dataWatch = serverBtn.attr("data-watch").ifEmpty { serverBtn.attr("data-url") }.ifEmpty { serverBtn.selectFirst("a")?.attr("data-url") ?: "" }
             val decodedUrl = decodeWatchUrl(dataWatch)
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
@@ -88,8 +128,8 @@ class MyCimaCloneParser : NewBaseParser() {
             }
         }
         
-        doc.select(".openLinkDown").forEach { downloadBtn ->
-            val dataHref = downloadBtn.attr("data-href")
+        doc.select(".List--Download--Wecima--Single li a[href], .openLinkDown").forEach { downloadBtn ->
+            val dataHref = downloadBtn.attr("href").ifEmpty { downloadBtn.attr("data-href") }
             val decodedUrl = decodeWatchUrl(dataHref)
             if (!decodedUrl.isNullOrBlank() && decodedUrl.startsWith("http")) {
                 urls.add(decodedUrl)

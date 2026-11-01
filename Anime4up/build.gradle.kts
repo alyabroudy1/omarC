@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-version = 2
+version = 3
 cloudstream {
     authors = listOf("omarflex")
     language = "ar"
