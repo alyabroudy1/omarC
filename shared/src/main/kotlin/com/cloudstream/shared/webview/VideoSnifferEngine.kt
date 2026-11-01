@@ -60,6 +60,30 @@ class VideoSnifferEngine(
          */
         const val FIRST_CAPTURE_DEADLINE_MS = 15_000L
 
+        /**
+         * How long to wait for the main frame to at least begin loading (`onPageStarted`) before
+         * declaring the host unreachable for this attempt (its TCP connection or DNS lookup silently
+         * stalls). Decided from observed behaviour only - no host is assumed dead in advance.
+         */
+        const val INITIAL_CONNECTION_DEADLINE_MS = 6_000L
+
+        /** Seconds the "Invalid Page" overlay counts down before auto-skipping. */
+        const val SKIP_COUNTDOWN_SECONDS = 3
+
+        /**
+         * Main-frame errors that mean the host is unreachable, as opposed to e.g. ERROR_UNKNOWN /
+         * aborted navigations that also fire while a blocked redirect is cancelled.
+         */
+        fun isFatalNetworkError(errorCode: Int): Boolean = when (errorCode) {
+            WebViewClient.ERROR_HOST_LOOKUP,
+            WebViewClient.ERROR_CONNECT,
+            WebViewClient.ERROR_TIMEOUT,
+            WebViewClient.ERROR_FAILED_SSL_HANDSHAKE,
+            WebViewClient.ERROR_BAD_URL,
+            WebViewClient.ERROR_UNSUPPORTED_SCHEME -> true
+            else -> false
+        }
+
 
         /**
          * Hosts whose player refuses to load the stream when it detects an ad blocker — for these
@@ -161,10 +185,13 @@ class VideoSnifferEngine(
     // Instance variables to share state with helper methods
     private var deferred: CompletableDeferred<WebViewResult>? = null
     private var resultDelivered = false
+    private var pageStarted = false
     private var timeoutJob: Job? = null
     private var videoMonitorJob: Job? = null
     /** Fast-fail deadline for the first captured candidate; see [FIRST_CAPTURE_DEADLINE_MS]. */
     private var firstCaptureJob: Job? = null
+    /** Fast-fail deadline when the main frame never connects (`onPageStarted`); see [INITIAL_CONNECTION_DEADLINE_MS]. */
+    private var initialConnectionJob: Job? = null
     /**
      * The DOM-scrape poller for the page currently loaded.
      *
@@ -226,6 +253,7 @@ class VideoSnifferEngine(
         val deferred = this@VideoSnifferEngine.deferred!!
         this@VideoSnifferEngine.exitConditionReference = exitCondition
         resultDelivered = false
+        pageStarted = false
 
         // Decided once per session from the target URL: ad blocking is counter-productive on hosts
         // that withhold the stream when they detect it.
@@ -261,6 +289,31 @@ class VideoSnifferEngine(
         firstLinkTime = 0L
         android.util.Log.d("VideoSnifferEngine", "runSession: Session started, capturedLinks cleared. URL: $url")
         ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Session started, capturedLinks cleared")
+
+        // ── Fast-fail on an unreachable/dead host ────────────────────────────────────────────────
+        // When a domain's DNS or TCP handshake silently hangs (observed 2026-11-01 on two EgyDead
+        // mirrors that never answered), onPageStarted never fires and the user stares at a blank
+        // WebView for the entire 15s FIRST_CAPTURE_DEADLINE_MS. If the main frame has not even
+        // begun loading within INITIAL_CONNECTION_DEADLINE_MS (6s), fail fast so the next server
+        // is tried immediately.
+        fun abandonUnreachableHost(reason: String) {
+            if (resultDelivered || capturedLinks.isNotEmpty()) return
+            resultDelivered = true
+            ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.unreachableHost",
+                "Abandoning unreachable host so the next server is tried", "reason" to reason, "url" to url.take(90))
+            timeoutJob?.cancel()
+            videoMonitorJob?.cancel()
+            domPollJob?.cancel()
+            firstCaptureJob?.cancel()
+            initialConnectionJob?.cancel()
+            cleanup(webView, dialog)
+            deferred.complete(WebViewResult.Timeout(url, null))
+        }
+        this@VideoSnifferEngine.initialConnectionJob = CoroutineScope(Dispatchers.Main).launch {
+            delay(INITIAL_CONNECTION_DEADLINE_MS)
+            if (resultDelivered || pageStarted) return@launch
+            abandonUnreachableHost("main frame did not start within ${INITIAL_CONNECTION_DEADLINE_MS}ms")
+        }
 
         // ── Fast-fail on a dud page ──────────────────────────────────────────────────────────────
         // Player-mode sessions run with a 3-hour timeout so a stream that can only play inside the
@@ -621,7 +674,9 @@ class VideoSnifferEngine(
                         val nextBase = baseDomain(nextHost)
                         val targetBase = baseDomain(targetHost)
 
-                        if (nextBase == targetBase) {
+                        val sameBrand = com.cloudstream.shared.session.SessionProvider.extractBaseDomain(nextHost)
+                            .let { it.isNotEmpty() && it == com.cloudstream.shared.session.SessionProvider.extractBaseDomain(targetHost) }
+                        if (nextBase == targetBase || sameBrand) {
                             // Same domain redirect (e.g., www.X.com → X.com) — allow silently
                             ProviderLogger.d(TAG_WEBVIEW, "VideoSnifferEngine.shouldOverrideUrlLoading", "Same-domain redirect (allowed)", "url" to nextUrl.take(80))
                             return false
@@ -677,6 +732,9 @@ class VideoSnifferEngine(
 
                 override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: android.graphics.Bitmap?) {
                     if (resultDelivered) return
+                    // The host answered — the connection deadline no longer applies.
+                    pageStarted = true
+                    initialConnectionJob?.cancel()
                     android.util.Log.i("VideoSnifferEngine", "onPageStarted: url=${pageUrl?.take(80)}")
                     ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onPageStarted", "Page started", "url" to pageUrl?.take(80))
 
@@ -909,7 +967,7 @@ class VideoSnifferEngine(
                                     ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onPageFinished",
                                         "Error page detected immediately", "pattern" to pattern)
                                     CoroutineScope(Dispatchers.Main).launch {
-                                        delay(1500)
+                                        delay(800)
                                         showSkipOverlay(view)
                                     }
                                 }
@@ -958,6 +1016,22 @@ class VideoSnifferEngine(
                         }
                         ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedError", "WebView error",
                             "description" to description, "url" to request.url.toString().take(80))
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+                            isFatalNetworkError(error?.errorCode ?: 0)) {
+                            abandonUnreachableHost("main-frame network error: $description")
+                        }
+                    }
+                }
+
+                // API < 23 (old Android TV): the WebResourceRequest overload is never called.
+                @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) return
+                    ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedError", "WebView error (legacy)",
+                        "code" to errorCode, "description" to description, "url" to failingUrl?.take(80))
+                    // Legacy callback only reports main-frame failures.
+                    if (isFatalNetworkError(errorCode)) {
+                        abandonUnreachableHost("main-frame network error: $description")
                     }
                 }
 
@@ -977,7 +1051,7 @@ class VideoSnifferEngine(
                             ProviderLogger.i(TAG_WEBVIEW, "VideoSnifferEngine.onReceivedHttpError",
                                 "Dead/corrupted page detected via HTTP $statusCode, scheduling skip")
                             CoroutineScope(Dispatchers.Main).launch {
-                                delay(1500) // Brief grace period for page content to settle
+                                delay(800) // Brief grace period for page content to settle
                                 showSkipOverlay(view)
                             }
                         }
@@ -1061,6 +1135,7 @@ class VideoSnifferEngine(
             videoMonitorJob?.cancel()
             domPollJob?.cancel()
             firstCaptureJob?.cancel()
+            initialConnectionJob?.cancel()
             cleanup(webView, dialog)
             deferred.complete(WebViewResult.Error(e.message ?: "Unknown error"))
         }
@@ -1078,6 +1153,7 @@ class VideoSnifferEngine(
                 videoMonitorJob?.cancel()
                 domPollJob?.cancel()
                 firstCaptureJob?.cancel()
+                initialConnectionJob?.cancel()
                 android.util.Log.i("VideoSnifferEngine", "runSession: Parent coroutine cancelled, cleaning up WebView and dialog")
                 ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.runSession", "Parent coroutine cancelled, forcing cleanup")
                 cleanup(webView, dialog)
@@ -1176,6 +1252,7 @@ class VideoSnifferEngine(
             videoMonitorJob?.cancel()
             domPollJob?.cancel()
             firstCaptureJob?.cancel()
+            initialConnectionJob?.cancel()
 
             // Launch coroutine to get cookies safely
             CoroutineScope(Dispatchers.Main).launch {
@@ -1279,7 +1356,7 @@ class VideoSnifferEngine(
 
             // Countdown Subtitle
             skipCountdownText = TextView(activity).apply {
-                text = "Skipping server in 5s..."
+                text = "Skipping server in ${SKIP_COUNTDOWN_SECONDS}s..."
                 textSize = 16f
                 setTextColor(Color.LTGRAY)
                 gravity = Gravity.CENTER
@@ -1405,6 +1482,7 @@ class VideoSnifferEngine(
                     videoMonitorJob?.cancel()
                     domPollJob?.cancel()
                     firstCaptureJob?.cancel()
+                    initialConnectionJob?.cancel()
 
                     // User aborted, so we immediately complete with an error to stop execution
                     cleanup(webView, null)
@@ -1429,7 +1507,7 @@ class VideoSnifferEngine(
 
         skipCountdownJob?.cancel()
         skipCountdownJob = CoroutineScope(Dispatchers.Main).launch {
-            for (i in 5 downTo 1) {
+            for (i in SKIP_COUNTDOWN_SECONDS downTo 1) {
                 if (resultDelivered) break
                 skipCountdownText?.text = "Skipping server in ${i}s..."
                 delay(1000)
@@ -1449,6 +1527,7 @@ class VideoSnifferEngine(
         videoMonitorJob?.cancel()
         domPollJob?.cancel()
         firstCaptureJob?.cancel()
+        initialConnectionJob?.cancel()
         skipCountdownJob?.cancel()
 
         cleanup(view, dialog)
@@ -1951,9 +2030,17 @@ class VideoSnifferEngine(
         // Last line of defence: the poller outlives the WebView it scrapes otherwise.
         domPollJob?.cancel()
         firstCaptureJob?.cancel()
+        initialConnectionJob?.cancel()
+        skipCountdownJob?.cancel()
+        val d = dialog ?: activeDialog
+        val w = webView ?: activeWebView
         try {
-            dialog?.dismiss()
-            webView?.let { view ->
+            tvMouseController?.detach()
+            tvMouseController = null
+        } catch (_: Exception) {}
+        try {
+            d?.dismiss()
+            w?.let { view ->
                 // Must run on main thread
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     try {
@@ -1969,8 +2056,8 @@ class VideoSnifferEngine(
                 }
             }
             // Clear active references
-            if (activeWebView == webView) activeWebView = null
-            if (activeDialog == dialog) activeDialog = null
+            if (activeWebView == w) activeWebView = null
+            if (activeDialog == d) activeDialog = null
         } catch (e: Exception) {
             ProviderLogger.w(TAG_WEBVIEW, "VideoSnifferEngine.cleanup", "Error", "error" to e.message)
         }
