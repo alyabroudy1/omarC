@@ -4,12 +4,15 @@ import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
 import android.webkit.*
+import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.util.WebConfig
+import com.cloudstream.shared.webview.RequestedWithHeaderControl
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONTokener
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -44,11 +47,36 @@ class ChromiumFetcher(
 
     private val fetchMutex = kotlinx.coroutines.sync.Mutex()
 
+    /**
+     * Domains where a passive Chrome-TLS fetch without `cf_clearance` received a 403/503 challenge.
+     * Subsequent requests without a clearance cookie skip [ChromiumFetcher] and proceed directly
+     * to `CfBypassEngine`, eliminating the redundant double-WebView penalty on TV.
+     */
+    private val domainsRequiringActiveSolve: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /** Cached WebView for reuse within the reuse window */
     @Volatile
     private var cachedWebView: WebView? = null
     @Volatile
     private var lastFetchTime = 0L
+
+    /**
+     * Returns true if [domain] already rejected a passive Chrome-TLS fetch and no `cf_clearance`
+     * cookie is currently available, meaning an active `CfBypassEngine` solve is required.
+     */
+    fun requiresActiveSolve(domain: String, hasClearanceCookie: Boolean): Boolean {
+        if (hasClearanceCookie || domain.isBlank()) return false
+        return domainsRequiringActiveSolve.contains(domain.removePrefix("www."))
+    }
+
+    /**
+     * Clears the active-solve requirement for [domain] after `CfBypassEngine` succeeds.
+     */
+    fun markChallengeSolved(domain: String) {
+        if (domain.isNotBlank()) {
+            domainsRequiringActiveSolve.remove(domain.removePrefix("www."))
+        }
+    }
 
     /**
      * Fetch a URL using Chromium's TLS stack.
@@ -65,9 +93,11 @@ class ChromiumFetcher(
     ): ChromiumResponse = fetchMutex.withLock {
         withContext(Dispatchers.Main) {
             val activity = activityProvider()
-            if (activity == null) {
-                ProviderLogger.e(TAG, "fetch", "No Activity available")
-                return@withContext ChromiumResponse.error("No Activity context")
+            if (activity == null || activity.isFinishing ||
+                (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed)
+            ) {
+                ProviderLogger.e(TAG, "fetch", "No active Activity available")
+                return@withContext ChromiumResponse.error("No active Activity context")
             }
 
             val deferred = CompletableDeferred<ChromiumResponse>()
@@ -77,6 +107,7 @@ class ChromiumFetcher(
             try {
                 val webView = getOrCreateWebView(activity, headers)
                 webViewRef = webView
+                try { webView.stopLoading() } catch (_: Exception) {}
 
                 ProviderLogger.d(TAG, "fetch", "Starting Chrome-TLS fetch",
                     "url" to url.take(80), "headerCount" to headers.size)
@@ -92,18 +123,34 @@ class ChromiumFetcher(
                     ) {
                         if (request?.isForMainFrame == true) {
                             responseCode = errorResponse?.statusCode ?: -1
-                            // Carries the URL/host so a bare "code=403" in logcat can be tied back
-                            // to a caller and a domain — without it, a burst of these lines is
-                            // indistinguishable from an unguarded call site vs. several legitimate,
-                            // breaker-guarded fetches for different domains.
+                            val failedUrl = request.url?.toString() ?: url
                             ProviderLogger.d(TAG, "fetch.onReceivedHttpError",
                                 "HTTP error on main frame", "code" to responseCode,
-                                "url" to url.take(80), "requestUrl" to request?.url?.toString()?.take(80))
+                                "url" to url.take(80), "requestUrl" to failedUrl.take(80))
+
+                            // Fail-fast on Cloudflare HTTP challenge/block codes (403/503/429):
+                            // ChromiumFetcher is a passive single-shot fetcher whose success criterion is
+                            // `responseCode in 200..399`. Waiting for `onPageFinished` on a 403/503 wastes
+                            // 5–15s on TV compiling and executing Turnstile challenge scripts only to return
+                            // `success = false` and launch a second WebView in `CfBypassEngine`.
+                            if (!delivered && CloudflareDetector.isCloudflareResponse(responseCode)) {
+                                delivered = true
+                                lastFetchTime = System.currentTimeMillis()
+                                val host = try { URI(failedUrl).host?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
+                                if (host.isNotBlank()) {
+                                    domainsRequiringActiveSolve.add(host)
+                                }
+                                try {
+                                    view?.webViewClient = WebViewClient()
+                                    view?.stopLoading()
+                                } catch (_: Exception) {}
+                                deferred.complete(ChromiumResponse.cloudflareBlocked(responseCode, failedUrl))
+                            }
                         }
                     }
 
                     override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                        if (delivered) return
+                        if (delivered || loadedUrl == "about:blank") return
                         val currentUrl = view?.url ?: loadedUrl ?: url
 
                         CoroutineScope(Dispatchers.Main).launch {
@@ -111,18 +158,32 @@ class ChromiumFetcher(
                                 val html = extractHtml(view!!)
                                 val cookies = extractCookies(currentUrl)
 
+                                if (delivered) return@launch
                                 delivered = true
                                 lastFetchTime = System.currentTimeMillis()
 
+                                // On Android 5.0/5.1 (API 21–22), `onReceivedHttpError` (API 23+) is not
+                                // invoked by the system WebView, so `responseCode` stays 200 even on a 403
+                                // challenge page. Detect CF challenge markers in HTML to handle pre-API-23 TVs.
+                                val isChallengeHtml = CloudflareDetector.isCloudflareChallenge(html, responseCode)
+                                if (isChallengeHtml || CloudflareDetector.isCloudflareResponse(responseCode)) {
+                                    val host = try { URI(currentUrl).host?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
+                                    if (host.isNotBlank()) {
+                                        domainsRequiringActiveSolve.add(host)
+                                    }
+                                }
+
+                                val effectiveCode = if (isChallengeHtml && responseCode in 200..399) 403 else responseCode
+
                                 ProviderLogger.i(TAG, "fetch", "Chrome-TLS fetch complete",
-                                    "code" to responseCode,
+                                    "code" to effectiveCode,
                                     "htmlLength" to html.length,
                                     "cookieCount" to cookies.size,
                                     "finalUrl" to currentUrl.take(80))
 
                                 deferred.complete(ChromiumResponse(
-                                    success = responseCode in 200..399,
-                                    statusCode = responseCode,
+                                    success = effectiveCode in 200..399 && !isChallengeHtml,
+                                    statusCode = effectiveCode,
                                     body = html,
                                     cookies = cookies,
                                     finalUrl = currentUrl
@@ -154,16 +215,9 @@ class ChromiumFetcher(
                     }
                 }
 
-                // Build extra headers map (WebView.loadUrl headers)
-                val extraHeaders = mutableMapOf<String, String>()
-                // Strip X-Requested-With to avoid WebView detection
-                extraHeaders["X-Requested-With"] = ""
-                // Forward user-provided headers (except Cookie which goes via CookieManager)
-                for ((k, v) in headers) {
-                    if (!k.equals("Cookie", ignoreCase = true)) {
-                        extraHeaders[k] = v
-                    }
-                }
+                // Build extra headers map via RequestedWithHeaderControl so we never send
+                // the `X-Requested-With: ""` bot signature or conflict with profile-level control.
+                val extraHeaders = RequestedWithHeaderControl.sanitizeLoadHeaders(headers)
 
                 // Inject cookies via CookieManager (WebView ignores Cookie header in loadUrl)
                 headers["Cookie"]?.let { cookieHeader ->
@@ -200,8 +254,8 @@ class ChromiumFetcher(
                 }
                 ChromiumResponse.error(e.message ?: "Unknown error")
             } finally {
-                // Timed out or cancelled before delivery — stop the in-flight load so the
-                // WebView doesn't keep running detached from the (now-gone) caller.
+                // Detach client and stop any in-flight load if timed out or cancelled before delivery.
+                try { webViewRef?.webViewClient = WebViewClient() } catch (_: Exception) {}
                 if (!deferred.isCompleted) {
                     try { webViewRef?.stopLoading() } catch (_: Exception) {}
                 }
@@ -233,10 +287,13 @@ class ChromiumFetcher(
         val now = System.currentTimeMillis()
         val existing = cachedWebView
 
-        if (existing != null && (now - lastFetchTime) < WEBVIEW_REUSE_WINDOW_MS) {
+        if (existing != null && existing.context === activity && (now - lastFetchTime) < WEBVIEW_REUSE_WINDOW_MS) {
             // Reuse — just update UA if needed
             val ua = headers["User-Agent"] ?: WebConfig.getCachedUserAgent()
-            existing.settings.userAgentString = ua
+            if (existing.settings.userAgentString != ua) {
+                existing.settings.userAgentString = ua
+                RequestedWithHeaderControl.suppress(existing)
+            }
             return existing
         }
 
@@ -263,6 +320,8 @@ class ChromiumFetcher(
                 blockNetworkImage = true
                 loadsImagesAutomatically = false
             }
+            // Suppress X-Requested-With: <package> and spoof Chrome sec-ch-ua brands globally
+            RequestedWithHeaderControl.suppress(this)
         }
 
         // Anti-bot spoofing
@@ -364,12 +423,19 @@ data class ChromiumResponse(
     val error: String? = null
 ) {
     val isCloudflareBlocked: Boolean
-        get() = statusCode == 403 && (
+        get() = (CloudflareDetector.isCloudflareResponse(statusCode) && (
+            body.isEmpty() ||
             body.contains("cloudflare", ignoreCase = true) ||
-            body.contains("cf-browser-verification", ignoreCase = true)
-        )
+            body.contains("cf-browser-verification", ignoreCase = true) ||
+            CloudflareDetector.isCloudflareChallenge(body, statusCode)
+        )) || CloudflareDetector.isCloudflareChallenge(body, statusCode)
 
     companion object {
+        fun cloudflareBlocked(statusCode: Int, finalUrl: String?) = ChromiumResponse(
+            success = false, statusCode = statusCode, body = "", cookies = emptyMap(),
+            finalUrl = finalUrl, error = "HTTP $statusCode (Cloudflare challenge)"
+        )
+
         fun error(message: String) = ChromiumResponse(
             success = false, statusCode = -1, body = "", cookies = emptyMap(),
             finalUrl = null, error = message

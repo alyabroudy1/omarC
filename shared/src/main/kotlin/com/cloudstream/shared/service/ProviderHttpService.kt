@@ -2,6 +2,7 @@ package com.cloudstream.shared.service
 
 import android.content.Context
 import com.cloudstream.shared.parsing.ParserInterface
+import com.cloudstream.shared.cloudflare.CfBlockType
 import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.domain.DomainManager
 import com.cloudstream.shared.cookie.CookieLifecycleManager
@@ -59,6 +60,7 @@ class ProviderHttpService private constructor(
     @Volatile
     private var initialized = false
     private val initMutex = Mutex()
+    private val cfSolveMutex = Mutex()
 
     /** Validates media URLs for TLS-based CDN blocks before ExoPlayer */
     val mediaValidator = MediaUrlValidator()
@@ -673,7 +675,11 @@ class ProviderHttpService private constructor(
             checkAndUpdateDomain(url, result.finalUrl)
         }
         
-        val doc = result.html?.let { Jsoup.parse(it, url) }
+        // Never parse a Cloudflare challenge/block page into `doc` — if CF solve is skipped or
+        // fails below, callers must receive `null` rather than a parsed "Just a moment..." page.
+        val doc = if (!result.isCloudflareBlocked) {
+            result.html?.let { Jsoup.parse(it, url) }
+        } else null
         
         // Check for meta-refresh domain redirect (e.g., LaRoza returns 200 + meta-refresh)
         if (doc != null && result.success) {
@@ -684,13 +690,15 @@ class ProviderHttpService private constructor(
         // Only fall back to WebView if status is 403 AND the HTML contains actual CF markers.
         // This prevents non-CF 403s (like Akwam's anti-bot) from triggering useless CF solve loops.
         val hasCfMarkers = result.html?.let { CloudflareDetector.isCloudflareChallenge(it) } == true
-        val isDirectCfBlock = (result.responseCode == 403 && hasCfMarkers)
-        // Don't re-enqueue if the queue already attempted CF solve and failed
+        val isDirectCfBlock = result.isCloudflareBlocked || (result.responseCode == 403 && hasCfMarkers)
+        // Don't re-enqueue if the queue already attempted CF solve and failed/cancelled
         // This prevents parallel CF solve thundering herd
         val isQueueLevelFailure = result.error?.message?.contains("Cookie verification") == true ||
                                   result.error?.message?.contains("CF solve failed") == true ||
                                   result.error?.message?.contains("CF re-solve failed") == true ||
-                                  result.error?.message?.contains("CF Bypass failed") == true
+                                  result.error?.message?.contains("CF Bypass failed") == true ||
+                                  result.error?.message?.contains("User cancelled CF bypass") == true ||
+                                  result.error?.message?.contains("circuit breaker open") == true
         
         if (isDirectCfBlock && !isQueueLevelFailure) {
             val cfBreakerDomain = extractDomain(url)
@@ -965,10 +973,27 @@ class ProviderHttpService private constructor(
             // gone. The cost when it does not help is one invisible fetch on a path that was already
             // heading for a full WebView session.
             if (result.isCloudflareBlocked) {
+                val hasClearanceCookie = cookiesForDomain.keys.any {
+                    it.equals("cf_clearance", ignoreCase = true)
+                }
+
+                // Skip Tier-3 passive fetch if this domain is already known to require an active
+                // JS/Turnstile solve and we still have no cf_clearance cookie.
+                if (chromiumFetcher.requiresActiveSolve(breakerDomain, hasClearanceCookie)) {
+                    ProviderLogger.i(TAG_PROVIDER_HTTP, "executeDirectRequest",
+                        "⏩ Skipping Chrome TLS fallback — domain requires active CF solve and has no cf_clearance",
+                        "domain" to breakerDomain,
+                        "blockType" to result.cfBlockType.name,
+                        "url" to targetUrl.take(80))
+                    return result
+                }
+
                 ProviderLogger.w(TAG_PROVIDER_HTTP, "executeDirectRequest",
                     "🔒 Tier 3 TLS block — retrying via Chrome TLS stack",
                     "url" to targetUrl.take(80),
-                    "hadCookies" to cookiesForDomain.isNotEmpty().toString())
+                    "blockType" to result.cfBlockType.name,
+                    "hadCookies" to cookiesForDomain.isNotEmpty().toString(),
+                    "hasClearance" to hasClearanceCookie.toString())
 
                 val chromiumResponse = chromiumFetcher.fetch(targetUrl, headers)
                 // Success is a status code, which a block page also has. Check the body too, or a
@@ -980,6 +1005,9 @@ class ProviderHttpService private constructor(
                         "✅ Chrome TLS fallback succeeded — no WebView solve needed",
                         "url" to targetUrl.take(80),
                         "htmlLength" to chromiumResponse.body.length)
+
+                    chromiumFetcher.markChallengeSolved(breakerDomain)
+                    DomainCircuitBreaker.recordSuccess(breakerDomain)
 
                     // Merge any new cookies from the Chrome response
                     if (chromiumResponse.cookies.isNotEmpty()) {
@@ -997,7 +1025,9 @@ class ProviderHttpService private constructor(
                         "code" to chromiumResponse.statusCode,
                         "stillBlocked" to stillBlocked.toString(),
                         "error" to (chromiumResponse.error ?: ""))
-                    DomainCircuitBreaker.recordFailure(breakerDomain)
+                    if (!config.webViewEnabled) {
+                        DomainCircuitBreaker.recordFailure(breakerDomain)
+                    }
                 }
             }
 
@@ -1074,33 +1104,51 @@ class ProviderHttpService private constructor(
             if (newCookies.isNotEmpty()) updateCookies(newCookies, fromWebView = false)
         }
         
+        val cfMitigated = response.header("cf-mitigated")
+        val serverHeader = response.header("Server")
         response.close()
         
-        if (CloudflareDetector.isBlocked(code, html)) {
-            return RequestResult.cloudflareBlocked(code, finalUrl)
+        val blockType = CloudflareDetector.classifyBlock(code, html, cfMitigated, serverHeader)
+        if (blockType != CfBlockType.NONE || CloudflareDetector.isBlocked(code, html)) {
+            val effectiveType = if (blockType != CfBlockType.NONE) blockType else CfBlockType.ACTIVE_CHALLENGE
+            return RequestResult.cloudflareBlocked(code, finalUrl, html, effectiveType)
         } else {
             return RequestResult.success(html, code, finalUrl)
         }
     }
     
-    internal suspend fun solveCloudflareThenRequest(url: String, allowedDomains: Set<String> = emptySet()): RequestResult {
-        if (!config.webViewEnabled) return RequestResult.failure("WebView disabled")
+    internal suspend fun solveCloudflareThenRequest(
+        url: String,
+        allowedDomains: Set<String> = emptySet()
+    ): RequestResult = cfSolveMutex.withLock {
+        if (!config.webViewEnabled) return@withLock RequestResult.failure("WebView disabled")
         
         val targetUrl = rewriteUrlIfNeeded(url)
+        val breakerDomain = extractDomain(targetUrl)
+
+        if (DomainCircuitBreaker.isOpen(breakerDomain)) {
+            ProviderLogger.w(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
+                "Circuit breaker is open — skipping CF WebView session", "domain" to breakerDomain)
+            return@withLock RequestResult.failure("CF Bypass skipped (circuit breaker open)")
+        }
         
         // Guard: if valid cookies already exist from a very recent solve (< 10s),
         // skip re-invalidation — a concurrent solve likely just succeeded.
         val cookieAge = System.currentTimeMillis() - sessionState.cookieTimestamp
-            if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
+        if (sessionState.cookies.isNotEmpty() && cookieAge < 10_000L) {
             ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
                 "Skipping CF solve — fresh cookies exist (${cookieAge}ms old), retrying HTTP",
                 "domain" to sessionState.domain)
             val retryResult = executeDirectRequest(targetUrl, rewriteDomain = true)
-            if (retryResult.success) return retryResult
+            if (retryResult.success) return@withLock retryResult
             // If retry still fails (cookies expired or invalid), fall through to full CF solve
             ProviderLogger.d(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest",
                 "Retry with existing cookies failed, proceeding with full CF solve")
         }
+
+        // Release any cached hidden WebView in ChromiumFetcher before launching CfBypassEngine
+        // so low-RAM old Android TVs never hold two live WebView instances simultaneously.
+        chromiumFetcher.release()
 
         // Invalidate current session before WebView attempt
         invalidateSession("Preparing for CF solve")
@@ -1119,9 +1167,11 @@ class ProviderHttpService private constructor(
             allowedDomains = allowedDomains
         )
         
-        return when (result) {
+        when (result) {
             is WebViewResult.Success -> {
                 updateCookies(result.cookies, fromWebView = true)
+                chromiumFetcher.markChallengeSolved(breakerDomain)
+                DomainCircuitBreaker.recordSuccess(breakerDomain)
                 // CRITICAL: Do NOT call checkAndUpdateDomain here.
                 // CF bypass WebView may navigate to cloudflare.com / challenges.cloudflare.com
                 // during the challenge. If we detect a domain change from the CF solve's finalUrl,
@@ -1134,7 +1184,10 @@ class ProviderHttpService private constructor(
                 ProviderLogger.i(TAG_PROVIDER_HTTP, "solveCloudflareThenRequest", "User cancelled CF bypass")
                 RequestResult.failure("User cancelled CF bypass")
             }
-            else -> RequestResult.failure("CF Bypass failed")
+            else -> {
+                DomainCircuitBreaker.recordFailure(breakerDomain)
+                RequestResult.failure("CF Bypass failed")
+            }
         }
     }
     

@@ -133,6 +133,16 @@ object RequestedWithHeaderControl {
     @Volatile
     private var featuresLogged = false
 
+    /** Cached boundary factory & converter so old TV CPUs don't repeat reflection per WebView. */
+    @Volatile
+    private var cachedFactory: WebViewProviderFactoryBoundaryInterface? = null
+    @Volatile
+    private var cachedConverter: WebkitToCompatConverterBoundaryInterface? = null
+    @Volatile
+    private var cachedFeatures: Set<String>? = null
+    @Volatile
+    private var profileHeaderConfigured = false
+
     /**
      * True once **both** offending headers are controlled at the WebView level for every request.
      *
@@ -153,14 +163,23 @@ object RequestedWithHeaderControl {
     /**
      * Real-Chrome client hints, matching the shape androidx uses.
      *
-     * Brands mirror what desktop/mobile Chrome 150 reports, with the `"Android WebView"` entry replaced by
-     * `"Google Chrome"`. Versions are taken from the running WebView so the hints cannot drift out of step
-     * with the User-Agent string, which would be its own fingerprint.
+     * Brands mirror what desktop/mobile Chrome reports, with the `"Android WebView"` entry replaced by
+     * `"Google Chrome"`. Versions are taken directly from the running [webView] `userAgentString` (falling
+     * back to `webView.context`) so the hints never drift out of step with the active User-Agent string
+     * on old Android TVs and never crash if `PluginContext.context` was garbage-collected.
      */
-    private fun chromeBrandMetadata(): Map<String, Any> {
+    private fun chromeBrandMetadata(webView: WebView): Map<String, Any> {
+        val ua = try {
+            webView.settings.userAgentString?.takeIf { it.isNotBlank() }
+                ?: WebSettings.getDefaultUserAgent(webView.context)
+        } catch (_: Throwable) {
+            try {
+                com.cloudstream.shared.android.PluginContext.context?.let { WebSettings.getDefaultUserAgent(it) }
+            } catch (_: Throwable) { null }
+        } ?: ""
         val full = Regex("""Chrome/([0-9.]+)""")
-            .find(WebSettings.getDefaultUserAgent(com.cloudstream.shared.android.PluginContext.context))
-            ?.groupValues?.getOrNull(1) ?: "150.0.0.0"
+            .find(ua)
+            ?.groupValues?.getOrNull(1) ?: "131.0.0.0"
         val major = full.substringBefore('.')
         return mapOf(
             "BRAND_VERSION_LIST" to arrayOf(
@@ -236,65 +255,68 @@ object RequestedWithHeaderControl {
      * failed is another day of guessing at 403s.
      */
     fun suppress(webView: WebView): Boolean {
-        val factoryHandler = try {
-            val loader = webViewClassLoader() ?: return false
-            val glue = Class.forName(GLUE_CLASS, false, loader)
-            val create = glue.getDeclaredMethod(GLUE_METHOD)
-            create.isAccessible = true
-            create.invoke(null) as? InvocationHandler
-        } catch (e: Throwable) {
-            ProviderLogger.w(TAG, "suppress",
-                "Cannot reach the WebView support-library glue — leaving the header as it is",
-                "error" to (e.message ?: e.javaClass.simpleName))
-            null
-        } ?: return false
+        val factory = cachedFactory ?: run {
+            val factoryHandler = try {
+                val loader = webViewClassLoader() ?: return suppressLegacyProviderField(webView)
+                val glue = Class.forName(GLUE_CLASS, false, loader)
+                val create = glue.getDeclaredMethod(GLUE_METHOD)
+                create.isAccessible = true
+                create.invoke(null) as? InvocationHandler
+            } catch (e: Throwable) {
+                ProviderLogger.w(TAG, "suppress",
+                    "Cannot reach the WebView support-library glue — trying legacy provider reflection",
+                    "error" to (e.message ?: e.javaClass.simpleName))
+                null
+            } ?: return suppressLegacyProviderField(webView)
 
-        val factory = try { cast<WebViewProviderFactoryBoundaryInterface>(factoryHandler) } catch (e: Throwable) {
-            ProviderLogger.w(TAG, "suppress", "Factory proxy failed: ${e.message}")
-            return false
+            try {
+                cast<WebViewProviderFactoryBoundaryInterface>(factoryHandler).also { cachedFactory = it }
+            } catch (e: Throwable) {
+                ProviderLogger.w(TAG, "suppress", "Factory proxy failed: ${e.message}")
+                return suppressLegacyProviderField(webView)
+            }
         }
 
-        val features = try { factory.getSupportedFeatures() } catch (e: Throwable) {
+        val features = cachedFeatures ?: try {
+            factory.getSupportedFeatures().toSet().also { cachedFeatures = it }
+        } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "getSupportedFeatures failed: ${e.message}")
-            emptyArray()
+            emptySet()
         }
         if (!featuresLogged) {
             featuresLogged = true
-            // The full list, not a filtered slice. Picking levers by grepping the WebView's dex for
-            // strings found `SET_ORIGIN_MATCHED_HEADER` — which turned out **not** to be advertised, so
-            // the call was accepted into a stub. The advertised list is the authority; log all of it.
             ProviderLogger.i(TAG, "suppress", "WebView support-library features",
                 "count" to features.size.toString(),
                 "headerRelated" to (features.filter {
                     it.contains("HEADER", true) || it.contains("REQUESTED", true) ||
                         it.contains("USER_AGENT", true) || it.contains("ORIGIN", true)
                 }.joinToString(",").ifEmpty { "NONE" }))
-            ProviderLogger.i(TAG, "suppress", "All advertised features",
-                "list" to features.sorted().joinToString(","))
         }
         val hasAllowList = features.any { it.startsWith(FEATURE_ALLOW_LIST) }
         val hasMode = features.any { it.startsWith(FEATURE_MODE) }
 
-        val settingsHandler = try {
+        val converter = cachedConverter ?: try {
             cast<WebkitToCompatConverterBoundaryInterface>(factory.getWebkitToCompatConverter())
-                .convertSettings(webView.settings)
+                .also { cachedConverter = it }
+        } catch (e: Throwable) {
+            ProviderLogger.w(TAG, "suppress", "getWebkitToCompatConverter failed: ${e.message}")
+            return suppressLegacyProviderField(webView)
+        }
+
+        val settingsHandler = try {
+            converter.convertSettings(webView.settings)
         } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "convertSettings failed: ${e.message}")
-            return false
+            return suppressLegacyProviderField(webView)
         }
         val settings = try { cast<WebSettingsBoundaryInterface>(settingsHandler) } catch (e: Throwable) {
             ProviderLogger.w(TAG, "suppress", "Settings proxy failed: ${e.message}")
-            return false
+            return suppressLegacyProviderField(webView)
         }
 
-        // sec-ch-ua, globally.
-        //
-        // The CDP capture showed `sec-ch-ua: "Not;A=Brand";v="8", "Chromium";v="150", "Android WebView";
-        // v="150"` on every request — the WebView brand, which handover rule 16 says cimanow bounces. The
-        // interceptor has been rewriting it per request; `setUserAgentMetadataFromMap` sets it once for
-        // every request this WebView makes, POSTs included.
+        // sec-ch-ua, per WebView settings instance.
         val uaOk = try {
-            settings.setUserAgentMetadataFromMap(chromeBrandMetadata())
+            settings.setUserAgentMetadataFromMap(chromeBrandMetadata(webView))
             ProviderLogger.i(TAG, "suppress", "✅ sec-ch-ua brands set to real Chrome for this WebView",
                 "advertised" to features.any { it.startsWith("USER_AGENT_METADATA") }.toString())
             true
@@ -305,16 +327,14 @@ object RequestedWithHeaderControl {
             false
         }
 
-        // Preferred on any modern WebView: override the header's value per origin.
-        //
-        // WebView 150's dex contains no `RequestedWith` method at all — that API was removed — but it does
-        // advertise `SET_ORIGIN_MATCHED_HEADER`, and the CDP capture proves the header is still being sent
-        // on every request (15 of 15, all `com.lagradost.cloudstream3`). So the value is what we can
-        // change, and per [SAFE_VALUE] that is sufficient: the block is on our package name.
+        // Preferred on any modern WebView: override the header's value per origin on the Default profile.
         try {
-            val store = cast<ProfileStoreBoundaryInterface>(factory.getProfileStore())
-            val profile = cast<ProfileBoundaryInterface>(store.getOrCreateProfile("Default"))
-            profile.setOriginMatchedHeader(HEADER, SAFE_VALUE, ALL_ORIGINS)
+            if (!profileHeaderConfigured) {
+                val store = cast<ProfileStoreBoundaryInterface>(factory.getProfileStore())
+                val profile = cast<ProfileBoundaryInterface>(store.getOrCreateProfile("Default"))
+                profile.setOriginMatchedHeader(HEADER, SAFE_VALUE, ALL_ORIGINS)
+                profileHeaderConfigured = true
+            }
             val advertised = features.any { f -> FEATURES_ORIGIN_HEADER.any { f.startsWith(it) } }
             headersControlledGlobally = uaOk && advertised
             ProviderLogger.i(TAG, "suppress",
@@ -329,12 +349,12 @@ object RequestedWithHeaderControl {
                 "error" to (e.message?.take(180) ?: e.javaClass.simpleName))
         }
 
-        // Allow-list first: it is the current API, and an empty list means "send it to nobody", which is
-        // exactly what a browser does. `setRequestedWithHeaderMode` is its deprecated predecessor.
+        // Allow-list first: supported on WebView 96–149 (common on older Android TVs).
         if (hasAllowList || !hasMode) {
             try {
                 settings.setRequestedWithHeaderOriginAllowList(emptySet())
                 val readBack = try { settings.getRequestedWithHeaderOriginAllowList() } catch (_: Throwable) { null }
+                headersControlledGlobally = uaOk && hasAllowList
                 ProviderLogger.i(TAG, "suppress",
                     "✅ X-Requested-With suppressed via the origin allow-list — no origin will receive it",
                     "advertised" to hasAllowList.toString(),
@@ -350,19 +370,76 @@ object RequestedWithHeaderControl {
                 settings.setRequestedWithHeaderMode(MODE_NO_HEADER)
                 val readBack = try { settings.getRequestedWithHeaderMode() } catch (_: Throwable) { -1 }
                 val ok = readBack == MODE_NO_HEADER
+                if (ok) {
+                    headersControlledGlobally = uaOk
+                }
                 ProviderLogger.i(TAG, "suppress",
                     if (ok) "✅ X-Requested-With suppressed via header mode NO_HEADER"
                     else "⚠️ Header mode set but read back as $readBack, not $MODE_NO_HEADER",
                     "readBack" to readBack.toString())
-                return ok
+                if (ok) return true
             } catch (e: Throwable) {
                 ProviderLogger.w(TAG, "suppress", "Header-mode call failed: ${e.message}")
             }
+        }
+
+        if (suppressLegacyProviderField(webView)) {
+            return true
         }
 
         ProviderLogger.w(TAG, "suppress",
             "This WebView exposes neither header API — the package name will keep going out, which " +
                 "breaks freex's countdown and stops Google filling ad slots. See the class doc.")
         return false
+    }
+
+    /**
+     * Fallback for legacy Android TV WebViews (< WebView 96) that predate the support-library
+     * origin allow-list and profile header APIs.
+     */
+    private fun suppressLegacyProviderField(webView: WebView): Boolean {
+        return try {
+            val providerField = WebView::class.java.getDeclaredField("mProvider").apply { isAccessible = true }
+            val provider = providerField.get(webView) ?: return false
+            var cls: Class<*>? = provider.javaClass
+            while (cls != null) {
+                for (fieldName in arrayOf("mXRequestedWithHeader", "xRequestedWithHeader")) {
+                    try {
+                        val f = cls.getDeclaredField(fieldName)
+                        f.isAccessible = true
+                        f.set(provider, SAFE_VALUE)
+                        ProviderLogger.i(TAG, "suppressLegacyProviderField",
+                            "✅ Overrode $fieldName on legacy WebView provider", "value" to SAFE_VALUE)
+                        return true
+                    } catch (_: NoSuchFieldException) {}
+                }
+                cls = cls.superclass
+            }
+            false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Builds the `extraHeaders` map for [WebView.loadUrl], ensuring we never emit an empty
+     * `X-Requested-With: ""` signature and never conflict with profile-level header control.
+     *
+     * - When [headersControlledGlobally] is true, the Chromium Profile already sets
+     *   `X-Requested-With: com.android.chrome` for all origins, so we omit it from `extraHeaders`.
+     * - When [headersControlledGlobally] is false (older WebView without boundary support),
+     *   we fall back to setting `X-Requested-With: com.android.chrome` on the initial navigation.
+     */
+    fun sanitizeLoadHeaders(headers: Map<String, String> = emptyMap()): MutableMap<String, String> {
+        val extraHeaders = mutableMapOf<String, String>()
+        if (!headersControlledGlobally) {
+            extraHeaders[HEADER] = SAFE_VALUE
+        }
+        for ((k, v) in headers) {
+            if (!k.equals("Cookie", ignoreCase = true) && !k.equals(HEADER, ignoreCase = true)) {
+                extraHeaders[k] = v
+            }
+        }
+        return extraHeaders
     }
 }

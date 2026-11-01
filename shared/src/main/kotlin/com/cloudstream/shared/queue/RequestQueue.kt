@@ -1,5 +1,6 @@
 package com.cloudstream.shared.queue
 
+import com.cloudstream.shared.cloudflare.CfBlockType
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_QUEUE
 import kotlinx.coroutines.*
@@ -147,7 +148,7 @@ class RequestQueue(
                         val retryResult = leader.action()
                         leader.deferred.complete(retryResult)
                     }
-                    verifyAndRunFollowers(domain)
+                    verifyAndRunFollowers(domain, leader.url, cfResult)
                 } else {
                     ProviderLogger.w(TAG_QUEUE, "executeAsLeader", "CF solve failed")
                     leader.deferred.complete(cfResult)
@@ -162,16 +163,41 @@ class RequestQueue(
         }
     }
     
-    private suspend fun verifyAndRunFollowers(domain: String) {
-        val followers = mutex.withLock {
+    private suspend fun verifyAndRunFollowers(
+        domain: String,
+        leaderUrl: String? = null,
+        leaderResult: RequestResult? = null
+    ) {
+        val allFollowers = mutex.withLock {
             pendingRequests.remove(domain)?.drop(1) ?: emptyList()
         }
         
-        if (followers.isEmpty()) return
+        if (allFollowers.isEmpty()) return
         
         val activeDomain = getCurrentDomain()
+        val rewrittenLeaderUrl = leaderUrl?.let { rewriteFollowerUrl(it, activeDomain) }
+
+        // Followers requesting the exact same URL as the just-resolved leader can reuse
+        // the leader's WebView result directly without making a redundant network request.
+        val followers = if (leaderResult != null && leaderResult.success && leaderResult.html != null) {
+            val (sameUrlFollowers, distinctFollowers) = allFollowers.partition { follower ->
+                val rewrittenFollowerUrl = rewriteFollowerUrl(follower.url, activeDomain)
+                rewrittenFollowerUrl == rewrittenLeaderUrl || rewrittenFollowerUrl == leaderResult.finalUrl
+            }
+            if (sameUrlFollowers.isNotEmpty()) {
+                ProviderLogger.i(TAG_QUEUE, "verifyAndRunFollowers",
+                    "Completing identical-URL followers from leader CF result",
+                    "count" to sameUrlFollowers.size)
+                sameUrlFollowers.forEach { it.deferred.complete(leaderResult) }
+            }
+            distinctFollowers
+        } else {
+            allFollowers
+        }
+
+        if (followers.isEmpty()) return
         
-        // First follower verifies that new cookies work
+        // First remaining follower verifies that new cookies work
         val verifier = followers.first()
         val verifierUrl = rewriteFollowerUrl(verifier.url, activeDomain)
         ProviderLogger.d(TAG_QUEUE, "verifyAndRunFollowers", "Verifying cookies", "url" to verifierUrl.take(80))
@@ -306,7 +332,8 @@ data class RequestResult(
     val responseCode: Int,
     val finalUrl: String?,
     val error: Throwable? = null,
-    val isCloudflareBlocked: Boolean = false
+    val isCloudflareBlocked: Boolean = false,
+    val cfBlockType: CfBlockType = CfBlockType.NONE
 ) {
     companion object {
         fun success(html: String, code: Int = 200, finalUrl: String) = RequestResult(
@@ -316,12 +343,18 @@ data class RequestResult(
             finalUrl = finalUrl
         )
         
-        fun cloudflareBlocked(code: Int = 403, finalUrl: String? = null) = RequestResult(
+        fun cloudflareBlocked(
+            code: Int = 403,
+            finalUrl: String? = null,
+            html: String? = null,
+            cfBlockType: CfBlockType = CfBlockType.ACTIVE_CHALLENGE
+        ) = RequestResult(
             success = false,
-            html = null,
+            html = html,
             responseCode = code,
             finalUrl = finalUrl,
-            isCloudflareBlocked = true
+            isCloudflareBlocked = true,
+            cfBlockType = cfBlockType
         )
         
         fun failure(reason: String, code: Int = -1) = RequestResult(

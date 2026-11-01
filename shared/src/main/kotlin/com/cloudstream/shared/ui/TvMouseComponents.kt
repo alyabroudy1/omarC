@@ -62,6 +62,8 @@ class TvMouseController(
     private var position = PointF(-1f, -1f)  // -1 = not initialised yet
     private var velocity = PointF(0f, 0f)
     private var isAttached = false
+    private var isFrameLoopActive = false
+    private var userMovedCursor = false
 
     // Track how many consecutive frames each direction has been held.
     // Used for the ramp-up curve so the first frame produces a tiny nudge.
@@ -74,6 +76,22 @@ class TvMouseController(
     private var isLeftPressed = false
     private var isRightPressed = false
 
+    private val hasActiveMotion: Boolean
+        get() = isUpPressed || isDownPressed || isLeftPressed || isRightPressed ||
+            abs(velocity.x) >= 0.05f || abs(velocity.y) >= 0.05f
+
+    private fun ensureFrameLoopRunning() {
+        if (!isAttached || isFrameLoopActive) return
+        isFrameLoopActive = true
+        Choreographer.getInstance().postFrameCallback(this)
+    }
+
+    private fun stopFrameLoop() {
+        if (!isFrameLoopActive) return
+        isFrameLoopActive = false
+        Choreographer.getInstance().removeFrameCallback(this)
+    }
+
     /**
      * Attach the mouse controller to the WebView.
      * The WebView should be inside a FrameLayout.
@@ -81,32 +99,17 @@ class TvMouseController(
     fun attach(parentContainer: FrameLayout) {
         if (isAttached) return
         this.container = parentContainer
-
-        val containerWidth = parentContainer.width.toFloat()
-        val containerHeight = parentContainer.height.toFloat()
-
-        if (containerWidth > 0 && containerHeight > 0) {
-            position.x = containerWidth / 2f
-            position.y = containerHeight / 2f
-        } else {
-            parentContainer.post {
-                if (!isAttached) return@post
-                val w = parentContainer.width.toFloat()
-                val h = parentContainer.height.toFloat()
-                if (w > 0 && h > 0) {
-                    position.x = w / 2f
-                    position.y = h / 2f
-                    overlay?.setCursorPosition(position.x, position.y)
-                } else {
-                    position.x = 500f
-                    position.y = 500f
-                    overlay?.setCursorPosition(position.x, position.y)
-                }
-            }
-        }
+        userMovedCursor = false
 
         // Create and add overlay
-        overlay = TvMouseOverlay(context).apply {
+        overlay = TvMouseOverlay(context) { w, h ->
+            // Automatically center cursor as soon as the Dialog window finishes layout on TV
+            if (isAttached && !userMovedCursor && w > 0 && h > 0) {
+                position.x = w / 2f
+                position.y = h / 2f
+                overlay?.setCursorPosition(position.x, position.y)
+            }
+        }.apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -118,12 +121,27 @@ class TvMouseController(
         parentContainer.addView(overlay)
 
         isAttached = true
-        Choreographer.getInstance().postFrameCallback(this)
+
+        val containerWidth = parentContainer.width.toFloat()
+        val containerHeight = parentContainer.height.toFloat()
+
+        if (containerWidth > 0 && containerHeight > 0) {
+            position.x = containerWidth / 2f
+            position.y = containerHeight / 2f
+            overlay?.setCursorPosition(position.x, position.y)
+        }
     }
 
     fun detach() {
         isAttached = false
-        Choreographer.getInstance().removeFrameCallback(this)
+        isUpPressed = false
+        isDownPressed = false
+        isLeftPressed = false
+        isRightPressed = false
+        holdFramesX = 0
+        holdFramesY = 0
+        velocity.set(0f, 0f)
+        stopFrameLoop()
         container?.removeView(overlay)
         overlay = null
         container = null
@@ -141,38 +159,49 @@ class TvMouseController(
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> {
                 if (isDown && !isUpPressed) {
-                    // First press — give a tiny impulse so a tap moves at least 1px
-                    velocity.y = -TAP_IMPULSE
+                    userMovedCursor = true
+                    // Preserve existing upward momentum on rapid taps / IR pulse repeats
+                    velocity.y = min(velocity.y - TAP_IMPULSE, -TAP_IMPULSE)
                     holdFramesY = 0
                 }
                 isUpPressed = isDown
+                if (isDown) ensureFrameLoopRunning()
                 return true
             }
             KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (isDown && !isDownPressed) {
-                    velocity.y = TAP_IMPULSE
+                    userMovedCursor = true
+                    velocity.y = max(velocity.y + TAP_IMPULSE, TAP_IMPULSE)
                     holdFramesY = 0
                 }
                 isDownPressed = isDown
+                if (isDown) ensureFrameLoopRunning()
                 return true
             }
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 if (isDown && !isLeftPressed) {
-                    velocity.x = -TAP_IMPULSE
+                    userMovedCursor = true
+                    velocity.x = min(velocity.x - TAP_IMPULSE, -TAP_IMPULSE)
                     holdFramesX = 0
                 }
                 isLeftPressed = isDown
+                if (isDown) ensureFrameLoopRunning()
                 return true
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 if (isDown && !isRightPressed) {
-                    velocity.x = TAP_IMPULSE
+                    userMovedCursor = true
+                    velocity.x = max(velocity.x + TAP_IMPULSE, TAP_IMPULSE)
                     holdFramesX = 0
                 }
                 isRightPressed = isDown
+                if (isDown) ensureFrameLoopRunning()
                 return true
             }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_BUTTON_A -> {
                 if (!isDown) { // Click on key-up to avoid repeat-clicks when held
                     simulateClick()
                 }
@@ -183,7 +212,10 @@ class TvMouseController(
     }
 
     override fun doFrame(frameTimeNanos: Long) {
-        if (!isAttached || overlay == null) return
+        if (!isAttached || overlay == null) {
+            isFrameLoopActive = false
+            return
+        }
 
         // Lazy-init position if the container wasn't laid out at attach time
         if (position.x < 0 || position.y < 0) {
@@ -255,11 +287,22 @@ class TvMouseController(
         // Draw
         overlay!!.setCursorPosition(position.x, position.y)
 
-        // Next frame
-        Choreographer.getInstance().postFrameCallback(this)
+        // Schedule next frame ONLY while input is active or cursor is still gliding.
+        // When idle, stop the 60fps Choreographer loop so the TV UI/WebView threads aren't starved.
+        if (hasActiveMotion) {
+            Choreographer.getInstance().postFrameCallback(this)
+        } else {
+            isFrameLoopActive = false
+        }
     }
 
     private fun simulateClick() {
+        if (position.x < 0 || position.y < 0) {
+            val w = overlay?.width?.toFloat() ?: 0f
+            val h = overlay?.height?.toFloat() ?: 0f
+            position.x = if (w > 0) w / 2f else 500f
+            position.y = if (h > 0) h / 2f else 500f
+        }
         val downTime = SystemClock.uptimeMillis()
         val eventTime = SystemClock.uptimeMillis() + 100
         val x = position.x
@@ -286,7 +329,10 @@ class TvMouseController(
 /**
  * Custom View that draws the cursor arrow.
  */
-class TvMouseOverlay(context: Context) : View(context) {
+class TvMouseOverlay(
+    context: Context,
+    private val onLayoutReady: ((Int, Int) -> Unit)? = null
+) : View(context) {
 
     private val cursorPaint = Paint().apply {
         color = Color.WHITE
@@ -315,17 +361,21 @@ class TvMouseOverlay(context: Context) : View(context) {
     private val scale = 1.5f
 
     // Current draw position
-    private var cx = 0f
-    private var cy = 0f
-
-    init {
-        setLayerType(LAYER_TYPE_HARDWARE, null)
-    }
+    private var cx = -1f
+    private var cy = -1f
 
     fun setCursorPosition(x: Float, y: Float) {
+        if (abs(x - cx) < 0.01f && abs(y - cy) < 0.01f) return
         cx = x
         cy = y
         invalidate()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0) {
+            onLayoutReady?.invoke(w, h)
+        }
     }
 
     override fun onDraw(canvas: Canvas) {

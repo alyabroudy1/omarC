@@ -8,6 +8,8 @@ import com.cloudstream.shared.cloudflare.CloudflareDetector
 import com.cloudstream.shared.logging.ProviderLogger
 import com.cloudstream.shared.logging.ProviderLogger.TAG_WEBVIEW
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Cloudflare bypass engine using Android WebView.
@@ -22,6 +24,7 @@ import kotlinx.coroutines.*
 class CfBypassEngine(
     private val activityProvider: () -> android.app.Activity?
 ) {
+    private val sessionMutex = Mutex()
     private var deferred: CompletableDeferred<WebViewResult>? = null
     private var resultDelivered = false
     private var timeoutJob: Job? = null
@@ -51,13 +54,16 @@ class CfBypassEngine(
         timeout: Long = 60_000L,
         delayMs: Long = 0L,
         allowedDomains: Set<String> = emptySet()
-    ): WebViewResult = withContext(Dispatchers.Main) {
+    ): WebViewResult = sessionMutex.withLock {
+        withContext(Dispatchers.Main) {
 
-        val activity = activityProvider()
-        if (activity == null) {
-            ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.runSession", "No Activity available")
-            return@withContext WebViewResult.Error("No Activity context")
-        }
+            val activity = activityProvider()
+            if (activity == null || activity.isFinishing ||
+                (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed)
+            ) {
+                ProviderLogger.e(TAG_WEBVIEW, "CfBypassEngine.runSession", "No active Activity available")
+                return@withContext WebViewResult.Error("No active Activity context")
+            }
 
         this@CfBypassEngine.deferred = CompletableDeferred<WebViewResult>()
         val deferred = this@CfBypassEngine.deferred!!
@@ -98,6 +104,9 @@ class CfBypassEngine(
                     javaScriptCanOpenWindowsAutomatically = false
                     setSupportMultipleWindows(false)
                 }
+                // Suppress X-Requested-With: <package> and spoof Chrome sec-ch-ua brands globally
+                // across all main-frame and Turnstile subresource/POST requests.
+                RequestedWithHeaderControl.suppress(this)
             }
 
             // UA VERIFICATION: Log the exact UA WebView is using
@@ -365,8 +374,7 @@ class CfBypassEngine(
             // Load URL
             ProviderLogger.i(TAG_WEBVIEW, "CfBypassEngine.runSession", "Loading URL", "url" to url.take(80))
 
-            val extraHeaders = mutableMapOf<String, String>()
-            extraHeaders["X-Requested-With"] = ""
+            val extraHeaders = RequestedWithHeaderControl.sanitizeLoadHeaders()
 
             webView.loadUrl(url, extraHeaders)
 
@@ -388,6 +396,7 @@ class CfBypassEngine(
                 cleanup(webView, dialog)
             }
         }
+        }
     }
 
     /**
@@ -402,9 +411,17 @@ class CfBypassEngine(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
+            // Block WebView and its child iframes from stealing TV D-pad focus
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         }
 
         container.addView(webView.apply {
+            // Disable native focus on WebView so Android TV spatial navigation does not
+            // compete with TvMouseController for D-pad events or trigger focus redraws.
+            isFocusable = false
+            isFocusableInTouchMode = false
             layoutParams = android.widget.FrameLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
